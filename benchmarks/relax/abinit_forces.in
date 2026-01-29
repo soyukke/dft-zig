@@ -1,0 +1,59 @@
+# ABINIT force calculation for displaced silicon (8 atoms, conventional cell)
+# This is for comparison with DFT-Zig force calculation
+
+pp_dirpath "../../pseudo"
+pseudos "Si.upf"
+
+outdata_prefix "abinit_forceso"
+tmpdata_prefix "abinit_forces_tmp"
+
+ntypat 1
+znucl 14
+natom 8
+typat 8*1
+
+# Conventional cubic cell: a = 5.431 Angstrom
+# Using Angstrom units for consistency with XYZ file
+acell 3*10.2631  # 5.431 Angstrom in Bohr
+
+rprim
+  1.0 0.0 0.0
+  0.0 1.0 0.0
+  0.0 0.0 1.0
+
+# Displaced atomic positions (in Bohr)
+# Converted from silicon_displaced.xyz (1 Angstrom = 1.8897259886 Bohr)
+xcart
+  0.00000000 0.00000000 0.00000000
+  0.00000000 5.13154906 5.13154906
+  5.13154906 0.00000000 5.13154906
+  5.13154906 5.13154906 0.00000000
+  2.66061741 2.56613770 2.56613770
+  2.56613770 7.79167942 7.69720076
+  7.69720076 2.56613770 7.79167942
+  7.60272209 7.69720076 2.56613770
+
+# ecut = 20 Ry = 10 Ha (matching DFT-Zig config)
+ecut 10.0
+nband 20  # 8 atoms * 4 valence electrons / 2 = 16, plus some empty bands
+
+ixc 11  # PBE
+
+# SCF parameters
+iscf 7
+diemix 0.3
+tolvrs 1.0d-8
+nstep 50
+
+# Temperature (matching DFT-Zig)
+occopt 3
+tsmear 0.01
+
+# K-mesh 2x2x2 (matching DFT-Zig)
+kptopt 1
+ngkpt 2 2 2
+nshiftk 1
+shiftk 0.0 0.0 0.0
+
+# Request force output
+optforces 1

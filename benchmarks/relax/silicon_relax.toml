@@ -1,0 +1,61 @@
+title = "silicon_relax_primitive_displaced"
+xyz = "benchmarks/relax/silicon_primitive_displaced.xyz"
+out_dir = "out/silicon_relax"
+units = "angstrom"
+linalg_backend = "accelerate"
+
+[[pseudopotential]]
+element = "Si"
+path = "pseudo/Si.upf"
+format = "upf"
+
+# Primitive cell (FCC): a/2 * [(0,1,1), (1,0,1), (1,1,0)]
+# a = 5.431 Angstrom
+[cell]
+a1 = [0.0, 2.7155, 2.7155]
+a2 = [2.7155, 0.0, 2.7155]
+a3 = [2.7155, 2.7155, 0.0]
+
+[scf]
+enabled = true
+solver = "iterative"
+xc = "pbe"
+smearing = "fermi_dirac"
+smear_ry = 0.02
+ecut_ry = 15.0
+kmesh = [2, 2, 2]
+grid = [20, 20, 20]
+mixing_beta = 0.3
+pulay_history = 8
+max_iter = 50
+convergence = 1e-5
+fft_backend = "fftw"
+use_rfft = true
+quiet = true
+
+[relax]
+enabled = true
+algorithm = "bfgs"
+max_iter = 30
+force_tol = 1e-3
+max_step = 0.1
+output_trajectory = true
+
+[ewald]
+alpha = 0.0
+rcut = 0.0
+gcut = 0.0
+tol = 1e-8
+
+[band]
+solver = "iterative"
+points = 5
+nbands = 8
+
+[[band.path]]
+label = "G"
+k = [0.0, 0.0, 0.0]
+
+[[band.path]]
+label = "X"
+k = [0.0, 1.0, 0.0]

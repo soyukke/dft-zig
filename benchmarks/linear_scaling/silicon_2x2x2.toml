@@ -1,0 +1,44 @@
+xyz = "benchmarks/linear_scaling/silicon_2x2x2.xyz"
+out_dir = "out/linear_scaling/silicon_2x2x2"
+units = "angstrom"
+linalg_backend = "accelerate"
+
+[[pseudopotential]]
+element = "Si"
+path = "pseudo/Si.upf"
+format = "upf"
+
+[cell]
+a1 = [10.862, 0.0, 0.0]
+a2 = [0.0, 10.862, 0.0]
+a3 = [0.0, 0.0, 10.862]
+
+[scf]
+enabled = true
+solver = "iterative"
+ecut_ry = 15.0
+kmesh = [1, 1, 1]
+grid = [0, 0, 0]
+mixing_beta = 0.3
+max_iter = 50
+convergence = 1e-6
+symmetry = true
+time_reversal = true
+reference_json = "scf_reference.json"
+
+[band]
+solver = "iterative"
+points = 1
+nbands = 1
+use_symmetry = false
+
+[[band.path]]
+label = "G"
+k = [0.0, 0.0, 0.0]
+
+[[band.path]]
+label = "G"
+k = [0.0, 0.0, 0.0]
+
+[ewald]
+tol = 1e-8

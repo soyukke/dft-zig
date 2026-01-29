@@ -1,0 +1,2 @@
+fermi_eV=6.811285534
+magnetization=2.3219

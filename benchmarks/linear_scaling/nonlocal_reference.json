@@ -1,0 +1,41 @@
+{
+  "description": "Reference values for linear scaling nonlocal pseudopotential benchmark",
+  "system": "Silicon 8 atoms (conventional cell)",
+  "parameters": {
+    "sigma": 0.5,
+    "cutoff": 3.0,
+    "grid_dims": [16, 16, 16],
+    "units": "angstrom",
+    "electrons": 32.0,
+    "xc": "lda_pz"
+  },
+  "s_only": {
+    "description": "s-wave Gaussian basis only",
+    "nonlocal_ry": 32.604607,
+    "total_ry": -398.024496,
+    "hartree_ry": 87.690805,
+    "xc_ry": -45.303188,
+    "tolerance": {
+      "nonlocal": 0.01,
+      "total": 0.1
+    }
+  },
+  "sp": {
+    "description": "sp basis with sp3 hybridization weighting (25% s, 75% p)",
+    "nonlocal_ry": 8.213131,
+    "total_ry": -422.415971,
+    "hartree_ry": 87.690805,
+    "xc_ry": -45.303188,
+    "tolerance": {
+      "nonlocal": 0.01,
+      "total": 0.1
+    }
+  },
+  "notes": [
+    "s_only gives positive nonlocal energy because s-wave D values are positive",
+    "sp basis includes p-wave contribution with negative D values (attractive)",
+    "sp basis gives more physically reasonable nonlocal energy",
+    "sp basis is ~1.6x slower due to computing 4x more projector overlaps"
+  ],
+  "last_updated": "2026-02-02"
+}

@@ -1,0 +1,46 @@
+# ABINIT SCF calculation for GaAs benchmark
+# Zinc-blende structure (2 atoms), ecut=30 Ry = 15 Ha, 4x4x4 k-mesh
+
+pp_dirpath "../../pseudo"
+pseudos "Ga_ONCV_PBE-1.2.upf, As_ONCV_PBE-1.2.upf"
+
+# Output file prefix
+outdata_prefix "abinit_scfo"
+tmpdata_prefix "abinit_scf_tmp"
+
+ntypat 2
+znucl 31 33
+natom 2
+typat 1 2
+
+# Primitive FCC cell: a/2 * [(0,1,1), (1,0,1), (1,1,0)]
+# a = 5.653 Angstrom = 10.6830 bohr, a/2 = 5.3415 bohr
+acell 3*5.3415
+
+rprim
+  0.0 1.0 1.0
+  1.0 0.0 1.0
+  1.0 1.0 0.0
+
+# Zinc-blende structure: Ga at (0,0,0), As at (1/4,1/4,1/4)
+xred
+  0.00 0.00 0.00
+  0.25 0.25 0.25
+
+# ecut = 30 Ry = 15 Ha
+ecut 15.0
+nband 14
+ixc 11  # PBE
+
+iscf 7
+diemix 0.3
+tolvrs 1.0d-8
+nstep 50
+
+occopt 3
+tsmear 0.01
+
+kptopt 1
+ngkpt 4 4 4
+nshiftk 1
+shiftk 0.0 0.0 0.0

@@ -1,0 +1,34 @@
+&CONTROL
+  calculation = 'scf'
+  pseudo_dir = '../../pseudo'
+  outdir = './out_qe'
+  prefix = 'si'
+  verbosity = 'high'
+  tstress = .true.
+  wf_collect = .true.
+/
+&SYSTEM
+  ibrav = 0
+  nat = 2
+  ntyp = 1
+  ecutwfc = 15.0
+  input_dft = 'PBE'
+/
+&ELECTRONS
+  conv_thr = 1.0d-8
+  mixing_beta = 0.3
+/
+ATOMIC_SPECIES
+  Si 28.0855 Si.pbe-n-kjpaw_psl.1.0.0.UPF
+
+CELL_PARAMETERS {angstrom}
+  0.0000  2.7155  2.7155
+  2.7155  0.0000  2.7155
+  2.7155  2.7155  0.0000
+
+ATOMIC_POSITIONS {crystal}
+  Si 0.00 0.00 0.00
+  Si 0.25 0.25 0.25
+
+K_POINTS {automatic}
+  4 4 4 0 0 0

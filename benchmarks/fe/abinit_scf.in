@@ -1,0 +1,48 @@
+# ABINIT SCF calculation for Fe BCC benchmark
+# BCC primitive cell (1 atom), ecut=60 Ry = 30 Ha, 8x8x8 k-mesh
+# Spin-polarized (nsppol=2)
+
+pp_dirpath "../../pseudo"
+pseudos "Fe_ONCV_PBE-1.2.upf"
+
+outdata_prefix "abinit_scfo"
+tmpdata_prefix "abinit_scf_tmp"
+
+ntypat 1
+znucl 26
+natom 1
+typat 1
+
+# BCC primitive cell: a/2 * [(-1,1,1), (1,-1,1), (1,1,-1)]
+# a = 2.87 Angstrom = 5.4234 bohr, a/2 = 2.7117 bohr
+acell 3*2.7117
+
+rprim
+ -1.0  1.0  1.0
+  1.0 -1.0  1.0
+  1.0  1.0 -1.0
+
+xred
+  0.00 0.00 0.00
+
+# ecut = 60 Ry = 30 Ha
+ecut 30.0
+nband 20
+ixc 11  # PBE
+
+# Spin-polarized
+nsppol 2
+spinat 0.0 0.0 4.0
+
+iscf 7
+diemix 0.3
+tolvrs 1.0d-8
+nstep 100
+
+occopt 3  # Fermi-Dirac smearing
+tsmear 0.01  # Ha (= 0.02 Ry)
+
+kptopt 1
+ngkpt 8 8 8
+nshiftk 1
+shiftk 0.0 0.0 0.0

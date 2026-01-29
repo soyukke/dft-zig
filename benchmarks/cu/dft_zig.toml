@@ -1,0 +1,68 @@
+title = "cu_benchmark"
+xyz = "cu.xyz"
+out_dir = "out_dft_zig"
+units = "angstrom"
+linalg_backend = "accelerate"
+
+[[pseudopotential]]
+element = "Cu"
+path = "../../pseudo/Cu_ONCV_PBE-1.2.upf"
+format = "upf"
+
+[cell]
+# FCC primitive cell: a/2 * [(0,1,1), (1,0,1), (1,1,0)]
+# a = 3.615 Angstrom, a/2 = 1.8075 Angstrom
+a1 = [0.0, 1.8075, 1.8075]
+a2 = [1.8075, 0.0, 1.8075]
+a3 = [1.8075, 1.8075, 0.0]
+
+[scf]
+enabled = true
+solver = "iterative"
+xc = "pbe"
+ecut_ry = 60.0
+kmesh = [8, 8, 8]
+grid = [0, 0, 0]
+mixing_beta = 0.3
+pulay_history = 8
+pulay_start = 4
+max_iter = 50
+convergence = 1e-6
+use_rfft = true
+smearing = "fermi"
+smear_ry = 0.02
+
+[band]
+solver = "iterative"
+points = 20
+nbands = 16
+use_symmetry = false
+iterative_max_iter = 100
+
+[ewald]
+tol = 1e-8
+
+# G -> X -> W -> K -> G -> L path (FCC Brillouin zone)
+[[band.path]]
+label = "G"
+k = [0.0, 0.0, 0.0]
+
+[[band.path]]
+label = "X"
+k = [0.5, 0.0, 0.5]
+
+[[band.path]]
+label = "W"
+k = [0.5, 0.25, 0.75]
+
+[[band.path]]
+label = "K"
+k = [0.375, 0.375, 0.75]
+
+[[band.path]]
+label = "G"
+k = [0.0, 0.0, 0.0]
+
+[[band.path]]
+label = "L"
+k = [0.5, 0.5, 0.5]

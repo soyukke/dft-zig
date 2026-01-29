@@ -1,0 +1,39 @@
+# ABINIT SCF calculation for graphene benchmark
+# Equivalent to DFT-Zig: ecut=15 Ry = 7.5 Ha, 6x6x1 k-mesh
+
+pp_dirpath "../../pseudo"
+pseudos "C.upf"
+
+ntypat 1
+znucl 6
+natom 2
+typat 1 1
+
+acell 1 1 1
+rprim
+  4.6487262675 0.0 0.0
+  2.3243631337 4.0259150366 0.0
+  0.0 0.0 18.8972612
+
+# C2 at (1/3, 1/3, 0) - correct graphene structure
+xred
+  0.0 0.0 0.0
+  0.33333333 0.33333333 0.0
+
+# ecut = 15 Ry = 7.5 Ha (same as DFT-Zig)
+ecut 7.5
+nband 8
+
+ixc 11  # PBE (matching UPF pseudopotential)
+iscf 7
+diemix 0.3
+tolvrs 1.0d-8
+nstep 50
+
+occopt 3
+tsmear 0.01
+
+kptopt 1
+ngkpt 6 6 1
+nshiftk 1
+shiftk 0.0 0.0 0.0

@@ -1,0 +1,44 @@
+pub const config = @import("features/config/config.zig");
+pub const coulomb = @import("features/coulomb/coulomb.zig");
+pub const dft = @import("features/dft/dft.zig");
+pub const ewald = @import("features/ewald/ewald.zig");
+pub const forces = @import("features/forces/forces.zig");
+pub const stress = @import("features/stress/stress.zig");
+pub const relax = @import("features/relax/relax.zig");
+pub const fft = @import("features/fft/fft.zig");
+pub const hamiltonian = @import("features/hamiltonian/hamiltonian.zig");
+pub const kpath = @import("features/kpath/kpath.zig");
+pub const kpoints = @import("features/kpoints/kpoints.zig");
+pub const linalg = @import("features/linalg/linalg.zig");
+pub const iterative = @import("features/linalg/iterative.zig");
+pub const linear_scaling = @import("features/linear_scaling/linear_scaling.zig");
+pub const math = @import("features/math/math.zig");
+pub const pseudopotential = @import("features/pseudopotential/pseudopotential.zig");
+pub const pseudopotential_nonlocal = @import("features/pseudopotential/nonlocal.zig");
+pub const plane_wave = @import("features/plane_wave/basis.zig");
+pub const scf = @import("features/scf/scf.zig");
+pub const symmetry = @import("features/symmetry/symmetry.zig");
+pub const spacegroup = @import("features/symmetry/spacegroup.zig");
+pub const vdw = @import("features/vdw/vdw.zig");
+pub const xc = @import("features/xc/xc.zig");
+pub const xyz = @import("features/structure/xyz.zig");
+pub const dfpt = @import("features/dfpt/dfpt.zig");
+pub const dos = @import("features/dos/dos.zig");
+pub const paw = @import("features/paw/paw.zig");
+pub const paw_data = @import("features/pseudopotential/paw_data.zig");
+pub const basis = @import("features/basis/basis.zig");
+pub const integrals_mod = @import("features/integrals/integrals.zig");
+pub const gto_scf = @import("features/gto_scf/gto_scf.zig");
+pub const grid = @import("features/grid/grid.zig");
+
+test {
+    _ = @import("tests.zig");
+    _ = dfpt;
+    _ = paw;
+    _ = basis;
+    _ = integrals_mod;
+    _ = gto_scf;
+    _ = grid;
+    _ = vdw;
+    _ = stress;
+}

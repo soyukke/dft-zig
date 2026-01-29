@@ -1,0 +1,50 @@
+title = "silicon_dfpt_regression_test"
+xyz = "silicon.xyz"
+out_dir = "out_dfpt_regression"
+units = "angstrom"
+linalg_backend = "accelerate"
+threads = 0
+
+[[pseudopotential]]
+element = "Si"
+path = "../../pseudo/Si.upf"
+format = "upf"
+
+# Primitive cell (FCC): a/2 * [(0,1,1), (1,0,1), (1,1,0)]
+# a = 5.431 Angstrom
+[cell]
+a1 = [0.0, 2.7155, 2.7155]
+a2 = [2.7155, 0.0, 2.7155]
+a3 = [2.7155, 2.7155, 0.0]
+
+[scf]
+enabled = true
+solver = "iterative"
+xc = "lda"
+ecut_ry = 15.0
+kmesh = [2, 2, 2]
+grid = [24, 24, 24]
+mixing_beta = 0.3
+max_iter = 50
+convergence = 1e-8
+fft_backend = "fftw"
+
+[ewald]
+tol = 1e-8
+
+[dfpt]
+enabled = true
+sternheimer_tol = 1e-8
+sternheimer_max_iter = 200
+scf_tol = 5e-6
+scf_max_iter = 100
+mixing_beta = 0.3
+alpha_shift = 0.01
+qpath_npoints = 1
+pulay_history = 8
+pulay_start = 4
+
+[band]
+solver = "iterative"
+points = 0
+nbands = 8

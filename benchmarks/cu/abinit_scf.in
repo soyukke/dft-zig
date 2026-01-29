@@ -1,0 +1,43 @@
+# ABINIT SCF calculation for Cu benchmark
+# FCC primitive cell (1 atom), ecut=60 Ry = 30 Ha, 8x8x8 k-mesh
+
+pp_dirpath "../../pseudo"
+pseudos "Cu_ONCV_PBE-1.2.upf"
+
+outdata_prefix "abinit_scfo"
+tmpdata_prefix "abinit_scf_tmp"
+
+ntypat 1
+znucl 29
+natom 1
+typat 1
+
+# FCC primitive cell: a/2 * [(0,1,1), (1,0,1), (1,1,0)]
+# a = 3.615 Angstrom = 6.8310 bohr, a/2 = 3.4155 bohr
+acell 3*3.4155
+
+rprim
+  0.0 1.0 1.0
+  1.0 0.0 1.0
+  1.0 1.0 0.0
+
+xred
+  0.00 0.00 0.00
+
+# ecut = 60 Ry = 30 Ha
+ecut 30.0
+nband 16
+ixc 11  # PBE
+
+iscf 7
+diemix 0.3
+tolvrs 1.0d-8
+nstep 50
+
+occopt 3  # Fermi-Dirac smearing
+tsmear 0.01  # Ha (= 0.02 Ry)
+
+kptopt 1
+ngkpt 8 8 8
+nshiftk 1
+shiftk 0.0 0.0 0.0

@@ -1,0 +1,54 @@
+title = "silicon_kparallel_test_parallel"
+xyz = "silicon.xyz"
+out_dir = "out_kparallel_parallel"
+units = "angstrom"
+linalg_backend = "accelerate"
+threads = 4
+
+[[pseudopotential]]
+element = "Si"
+path = "../../pseudo/Si.upf"
+format = "upf"
+
+[cell]
+a1 = [0.0, 2.7155, 2.7155]
+a2 = [2.7155, 0.0, 2.7155]
+a3 = [2.7155, 2.7155, 0.0]
+
+[scf]
+enabled = true
+solver = "iterative"
+xc = "pbe"
+ecut_ry = 10.0  # Smaller cutoff for faster test
+kmesh = [2, 2, 2]  # Smaller k-mesh
+grid = [16, 16, 16]  # Smaller grid
+mixing_beta = 0.3
+pulay_history = 4
+max_iter = 30
+convergence = 1e-5
+use_rfft = true
+
+[band]
+solver = "iterative"
+points = 5  # Few points per segment
+nbands = 8
+use_symmetry = false
+iterative_max_iter = 100
+iterative_tol = 1e-8
+iterative_reuse_vectors = false
+
+[ewald]
+tol = 1e-8
+
+# Short k-path: G -> X -> G
+[[band.path]]
+label = "G"
+k = [0.0, 0.0, 0.0]
+
+[[band.path]]
+label = "X"
+k = [0.5, 0.0, 0.5]
+
+[[band.path]]
+label = "G"
+k = [0.0, 0.0, 0.0]

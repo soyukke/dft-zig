@@ -1,0 +1,65 @@
+title = "silicon_benchmark_fair_comparison"
+xyz = "silicon.xyz"
+out_dir = "out_dft_zig_fair"
+units = "angstrom"
+linalg_backend = "accelerate"
+
+[[pseudopotential]]
+element = "Si"
+path = "../../pseudo/Si.upf"
+format = "upf"
+
+# Primitive cell (FCC): a/2 * [(0,1,1), (1,0,1), (1,1,0)]
+# a = 5.431 Angstrom
+[cell]
+a1 = [0.0, 2.7155, 2.7155]
+a2 = [2.7155, 0.0, 2.7155]
+a3 = [2.7155, 2.7155, 0.0]
+
+[scf]
+enabled = true
+solver = "iterative"
+xc = "pbe"
+ecut_ry = 15.0
+kmesh = [4, 4, 4]
+grid = [24, 24, 24]
+mixing_beta = 0.3
+pulay_history = 8  # Enable Pulay/DIIS mixing (like ABINIT iscf=7)
+max_iter = 50
+convergence = 1e-6  # Match ABINIT tolvrs
+use_rfft = true
+
+[band]
+solver = "iterative"
+points = 20
+nbands = 8
+use_symmetry = false
+iterative_max_iter = 100
+
+[ewald]
+tol = 1e-8
+
+# G -> X -> W -> K -> G -> L path (FCC Brillouin zone)
+[[band.path]]
+label = "G"
+k = [0.0, 0.0, 0.0]
+
+[[band.path]]
+label = "X"
+k = [0.5, 0.0, 0.5]
+
+[[band.path]]
+label = "W"
+k = [0.5, 0.25, 0.75]
+
+[[band.path]]
+label = "K"
+k = [0.375, 0.375, 0.75]
+
+[[band.path]]
+label = "G"
+k = [0.0, 0.0, 0.0]
+
+[[band.path]]
+label = "L"
+k = [0.5, 0.5, 0.5]

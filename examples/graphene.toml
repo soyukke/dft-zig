@@ -1,0 +1,52 @@
+title = "graphene"
+xyz = "examples/graphene.xyz"
+out_dir = "out/graphene"
+units = "angstrom"
+linalg_backend = "accelerate"
+
+[[pseudopotential]]
+element = "C"
+path = "pseudo/C.upf"
+format = "upf"
+
+[cell]
+a1 = [2.46, 0.0, 0.0]
+a2 = [1.23, 2.13042249, 0.0]
+a3 = [0.0, 0.0, 20.0]
+
+[scf]
+enabled = true
+solver = "iterative"
+ecut_ry = 30.0
+kmesh = [12, 12, 1]
+grid = [16, 16, 128]
+mixing_beta = 0.3
+max_iter = 1
+convergence = 1e-6
+profile = true
+
+[band]
+points = 60
+nbands = 8
+
+[ewald]
+alpha = 0.0
+rcut = 0.0
+gcut = 0.0
+tol = 1e-8
+
+[[band.path]]
+label = "G"
+k = [0.0, 0.0, 0.0]
+
+[[band.path]]
+label = "K"
+k = [0.33333333, 0.66666667, 0.0]
+
+[[band.path]]
+label = "M"
+k = [0.5, 0.0, 0.0]
+
+[[band.path]]
+label = "G"
+k = [0.0, 0.0, 0.0]

@@ -1,0 +1,55 @@
+title = "graphene_benchmark"
+xyz = "../../examples/graphene.xyz"
+out_dir = "out_dft_zig"
+units = "angstrom"
+linalg_backend = "accelerate"
+
+[[pseudopotential]]
+element = "C"
+path = "../../pseudo/C.upf"
+format = "upf"
+
+[cell]
+a1 = [2.46, 0.0, 0.0]
+a2 = [1.23, 2.13042249, 0.0]
+a3 = [0.0, 0.0, 10.0]
+
+[scf]
+enabled = true
+solver = "iterative"
+xc = "pbe"
+ecut_ry = 15.0
+kmesh = [6, 6, 1]
+grid = [16, 16, 64]
+mixing_beta = 0.3
+max_iter = 50
+convergence = 1e-8
+pulay_history = 5
+
+[band]
+solver = "iterative"
+points = 20
+nbands = 8
+use_symmetry = true
+iterative_max_iter = 100
+iterative_tol = 1e-8
+
+[ewald]
+tol = 1e-8
+
+# G -> K -> M -> G path
+[[band.path]]
+label = "G"
+k = [0.0, 0.0, 0.0]
+
+[[band.path]]
+label = "K"
+k = [0.33333333, 0.66666667, 0.0]
+
+[[band.path]]
+label = "M"
+k = [0.5, 0.0, 0.0]
+
+[[band.path]]
+label = "G"
+k = [0.0, 0.0, 0.0]

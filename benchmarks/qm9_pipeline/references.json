@@ -1,0 +1,122 @@
+{
+  "H2": {
+    "formula": "H2",
+    "n_atoms": 2,
+    "n_electrons": 2,
+    "n_basis": 10,
+    "charge": 0,
+    "spin": 0,
+    "energy_sp": -1.1785340277279137,
+    "has_optimized": false
+  },
+  "H2O": {
+    "formula": "H2O",
+    "n_atoms": 3,
+    "n_electrons": 10,
+    "n_basis": 41,
+    "charge": 0,
+    "spin": 0,
+    "energy_sp": -76.42574675524472,
+    "has_optimized": false
+  },
+  "CH4": {
+    "formula": "CH4",
+    "n_atoms": 5,
+    "n_electrons": 10,
+    "n_basis": 51,
+    "charge": 0,
+    "spin": 0,
+    "energy_sp": -40.52555366426437,
+    "has_optimized": false
+  },
+  "NH3": {
+    "formula": "NH3",
+    "n_atoms": 4,
+    "n_electrons": 10,
+    "n_basis": 46,
+    "charge": 0,
+    "spin": 0,
+    "energy_sp": -56.56278104204775,
+    "has_optimized": false
+  },
+  "HF": {
+    "formula": "HF",
+    "n_atoms": 2,
+    "n_electrons": 10,
+    "n_basis": 36,
+    "charge": 0,
+    "spin": 0,
+    "energy_sp": -100.43381756707092,
+    "has_optimized": false
+  },
+  "CH2O": {
+    "formula": "CH2O",
+    "n_atoms": 4,
+    "n_electrons": 16,
+    "n_basis": 72,
+    "charge": 0,
+    "spin": 0,
+    "energy_sp": -114.51184597425397,
+    "has_optimized": false
+  },
+  "CH3OH": {
+    "formula": "CH3OH",
+    "n_atoms": 6,
+    "n_electrons": 18,
+    "n_basis": 82,
+    "charge": 0,
+    "spin": 0,
+    "energy_sp": -115.72848929880179,
+    "has_optimized": false
+  },
+  "C2H2": {
+    "formula": "C2H2",
+    "n_atoms": 4,
+    "n_electrons": 14,
+    "n_basis": 72,
+    "charge": 0,
+    "spin": 0,
+    "energy_sp": -77.33997671843996,
+    "has_optimized": false
+  },
+  "C2H4": {
+    "formula": "C2H4",
+    "n_atoms": 6,
+    "n_electrons": 16,
+    "n_basis": 82,
+    "charge": 0,
+    "spin": 0,
+    "energy_sp": -78.5994598907683,
+    "has_optimized": false
+  },
+  "C2H6": {
+    "formula": "C2H6",
+    "n_atoms": 8,
+    "n_electrons": 18,
+    "n_basis": 92,
+    "charge": 0,
+    "spin": 0,
+    "energy_sp": -79.84180649197282,
+    "has_optimized": false
+  },
+  "HCN": {
+    "formula": "HCN",
+    "n_atoms": 3,
+    "n_electrons": 14,
+    "n_basis": 67,
+    "charge": 0,
+    "spin": 0,
+    "energy_sp": -93.43398181239621,
+    "has_optimized": false
+  },
+  "N2": {
+    "formula": "N2",
+    "n_atoms": 2,
+    "n_electrons": 14,
+    "n_basis": 62,
+    "charge": 0,
+    "spin": 0,
+    "energy_sp": -109.53596801113198,
+    "has_optimized": false
+  }
+}

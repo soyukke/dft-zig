@@ -1,0 +1,15 @@
+{
+  "energy": { "abs": 1e-6, "rel": 1e-6 },
+  "density": { "abs": 1e-6, "rel": 1e-6 },
+  "energy_terms": {
+    "total": { "abs": 1e-6, "rel": 1e-6 },
+    "band": { "abs": 1e-6, "rel": 1e-6 },
+    "hartree": { "abs": 1e-6, "rel": 1e-6 },
+    "vxc_rho": { "abs": 1e-6, "rel": 1e-6 },
+    "xc": { "abs": 1e-6, "rel": 1e-6 },
+    "ion_ion": { "abs": 1e-6, "rel": 1e-6 },
+    "double_counting": { "abs": 1e-6, "rel": 1e-6 },
+    "local_pseudo": { "abs": 1e-6, "rel": 1e-6 },
+    "nonlocal_pseudo": { "abs": 1e-6, "rel": 1e-6 }
+  }
+}
