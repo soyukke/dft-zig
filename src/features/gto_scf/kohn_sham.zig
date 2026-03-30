@@ -1606,68 +1606,6 @@ test "KS-DFT H2O STO-3G B3LYP" {
     try testing.expectApproxEqAbs(-75.3125872072, result.total_energy, 1e-3);
 }
 
-// NOTE: This test requires very long runtime due to Direct SCF on large basis.
-// Uncomment and run individually with: zig build test -Doptimize=ReleaseFast
-// test "KS-DFT H2O 6-31G(2df,p) B3LYP" {
-//     const testing = std.testing;
-//     const alloc = testing.allocator;
-//     const b = @import("../basis/basis631g_2dfp.zig");
-//
-//     // H2O geometry in bohr (same as other H2O tests)
-//     const nuc_positions = [_]math_mod.Vec3{
-//         .{ .x = 0.0, .y = 0.0, .z = 0.0 },
-//         .{ .x = 0.0, .y = 1.4305226763, .z = 1.1092692351 },
-//         .{ .x = 0.0, .y = -1.4305226763, .z = 1.1092692351 },
-//     };
-//     const nuc_charges = [_]f64{ 8.0, 1.0, 1.0 };
-//
-//     // Build 6-31G(2df,p) shells for H2O
-//     const o_data = b.buildAtomShells(8, nuc_positions[0]).?;
-//     const h1_data = b.buildAtomShells(1, nuc_positions[1]).?;
-//     const h2_data = b.buildAtomShells(1, nuc_positions[2]).?;
-//
-//     var all_shells: [b.MAX_SHELLS_PER_ATOM * 3]ContractedShell = undefined;
-//     var count: usize = 0;
-//     for (o_data.shells[0..o_data.count]) |s| {
-//         all_shells[count] = s;
-//         count += 1;
-//     }
-//     for (h1_data.shells[0..h1_data.count]) |s| {
-//         all_shells[count] = s;
-//         count += 1;
-//     }
-//     for (h2_data.shells[0..h2_data.count]) |s| {
-//         all_shells[count] = s;
-//         count += 1;
-//     }
-//     const shells = all_shells[0..count];
-//
-//     var result = try runKohnShamScf(alloc, shells, &nuc_positions, &nuc_charges, 10, .{
-//         .xc_functional = .b3lyp,
-//         .n_radial = 99,
-//         .n_angular = 590,
-//         .prune = false,
-//         .use_direct_scf = true,
-//         .schwarz_threshold = 1e-12,
-//     });
-//     defer result.deinit(alloc);
-//
-//     std.debug.print("\nH2O 6-31G(2df,p) KS-DFT B3LYP:\n", .{});
-//     std.debug.print("  Total energy:     {d:.10} Ha\n", .{result.total_energy});
-//     std.debug.print("  1e energy:        {d:.10} Ha\n", .{result.one_electron_energy});
-//     std.debug.print("  Coulomb energy:   {d:.10} Ha\n", .{result.coulomb_energy});
-//     std.debug.print("  XC energy:        {d:.10} Ha\n", .{result.xc_energy});
-//     std.debug.print("  HF exchange:      {d:.10} Ha\n", .{result.hf_exchange_energy});
-//     std.debug.print("  Nuclear repulsion:{d:.10} Ha\n", .{result.nuclear_repulsion});
-//     std.debug.print("  Iterations:       {d}\n", .{result.iterations});
-//     std.debug.print("  Converged:        {}\n", .{result.converged});
-//     std.debug.print("  PySCF reference:  -76.4257467869 Ha\n", .{});
-//
-//     try testing.expect(result.converged);
-//     // PySCF B3LYP/6-31G(2df,p) Cartesian: -76.4257467869 Ha
-//     try testing.expectApproxEqAbs(-76.4257467869, result.total_energy, 1e-3);
-// }
-
 // ============================================================================
 // QM9 validation tests: B3LYP/6-31G(2df,p) vs PySCF
 // ============================================================================
