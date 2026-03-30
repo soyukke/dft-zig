@@ -82,6 +82,7 @@ pub fn computeForces(
     paw_tabs: ?[]const paw_mod.PawTab,
     paw_dij: ?[]const []const f64,
     paw_rhoij: ?[]const []const f64,
+    wavefunctions_down: ?scf.WavefunctionData,
 ) !ForceTerms {
     const n_atoms = atoms.len;
 
@@ -159,6 +160,8 @@ pub fn computeForces(
     // Nonlocal forces (requires wavefunctions)
     var nl_forces: ?[]math.Vec3 = null;
     if (wavefunctions) |wf| {
+        const is_spin = wavefunctions_down != null;
+        const sf: f64 = if (is_spin) 1.0 else 2.0;
         nl_forces = try nonlocal_force.nonlocalForces(
             alloc,
             wf,
@@ -169,7 +172,27 @@ pub fn computeForces(
             radial_tables,
             paw_dij,
             paw_sij_list,
+            sf,
         );
+        // Add spin-down nonlocal forces if spin-polarized
+        if (wavefunctions_down) |wf_down| {
+            const nl_down = try nonlocal_force.nonlocalForces(
+                alloc,
+                wf_down,
+                species,
+                atoms,
+                recip,
+                volume,
+                radial_tables,
+                paw_dij,
+                paw_sij_list,
+                1.0,
+            );
+            defer alloc.free(nl_down);
+            for (nl_forces.?, 0..) |*f, i| {
+                f.* = math.Vec3.add(f.*, nl_down[i]);
+            }
+        }
     }
 
     const after_nonlocal = std.time.Instant.now() catch null;

@@ -178,6 +178,9 @@ pub fn writeStatus(dir: std.fs.Dir, cfg: config.Config, scf_result: ?scf.ScfResu
         try out.print("nspin = {d}\n", .{cfg.scf.nspin});
         if (cfg.scf.nspin == 2) {
             try out.print("magnetization = {d:.10}\n", .{result.magnetization});
+            if (std.math.isFinite(result.fermi_level_down)) {
+                try out.print("scf_fermi_level_down_ry = {d:.10}\n", .{result.fermi_level_down});
+            }
         }
         try out.print("band_status = local_nonlocal_qij_scf\n", .{});
     } else {

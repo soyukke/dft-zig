@@ -27,6 +27,7 @@ pub fn computeDos(
     npoints: usize,
     emin_opt: ?f64,
     emax_opt: ?f64,
+    nspin: usize,
 ) !DosResult {
     // Find energy range from eigenvalues
     var e_min: f64 = std.math.inf(f64);
@@ -50,9 +51,7 @@ pub fn computeDos(
 
     const inv_sigma_sqrt2pi = 1.0 / (sigma * std.math.sqrt(2.0 * std.math.pi));
     const inv_2sigma2 = 1.0 / (2.0 * sigma * sigma);
-    // spin_factor = 2 for spin-unpolarized (nspin=1)
-    // TODO: pass nspin from config for spin-polarized support
-    const spin_factor: f64 = 2.0;
+    const spin_factor: f64 = if (nspin == 2) 1.0 else 2.0;
     const cutoff = 5.0 * sigma;
 
     for (0..npoints) |i| {
@@ -80,7 +79,11 @@ pub fn computeDos(
 /// Write DOS to CSV file.
 /// If fermi_level is NaN (e.g., insulator without smearing), shifted energies use 0.
 pub fn writeDosCSV(dir: std.fs.Dir, result: DosResult, fermi_level: f64) !void {
-    const file = try dir.createFile("dos.csv", .{});
+    return writeDosCSVNamed(dir, result, fermi_level, "dos.csv");
+}
+
+pub fn writeDosCSVNamed(dir: std.fs.Dir, result: DosResult, fermi_level: f64, filename: []const u8) !void {
+    const file = try dir.createFile(filename, .{});
     defer file.close();
     var buf: [256]u8 = undefined;
     var writer = file.writer(&buf);
@@ -135,7 +138,7 @@ test "computeDos basic" {
         .fermi_level = 0.75,
     };
 
-    var result = try computeDos(alloc, wf_data, 0.05, 101, null, null);
+    var result = try computeDos(alloc, wf_data, 0.05, 101, null, null, 1);
     defer result.deinit(alloc);
 
     try std.testing.expect(result.energies.len == 101);

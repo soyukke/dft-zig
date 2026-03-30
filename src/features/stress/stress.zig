@@ -92,6 +92,7 @@ pub fn computeStress(
     potential_values: ?[]const math.Complex,
     // Spherical G-vector cutoff (ecutrho in Ry = Bohr⁻²)
     ecutrho: f64,
+    wavefunctions_down: ?scf.WavefunctionData,
 ) !StressTerms {
     const volume = grid.volume;
     const inv_volume = 1.0 / volume;
@@ -114,8 +115,14 @@ pub fn computeStress(
     };
     const sigma_ewald = scaleStress(try ewald.ionIonStress(grid.cell, grid.recip, charges, positions, ew_params), 2.0);
 
-    // Kinetic stress
-    const sigma_kin = try kineticStress(alloc, wavefunctions, grid.recip, inv_volume);
+    // Kinetic stress (spin-polarized: sum contributions from both channels)
+    const is_spin = wavefunctions_down != null;
+    const sf: f64 = if (is_spin) 1.0 else 2.0;
+    var sigma_kin = try kineticStress(alloc, wavefunctions, grid.recip, inv_volume, sf);
+    if (wavefunctions_down) |wf_down| {
+        const sigma_kin_down = try kineticStress(alloc, wf_down, grid.recip, inv_volume, 1.0);
+        sigma_kin = addStress(sigma_kin, sigma_kin_down);
+    }
 
     // Hartree stress: use augmented density ρ̃+n̂ for PAW (consistent with E_H).
     // The n̂ response to strain cancels between E_H and double-counting terms;
@@ -166,7 +173,11 @@ pub fn computeStress(
     // No separate on-site stress is needed: the correct PAW energy has
     // -Σ D^xc ρ + E_paw, and d(-Σ D^xc ρ + E_paw)/dε = 0 because
     // ∂E_paw/∂ρ_ij = D^xc. The D^xc contribution in D_full is sufficient.
-    const sigma_nonlocal = try nonlocalStress(alloc, wavefunctions, species, atoms, grid.recip, volume, radial_tables, paw_dij, paw_dij_m, paw_tabs);
+    var sigma_nonlocal = try nonlocalStress(alloc, wavefunctions, species, atoms, grid.recip, volume, radial_tables, paw_dij, paw_dij_m, paw_tabs, sf);
+    if (wavefunctions_down) |wf_down| {
+        const sigma_nl_down = try nonlocalStress(alloc, wf_down, species, atoms, grid.recip, volume, radial_tables, paw_dij, paw_dij_m, paw_tabs, 1.0);
+        sigma_nonlocal = addStress(sigma_nonlocal, sigma_nl_down);
+    }
 
     // PSP core stress: σ = -(E_psp/Ω) δ_αβ
     var sigma_psp = zeroStress();
@@ -341,6 +352,7 @@ pub fn computeStressFromScf(
         scf_result.paw_tabs,
         pot_vals,
         ecutrho,
+        scf_result.wavefunctions_down,
     );
 
     // Symmetrize stress using crystal symmetry operations
@@ -433,10 +445,9 @@ fn densityToReciprocal(
 }
 
 /// Kinetic stress: σ_αβ = -(2 × spin / Ω) Σ_nk f w Σ_G (k+G)_α (k+G)_β |c(G)|²
-fn kineticStress(alloc: std.mem.Allocator, wavefunctions: ?scf.WavefunctionData, recip: math.Mat3, inv_volume: f64) !Stress3x3 {
+fn kineticStress(alloc: std.mem.Allocator, wavefunctions: ?scf.WavefunctionData, recip: math.Mat3, inv_volume: f64, spin_factor: f64) !Stress3x3 {
     var sigma = zeroStress();
     const wf = wavefunctions orelse return sigma;
-    const spin_factor: f64 = 2.0;
 
     for (wf.kpoints) |kp| {
         var basis = try plane_wave.generate(alloc, recip, wf.ecut_ry, kp.k_cart);
@@ -772,11 +783,11 @@ fn nonlocalStress(
     paw_dij_per_atom: ?[]const []const f64,
     paw_dij_m_per_atom: ?[]const []const f64,
     paw_tabs: ?[]const paw_mod.PawTab,
+    spin_factor: f64,
 ) !Stress3x3 {
     var sigma = zeroStress();
     const wf = wavefunctions orelse return sigma;
     const inv_volume = 1.0 / volume;
-    const spin_factor: f64 = 2.0;
 
     for (wf.kpoints) |kp| {
         var basis = try plane_wave.generate(alloc, recip, wf.ecut_ry, kp.k_cart);

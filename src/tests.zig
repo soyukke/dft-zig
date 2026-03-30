@@ -265,6 +265,7 @@ fn makeScfConfig(alloc: std.mem.Allocator, out_dir: []const u8, cell: math.Mat3)
         .mixing_mode = .potential,
         .use_rfft = false,
         .fft_backend = .zig,
+        .compute_stress = false,
         .nspin = 1,
         .spinat = null,
         .reference_json = null,
@@ -284,6 +285,8 @@ fn makeScfConfig(alloc: std.mem.Allocator, out_dir: []const u8, cell: math.Mat3)
         .scf = scf_cfg,
         .ewald = .{ .alpha = 0.0, .rcut = 0.0, .gcut = 0.0, .tol = 1e-8 },
         .relax = .{ .enabled = true, .algorithm = .bfgs, .max_iter = 0, .force_tol = 1e-6, .max_step = 0.1, .output_trajectory = false },
+        .dos = .{},
+        .output = .{},
         .dfpt = .{ .enabled = false, .sternheimer_tol = 1e-8, .sternheimer_max_iter = 200, .scf_tol = 1e-10, .scf_max_iter = 50, .mixing_beta = 0.3, .alpha_shift = 0.01, .qpath_npoints = 0, .pulay_history = 8, .pulay_start = 4, .kpoint_threads = 0, .perturbation_threads = 1, .qgrid = null, .qpath = &.{} },
         .band = .{
             .points_per_segment = 10,
@@ -410,6 +413,7 @@ test "scf total force finite difference" {
         null,
         null,
         .{},
+        null,
         null,
         null,
         null,
@@ -680,6 +684,7 @@ test "scf total force finite difference (self-consistent)" {
         null,
         null,
         null,
+        null,
     );
     defer force_terms.deinit(alloc);
 
@@ -880,6 +885,7 @@ test "scf force FD FCC cell" {
         null,
         null,
         .{},
+        null,
         null,
         null,
         null,

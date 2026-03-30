@@ -47,6 +47,7 @@ pub fn computePdos(
     npoints: usize,
     emin_opt: ?f64,
     emax_opt: ?f64,
+    nspin: usize,
 ) !PdosResult {
     // Find energy range
     var e_min: f64 = std.math.inf(f64);
@@ -142,7 +143,7 @@ pub fn computePdos(
 
     const inv_sigma_sqrt2pi = 1.0 / (sigma * std.math.sqrt(2.0 * std.math.pi));
     const inv_2sigma2 = 1.0 / (2.0 * sigma * sigma);
-    const spin_factor: f64 = 2.0;
+    const spin_factor: f64 = if (nspin == 2) 1.0 else 2.0;
     const cutoff = 5.0 * sigma;
 
     // Projection normalization: <φ|ψ> = (1/Ω) Σ_G conj(φ_G) c_G

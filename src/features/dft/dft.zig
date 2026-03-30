@@ -154,10 +154,18 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
                     cfg.dos.npoints,
                     cfg.dos.emin,
                     cfg.dos.emax,
+                    cfg.scf.nspin,
                 );
                 defer dos_result.deinit(alloc);
                 const dos_fermi = if (std.math.isNan(result.fermi_level)) wf_data.fermi_level else result.fermi_level;
-                try dos.writeDosCSV(out_dir, dos_result, dos_fermi);
+                if (result.wavefunctions_down) |wf_down| {
+                    try dos.writeDosCSVNamed(out_dir, dos_result, dos_fermi, "dos_up.csv");
+                    var dos_down = try dos.computeDos(alloc, wf_down, cfg.dos.sigma, cfg.dos.npoints, cfg.dos.emin, cfg.dos.emax, 2);
+                    defer dos_down.deinit(alloc);
+                    try dos.writeDosCSVNamed(out_dir, dos_down, dos_fermi, "dos_down.csv");
+                } else {
+                    try dos.writeDosCSV(out_dir, dos_result, dos_fermi);
+                }
                 try logStep("step: dos done");
 
                 // PDOS computation
@@ -174,6 +182,7 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
                         cfg.dos.npoints,
                         cfg.dos.emin,
                         cfg.dos.emax,
+                        cfg.scf.nspin,
                     );
                     defer pdos_result.deinit(alloc);
                     try pdos_mod.writePdosCSV(out_dir, pdos_result, dos_fermi);

@@ -332,6 +332,19 @@ pub fn run(
 
         const coulomb_r_cut: ?f64 = if (cfg.boundary == .isolated) coulomb_mod.cutoffRadius(current_cell) else null;
 
+        // For spin-polarized NLCC force, compute averaged V_xc
+        var vxc_avg: ?[]f64 = null;
+        defer if (vxc_avg) |v| alloc.free(v);
+        const vxc_for_force: ?[]const f64 = if (scf_result.vxc_r_up != null and scf_result.vxc_r_down != null) blk: {
+            const up = scf_result.vxc_r_up.?;
+            const down = scf_result.vxc_r_down.?;
+            vxc_avg = try alloc.alloc(f64, up.len);
+            for (0..up.len) |i| {
+                vxc_avg.?[i] = (up[i] + down[i]) * 0.5;
+            }
+            break :blk vxc_avg.?;
+        } else scf_result.vxc_r;
+
         const force_start = std.time.Instant.now() catch null;
         // Build PAW S_ij per-species array for nonlocal force
         const paw_dij_slice: ?[]const []const f64 = if (scf_result.paw_dij) |dij| blk: {
@@ -359,7 +372,7 @@ pub fn run(
             if (scf_result.vresid) |vresid| vresid.values else null,
             cfg.scf.quiet,
             force_radial_tables,
-            scf_result.vxc_r,
+            vxc_for_force,
             rho_atom_tables,
             rho_core_tables,
             ff_tables,
@@ -368,6 +381,7 @@ pub fn run(
             paw_tabs_slice,
             paw_dij_slice,
             paw_rhoij_slice,
+            scf_result.wavefunctions_down,
         );
         defer force_terms.deinit(alloc);
         const force_end = std.time.Instant.now() catch null;

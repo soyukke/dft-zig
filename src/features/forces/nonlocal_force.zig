@@ -133,6 +133,7 @@ pub fn nonlocalForces(
     radial_tables_list: ?[]nonlocal.RadialTableSet,
     paw_dij: ?[]const []const f64,
     paw_sij: ?[]const []const f64,
+    spin_factor: f64,
 ) ![]math.Vec3 {
     const n_atoms = atoms.len;
     if (n_atoms == 0) return &[_]math.Vec3{};
@@ -144,7 +145,6 @@ pub fn nonlocalForces(
     }
 
     const inv_volume = 1.0 / volume;
-    const spin_factor = 2.0;
 
     for (wavefunctions.kpoints) |kp_wf| {
         var basis = try plane_wave.generate(alloc, recip, wavefunctions.ecut_ry, kp_wf.k_cart);
@@ -393,7 +393,7 @@ test "nonlocal force analytical vs finite difference" {
     };
 
     // Analytical forces (NCPP mode: no PAW)
-    const forces = try nonlocalForces(alloc, wf, species_entries, atoms_arr[0..], recip, volume, null, null, null);
+    const forces = try nonlocalForces(alloc, wf, species_entries, atoms_arr[0..], recip, volume, null, null, null, 2.0);
     defer alloc.free(forces);
 
     // Finite-difference reference

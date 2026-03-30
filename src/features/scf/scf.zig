@@ -19,6 +19,7 @@ const form_factor = @import("../pseudopotential/form_factor.zig");
 const nonlocal_mod = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
 const potential_mod = @import("potential.zig");
+const xc_fields_mod = @import("xc_fields.zig");
 const pw_grid_map = @import("pw_grid_map.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const symmetry = @import("../symmetry/symmetry.zig");
@@ -135,6 +136,10 @@ pub const ScfResult = struct {
     density_down: ?[]f64 = null,
     potential_down: ?hamiltonian.PotentialGrid = null,
     magnetization: f64 = 0.0,
+    wavefunctions_down: ?WavefunctionData = null,
+    vxc_r_up: ?[]f64 = null,
+    vxc_r_down: ?[]f64 = null,
+    fermi_level_down: f64 = 0.0,
     // PAW fields for band calculation
     paw_tabs: ?[]paw_mod.PawTab = null, // Owned PAW tables (one per species)
     paw_dij: ?[][]f64 = null, // Per-atom converged D_ij (radial): [natom][nbeta*nbeta]
@@ -162,6 +167,9 @@ pub const ScfResult = struct {
         if (self.density_up) |d| alloc.free(d);
         if (self.density_down) |d| alloc.free(d);
         if (self.potential_down) |*p| p.deinit(alloc);
+        if (self.wavefunctions_down) |*wf| wf.deinit(alloc);
+        if (self.vxc_r_up) |v| alloc.free(v);
+        if (self.vxc_r_down) |v| alloc.free(v);
         if (self.paw_dij) |dij| {
             for (dij) |d| alloc.free(d);
             alloc.free(dij);
@@ -1284,7 +1292,7 @@ pub fn run(params: ScfParams) !ScfResult {
     // Compute final wavefunctions for force calculation
     var wavefunctions: ?WavefunctionData = null;
     if (cfg.relax.enabled or cfg.dfpt.enabled or cfg.scf.compute_stress or cfg.dos.enabled) {
-        const wfn_result = try computeFinalWavefunctions(
+        const wfn_result = try computeFinalWavefunctionsWithSpinFactor(
             alloc,
             cfg,
             grid,
@@ -1299,6 +1307,7 @@ pub fn run(params: ScfParams) !ScfResult {
             apply_caches,
             radial_tables,
             common.paw_tabs,
+            2.0,
         );
         wavefunctions = wfn_result.wavefunctions;
         last_band_energy = wfn_result.band_energy;
@@ -2278,7 +2287,7 @@ const WavefunctionResult = struct {
 };
 
 /// Compute final wavefunctions for force calculation.
-fn computeFinalWavefunctions(
+fn computeFinalWavefunctionsWithSpinFactor(
     alloc: std.mem.Allocator,
     cfg: config.Config,
     grid: Grid,
@@ -2293,6 +2302,7 @@ fn computeFinalWavefunctions(
     apply_caches: []apply.KpointApplyCache,
     radial_tables: ?[]const nonlocal_mod.RadialTableSet,
     paw_tabs: ?[]const paw_mod.PawTab,
+    spin_factor: f64,
 ) !WavefunctionResult {
     const nelec = totalElectrons(species, atoms);
     const nocc = @as(usize, @intFromFloat(std.math.ceil(nelec / 2.0)));
@@ -2344,7 +2354,6 @@ fn computeFinalWavefunctions(
     var wf_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
     defer wf_fft_plan.deinit(alloc);
 
-    const spin_factor = 2.0;
     var band_energy: f64 = 0.0;
     var nonlocal_energy: f64 = 0.0;
 
@@ -4178,6 +4187,40 @@ fn runSpinPolarizedLoop(
         energy_terms.psp_core,
     );
 
+    // Compute final wavefunctions for force/stress/DOS/band calculation
+    var wavefunctions_up: ?WavefunctionData = null;
+    var wavefunctions_down_final: ?WavefunctionData = null;
+    var vxc_r_up_result: ?[]f64 = null;
+    var vxc_r_down_result: ?[]f64 = null;
+    if (cfg.relax.enabled or cfg.dfpt.enabled or cfg.scf.compute_stress or cfg.dos.enabled) {
+        const wfn_up = try computeFinalWavefunctionsWithSpinFactor(
+            alloc, cfg, grid, kpoints, common.ionic, species, atoms, recip, volume_bohr,
+            potential_up, kpoint_cache_up, apply_caches_up, common.radial_tables, common.paw_tabs, 1.0,
+        );
+        wavefunctions_up = wfn_up.wavefunctions;
+        const wfn_down = try computeFinalWavefunctionsWithSpinFactor(
+            alloc, cfg, grid, kpoints, common.ionic, species, atoms, recip, volume_bohr,
+            potential_down, kpoint_cache_down, apply_caches_down, common.radial_tables, common.paw_tabs, 1.0,
+        );
+        wavefunctions_down_final = wfn_down.wavefunctions;
+
+        // Update band energies from final wavefunctions (spin_factor=1.0 for each channel)
+        last_band_energy = wfn_up.band_energy + wfn_down.band_energy;
+        last_nonlocal_energy = wfn_up.nonlocal_energy + wfn_down.nonlocal_energy;
+
+        // Store V_xc in real space for NLCC force
+        const pot_rho_up_final = rho_aug_up_for_energy orelse rho_up;
+        const pot_rho_down_final = rho_aug_down_for_energy orelse rho_down;
+        const vxc_spin = try xc_fields_mod.computeXcFieldsSpin(alloc, grid, pot_rho_up_final, pot_rho_down_final, common.rho_core, cfg.scf.use_rfft, cfg.scf.xc);
+        vxc_r_up_result = vxc_spin.vxc_up;
+        vxc_r_down_result = vxc_spin.vxc_down;
+        alloc.free(vxc_spin.exc);
+    }
+    errdefer if (wavefunctions_up) |*wf| wf.deinit(alloc);
+    errdefer if (wavefunctions_down_final) |*wf| wf.deinit(alloc);
+    errdefer if (vxc_r_up_result) |v| alloc.free(v);
+    errdefer if (vxc_r_down_result) |v| alloc.free(v);
+
     return ScfResult{
         .potential = potential_up,
         .density = rho_total,
@@ -4186,13 +4229,17 @@ fn runSpinPolarizedLoop(
         .energy = energy_terms,
         .fermi_level = last_fermi_level,
         .potential_residual = last_potential_residual,
-        .wavefunctions = null,
+        .wavefunctions = wavefunctions_up,
         .vresid = null,
         .grid = grid,
         .density_up = rho_up,
         .density_down = rho_down,
         .potential_down = potential_down,
         .magnetization = magnetization,
+        .wavefunctions_down = wavefunctions_down_final,
+        .vxc_r_up = vxc_r_up_result,
+        .vxc_r_down = vxc_r_down_result,
+        .fermi_level_down = if (!std.math.isNan(last_fermi_level)) last_fermi_level else 0.0,
         .paw_tabs = result_paw_tabs,
         .paw_dij = result_paw_dij,
         .paw_dij_m = result_paw_dij_m,
@@ -4214,7 +4261,7 @@ test "auto grid chooses fft-friendly size for aluminum" {
     );
     const cell_bohr = cell_ang.scale(math.unitsScaleToBohr(.angstrom));
     const recip = math.reciprocal(cell_bohr);
-    const grid = autoGrid(15.0, 1.0, recip, cell_bohr);
+    const grid = autoGrid(15.0, 1.0, recip);
     // With QE-like algorithm, FCC cell with ecut=15 gives smaller grid
     // than the old formula which overestimated for non-orthogonal cells
     try std.testing.expect(grid[0] >= 3);
