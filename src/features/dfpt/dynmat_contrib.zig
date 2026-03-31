@@ -8,6 +8,7 @@
 
 const std = @import("std");
 const math = @import("../math/math.zig");
+const gvec_iter = @import("../scf/gvec_iter.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const apply_mod = @import("../scf/apply.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
@@ -40,59 +41,35 @@ pub fn computeSelfEnergyDynmat(
     const dyn = try alloc.alloc(f64, dim * dim);
     @memset(dyn, 0.0);
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
-
     for (0..n_atoms) |ia| {
         const atom = atoms[ia];
         const sp = &species[atom.species_index];
 
-        var idx: usize = 0;
-        var l: usize = 0;
-        while (l < grid.nz) : (l += 1) {
-            var k: usize = 0;
-            while (k < grid.ny) : (k += 1) {
-                var h: usize = 0;
-                while (h < grid.nx) : (h += 1) {
-                    defer idx += 1;
+        var it = gvec_iter.GVecIterator.init(grid);
+        while (it.next()) |g| {
+            if (g.gh == 0 and g.gk == 0 and g.gl == 0) continue;
 
-                    const gh = grid.min_h + @as(i32, @intCast(h));
-                    const gk = grid.min_k + @as(i32, @intCast(k));
-                    const gl = grid.min_l + @as(i32, @intCast(l));
+            const g_norm = math.Vec3.norm(g.gvec);
 
-                    if (gh == 0 and gk == 0 and gl == 0) continue;
+            // V_form(|G|)
+            const v_loc = if (ff_tables) |tables|
+                tables[atom.species_index].eval(g_norm)
+            else
+                hamiltonian.localFormFactor(sp, g_norm);
 
-                    const gvec = math.Vec3.add(
-                        math.Vec3.add(
-                            math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                            math.Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                        ),
-                        math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                    );
-                    const g_norm = math.Vec3.norm(gvec);
+            // exp(+iG·τ_I) × ρ(G) × V_form
+            const phase = math.complex.expi(math.Vec3.dot(g.gvec, atom.position));
+            const rho_g = rho0_g[g.idx];
+            // product = exp(+iG·τ) × ρ(G) × V_form
+            const prod = math.complex.scale(math.complex.mul(phase, rho_g), v_loc);
 
-                    // V_form(|G|)
-                    const v_loc = if (ff_tables) |tables|
-                        tables[atom.species_index].eval(g_norm)
-                    else
-                        hamiltonian.localFormFactor(sp, g_norm);
-
-                    // exp(+iG·τ_I) × ρ(G) × V_form
-                    const phase = math.complex.expi(math.Vec3.dot(gvec, atom.position));
-                    const rho_g = rho0_g[idx];
-                    // product = exp(+iG·τ) × ρ(G) × V_form
-                    const prod = math.complex.scale(math.complex.mul(phase, rho_g), v_loc);
-
-                    // Accumulate -G_α G_β × Re(product) for each pair (α, β)
-                    const g_comp = [3]f64{ gvec.x, gvec.y, gvec.z };
-                    for (0..3) |a| {
-                        for (0..3) |b| {
-                            const i_idx = 3 * ia + a;
-                            const j_idx = 3 * ia + b;
-                            dyn[i_idx * dim + j_idx] += -g_comp[a] * g_comp[b] * prod.r;
-                        }
-                    }
+            // Accumulate -G_α G_β × Re(product) for each pair (α, β)
+            const g_comp = [3]f64{ g.gvec.x, g.gvec.y, g.gvec.z };
+            for (0..3) |a| {
+                for (0..3) |b| {
+                    const i_idx = 3 * ia + a;
+                    const j_idx = 3 * ia + b;
+                    dyn[i_idx * dim + j_idx] += -g_comp[a] * g_comp[b] * prod.r;
                 }
             }
         }
@@ -257,62 +234,38 @@ pub fn computeNlccSelfDynmat(
     const dyn = try alloc.alloc(f64, dim * dim);
     @memset(dyn, 0.0);
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
-
     for (0..n_atoms) |ia| {
         const atom = atoms[ia];
         const sp = &species[atom.species_index];
 
         if (sp.upf.nlcc.len == 0) continue;
 
-        var idx: usize = 0;
-        var l: usize = 0;
-        while (l < grid.nz) : (l += 1) {
-            var k: usize = 0;
-            while (k < grid.ny) : (k += 1) {
-                var h: usize = 0;
-                while (h < grid.nx) : (h += 1) {
-                    defer idx += 1;
+        var it = gvec_iter.GVecIterator.init(grid);
+        while (it.next()) |g| {
+            if (g.gh == 0 and g.gk == 0 and g.gl == 0) continue;
 
-                    const gh = grid.min_h + @as(i32, @intCast(h));
-                    const gk = grid.min_k + @as(i32, @intCast(k));
-                    const gl = grid.min_l + @as(i32, @intCast(l));
+            const g_norm = math.Vec3.norm(g.gvec);
 
-                    if (gh == 0 and gk == 0 and gl == 0) continue;
+            // ρ_core_form(|G|)
+            const rho_core_form = if (rho_core_tables) |tables|
+                tables[atom.species_index].eval(g_norm)
+            else
+                form_factor.rhoCoreG(sp.upf.*, g_norm);
 
-                    const gvec = math.Vec3.add(
-                        math.Vec3.add(
-                            math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                            math.Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                        ),
-                        math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                    );
-                    const g_norm = math.Vec3.norm(gvec);
+            // exp(-iG·τ_I) — note: using -iGτ consistent with convention
+            const phase_val = math.complex.expi(-math.Vec3.dot(g.gvec, atom.position));
 
-                    // ρ_core_form(|G|)
-                    const rho_core_form = if (rho_core_tables) |tables|
-                        tables[atom.species_index].eval(g_norm)
-                    else
-                        form_factor.rhoCoreG(sp.upf.*, g_norm);
+            // V_xc*(G) × exp(-iG·τ) × ρ_core_form
+            const vxc_conj = math.complex.conj(vxc_g[g.idx]);
+            const prod = math.complex.scale(math.complex.mul(vxc_conj, phase_val), rho_core_form);
 
-                    // exp(-iG·τ_I) — note: using -iGτ consistent with convention
-                    const phase_val = math.complex.expi(-math.Vec3.dot(gvec, atom.position));
-
-                    // V_xc*(G) × exp(-iG·τ) × ρ_core_form
-                    const vxc_conj = math.complex.conj(vxc_g[idx]);
-                    const prod = math.complex.scale(math.complex.mul(vxc_conj, phase_val), rho_core_form);
-
-                    // Accumulate -G_α G_β × Re(product) for each pair (α, β)
-                    const g_comp = [3]f64{ gvec.x, gvec.y, gvec.z };
-                    for (0..3) |a| {
-                        for (0..3) |b| {
-                            const i_idx = 3 * ia + a;
-                            const j_idx = 3 * ia + b;
-                            dyn[i_idx * dim + j_idx] += -g_comp[a] * g_comp[b] * prod.r;
-                        }
-                    }
+            // Accumulate -G_α G_β × Re(product) for each pair (α, β)
+            const g_comp = [3]f64{ g.gvec.x, g.gvec.y, g.gvec.z };
+            for (0..3) |a| {
+                for (0..3) |b| {
+                    const i_idx = 3 * ia + a;
+                    const j_idx = 3 * ia + b;
+                    dyn[i_idx * dim + j_idx] += -g_comp[a] * g_comp[b] * prod.r;
                 }
             }
         }

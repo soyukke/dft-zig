@@ -2,6 +2,7 @@ const std = @import("std");
 const math = @import("../math/math.zig");
 const config = @import("../config/config.zig");
 const ewald = @import("../ewald/ewald.zig");
+const gvec_iter = @import("../scf/gvec_iter.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
@@ -488,44 +489,23 @@ fn kineticStress(alloc: std.mem.Allocator, wavefunctions: ?scf.WavefunctionData,
 /// Hartree stress: σ_αβ = -(E_H/Ω) δ_αβ + 8π Σ_{G≠0} |ρ(G)|² G_α G_β / |G|⁴
 fn hartreeStress(grid: Grid, rho_g: []const math.Complex, e_hartree: f64, inv_volume: f64, ecutrho: f64) Stress3x3 {
     var sigma = zeroStress();
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
 
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                if (gh == 0 and gk == 0 and gl == 0) {
-                    idx += 1;
-                    continue;
-                }
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const g2 = math.Vec3.dot(gvec, gvec);
-                if (g2 < 1e-12 or g2 >= ecutrho) {
-                    idx += 1;
-                    continue;
-                }
-                const rho_val = rho_g[idx];
-                const rho2 = rho_val.r * rho_val.r + rho_val.i * rho_val.i;
-                const factor = 8.0 * std.math.pi * rho2 / (g2 * g2);
-                const gv = [3]f64{ gvec.x, gvec.y, gvec.z };
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
+            continue;
+        }
+        if (g.g2 < 1e-12 or g.g2 >= ecutrho) {
+            continue;
+        }
+        const rho_val = rho_g[g.idx];
+        const rho2 = rho_val.r * rho_val.r + rho_val.i * rho_val.i;
+        const factor = 8.0 * std.math.pi * rho2 / (g.g2 * g.g2);
+        const gv = [3]f64{ g.gvec.x, g.gvec.y, g.gvec.z };
 
-                for (0..3) |a| {
-                    for (a..3) |b| {
-                        sigma[a][b] += factor * gv[a] * gv[b];
-                    }
-                }
-                idx += 1;
+        for (0..3) |a| {
+            for (a..3) |b| {
+                sigma[a][b] += factor * gv[a] * gv[b];
             }
         }
     }
@@ -595,36 +575,17 @@ fn xcStress(
             const grad_g = try alloc.alloc(math.Complex, n_grid);
             defer alloc.free(grad_g);
 
-            const b1 = grid.recip.row(0);
-            const b2 = grid.recip.row(1);
-            const b3 = grid.recip.row(2);
-
-            var idx_g: usize = 0;
-            var lz: usize = 0;
-            while (lz < grid.nz) : (lz += 1) {
-                var ky: usize = 0;
-                while (ky < grid.ny) : (ky += 1) {
-                    var hx: usize = 0;
-                    while (hx < grid.nx) : (hx += 1) {
-                        const gh = grid.min_h + @as(i32, @intCast(hx));
-                        const gk = grid.min_k + @as(i32, @intCast(ky));
-                        const gl = grid.min_l + @as(i32, @intCast(lz));
-                        const gvec = math.Vec3.add(
-                            math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                            math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                        );
-                        const gdir: f64 = switch (dir) {
-                            0 => gvec.x,
-                            1 => gvec.y,
-                            2 => gvec.z,
-                            else => unreachable,
-                        };
-                        // i * G_dir * ρ(G)
-                        const rho_val = rho_total_g[idx_g];
-                        grad_g[idx_g] = math.complex.init(-gdir * rho_val.i, gdir * rho_val.r);
-                        idx_g += 1;
-                    }
-                }
+            var it_g = gvec_iter.GVecIterator.init(grid);
+            while (it_g.next()) |g| {
+                const gdir: f64 = switch (dir) {
+                    0 => g.gvec.x,
+                    1 => g.gvec.y,
+                    2 => g.gvec.z,
+                    else => unreachable,
+                };
+                // i * G_dir * ρ(G)
+                const rho_val = rho_total_g[g.idx];
+                grad_g[g.idx] = math.complex.init(-gdir * rho_val.i, gdir * rho_val.r);
             }
 
             grad_r[dir] = try fft_grid.reciprocalToReal(alloc, fft_obj, grad_g);
@@ -670,89 +631,67 @@ fn localStress(
     ecutrho: f64,
 ) Stress3x3 {
     var sigma = zeroStress();
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
 
     // Accumulate E_loc = Σ_{G≠0} V_form(|G|) × Re[ρ(G) exp(+iGR)] internally.
     // For PAW, rho_g is the augmented density ρ̃+n̂, giving the correct evloc.
     // This matches QE's stres_loc which uses rho%of_r (augmented density).
     var evloc: f64 = 0.0;
 
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                if (gh == 0 and gk == 0 and gl == 0) {
-                    idx += 1;
-                    continue;
-                }
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const g_norm = math.Vec3.norm(gvec);
-                const g2_loc = gvec.x * gvec.x + gvec.y * gvec.y + gvec.z * gvec.z;
-                if (g_norm < 1e-12 or g2_loc >= ecutrho) {
-                    idx += 1;
-                    continue;
-                }
-                const rho_val = rho_g[idx];
-                const gv = [3]f64{ gvec.x, gvec.y, gvec.z };
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
+            continue;
+        }
+        const g_norm = math.Vec3.norm(g.gvec);
+        if (g_norm < 1e-12 or g.g2 >= ecutrho) {
+            continue;
+        }
+        const rho_val = rho_g[g.idx];
+        const gv = [3]f64{ g.gvec.x, g.gvec.y, g.gvec.z };
 
-                // Accumulate: Σ_I V_form(|G|) and V_form'(|G|) contributions
-                var vloc_rho_re: f64 = 0.0; // Re[V_form × S*_I(G) × ρ(G)]
-                var dvloc_rho_re: f64 = 0.0; // Re[V'_form × S*_I(G) × ρ(G)]
+        // Accumulate: Σ_I V_form(|G|) and V_form'(|G|) contributions
+        var vloc_rho_re: f64 = 0.0; // Re[V_form × S*_I(G) × ρ(G)]
+        var dvloc_rho_re: f64 = 0.0; // Re[V'_form × S*_I(G) × ρ(G)]
 
-                for (atoms) |atom| {
-                    const v_loc = if (ff_tables) |tables|
-                        tables[atom.species_index].eval(g_norm)
-                    else
-                        hamiltonian.localFormFactor(&species[atom.species_index], g_norm);
+        for (atoms) |atom| {
+            const v_loc = if (ff_tables) |tables|
+                tables[atom.species_index].eval(g_norm)
+            else
+                hamiltonian.localFormFactor(&species[atom.species_index], g_norm);
 
-                    const dv_loc = if (ff_tables) |tables|
-                        tables[atom.species_index].evalDeriv(g_norm)
-                    else blk: {
-                        // Numerical derivative
-                        const dq: f64 = 0.01;
-                        const vp = hamiltonian.localFormFactor(&species[atom.species_index], g_norm + dq);
-                        const vm = hamiltonian.localFormFactor(&species[atom.species_index], g_norm - dq);
-                        break :blk (vp - vm) / (2.0 * dq);
-                    };
+            const dv_loc = if (ff_tables) |tables|
+                tables[atom.species_index].evalDeriv(g_norm)
+            else blk: {
+                // Numerical derivative
+                const dq: f64 = 0.01;
+                const vp = hamiltonian.localFormFactor(&species[atom.species_index], g_norm + dq);
+                const vm = hamiltonian.localFormFactor(&species[atom.species_index], g_norm - dq);
+                break :blk (vp - vm) / (2.0 * dq);
+            };
 
-                    const phase = math.Vec3.dot(gvec, atom.position);
-                    const cos_phase = std.math.cos(phase);
-                    const sin_phase = std.math.sin(phase);
-                    // Energy: E_loc = Ω Σ_G Re[ρ̃ conj(V_G)] where V_G = (1/Ω) V_form exp(-iGR)
-                    // conj(V_G) = (1/Ω) V_form exp(+iGR)
-                    // Re[ρ̃ exp(+iGR)] = Re[(ρ_r+iρ_i)(cos+isin)] = ρ_r cos - ρ_i sin
-                    // The stress G-derivative uses the same phase factor.
-                    const re_rho_si = rho_val.r * cos_phase - rho_val.i * sin_phase;
+            const phase = math.Vec3.dot(g.gvec, atom.position);
+            const cos_phase = std.math.cos(phase);
+            const sin_phase = std.math.sin(phase);
+            // Energy: E_loc = Ω Σ_G Re[ρ̃ conj(V_G)] where V_G = (1/Ω) V_form exp(-iGR)
+            // conj(V_G) = (1/Ω) V_form exp(+iGR)
+            // Re[ρ̃ exp(+iGR)] = Re[(ρ_r+iρ_i)(cos+isin)] = ρ_r cos - ρ_i sin
+            // The stress G-derivative uses the same phase factor.
+            const re_rho_si = rho_val.r * cos_phase - rho_val.i * sin_phase;
 
-                    vloc_rho_re += v_loc * re_rho_si;
-                    dvloc_rho_re += dv_loc * re_rho_si;
-                }
+            vloc_rho_re += v_loc * re_rho_si;
+            dvloc_rho_re += dv_loc * re_rho_si;
+        }
 
-                evloc += vloc_rho_re;
+        evloc += vloc_rho_re;
 
-                // Local stress contribution from this G:
-                // From V_form(|G|) dependence: dV_form/dε_αβ = V'_form × d|G|/dε_αβ = V'_form × (-G_αG_β/|G|)
-                // From 1/Ω (in ρ): -(1-Tr(ε)) gives -δ_αβ × E_loc at the end
-                // So: σ_αβ += -(1/Ω) × dvloc_rho_re × G_αG_β/|G|
-                const inv_gnorm = 1.0 / g_norm;
-                for (0..3) |a| {
-                    for (a..3) |b| {
-                        sigma[a][b] -= dvloc_rho_re * gv[a] * gv[b] * inv_gnorm * inv_volume;
-                    }
-                }
-
-                idx += 1;
+        // Local stress contribution from this G:
+        // From V_form(|G|) dependence: dV_form/dε_αβ = V'_form × d|G|/dε_αβ = V'_form × (-G_αG_β/|G|)
+        // From 1/Ω (in ρ): -(1-Tr(ε)) gives -δ_αβ × E_loc at the end
+        // So: σ_αβ += -(1/Ω) × dvloc_rho_re × G_αG_β/|G|
+        const inv_gnorm = 1.0 / g_norm;
+        for (0..3) |a| {
+            for (a..3) |b| {
+                sigma[a][b] -= dvloc_rho_re * gv[a] * gv[b] * inv_gnorm * inv_volume;
             }
         }
     }
@@ -1171,57 +1110,35 @@ fn nlccStress(
     const vxc_g = try fft_grid.realToReciprocal(alloc, fft_obj, xc_fields.vxc, false);
     defer alloc.free(vxc_g);
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
+            continue;
+        }
+        const g_norm = math.Vec3.norm(g.gvec);
+        if (g_norm < 1e-12 or g.g2 >= ecutrho) {
+            continue;
+        }
 
-    var idx: usize = 0;
-    var lz: usize = 0;
-    while (lz < grid.nz) : (lz += 1) {
-        var ky: usize = 0;
-        while (ky < grid.ny) : (ky += 1) {
-            var hx: usize = 0;
-            while (hx < grid.nx) : (hx += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(hx));
-                const gk = grid.min_k + @as(i32, @intCast(ky));
-                const gl = grid.min_l + @as(i32, @intCast(lz));
-                if (gh == 0 and gk == 0 and gl == 0) {
-                    idx += 1;
-                    continue;
+        const vxc_val = vxc_g[g.idx];
+        const gv = [3]f64{ g.gvec.x, g.gvec.y, g.gvec.z };
+
+        for (atoms) |atom| {
+            const si = atom.species_index;
+            if (species[si].upf.nlcc.len == 0) continue;
+
+            const drhoc = core_tables[si].evalDeriv(g_norm);
+            const phase = math.Vec3.dot(g.gvec, atom.position);
+            const cos_phase = std.math.cos(phase);
+            const sin_phase = std.math.sin(phase);
+            // Re[V_xc(G) × conj(exp(-iG·R))] = Re[V_xc × exp(+iGR)] = Vxc_r cos - Vxc_i sin
+            const re_vxc_si = vxc_val.r * cos_phase - vxc_val.i * sin_phase;
+
+            const factor = -drhoc * re_vxc_si / g_norm * inv_volume;
+            for (0..3) |a| {
+                for (a..3) |b| {
+                    sigma[a][b] += factor * gv[a] * gv[b];
                 }
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const g_norm = math.Vec3.norm(gvec);
-                const g2_nlcc = gvec.x * gvec.x + gvec.y * gvec.y + gvec.z * gvec.z;
-                if (g_norm < 1e-12 or g2_nlcc >= ecutrho) {
-                    idx += 1;
-                    continue;
-                }
-
-                const vxc_val = vxc_g[idx];
-                const gv = [3]f64{ gvec.x, gvec.y, gvec.z };
-
-                for (atoms) |atom| {
-                    const si = atom.species_index;
-                    if (species[si].upf.nlcc.len == 0) continue;
-
-                    const drhoc = core_tables[si].evalDeriv(g_norm);
-                    const phase = math.Vec3.dot(gvec, atom.position);
-                    const cos_phase = std.math.cos(phase);
-                    const sin_phase = std.math.sin(phase);
-                    // Re[V_xc(G) × conj(exp(-iG·R))] = Re[V_xc × exp(+iGR)] = Vxc_r cos - Vxc_i sin
-                    const re_vxc_si = vxc_val.r * cos_phase - vxc_val.i * sin_phase;
-
-                    const factor = -drhoc * re_vxc_si / g_norm * inv_volume;
-                    for (0..3) |a| {
-                        for (a..3) |b| {
-                            sigma[a][b] += factor * gv[a] * gv[b];
-                        }
-                    }
-                }
-                idx += 1;
             }
         }
     }
@@ -1264,76 +1181,53 @@ fn buildAugmentedDensity(
     defer alloc.free(n_hat_g);
     @memset(n_hat_g, math.complex.init(0.0, 0.0));
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
     const inv_omega = 1.0 / grid.volume;
 
-    var idx: usize = 0;
-    var il: usize = 0;
-    while (il < grid.nz) : (il += 1) {
-        var ik: usize = 0;
-        while (ik < grid.ny) : (ik += 1) {
-            var ih: usize = 0;
-            while (ih < grid.nx) : (ih += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(ih));
-                const gk = grid.min_k + @as(i32, @intCast(ik));
-                const gl = grid.min_l + @as(i32, @intCast(il));
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(
-                        math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                        math.Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                    ),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const g_abs = math.Vec3.norm(gvec);
-                const g2_aug = math.Vec3.dot(gvec, gvec);
-                if (g2_aug >= ecutrho) {
-                    idx += 1;
-                    continue;
-                }
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        if (g.g2 >= ecutrho) {
+            continue;
+        }
 
-                var sum_re: f64 = 0.0;
-                var sum_im: f64 = 0.0;
+        const g_abs = math.Vec3.norm(g.gvec);
+        var sum_re: f64 = 0.0;
+        var sum_im: f64 = 0.0;
 
-                for (0..atoms.len) |a| {
-                    const sp = atoms[a].species_index;
-                    if (sp >= paw_tabs.len) continue;
-                    const tab = &paw_tabs[sp];
-                    if (tab.nbeta == 0) continue;
-                    const nb = tab.nbeta;
-                    const rij = paw_rhoij[a];
-                    const pos = atoms[a].position;
+        for (0..atoms.len) |a| {
+            const sp = atoms[a].species_index;
+            if (sp >= paw_tabs.len) continue;
+            const tab = &paw_tabs[sp];
+            if (tab.nbeta == 0) continue;
+            const nb = tab.nbeta;
+            const rij = paw_rhoij[a];
+            const pos = atoms[a].position;
 
-                    const g_dot_r = math.Vec3.dot(gvec, pos);
-                    const sf_re = @cos(g_dot_r);
-                    const sf_im = -@sin(g_dot_r);
+            const g_dot_r = math.Vec3.dot(g.gvec, pos);
+            const sf_re = @cos(g_dot_r);
+            const sf_im = -@sin(g_dot_r);
 
-                    for (0..tab.n_qijl_entries) |e| {
-                        const qidx = tab.qijl_indices[e];
-                        if (qidx.l != 0) continue;
-                        const i = qidx.first;
-                        const j = qidx.second;
-                        const rij_val = rij[i * nb + j];
-                        if (@abs(rij_val) < 1e-30) continue;
+            for (0..tab.n_qijl_entries) |e| {
+                const qidx = tab.qijl_indices[e];
+                if (qidx.l != 0) continue;
+                const i = qidx.first;
+                const j = qidx.second;
+                const rij_val = rij[i * nb + j];
+                if (@abs(rij_val) < 1e-30) continue;
 
-                        const qijl_g = tab.evalQijlForm(e, g_abs);
-                        if (@abs(qijl_g) < 1e-30) continue;
+                const qijl_g = tab.evalQijlForm(e, g_abs);
+                if (@abs(qijl_g) < 1e-30) continue;
 
-                        const ylm = 1.0 / @sqrt(4.0 * std.math.pi);
-                        const gaunt = 1.0 / @sqrt(4.0 * std.math.pi);
-                        const sym_factor: f64 = if (i != j) 2.0 else 1.0;
-                        const contrib = rij_val * qijl_g * ylm * gaunt * sym_factor * inv_omega;
-                        sum_re += contrib * sf_re;
-                        sum_im += contrib * sf_im;
-                    }
-                }
-
-                n_hat_g[idx].r += sum_re;
-                n_hat_g[idx].i += sum_im;
-                idx += 1;
+                const ylm = 1.0 / @sqrt(4.0 * std.math.pi);
+                const gaunt = 1.0 / @sqrt(4.0 * std.math.pi);
+                const sym_factor: f64 = if (i != j) 2.0 else 1.0;
+                const contrib = rij_val * qijl_g * ylm * gaunt * sym_factor * inv_omega;
+                sum_re += contrib * sf_re;
+                sum_im += contrib * sf_im;
             }
         }
+
+        n_hat_g[g.idx].r += sum_re;
+        n_hat_g[g.idx].i += sum_im;
     }
 
     // IFFT n_hat(G) → n_hat(r) and add to density
@@ -1373,74 +1267,53 @@ fn augmentationStress(
     const pot_vals = potential_values orelse return sigma;
     _ = alloc;
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
     const ylm_gaunt = 1.0 / (4.0 * std.math.pi); // Y_00 × Gaunt for L=0
 
-    var idx: usize = 0;
-    var lz: usize = 0;
-    while (lz < grid.nz) : (lz += 1) {
-        var ky: usize = 0;
-        while (ky < grid.ny) : (ky += 1) {
-            var hx: usize = 0;
-            while (hx < grid.nx) : (hx += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(hx));
-                const gk = grid.min_k + @as(i32, @intCast(ky));
-                const gl = grid.min_l + @as(i32, @intCast(lz));
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        if (g.g2 >= ecutrho) {
+            continue;
+        }
 
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const g_norm = math.Vec3.norm(gvec);
-                const g2_aug = gvec.x * gvec.x + gvec.y * gvec.y + gvec.z * gvec.z;
-                if (g2_aug >= ecutrho) {
-                    idx += 1;
-                    continue;
-                }
+        const g_norm = math.Vec3.norm(g.gvec);
+        const v_eff = pot_vals[g.idx];
 
-                const v_eff = pot_vals[idx];
+        for (atoms, 0..) |atom, a| {
+            const si = atom.species_index;
+            if (si >= tabs.len) continue;
+            const tab = &tabs[si];
+            if (tab.nbeta == 0) continue;
+            const nb = tab.nbeta;
+            const rij = rhoij[a];
 
-                for (atoms, 0..) |atom, a| {
-                    const si = atom.species_index;
-                    if (si >= tabs.len) continue;
-                    const tab = &tabs[si];
-                    if (tab.nbeta == 0) continue;
-                    const nb = tab.nbeta;
-                    const rij = rhoij[a];
+            const g_dot_r = math.Vec3.dot(g.gvec, atom.position);
+            // S*_a(G) = exp(+iG·R)
+            const sf_re = @cos(g_dot_r);
+            const sf_im = @sin(g_dot_r);
+            // Re[V_eff(G) × exp(+iG·R)] = V_re cos(GR) - V_im sin(GR)
+            const re_vs = v_eff.r * sf_re - v_eff.i * sf_im;
 
-                    const g_dot_r = math.Vec3.dot(gvec, atom.position);
-                    // S*_a(G) = exp(+iG·R)
-                    const sf_re = @cos(g_dot_r);
-                    const sf_im = @sin(g_dot_r);
-                    // Re[V_eff(G) × exp(+iG·R)] = V_re cos(GR) - V_im sin(GR)
-                    const re_vs = v_eff.r * sf_re - v_eff.i * sf_im;
+            for (0..tab.n_qijl_entries) |e| {
+                const qidx = tab.qijl_indices[e];
+                if (qidx.l != 0) continue;
+                const i = qidx.first;
+                const j = qidx.second;
+                const rij_val = rij[i * nb + j];
+                if (@abs(rij_val) < 1e-30) continue;
 
-                    for (0..tab.n_qijl_entries) |e| {
-                        const qidx = tab.qijl_indices[e];
-                        if (qidx.l != 0) continue;
-                        const i = qidx.first;
-                        const j = qidx.second;
-                        const rij_val = rij[i * nb + j];
-                        if (@abs(rij_val) < 1e-30) continue;
+                const sym_factor: f64 = if (i != j) 2.0 else 1.0;
+                const rij_sym = rij_val * sym_factor;
 
-                        const sym_factor: f64 = if (i != j) 2.0 else 1.0;
-                        const rij_sym = rij_val * sym_factor;
-
-                        // Off-diagonal: dQ/dG derivative term (G≠0 only)
-                        if (g_norm < 1e-12) continue;
-                        const dqijl_g = tab.evalQijlFormDeriv(e, g_norm);
-                        const factor = -rij_sym * dqijl_g * re_vs * ylm_gaunt * inv_volume / g_norm;
-                        const gv = [3]f64{ gvec.x, gvec.y, gvec.z };
-                        for (0..3) |a2| {
-                            for (a2..3) |b| {
-                                sigma[a2][b] += factor * gv[a2] * gv[b];
-                            }
-                        }
+                // Off-diagonal: dQ/dG derivative term (G≠0 only)
+                if (g_norm < 1e-12) continue;
+                const dqijl_g = tab.evalQijlFormDeriv(e, g_norm);
+                const factor = -rij_sym * dqijl_g * re_vs * ylm_gaunt * inv_volume / g_norm;
+                const gv = [3]f64{ g.gvec.x, g.gvec.y, g.gvec.z };
+                for (0..3) |a2| {
+                    for (a2..3) |b| {
+                        sigma[a2][b] += factor * gv[a2] * gv[b];
                     }
                 }
-                idx += 1;
             }
         }
     }

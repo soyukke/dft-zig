@@ -4,6 +4,7 @@
 
 const std = @import("std");
 const math = @import("../math/math.zig");
+const gvec_iter = @import("../scf/gvec_iter.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
@@ -41,55 +42,31 @@ pub fn buildLocalPerturbation(
     const result = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(result);
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
     const inv_volume = 1.0 / grid.volume;
 
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-
-                if (gh == 0 and gk == 0 and gl == 0) {
-                    result[idx] = math.complex.init(0.0, 0.0);
-                    idx += 1;
-                    continue;
-                }
-
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(
-                        math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                        math.Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                    ),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const g_norm = math.Vec3.norm(gvec);
-                const g_alpha = gComponent(gvec, direction);
-
-                // V_form(|G|)
-                const v_loc = if (ff_tables) |tables|
-                    tables[atom.species_index].eval(g_norm)
-                else
-                    hamiltonian.localFormFactor(&species[atom.species_index], g_norm);
-
-                // exp(-iG·τ_I)
-                const phase = math.complex.expi(-math.Vec3.dot(gvec, atom.position));
-
-                // V_loc^(1)(G) = -i × G_α × V_form × exp(-iG·τ) / Ω
-                // -i × z = -i × (a + bi) = (b - ai)
-                const temp = math.complex.scale(phase, g_alpha * v_loc * inv_volume);
-                result[idx] = math.complex.init(temp.i, -temp.r); // multiply by -i
-
-                idx += 1;
-            }
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
+            result[g.idx] = math.complex.init(0.0, 0.0);
+            continue;
         }
+
+        const g_norm = math.Vec3.norm(g.gvec);
+        const g_alpha = gComponent(g.gvec, direction);
+
+        // V_form(|G|)
+        const v_loc = if (ff_tables) |tables|
+            tables[atom.species_index].eval(g_norm)
+        else
+            hamiltonian.localFormFactor(&species[atom.species_index], g_norm);
+
+        // exp(-iG·τ_I)
+        const phase = math.complex.expi(-math.Vec3.dot(g.gvec, atom.position));
+
+        // V_loc^(1)(G) = -i × G_α × V_form × exp(-iG·τ) / Ω
+        // -i × z = -i × (a + bi) = (b - ai)
+        const temp = math.complex.scale(phase, g_alpha * v_loc * inv_volume);
+        result[g.idx] = math.complex.init(temp.i, -temp.r); // multiply by -i
     }
 
     return result;
@@ -120,54 +97,30 @@ pub fn buildCorePerturbation(
         return result;
     }
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
     const inv_volume = 1.0 / grid.volume;
 
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-
-                if (gh == 0 and gk == 0 and gl == 0) {
-                    result[idx] = math.complex.init(0.0, 0.0);
-                    idx += 1;
-                    continue;
-                }
-
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(
-                        math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                        math.Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                    ),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const g_norm = math.Vec3.norm(gvec);
-                const g_alpha = gComponent(gvec, direction);
-
-                // ρ_core_form(|G|)
-                const rho_core_g = if (rho_core_tables) |tables|
-                    tables[atom.species_index].eval(g_norm)
-                else
-                    form_factor.rhoCoreG(sp.upf.*, g_norm);
-
-                // exp(-iG·τ_I)
-                const phase = math.complex.expi(-math.Vec3.dot(gvec, atom.position));
-
-                // ρ^(1)_core(G) = -i × G_α × ρ_core_form × exp(-iG·τ) / Ω
-                const temp = math.complex.scale(phase, g_alpha * rho_core_g * inv_volume);
-                result[idx] = math.complex.init(temp.i, -temp.r); // multiply by -i
-
-                idx += 1;
-            }
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
+            result[g.idx] = math.complex.init(0.0, 0.0);
+            continue;
         }
+
+        const g_norm = math.Vec3.norm(g.gvec);
+        const g_alpha = gComponent(g.gvec, direction);
+
+        // ρ_core_form(|G|)
+        const rho_core_g = if (rho_core_tables) |tables|
+            tables[atom.species_index].eval(g_norm)
+        else
+            form_factor.rhoCoreG(sp.upf.*, g_norm);
+
+        // exp(-iG·τ_I)
+        const phase = math.complex.expi(-math.Vec3.dot(g.gvec, atom.position));
+
+        // ρ^(1)_core(G) = -i × G_α × ρ_core_form × exp(-iG·τ) / Ω
+        const temp = math.complex.scale(phase, g_alpha * rho_core_g * inv_volume);
+        result[g.idx] = math.complex.init(temp.i, -temp.r); // multiply by -i
     }
 
     return result;
@@ -183,37 +136,12 @@ pub fn buildHartreePerturbation(
     const result = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(result);
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
-
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(
-                        math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                        math.Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                    ),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const g2 = math.Vec3.dot(gvec, gvec);
-
-                if (g2 > 1e-12) {
-                    result[idx] = math.complex.scale(rho1_g[idx], 8.0 * std.math.pi / g2);
-                } else {
-                    result[idx] = math.complex.init(0.0, 0.0);
-                }
-
-                idx += 1;
-            }
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        if (g.g2 > 1e-12) {
+            result[g.idx] = math.complex.scale(rho1_g[g.idx], 8.0 * std.math.pi / g.g2);
+        } else {
+            result[g.idx] = math.complex.init(0.0, 0.0);
         }
     }
 
@@ -409,32 +337,14 @@ fn gradientFromComplex(
     const gz_g = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(gz_g);
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
     const i_unit = math.complex.init(0.0, 1.0);
 
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const i_rho = math.complex.mul(values_g[idx], i_unit);
-                gx_g[idx] = math.complex.scale(i_rho, gvec.x);
-                gy_g[idx] = math.complex.scale(i_rho, gvec.y);
-                gz_g[idx] = math.complex.scale(i_rho, gvec.z);
-                idx += 1;
-            }
-        }
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        const i_rho = math.complex.mul(values_g[g.idx], i_unit);
+        gx_g[g.idx] = math.complex.scale(i_rho, g.gvec.x);
+        gy_g[g.idx] = math.complex.scale(i_rho, g.gvec.y);
+        gz_g[g.idx] = math.complex.scale(i_rho, g.gvec.z);
     }
 
     // IFFT each component back to real space
@@ -490,33 +400,15 @@ fn divergenceFromComplex(
     const div_g = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(div_g);
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
     const i_unit = math.complex.init(0.0, 1.0);
 
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const sum = math.complex.add(
-                    math.complex.add(math.complex.scale(bx_g[idx], gvec.x), math.complex.scale(by_g[idx], gvec.y)),
-                    math.complex.scale(bz_g[idx], gvec.z),
-                );
-                div_g[idx] = math.complex.mul(sum, i_unit);
-                idx += 1;
-            }
-        }
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        const sum = math.complex.add(
+            math.complex.add(math.complex.scale(bx_g[g.idx], g.gvec.x), math.complex.scale(by_g[g.idx], g.gvec.y)),
+            math.complex.scale(bz_g[g.idx], g.gvec.z),
+        );
+        div_g[g.idx] = math.complex.mul(sum, i_unit);
     }
 
     // IFFT back to real space
@@ -897,61 +789,36 @@ pub fn buildLocalPerturbationQ(
     const result = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(result);
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
     const inv_volume = 1.0 / grid.volume;
 
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        // G+q vector
+        const gpq = math.Vec3.add(g.gvec, q_cart);
+        const gpq_norm = math.Vec3.norm(gpq);
+        const gpq_alpha = gComponent(gpq, direction);
 
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(
-                        math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                        math.Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                    ),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-
-                // G+q vector
-                const gpq = math.Vec3.add(gvec, q_cart);
-                const gpq_norm = math.Vec3.norm(gpq);
-                const gpq_alpha = gComponent(gpq, direction);
-
-                // Skip only when |G+q| ≈ 0 (i.e. G=0 at q=0).
-                // For q≠0, G=0 gives |G+q| = |q| > 0, which is a valid contribution.
-                // Skipping G=0 unconditionally at finite q was a bug that caused
-                // the electronic response to be ~5× too small.
-                if (gpq_norm < 1e-12) {
-                    result[idx] = math.complex.init(0.0, 0.0);
-                    idx += 1;
-                    continue;
-                }
-
-                // V_form(|G+q|)
-                const v_loc = if (ff_tables) |tables|
-                    tables[atom.species_index].eval(gpq_norm)
-                else
-                    hamiltonian.localFormFactor(&species[atom.species_index], gpq_norm);
-
-                // exp(-i(G+q)·τ_I)
-                const phase = math.complex.expi(-math.Vec3.dot(gpq, atom.position));
-
-                // V_loc^(1)_q(G) = -i × (G+q)_α × V_form × exp(-i(G+q)·τ) / Ω
-                const temp = math.complex.scale(phase, gpq_alpha * v_loc * inv_volume);
-                result[idx] = math.complex.init(temp.i, -temp.r); // multiply by -i
-
-                idx += 1;
-            }
+        // Skip only when |G+q| ≈ 0 (i.e. G=0 at q=0).
+        // For q≠0, G=0 gives |G+q| = |q| > 0, which is a valid contribution.
+        // Skipping G=0 unconditionally at finite q was a bug that caused
+        // the electronic response to be ~5× too small.
+        if (gpq_norm < 1e-12) {
+            result[g.idx] = math.complex.init(0.0, 0.0);
+            continue;
         }
+
+        // V_form(|G+q|)
+        const v_loc = if (ff_tables) |tables|
+            tables[atom.species_index].eval(gpq_norm)
+        else
+            hamiltonian.localFormFactor(&species[atom.species_index], gpq_norm);
+
+        // exp(-i(G+q)·τ_I)
+        const phase = math.complex.expi(-math.Vec3.dot(gpq, atom.position));
+
+        // V_loc^(1)_q(G) = -i × (G+q)_α × V_form × exp(-i(G+q)·τ) / Ω
+        const temp = math.complex.scale(phase, gpq_alpha * v_loc * inv_volume);
+        result[g.idx] = math.complex.init(temp.i, -temp.r); // multiply by -i
     }
 
     return result;
@@ -979,54 +846,29 @@ pub fn buildCorePerturbationQ(
         return result;
     }
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
     const inv_volume = 1.0 / grid.volume;
 
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        const gpq = math.Vec3.add(g.gvec, q_cart);
+        const gpq_norm = math.Vec3.norm(gpq);
+        const gpq_alpha = gComponent(gpq, direction);
 
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(
-                        math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                        math.Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                    ),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-
-                const gpq = math.Vec3.add(gvec, q_cart);
-                const gpq_norm = math.Vec3.norm(gpq);
-                const gpq_alpha = gComponent(gpq, direction);
-
-                // Skip only when |G+q| ≈ 0 (i.e. G=0 at q=0).
-                // For q≠0, G=0 gives |G+q| = |q| > 0 → valid contribution.
-                if (gpq_norm < 1e-12) {
-                    result[idx] = math.complex.init(0.0, 0.0);
-                    idx += 1;
-                    continue;
-                }
-
-                const rho_core_g = if (rho_core_tables) |tables|
-                    tables[atom.species_index].eval(gpq_norm)
-                else
-                    form_factor.rhoCoreG(sp.upf.*, gpq_norm);
-
-                const phase = math.complex.expi(-math.Vec3.dot(gpq, atom.position));
-                const temp = math.complex.scale(phase, gpq_alpha * rho_core_g * inv_volume);
-                result[idx] = math.complex.init(temp.i, -temp.r); // multiply by -i
-
-                idx += 1;
-            }
+        // Skip only when |G+q| ≈ 0 (i.e. G=0 at q=0).
+        // For q≠0, G=0 gives |G+q| = |q| > 0 → valid contribution.
+        if (gpq_norm < 1e-12) {
+            result[g.idx] = math.complex.init(0.0, 0.0);
+            continue;
         }
+
+        const rho_core_g = if (rho_core_tables) |tables|
+            tables[atom.species_index].eval(gpq_norm)
+        else
+            form_factor.rhoCoreG(sp.upf.*, gpq_norm);
+
+        const phase = math.complex.expi(-math.Vec3.dot(gpq, atom.position));
+        const temp = math.complex.scale(phase, gpq_alpha * rho_core_g * inv_volume);
+        result[g.idx] = math.complex.init(temp.i, -temp.r); // multiply by -i
     }
 
     return result;
@@ -1043,40 +885,17 @@ pub fn buildHartreePerturbationQ(
     const result = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(result);
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        const gpq = math.Vec3.add(g.gvec, q_cart);
+        const gpq2 = math.Vec3.dot(gpq, gpq);
 
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(
-                        math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                        math.Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                    ),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const gpq = math.Vec3.add(gvec, q_cart);
-                const gpq2 = math.Vec3.dot(gpq, gpq);
-
-                // Skip only when |G+q| ≈ 0 (i.e. G=0 at q=0).
-                // For q≠0, G=0 gives |G+q| = |q| > 0 → finite V_H^(1).
-                if (gpq2 > 1e-12) {
-                    result[idx] = math.complex.scale(rho1_g[idx], 8.0 * std.math.pi / gpq2);
-                } else {
-                    result[idx] = math.complex.init(0.0, 0.0);
-                }
-
-                idx += 1;
-            }
+        // Skip only when |G+q| ≈ 0 (i.e. G=0 at q=0).
+        // For q≠0, G=0 gives |G+q| = |q| > 0 → finite V_H^(1).
+        if (gpq2 > 1e-12) {
+            result[g.idx] = math.complex.scale(rho1_g[g.idx], 8.0 * std.math.pi / gpq2);
+        } else {
+            result[g.idx] = math.complex.init(0.0, 0.0);
         }
     }
 
@@ -1182,53 +1001,28 @@ test "V_loc perturbation finite difference" {
     }};
 
     // Compute V_loc at displaced positions for each G point
-    const total = grid.count();
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
-
     var max_rel_err: f64 = 0.0;
     var tested: usize = 0;
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                defer idx += 1;
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                if (gh == 0 and gk == 0 and gl == 0) continue;
+    var it2 = gvec_iter.GVecIterator.init(grid);
+    while (it2.next()) |g| {
+        if (g.gh == 0 and g.gk == 0 and g.gl == 0) continue;
 
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(
-                        math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                        math.Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                    ),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
+        const vp = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms_plus[0..], inv_vol);
+        const vm = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms_minus[0..], inv_vol);
 
-                const vp = try hamiltonian.ionicLocalPotential(gvec, species, atoms_plus[0..], inv_vol);
-                const vm = try hamiltonian.ionicLocalPotential(gvec, species, atoms_minus[0..], inv_vol);
+        const fd_r = (vp.r - vm.r) / (2.0 * delta);
+        const fd_i = (vp.i - vm.i) / (2.0 * delta);
 
-                const fd_r = (vp.r - vm.r) / (2.0 * delta);
-                const fd_i = (vp.i - vm.i) / (2.0 * delta);
-
-                const abs_val = @sqrt(vloc1[idx].r * vloc1[idx].r + vloc1[idx].i * vloc1[idx].i);
-                if (abs_val > 1e-8) {
-                    const err_r = @abs(vloc1[idx].r - fd_r);
-                    const err_i = @abs(vloc1[idx].i - fd_i);
-                    const err = @sqrt(err_r * err_r + err_i * err_i);
-                    const rel = err / abs_val;
-                    if (rel > max_rel_err) max_rel_err = rel;
-                    tested += 1;
-                }
-            }
+        const abs_val = @sqrt(vloc1[g.idx].r * vloc1[g.idx].r + vloc1[g.idx].i * vloc1[g.idx].i);
+        if (abs_val > 1e-8) {
+            const err_r = @abs(vloc1[g.idx].r - fd_r);
+            const err_i = @abs(vloc1[g.idx].i - fd_i);
+            const err = @sqrt(err_r * err_r + err_i * err_i);
+            const rel = err / abs_val;
+            if (rel > max_rel_err) max_rel_err = rel;
+            tested += 1;
         }
     }
-    _ = total;
 
     try std.testing.expect(tested > 10);
     try std.testing.expect(max_rel_err < 1e-4);

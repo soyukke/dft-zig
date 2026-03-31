@@ -3,17 +3,7 @@ const nonlocal = @import("nonlocal.zig");
 const pseudo = @import("pseudopotential.zig");
 const config = @import("../config/config.zig");
 
-/// ABINIT-style ctrap endpoint weight for corrected trapezoidal integration.
-/// Uses Newton-Cotes 5-point endpoint correction (6th order accuracy).
-/// For an integral ∫f(r)dr ≈ Σ w(i) × f(r_i) × rab(i), where the first and
-/// last 5 points receive modified weights instead of 1.0.
-fn ctrapWeight(i: usize, n: usize) f64 {
-    const w = [5]f64{ 23.75 / 72.0, 95.10 / 72.0, 55.20 / 72.0, 79.30 / 72.0, 70.65 / 72.0 };
-    if (n < 10) return 1.0;
-    if (i < 5) return w[i];
-    if (i >= n - 5) return w[n - 1 - i];
-    return 1.0;
-}
+const ctrapWeight = @import("../math/math.zig").radial.ctrapWeight;
 
 /// Pre-computed lookup table for local form factor V(q).
 /// Uses uniform grid + linear interpolation for O(1) evaluation.

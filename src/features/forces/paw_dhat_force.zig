@@ -1,5 +1,6 @@
 const std = @import("std");
 const math = @import("../math/math.zig");
+const gvec_iter = @import("../scf/gvec_iter.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const paw_mod = @import("../paw/paw.zig");
 const local_force = @import("local_force.zig");
@@ -45,9 +46,6 @@ pub fn pawDhatForces(
         f.* = Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
     }
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
     const total = grid.nx * grid.ny * grid.nz;
 
     for (atoms, 0..) |atom, ai| {
@@ -63,62 +61,43 @@ pub fn pawDhatForces(
         var fy: f64 = 0.0;
         var fz: f64 = 0.0;
 
-        var gidx: usize = 0;
-        var il: usize = 0;
-        while (il < grid.nz) : (il += 1) {
-            var ik: usize = 0;
-            while (ik < grid.ny) : (ik += 1) {
-                var ih: usize = 0;
-                while (ih < grid.nx) : (ih += 1) {
-                    const gh = grid.min_h + @as(i32, @intCast(ih));
-                    const gk = grid.min_k + @as(i32, @intCast(ik));
-                    const gl = grid.min_l + @as(i32, @intCast(il));
-                    const gvec = Vec3.add(
-                        Vec3.add(
-                            Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                            Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                        ),
-                        Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                    );
-                    const g_abs = Vec3.norm(gvec);
+        var it = gvec_iter.GVecIterator.init(grid);
+        while (it.next()) |g| {
+            const g_abs = Vec3.norm(g.gvec);
 
-                    // V_eff(G) = V_H(G) + V_xc(G) — no V_ionic
-                    // D^hat only involves V_Hxc acting on augmentation charges.
-                    const v_eff = if (gidx < total) potential[gidx] else math.complex.init(0.0, 0.0);
+            // V_eff(G) = V_H(G) + V_xc(G) — no V_ionic
+            // D^hat only involves V_Hxc acting on augmentation charges.
+            const v_eff = if (g.idx < total) potential[g.idx] else math.complex.init(0.0, 0.0);
 
-                    // Structure factor: exp(+iG·R_a)
-                    const g_dot_r = Vec3.dot(gvec, pos);
-                    const sf_re = @cos(g_dot_r);
-                    const sf_im = @sin(g_dot_r);
-                    // Im[V_eff × exp(+iGR)] = V_eff.r × sf_im + V_eff.i × sf_re
-                    const prod_im = v_eff.r * sf_im + v_eff.i * sf_re;
+            // Structure factor: exp(+iG·R_a)
+            const g_dot_r = Vec3.dot(g.gvec, pos);
+            const sf_re = @cos(g_dot_r);
+            const sf_im = @sin(g_dot_r);
+            // Im[V_eff × exp(+iGR)] = V_eff.r × sf_im + V_eff.i × sf_re
+            const prod_im = v_eff.r * sf_im + v_eff.i * sf_re;
 
-                    // Sum over L=0 QIJL entries
-                    for (0..tab.n_qijl_entries) |e| {
-                        const qidx = tab.qijl_indices[e];
-                        if (qidx.l != 0) continue;
-                        const i = qidx.first;
-                        const j = qidx.second;
+            // Sum over L=0 QIJL entries
+            for (0..tab.n_qijl_entries) |e| {
+                const qidx = tab.qijl_indices[e];
+                if (qidx.l != 0) continue;
+                const i = qidx.first;
+                const j = qidx.second;
 
-                        const qijl_g = tab.evalQijlForm(e, g_abs);
-                        if (@abs(qijl_g) < 1e-30) continue;
+                const qijl_g = tab.evalQijlForm(e, g_abs);
+                if (@abs(qijl_g) < 1e-30) continue;
 
-                        // Y_00 = 1/√(4π), Gaunt = 1/√(4π) for m-summed L=0
-                        const ylm = 1.0 / @sqrt(4.0 * std.math.pi);
-                        const gaunt = 1.0 / @sqrt(4.0 * std.math.pi);
+                // Y_00 = 1/√(4π), Gaunt = 1/√(4π) for m-summed L=0
+                const ylm = 1.0 / @sqrt(4.0 * std.math.pi);
+                const gaunt = 1.0 / @sqrt(4.0 * std.math.pi);
 
-                        // ρ_ij contribution (symmetric: count off-diagonal twice)
-                        const rho_ij = atom_rij[i * nb + j];
-                        const rho_factor = if (i != j) 2.0 * rho_ij else rho_ij;
+                // ρ_ij contribution (symmetric: count off-diagonal twice)
+                const rho_ij = atom_rij[i * nb + j];
+                const rho_factor = if (i != j) 2.0 * rho_ij else rho_ij;
 
-                        const coeff = rho_factor * prod_im * qijl_g * ylm * gaunt;
-                        fx += gvec.x * coeff;
-                        fy += gvec.y * coeff;
-                        fz += gvec.z * coeff;
-                    }
-
-                    gidx += 1;
-                }
+                const coeff = rho_factor * prod_im * qijl_g * ylm * gaunt;
+                fx += g.gvec.x * coeff;
+                fy += g.gvec.y * coeff;
+                fz += g.gvec.z * coeff;
             }
         }
 

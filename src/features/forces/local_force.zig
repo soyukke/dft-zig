@@ -1,5 +1,6 @@
 const std = @import("std");
 const math = @import("../math/math.zig");
+const gvec_iter = @import("../scf/gvec_iter.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
@@ -43,10 +44,6 @@ pub fn localPseudoForces(
         f.* = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
     }
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
-
     // Hellmann-Feynman force from local pseudopotential:
     //
     // Energy: E_local = Σ_G ρ(G) × V_form(|G|) × S(G)
@@ -60,63 +57,41 @@ pub fn localPseudoForces(
     // This matches ionicLocalPotential's phase exp(-iG·R) via E_loc = Re[ρ(G) V_loc(G)].
 
     // Loop over all G vectors
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        // Skip G=0 (no force contribution)
+        if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
+            continue;
+        }
 
-                // Skip G=0 (no force contribution)
-                if (gh == 0 and gk == 0 and gl == 0) {
-                    idx += 1;
-                    continue;
-                }
+        const g_norm = math.Vec3.norm(g.gvec);
 
-                // Compute G vector
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(
-                        math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                        math.Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                    ),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const g_norm = math.Vec3.norm(gvec);
+        // Get electron density at G
+        const rho = rho_g[g.idx];
 
-                // Get electron density at G
-                const rho = rho_g[idx];
+        // Loop over atoms
+        for (atoms, 0..) |atom, atom_idx| {
+            // Get local pseudopotential form factor for this species
+            // Use the same form factor mode as SCF for consistency
+            const v_loc = if (ff_tables) |tables|
+                tables[atom.species_index].eval(g_norm)
+            else
+                hamiltonian.localFormFactor(&species[atom.species_index], g_norm);
 
-                // Loop over atoms
-                for (atoms, 0..) |atom, atom_idx| {
-                    // Get local pseudopotential form factor for this species
-                    // Use the same form factor mode as SCF for consistency
-                    const v_loc = if (ff_tables) |tables|
-                        tables[atom.species_index].eval(g_norm)
-                    else
-                        hamiltonian.localFormFactor(&species[atom.species_index], g_norm);
+            // Phase: G·R
+            const phase = math.Vec3.dot(g.gvec, atom.position);
+            const cos_phase = std.math.cos(phase);
+            const sin_phase = std.math.sin(phase);
 
-                    // Phase: G·R
-                    const phase = math.Vec3.dot(gvec, atom.position);
-                    const cos_phase = std.math.cos(phase);
-                    const sin_phase = std.math.sin(phase);
+            // Energy uses Re[ρ(G) × V_loc(G)*], so the force uses
+            // Re[i × ρ(G) × exp(+iG·R)] = ρ_r sin(G·R) + ρ_i cos(G·R)
+            const phase_factor = rho.r * sin_phase + rho.i * cos_phase;
 
-                    // Energy uses Re[ρ(G) × V_loc(G)*], so the force uses
-                    // Re[i × ρ(G) × exp(+iG·R)] = ρ_r sin(G·R) + ρ_i cos(G·R)
-                    const phase_factor = rho.r * sin_phase + rho.i * cos_phase;
+            // Force contribution: G × V_loc × phase_factor
+            const force_factor = v_loc * phase_factor;
+            const force_contrib = math.Vec3.scale(g.gvec, force_factor);
 
-                    // Force contribution: G × V_loc × phase_factor
-                    const force_factor = v_loc * phase_factor;
-                    const force_contrib = math.Vec3.scale(gvec, force_factor);
-
-                    forces[atom_idx] = math.Vec3.add(forces[atom_idx], force_contrib);
-                }
-
-                idx += 1;
-            }
+            forces[atom_idx] = math.Vec3.add(forces[atom_idx], force_contrib);
         }
     }
 

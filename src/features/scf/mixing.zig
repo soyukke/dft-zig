@@ -2,6 +2,7 @@ const std = @import("std");
 const math = @import("../math/math.zig");
 const fft_grid = @import("fft_grid.zig");
 const grid_mod = @import("grid.zig");
+const gvec_iter = @import("gvec_iter.zig");
 
 pub const Grid = grid_mod.Grid;
 
@@ -38,30 +39,12 @@ pub fn mixDensityKerker(
     defer alloc.free(delta_rho_g);
 
     // Apply Kerker kernel in reciprocal space
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
-
-    var idx: usize = 0;
-    var h: i32 = grid.min_h;
-    while (h < grid.min_h + @as(i32, @intCast(grid.nx))) : (h += 1) {
-        var k: i32 = grid.min_k;
-        while (k < grid.min_k + @as(i32, @intCast(grid.ny))) : (k += 1) {
-            var l: i32 = grid.min_l;
-            while (l < grid.min_l + @as(i32, @intCast(grid.nz))) : (l += 1) {
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(h))), math.Vec3.scale(b2, @as(f64, @floatFromInt(k)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(l))),
-                );
-                const g2 = math.Vec3.dot(gvec, gvec);
-
-                // Kerker kernel: K(G) = G² / (G² + q0²)
-                // For G=0, K=0 (no update to average density)
-                const kerker = if (g2 > 1e-12) g2 / (g2 + q0_sq) else 0.0;
-                delta_rho_g[idx] = math.complex.scale(delta_rho_g[idx], kerker);
-                idx += 1;
-            }
-        }
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        // Kerker kernel: K(G) = G² / (G² + q0²)
+        // For G=0, K=0 (no update to average density)
+        const kerker = if (g.g2 > 1e-12) g.g2 / (g.g2 + q0_sq) else 0.0;
+        delta_rho_g[g.idx] = math.complex.scale(delta_rho_g[g.idx], kerker);
     }
 
     // IFFT back to real space
@@ -323,27 +306,10 @@ fn applyKerkerPreconditioner(alloc: std.mem.Allocator, grid: Grid, residual: []c
     defer alloc.free(res_g);
 
     // Apply Kerker kernel in reciprocal space
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
-
-    var idx: usize = 0;
-    var h: i32 = grid.min_h;
-    while (h < grid.min_h + @as(i32, @intCast(grid.nx))) : (h += 1) {
-        var k: i32 = grid.min_k;
-        while (k < grid.min_k + @as(i32, @intCast(grid.ny))) : (k += 1) {
-            var l: i32 = grid.min_l;
-            while (l < grid.min_l + @as(i32, @intCast(grid.nz))) : (l += 1) {
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(h))), math.Vec3.scale(b2, @as(f64, @floatFromInt(k)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(l))),
-                );
-                const g2 = math.Vec3.dot(gvec, gvec);
-                const kerker = if (g2 > 1e-12) g2 / (g2 + q0_sq) else 0.0;
-                res_g[idx] = math.complex.scale(res_g[idx], kerker);
-                idx += 1;
-            }
-        }
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        const kerker = if (g.g2 > 1e-12) g.g2 / (g.g2 + q0_sq) else 0.0;
+        res_g[g.idx] = math.complex.scale(res_g[g.idx], kerker);
     }
 
     // IFFT back to real space

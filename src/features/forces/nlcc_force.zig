@@ -1,5 +1,6 @@
 const std = @import("std");
 const math = @import("../math/math.zig");
+const gvec_iter = @import("../scf/gvec_iter.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const local_force = @import("local_force.zig");
@@ -138,10 +139,6 @@ pub fn nlccForcesGSpace(
         f.* = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
     }
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
-
     for (atoms, 0..) |atom, atom_index| {
         const entry = &species[atom.species_index];
         if (entry.upf.nlcc.len == 0) continue;
@@ -151,56 +148,35 @@ pub fn nlccForcesGSpace(
         var fy: f64 = 0.0;
         var fz: f64 = 0.0;
 
-        var idx: usize = 0;
-        var l: usize = 0;
-        while (l < grid.nz) : (l += 1) {
-            var k: usize = 0;
-            while (k < grid.ny) : (k += 1) {
-                var h: usize = 0;
-                while (h < grid.nx) : (h += 1) {
-                    const gh = grid.min_h + @as(i32, @intCast(h));
-                    const gk = grid.min_k + @as(i32, @intCast(k));
-                    const gl = grid.min_l + @as(i32, @intCast(l));
+        var it = gvec_iter.GVecIterator.init(grid);
+        while (it.next()) |g| {
+            // Skip G=0
+            if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
+                continue;
+            }
 
-                    // Skip G=0
-                    if (gh == 0 and gk == 0 and gl == 0) {
-                        idx += 1;
-                        continue;
-                    }
+            const g_norm = math.Vec3.norm(g.gvec);
 
-                    const gvec = math.Vec3.add(
-                        math.Vec3.add(
-                            math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                            math.Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                        ),
-                        math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                    );
-                    const g_norm = math.Vec3.norm(gvec);
+            // Core charge form factor: ρ_core(G) = 4π ∫ r² ρ_core(r) j0(Gr) dr
+            const rho_core_g = if (rho_core_tables) |tables|
+                tables[atom.species_index].eval(g_norm)
+            else
+                form_factor.rhoCoreG(entry.upf.*, g_norm);
 
-                    // Core charge form factor: ρ_core(G) = 4π ∫ r² ρ_core(r) j0(Gr) dr
-                    const rho_core_g = if (rho_core_tables) |tables|
-                        tables[atom.species_index].eval(g_norm)
-                    else
-                        form_factor.rhoCoreG(entry.upf.*, g_norm);
+            if (rho_core_g != 0.0) {
+                const vxc = vxc_g[g.idx];
+                const phase = math.Vec3.dot(g.gvec, pos);
+                const cos_phase = std.math.cos(phase);
+                const sin_phase = std.math.sin(phase);
 
-                    if (rho_core_g != 0.0) {
-                        const vxc = vxc_g[idx];
-                        const phase = math.Vec3.dot(gvec, pos);
-                        const cos_phase = std.math.cos(phase);
-                        const sin_phase = std.math.sin(phase);
+                // Phase factor: V_r sin(G·R) + V_i cos(G·R)
+                // = Re[-i × V̂_xc(G) × exp(iG·R)]
+                const phase_factor = vxc.r * sin_phase + vxc.i * cos_phase;
+                const coeff = rho_core_g * phase_factor;
 
-                        // Phase factor: V_r sin(G·R) + V_i cos(G·R)
-                        // = Re[-i × V̂_xc(G) × exp(iG·R)]
-                        const phase_factor = vxc.r * sin_phase + vxc.i * cos_phase;
-                        const coeff = rho_core_g * phase_factor;
-
-                        fx += gvec.x * coeff;
-                        fy += gvec.y * coeff;
-                        fz += gvec.z * coeff;
-                    }
-
-                    idx += 1;
-                }
+                fx += g.gvec.x * coeff;
+                fy += g.gvec.y * coeff;
+                fz += g.gvec.z * coeff;
             }
         }
 

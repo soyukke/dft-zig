@@ -6,6 +6,7 @@ const fft_grid = @import("fft_grid.zig");
 const grid_mod = @import("grid.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const math = @import("../math/math.zig");
+const gvec_iter = @import("gvec_iter.zig");
 const d3 = @import("../vdw/d3.zig");
 const d3_params = @import("../vdw/d3_params.zig");
 const xc_fields_mod = @import("xc_fields.zig");
@@ -84,57 +85,39 @@ pub fn computeEnergyTerms(
     const inv_volume = 1.0 / grid.volume;
     var eh: f64 = 0.0;
     var e_local: f64 = 0.0;
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(grid.recip.row(0), @as(f64, @floatFromInt(gh))), math.Vec3.scale(grid.recip.row(1), @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(grid.recip.row(2), @as(f64, @floatFromInt(gl))),
-                );
-                const g2 = math.Vec3.dot(gvec, gvec);
-                // ecutrho spherical cutoff: skip G-vectors beyond ecutrho
-                const beyond_ecutrho = if (ecutrho) |ecut| g2 >= ecut else false;
-                if (beyond_ecutrho) {
-                    idx += 1;
-                    continue;
-                }
-                const rho_val = rho_g[idx];
-                // E_H uses augmented density
-                const rho_eh_val = rho_g_for_eh[idx];
-                const rho2_eh = rho_eh_val.r * rho_eh_val.r + rho_eh_val.i * rho_eh_val.i;
-                if (coulomb_r_cut) |r_cut| {
-                    // Isolated system: cutoff Coulomb Hartree energy
-                    // E_H = (Ω/2) Σ_G |ρ(G)|² × v_c(G)
-                    const g_mag = @sqrt(g2);
-                    const kernel = coulomb.cutoffCoulombEnergyKernel(g2, g_mag, r_cut);
-                    eh += 0.5 * kernel * rho2_eh * grid.volume;
-                } else {
-                    // Periodic system: skip G=0
-                    if (gh == 0 and gk == 0 and gl == 0) {
-                        // e_local always uses pseudo density
-                        const vloc = try hamiltonian.ionicLocalPotential(gvec, species, atoms, inv_volume);
-                        e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
-                        idx += 1;
-                        continue;
-                    }
-                    if (g2 > 1e-12) {
-                        // E_H = (Ω/2) × 8π × Σ |ρ_aug(G)|² / |G|² (Rydberg units)
-                        eh += 0.5 * 8.0 * std.math.pi * rho2_eh / g2 * grid.volume;
-                    }
-                }
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        // ecutrho spherical cutoff: skip G-vectors beyond ecutrho
+        const beyond_ecutrho = if (ecutrho) |ecut| g.g2 >= ecut else false;
+        if (beyond_ecutrho) {
+            continue;
+        }
+        const rho_val = rho_g[g.idx];
+        // E_H uses augmented density
+        const rho_eh_val = rho_g_for_eh[g.idx];
+        const rho2_eh = rho_eh_val.r * rho_eh_val.r + rho_eh_val.i * rho_eh_val.i;
+        if (coulomb_r_cut) |r_cut| {
+            // Isolated system: cutoff Coulomb Hartree energy
+            // E_H = (Ω/2) Σ_G |ρ(G)|² × v_c(G)
+            const g_mag = @sqrt(g.g2);
+            const kernel = coulomb.cutoffCoulombEnergyKernel(g.g2, g_mag, r_cut);
+            eh += 0.5 * kernel * rho2_eh * grid.volume;
+        } else {
+            // Periodic system: skip G=0
+            if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
                 // e_local always uses pseudo density
-                const vloc = try hamiltonian.ionicLocalPotential(gvec, species, atoms, inv_volume);
+                const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume);
                 e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
-                idx += 1;
+                continue;
+            }
+            if (g.g2 > 1e-12) {
+                // E_H = (Ω/2) × 8π × Σ |ρ_aug(G)|² / |G|² (Rydberg units)
+                eh += 0.5 * 8.0 * std.math.pi * rho2_eh / g.g2 * grid.volume;
             }
         }
+        // e_local always uses pseudo density
+        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume);
+        e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
     }
     e_local *= grid.volume;
 
@@ -253,51 +236,33 @@ pub fn computeEnergyTermsSpin(
     const inv_volume = 1.0 / grid.volume;
     var eh: f64 = 0.0;
     var e_local: f64 = 0.0;
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(grid.recip.row(0), @as(f64, @floatFromInt(gh))), math.Vec3.scale(grid.recip.row(1), @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(grid.recip.row(2), @as(f64, @floatFromInt(gl))),
-                );
-                const g2 = math.Vec3.dot(gvec, gvec);
-                // ecutrho spherical cutoff: skip G-vectors beyond ecutrho
-                const beyond_ecutrho = if (ecutrho) |ecut| g2 >= ecut else false;
-                if (beyond_ecutrho) {
-                    idx += 1;
-                    continue;
-                }
-                const rho_val = rho_g[idx];
-                const rho2 = rho_val.r * rho_val.r + rho_val.i * rho_val.i;
-                // e_local uses pseudo density
-                const rho_loc = rho_g_for_eloc[idx];
-                if (coulomb_r_cut) |r_cut| {
-                    const g_mag = @sqrt(g2);
-                    const kernel = coulomb.cutoffCoulombEnergyKernel(g2, g_mag, r_cut);
-                    eh += 0.5 * kernel * rho2 * grid.volume;
-                } else {
-                    if (gh == 0 and gk == 0 and gl == 0) {
-                        const vloc = try hamiltonian.ionicLocalPotential(gvec, species, atoms, inv_volume);
-                        e_local += rho_loc.r * vloc.r + rho_loc.i * vloc.i;
-                        idx += 1;
-                        continue;
-                    }
-                    if (g2 > 1e-12) {
-                        eh += 0.5 * 8.0 * std.math.pi * rho2 / g2 * grid.volume;
-                    }
-                }
-                const vloc = try hamiltonian.ionicLocalPotential(gvec, species, atoms, inv_volume);
+    var it2 = gvec_iter.GVecIterator.init(grid);
+    while (it2.next()) |g| {
+        // ecutrho spherical cutoff: skip G-vectors beyond ecutrho
+        const beyond_ecutrho = if (ecutrho) |ecut| g.g2 >= ecut else false;
+        if (beyond_ecutrho) {
+            continue;
+        }
+        const rho_val = rho_g[g.idx];
+        const rho2 = rho_val.r * rho_val.r + rho_val.i * rho_val.i;
+        // e_local uses pseudo density
+        const rho_loc = rho_g_for_eloc[g.idx];
+        if (coulomb_r_cut) |r_cut| {
+            const g_mag = @sqrt(g.g2);
+            const kernel = coulomb.cutoffCoulombEnergyKernel(g.g2, g_mag, r_cut);
+            eh += 0.5 * kernel * rho2 * grid.volume;
+        } else {
+            if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
+                const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume);
                 e_local += rho_loc.r * vloc.r + rho_loc.i * vloc.i;
-                idx += 1;
+                continue;
+            }
+            if (g.g2 > 1e-12) {
+                eh += 0.5 * 8.0 * std.math.pi * rho2 / g.g2 * grid.volume;
             }
         }
+        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume);
+        e_local += rho_loc.r * vloc.r + rho_loc.i * vloc.i;
     }
     e_local *= grid.volume;
 

@@ -3,6 +3,11 @@ const complex_mod = @import("complex.zig");
 
 pub const Complex = complex_mod.Complex;
 pub const complex = complex_mod;
+pub const radial = @import("radial.zig");
+
+test {
+    _ = radial;
+}
 
 pub const Units = enum {
     angstrom,

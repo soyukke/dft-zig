@@ -3,14 +3,7 @@ const paw_data = @import("../pseudopotential/paw_data.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const PawData = paw_data.PawData;
 
-/// ABINIT-style ctrap endpoint weight for corrected trapezoidal integration.
-fn ctrapWeight(i: usize, n: usize) f64 {
-    const w = [5]f64{ 23.75 / 72.0, 95.10 / 72.0, 55.20 / 72.0, 79.30 / 72.0, 70.65 / 72.0 };
-    if (n < 10) return 1.0;
-    if (i < 5) return w[i];
-    if (i >= n - 5) return w[n - 1 - i];
-    return 1.0;
-}
+const ctrapWeight = @import("../math/math.zig").radial.ctrapWeight;
 
 /// Pre-computed PAW tables for one atomic species.
 /// Built once from UPF data and reused throughout the calculation.

@@ -1,6 +1,7 @@
 const std = @import("std");
 const fft_grid = @import("fft_grid.zig");
 const grid_mod = @import("grid.zig");
+const gvec_iter = @import("gvec_iter.zig");
 const math = @import("../math/math.zig");
 const xc = @import("../xc/xc.zig");
 
@@ -55,31 +56,13 @@ pub fn gradientFromReal(
     const gz_g = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(gz_g);
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
     const i_unit = math.complex.init(0.0, 1.0);
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const i_rho = math.complex.mul(values_g[idx], i_unit);
-                gx_g[idx] = math.complex.scale(i_rho, gvec.x);
-                gy_g[idx] = math.complex.scale(i_rho, gvec.y);
-                gz_g[idx] = math.complex.scale(i_rho, gvec.z);
-                idx += 1;
-            }
-        }
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        const i_rho = math.complex.mul(values_g[g.idx], i_unit);
+        gx_g[g.idx] = math.complex.scale(i_rho, g.gvec.x);
+        gy_g[g.idx] = math.complex.scale(i_rho, g.gvec.y);
+        gz_g[g.idx] = math.complex.scale(i_rho, g.gvec.z);
     }
 
     const gx = try reciprocalToReal(alloc, grid, gx_g);
@@ -109,33 +92,15 @@ pub fn divergenceFromReal(
     const total = grid.count();
     const div_g = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(div_g);
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
     const i_unit = math.complex.init(0.0, 1.0);
 
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const sum = math.complex.add(
-                    math.complex.add(math.complex.scale(bx_g[idx], gvec.x), math.complex.scale(by_g[idx], gvec.y)),
-                    math.complex.scale(bz_g[idx], gvec.z),
-                );
-                div_g[idx] = math.complex.mul(sum, i_unit);
-                idx += 1;
-            }
-        }
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        const sum = math.complex.add(
+            math.complex.add(math.complex.scale(bx_g[g.idx], g.gvec.x), math.complex.scale(by_g[g.idx], g.gvec.y)),
+            math.complex.scale(bz_g[g.idx], g.gvec.z),
+        );
+        div_g[g.idx] = math.complex.mul(sum, i_unit);
     }
 
     const div = try reciprocalToReal(alloc, grid, div_g);

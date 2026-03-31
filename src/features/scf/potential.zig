@@ -2,6 +2,7 @@ const std = @import("std");
 const coulomb = @import("../coulomb/coulomb.zig");
 const fft_grid = @import("fft_grid.zig");
 const grid_mod = @import("grid.zig");
+const gvec_iter = @import("gvec_iter.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const math = @import("../math/math.zig");
@@ -59,50 +60,30 @@ pub fn buildPotentialGrid(
 
     const total = grid.count();
     const values = try alloc.alloc(math.Complex, total);
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const g2 = math.Vec3.dot(gvec, gvec);
-                // ecutrho spherical cutoff: zero V_H(G) and V_xc(G) for |G|² >= ecutrho
-                // to match QE's G-sphere convention (all G-space ops limited to sphere)
-                const beyond_ecutrho = if (ecutrho) |ecut| g2 >= ecut else false;
-                if (beyond_ecutrho) {
-                    values[idx] = math.complex.init(0.0, 0.0);
-                    idx += 1;
-                    continue;
-                }
-                var vh = math.complex.init(0.0, 0.0);
-                if (coulomb_r_cut) |r_cut| {
-                    // Isolated system: cutoff Coulomb kernel
-                    const g_mag = @sqrt(g2);
-                    const kernel = coulomb.cutoffCoulombKernel(g2, g_mag, r_cut);
-                    vh = math.complex.scale(rho_g[idx], kernel);
-                } else {
-                    if (g2 > 1e-12) {
-                        // Periodic: Hartree potential in Rydberg units: V_H(G) = 8πρ(G)/G²
-                        // (factor 2 compared to Hartree units for consistency with
-                        // kinetic energy |k+G|² and UPF pseudopotentials in Rydberg)
-                        vh = math.complex.scale(rho_g[idx], 8.0 * std.math.pi / g2);
-                    }
-                }
-                values[idx] = math.complex.add(vh, vxc_g[idx]);
-                idx += 1;
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        // ecutrho spherical cutoff: zero V_H(G) and V_xc(G) for |G|² >= ecutrho
+        // to match QE's G-sphere convention (all G-space ops limited to sphere)
+        const beyond_ecutrho = if (ecutrho) |ecut| g.g2 >= ecut else false;
+        if (beyond_ecutrho) {
+            values[g.idx] = math.complex.init(0.0, 0.0);
+            continue;
+        }
+        var vh = math.complex.init(0.0, 0.0);
+        if (coulomb_r_cut) |r_cut| {
+            // Isolated system: cutoff Coulomb kernel
+            const g_mag = @sqrt(g.g2);
+            const kernel = coulomb.cutoffCoulombKernel(g.g2, g_mag, r_cut);
+            vh = math.complex.scale(rho_g[g.idx], kernel);
+        } else {
+            if (g.g2 > 1e-12) {
+                // Periodic: Hartree potential in Rydberg units: V_H(G) = 8πρ(G)/G²
+                // (factor 2 compared to Hartree units for consistency with
+                // kinetic energy |k+G|² and UPF pseudopotentials in Rydberg)
+                vh = math.complex.scale(rho_g[g.idx], 8.0 * std.math.pi / g.g2);
             }
         }
+        values[g.idx] = math.complex.add(vh, vxc_g[g.idx]);
     }
 
     return hamiltonian.PotentialGrid{
@@ -172,39 +153,20 @@ pub fn buildPotentialGridSpin(
     // Build V_H(G) + V_xc_up(G) and V_H(G) + V_xc_down(G)
     const values_up = try alloc.alloc(math.Complex, total);
     const values_down = try alloc.alloc(math.Complex, total);
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const g2 = math.Vec3.dot(gvec, gvec);
-                var vh = math.complex.init(0.0, 0.0);
-                if (coulomb_r_cut) |r_cut| {
-                    const g_mag = @sqrt(g2);
-                    const kernel = coulomb.cutoffCoulombKernel(g2, g_mag, r_cut);
-                    vh = math.complex.scale(rho_g[idx], kernel);
-                } else {
-                    if (g2 > 1e-12) {
-                        vh = math.complex.scale(rho_g[idx], 8.0 * std.math.pi / g2);
-                    }
-                }
-                values_up[idx] = math.complex.add(vh, vxc_up_g[idx]);
-                values_down[idx] = math.complex.add(vh, vxc_down_g[idx]);
-                idx += 1;
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        var vh = math.complex.init(0.0, 0.0);
+        if (coulomb_r_cut) |r_cut| {
+            const g_mag = @sqrt(g.g2);
+            const kernel = coulomb.cutoffCoulombKernel(g.g2, g_mag, r_cut);
+            vh = math.complex.scale(rho_g[g.idx], kernel);
+        } else {
+            if (g.g2 > 1e-12) {
+                vh = math.complex.scale(rho_g[g.idx], 8.0 * std.math.pi / g.g2);
             }
         }
+        values_up[g.idx] = math.complex.add(vh, vxc_up_g[g.idx]);
+        values_down[g.idx] = math.complex.add(vh, vxc_down_g[g.idx]);
     }
 
     return .{
@@ -242,36 +204,16 @@ pub fn buildIonicPotentialGrid(
 ) !hamiltonian.PotentialGrid {
     const total = grid.count();
     const values = try alloc.alloc(math.Complex, total);
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
     const inv_volume = 1.0 / grid.volume;
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                if (ecutrho) |ecut| {
-                    const g2 = math.Vec3.dot(gvec, gvec);
-                    if (g2 >= ecut) {
-                        values[idx] = math.complex.init(0.0, 0.0);
-                        idx += 1;
-                        continue;
-                    }
-                }
-                values[idx] = try hamiltonian.ionicLocalPotentialWithTable(gvec, species, atoms, inv_volume, ff_tables);
-                idx += 1;
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        if (ecutrho) |ecut| {
+            if (g.g2 >= ecut) {
+                values[g.idx] = math.complex.init(0.0, 0.0);
+                continue;
             }
         }
+        values[g.idx] = try hamiltonian.ionicLocalPotentialWithTable(g.gvec, species, atoms, inv_volume, ff_tables);
     }
     return hamiltonian.PotentialGrid{
         .nx = grid.nx,
@@ -312,29 +254,10 @@ pub fn filterDensityToEcutrho(
     const rho_g = try realToReciprocal(alloc, grid, rho, use_rfft);
     defer alloc.free(rho_g);
 
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
-    var idx: usize = 0;
-    var l: usize = 0;
-    while (l < grid.nz) : (l += 1) {
-        var k: usize = 0;
-        while (k < grid.ny) : (k += 1) {
-            var h: usize = 0;
-            while (h < grid.nx) : (h += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(h));
-                const gk = grid.min_k + @as(i32, @intCast(k));
-                const gl = grid.min_l + @as(i32, @intCast(l));
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const g2 = math.Vec3.dot(gvec, gvec);
-                if (g2 >= ecutrho) {
-                    rho_g[idx] = math.complex.init(0.0, 0.0);
-                }
-                idx += 1;
-            }
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        if (g.g2 >= ecutrho) {
+            rho_g[g.idx] = math.complex.init(0.0, 0.0);
         }
     }
     return try reciprocalToReal(alloc, grid, rho_g);
