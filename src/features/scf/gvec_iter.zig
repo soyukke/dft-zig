@@ -33,6 +33,18 @@ pub const GVecIterator = struct {
     idx: usize,
 
     pub fn init(grid: anytype) GVecIterator {
+        const T = @TypeOf(grid);
+        // Unwrap pointer types so @hasField works for both Grid and *Grid / *const Grid.
+        const Inner = switch (@typeInfo(T)) {
+            .pointer => |p| p.child,
+            else => T,
+        };
+        comptime {
+            for (.{ "recip", "min_h", "min_k", "min_l", "nx", "ny", "nz" }) |field| {
+                if (!@hasField(Inner, field))
+                    @compileError("GVecIterator: grid type missing field '" ++ field ++ "'");
+            }
+        }
         return .{
             .b1 = grid.recip.row(0),
             .b2 = grid.recip.row(1),

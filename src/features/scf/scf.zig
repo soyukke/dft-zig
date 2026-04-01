@@ -27,6 +27,7 @@ const smearing_mod = @import("smearing.zig");
 const symmetry = @import("../symmetry/symmetry.zig");
 const thread_pool = @import("../thread_pool.zig");
 const util = @import("util.zig");
+const ctrapWeight = @import("../math/math.zig").radial.ctrapWeight;
 
 pub const ThreadPool = thread_pool.ThreadPool;
 
@@ -1493,12 +1494,10 @@ fn rhoAtomFormFactor(upf: *const @import("../pseudopotential/pseudopotential.zig
     if (upf.rho_atom.len == 0) return 0.0;
     const n = @min(upf.rho_atom.len, @min(upf.r.len, upf.rab.len));
     var sum: f64 = 0.0;
-    const w = [5]f64{ 23.75 / 72.0, 95.10 / 72.0, 55.20 / 72.0, 79.30 / 72.0, 70.65 / 72.0 };
     for (0..n) |i| {
         const x = g * upf.r[i];
         const j0 = nonlocal_mod.sphericalBessel(0, x);
-        const cw: f64 = if (n < 10) 1.0 else if (i < 5) w[i] else if (i >= n - 5) w[n - 1 - i] else 1.0;
-        sum += upf.rho_atom[i] * j0 * upf.rab[i] * cw;
+        sum += upf.rho_atom[i] * j0 * upf.rab[i] * ctrapWeight(i, n);
     }
     return sum;
 }

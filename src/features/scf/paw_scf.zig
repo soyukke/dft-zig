@@ -2,6 +2,7 @@ const std = @import("std");
 const apply = @import("apply.zig");
 const fft_grid = @import("fft_grid.zig");
 const grid_mod = @import("grid.zig");
+const gvec_iter = @import("gvec_iter.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const math = @import("../math/math.zig");
 const nonlocal_mod = @import("../pseudopotential/nonlocal.zig");
@@ -221,9 +222,6 @@ pub fn updatePawDij(
     rhoij_spin: ?*const paw_mod.RhoIJ,
     dij_mix_beta: f64,
 ) !void {
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
     const total = grid.count();
 
     for (species, 0..) |entry_s, si| {
@@ -299,106 +297,83 @@ pub fn updatePawDij(
             }
 
             // Add D^hat: radial (L=0 only) and m-resolved (all L with Gaunt)
-            var gidx: usize = 0;
-            var il: usize = 0;
-            while (il < grid.nz) : (il += 1) {
-                var ik: usize = 0;
-                while (ik < grid.ny) : (ik += 1) {
-                    var ih: usize = 0;
-                    while (ih < grid.nx) : (ih += 1) {
-                        const gh = grid.min_h + @as(i32, @intCast(ih));
-                        const gk = grid.min_k + @as(i32, @intCast(ik));
-                        const gl = grid.min_l + @as(i32, @intCast(il));
-                        const gvec = math.Vec3.add(
-                            math.Vec3.add(
-                                math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                                math.Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                            ),
-                            math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                        );
-                        const g_abs = math.Vec3.norm(gvec);
-                        const g2_dij = g_abs * g_abs;
-                        if (g2_dij >= ecutrho) {
-                            gidx += 1;
-                            continue;
+            var git = gvec_iter.GVecIterator.init(grid);
+            while (git.next()) |g| {
+                if (g.g2 >= ecutrho) continue;
+                const g_abs = @sqrt(g.g2);
+
+                const v_hxc = if (g.idx < total) potential.values[g.idx] else math.complex.init(0.0, 0.0);
+                const v_loc = if (g.idx < total) ionic.values[g.idx] else math.complex.init(0.0, 0.0);
+                const v_eff = math.complex.add(v_hxc, v_loc);
+
+                const g_dot_r = math.Vec3.dot(g.gvec, pos);
+                const sf_re = @cos(g_dot_r);
+                const sf_im = @sin(g_dot_r);
+                const prod_re = v_eff.r * sf_re - v_eff.i * sf_im;
+
+                // Pre-compute Y_{L,M}(Ĝ) for m-resolved D^hat
+                var ylm_g: [25]f64 = undefined;
+                const lmax_aug = gaunt_table.lmax_aug;
+                if (g_abs > 1e-10) {
+                    for (0..lmax_aug + 1) |big_l| {
+                        const bl_i32: i32 = @intCast(big_l);
+                        var bm: i32 = -bl_i32;
+                        while (bm <= bl_i32) : (bm += 1) {
+                            ylm_g[paw_mod.GauntTable.lmIndex(big_l, bm)] =
+                                nonlocal_mod.realSphericalHarmonic(bl_i32, bm, g.gvec.x, g.gvec.y, g.gvec.z);
                         }
+                    }
+                } else {
+                    @memset(&ylm_g, 0.0);
+                    ylm_g[0] = 1.0 / @sqrt(4.0 * std.math.pi);
+                }
 
-                        const v_hxc = if (gidx < total) potential.values[gidx] else math.complex.init(0.0, 0.0);
-                        const v_loc = if (gidx < total) ionic.values[gidx] else math.complex.init(0.0, 0.0);
-                        const v_eff = math.complex.add(v_hxc, v_loc);
+                for (0..tab.n_qijl_entries) |e| {
+                    const qidx_e = tab.qijl_indices[e];
+                    const big_l = qidx_e.l;
+                    const i_beta = qidx_e.first;
+                    const j_beta = qidx_e.second;
 
-                        const g_dot_r = math.Vec3.dot(gvec, pos);
-                        const sf_re = @cos(g_dot_r);
-                        const sf_im = @sin(g_dot_r);
-                        const prod_re = v_eff.r * sf_re - v_eff.i * sf_im;
+                    const qijl_g = tab.evalQijlForm(e, g_abs);
+                    if (@abs(qijl_g) < 1e-30) continue;
 
-                        // Pre-compute Y_{L,M}(Ĝ) for m-resolved D^hat
-                        var ylm_g: [25]f64 = undefined;
-                        const lmax_aug = gaunt_table.lmax_aug;
-                        if (g_abs > 1e-10) {
-                            for (0..lmax_aug + 1) |big_l| {
-                                const bl_i32: i32 = @intCast(big_l);
-                                var bm: i32 = -bl_i32;
-                                while (bm <= bl_i32) : (bm += 1) {
-                                    ylm_g[paw_mod.GauntTable.lmIndex(big_l, bm)] =
-                                        nonlocal_mod.realSphericalHarmonic(bl_i32, bm, gvec.x, gvec.y, gvec.z);
-                                }
-                            }
-                        } else {
-                            @memset(&ylm_g, 0.0);
-                            ylm_g[0] = 1.0 / @sqrt(4.0 * std.math.pi);
+                    // Radial D^hat (L=0 only, for forces)
+                    if (big_l == 0) {
+                        const ylm_00 = 1.0 / @sqrt(4.0 * std.math.pi);
+                        const gaunt_00 = 1.0 / @sqrt(4.0 * std.math.pi);
+                        const contrib = prod_re * qijl_g * ylm_00 * gaunt_00;
+                        dij[i_beta * nb + j_beta] += contrib;
+                        if (i_beta != j_beta) {
+                            dij[j_beta * nb + i_beta] += contrib;
                         }
+                    }
 
-                        for (0..tab.n_qijl_entries) |e| {
-                            const qidx_e = tab.qijl_indices[e];
-                            const big_l = qidx_e.l;
-                            const i_beta = qidx_e.first;
-                            const j_beta = qidx_e.second;
+                    // m-resolved D^hat (all L, for Hamiltonian)
+                    const l_i = @as(usize, @intCast(tab.l_list[i_beta]));
+                    const l_j = @as(usize, @intCast(tab.l_list[j_beta]));
+                    const bl_i32: i32 = @intCast(big_l);
+                    var bm: i32 = -bl_i32;
+                    while (bm <= bl_i32) : (bm += 1) {
+                        const ylm_val = ylm_g[paw_mod.GauntTable.lmIndex(big_l, bm)];
+                        if (@abs(ylm_val) < 1e-30) continue;
 
-                            const qijl_g = tab.evalQijlForm(e, g_abs);
-                            if (@abs(qijl_g) < 1e-30) continue;
-
-                            // Radial D^hat (L=0 only, for forces)
-                            if (big_l == 0) {
-                                const ylm_00 = 1.0 / @sqrt(4.0 * std.math.pi);
-                                const gaunt_00 = 1.0 / @sqrt(4.0 * std.math.pi);
-                                const contrib = prod_re * qijl_g * ylm_00 * gaunt_00;
-                                dij[i_beta * nb + j_beta] += contrib;
+                        const li_i32: i32 = @intCast(l_i);
+                        const lj_i32: i32 = @intCast(l_j);
+                        var mi: i32 = -li_i32;
+                        while (mi <= li_i32) : (mi += 1) {
+                            const im = sp_m_offsets[i_beta] + @as(usize, @intCast(mi + li_i32));
+                            var mj: i32 = -lj_i32;
+                            while (mj <= lj_i32) : (mj += 1) {
+                                const g_coeff = gaunt_table.get(l_i, mi, l_j, mj, big_l, bm);
+                                if (g_coeff == 0.0) continue;
+                                const jm = sp_m_offsets[j_beta] + @as(usize, @intCast(mj + lj_i32));
+                                const contrib_m = prod_re * qijl_g * ylm_val * g_coeff;
+                                dij_m[im * mt + jm] += contrib_m;
                                 if (i_beta != j_beta) {
-                                    dij[j_beta * nb + i_beta] += contrib;
-                                }
-                            }
-
-                            // m-resolved D^hat (all L, for Hamiltonian)
-                            const l_i = @as(usize, @intCast(tab.l_list[i_beta]));
-                            const l_j = @as(usize, @intCast(tab.l_list[j_beta]));
-                            const bl_i32: i32 = @intCast(big_l);
-                            var bm: i32 = -bl_i32;
-                            while (bm <= bl_i32) : (bm += 1) {
-                                const ylm_val = ylm_g[paw_mod.GauntTable.lmIndex(big_l, bm)];
-                                if (@abs(ylm_val) < 1e-30) continue;
-
-                                const li_i32: i32 = @intCast(l_i);
-                                const lj_i32: i32 = @intCast(l_j);
-                                var mi: i32 = -li_i32;
-                                while (mi <= li_i32) : (mi += 1) {
-                                    const im = sp_m_offsets[i_beta] + @as(usize, @intCast(mi + li_i32));
-                                    var mj: i32 = -lj_i32;
-                                    while (mj <= lj_i32) : (mj += 1) {
-                                        const g_coeff = gaunt_table.get(l_i, mi, l_j, mj, big_l, bm);
-                                        if (g_coeff == 0.0) continue;
-                                        const jm = sp_m_offsets[j_beta] + @as(usize, @intCast(mj + lj_i32));
-                                        const contrib_m = prod_re * qijl_g * ylm_val * g_coeff;
-                                        dij_m[im * mt + jm] += contrib_m;
-                                        if (i_beta != j_beta) {
-                                            dij_m[jm * mt + im] += contrib_m;
-                                        }
-                                    }
+                                    dij_m[jm * mt + im] += contrib_m;
                                 }
                             }
                         }
-
-                        gidx += 1;
                     }
                 }
             }
