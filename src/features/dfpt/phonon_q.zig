@@ -7,18 +7,13 @@
 const std = @import("std");
 const math = @import("../math/math.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
-const apply_mod = @import("../scf/apply.zig");
+const scf_mod = @import("../scf/scf.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const d3 = @import("../vdw/d3.zig");
 const d3_params = @import("../vdw/d3_params.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
-const fft_grid = @import("../scf/fft_grid.zig");
-const grid_mod = @import("../scf/grid.zig");
 const config_mod = @import("../config/config.zig");
-const scf_mod = @import("../scf/scf.zig");
-const pw_grid_map = @import("../scf/pw_grid_map.zig");
 const iterative = @import("../linalg/iterative.zig");
-const mixing = @import("../scf/mixing.zig");
 const symmetry_mod = @import("../symmetry/symmetry.zig");
 
 const dfpt = @import("dfpt.zig");
@@ -42,7 +37,7 @@ const mesh_mod = @import("../kpoints/mesh.zig");
 const reduction = @import("../kpoints/reduction.zig");
 const wfn_rot = @import("../symmetry/wavefunction_rotation.zig");
 
-const Grid = grid_mod.Grid;
+const Grid = scf_mod.Grid;
 
 // =====================================================================
 // K-point ground-state data (q-independent)
@@ -58,8 +53,8 @@ pub const KPointGsData = struct {
     n_occ: usize,
     n_pw_k: usize,
     basis_k: plane_wave.Basis,
-    map_k: pw_grid_map.PwGridMap,
-    apply_ctx_k: *apply_mod.ApplyContext,
+    map_k: scf_mod.PwGridMap,
+    apply_ctx_k: *scf_mod.ApplyContext,
     eigenvalues_k: []f64,
     wavefunctions_k: [][]math.Complex,
     wavefunctions_k_const: [][]const math.Complex,
@@ -122,13 +117,13 @@ pub fn prepareFullBZKpoints(
         const n_pw_k = basis_k.gvecs.len;
 
         // Build PwGridMap for k
-        var map_k = try pw_grid_map.PwGridMap.init(alloc, @constCast(basis_k.gvecs), grid);
+        var map_k = try scf_mod.PwGridMap.init(alloc, @constCast(basis_k.gvecs), grid);
         errdefer map_k.deinit(alloc);
 
         // Build ApplyContext for H_k
-        const apply_ctx_k = try alloc.create(apply_mod.ApplyContext);
+        const apply_ctx_k = try alloc.create(scf_mod.ApplyContext);
         errdefer alloc.destroy(apply_ctx_k);
-        apply_ctx_k.* = try apply_mod.ApplyContext.init(
+        apply_ctx_k.* = try scf_mod.ApplyContext.init(
             alloc,
             grid,
             @constCast(basis_k.gvecs),
@@ -156,8 +151,8 @@ pub fn prepareFullBZKpoints(
         const op_k = iterative.Operator{
             .n = n_pw_k,
             .ctx = @ptrCast(apply_ctx_k),
-            .apply = &apply_mod.applyHamiltonian,
-            .apply_batch = &apply_mod.applyHamiltonianBatched,
+            .apply = &scf_mod.applyHamiltonian,
+            .apply_batch = &scf_mod.applyHamiltonianBatched,
         };
         var eig_k = try iterative.hermitianEigenDecompIterative(
             alloc,
@@ -269,9 +264,9 @@ pub fn prepareFullBZKpointsFromIBZ(
         const n_pw_k = basis_k.gvecs.len;
 
         // Build ApplyContext for H_k
-        const apply_ctx_k = try alloc.create(apply_mod.ApplyContext);
+        const apply_ctx_k = try alloc.create(scf_mod.ApplyContext);
         errdefer alloc.destroy(apply_ctx_k);
-        apply_ctx_k.* = try apply_mod.ApplyContext.init(
+        apply_ctx_k.* = try scf_mod.ApplyContext.init(
             alloc,
             grid,
             @constCast(basis_k.gvecs),
@@ -298,8 +293,8 @@ pub fn prepareFullBZKpointsFromIBZ(
         const op_k = iterative.Operator{
             .n = n_pw_k,
             .ctx = @ptrCast(apply_ctx_k),
-            .apply = &apply_mod.applyHamiltonian,
-            .apply_batch = &apply_mod.applyHamiltonianBatched,
+            .apply = &scf_mod.applyHamiltonian,
+            .apply_batch = &scf_mod.applyHamiltonianBatched,
         };
         var eig_k = try iterative.hermitianEigenDecompIterative(
             alloc,
@@ -421,13 +416,13 @@ pub fn prepareFullBZKpointsFromIBZ(
         const n_pw_sk = n_pw_ibz;
 
         // Build PwGridMap for S*k
-        var map_sk = try pw_grid_map.PwGridMap.init(alloc, @constCast(basis_sk.gvecs), grid);
+        var map_sk = try scf_mod.PwGridMap.init(alloc, @constCast(basis_sk.gvecs), grid);
         errdefer map_sk.deinit(alloc);
 
         // Build ApplyContext for H_{S*k}
-        const apply_ctx_sk = try alloc.create(apply_mod.ApplyContext);
+        const apply_ctx_sk = try alloc.create(scf_mod.ApplyContext);
         errdefer alloc.destroy(apply_ctx_sk);
-        apply_ctx_sk.* = try apply_mod.ApplyContext.init(
+        apply_ctx_sk.* = try scf_mod.ApplyContext.init(
             alloc,
             grid,
             @constCast(basis_sk.gvecs),
@@ -585,12 +580,12 @@ fn buildKPointDfptDataFromGS(
         errdefer basis_kq.deinit(alloc);
         const n_pw_kq = basis_kq.gvecs.len;
 
-        var map_kq = try pw_grid_map.PwGridMap.init(alloc, @constCast(basis_kq.gvecs), grid);
+        var map_kq = try scf_mod.PwGridMap.init(alloc, @constCast(basis_kq.gvecs), grid);
         errdefer map_kq.deinit(alloc);
 
-        const apply_ctx_kq = try alloc.create(apply_mod.ApplyContext);
+        const apply_ctx_kq = try alloc.create(scf_mod.ApplyContext);
         errdefer alloc.destroy(apply_ctx_kq);
-        apply_ctx_kq.* = try apply_mod.ApplyContext.initWithWorkspaces(
+        apply_ctx_kq.* = try scf_mod.ApplyContext.initWithWorkspaces(
             alloc,
             grid,
             @constCast(basis_kq.gvecs),
@@ -635,8 +630,8 @@ fn buildKPointDfptDataFromGS(
             const op_kq = iterative.Operator{
                 .n = n_pw_kq,
                 .ctx = @ptrCast(apply_ctx_kq),
-                .apply = &apply_mod.applyHamiltonian,
-                .apply_batch = &apply_mod.applyHamiltonianBatched,
+                .apply = &scf_mod.applyHamiltonian,
+                .apply_batch = &scf_mod.applyHamiltonianBatched,
             };
             var eig_kq = try iterative.hermitianEigenDecompIterative(
                 alloc,
@@ -702,9 +697,9 @@ pub const KPointDfptData = struct {
     /// PW basis G-vectors at k
     basis_k: plane_wave.Basis,
     /// PwGridMap for k-basis
-    map_k: pw_grid_map.PwGridMap,
+    map_k: scf_mod.PwGridMap,
     /// Apply context for H_k
-    apply_ctx_k: *apply_mod.ApplyContext,
+    apply_ctx_k: *scf_mod.ApplyContext,
     /// Eigenvalues at k
     eigenvalues_k: []f64,
     /// Occupied wavefunctions at k: [n_occ][n_pw_k]
@@ -716,9 +711,9 @@ pub const KPointDfptData = struct {
     /// PW basis G-vectors at k+q
     basis_kq: plane_wave.Basis,
     /// PwGridMap for k+q-basis
-    map_kq: pw_grid_map.PwGridMap,
+    map_kq: scf_mod.PwGridMap,
     /// Apply context for H_{k+q}
-    apply_ctx_kq: *apply_mod.ApplyContext,
+    apply_ctx_kq: *scf_mod.ApplyContext,
     /// Occupied wavefunctions at k+q (for P_c projection): [n_occ_kq][n_pw_kq]
     occ_kq: [][]math.Complex,
     /// Const view
@@ -781,8 +776,8 @@ pub const MultiKPertResult = struct {
 fn applyV1PsiQ(
     alloc: std.mem.Allocator,
     grid: Grid,
-    map_k: *const pw_grid_map.PwGridMap,
-    map_kq: *const pw_grid_map.PwGridMap,
+    map_k: *const scf_mod.PwGridMap,
+    map_kq: *const scf_mod.PwGridMap,
     v1_r_complex: []const math.Complex,
     psi_k: []const math.Complex,
     n_pw_k: usize,
@@ -799,7 +794,7 @@ fn applyV1PsiQ(
     // IFFT to real space
     const work_r = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_r);
-    try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, work_g, work_r, null);
+    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g, work_r, null);
 
     // Multiply by V^(1)(r) (complex × complex)
     for (0..total) |i| {
@@ -809,7 +804,7 @@ fn applyV1PsiQ(
     // FFT back to reciprocal space
     const work_g_out = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_g_out);
-    try fft_grid.fftComplexToReciprocalInPlace(alloc, grid, work_r, work_g_out, null);
+    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, work_r, work_g_out, null);
 
     // Gather to k+q-basis
     const result = try alloc.alloc(math.Complex, n_pw_kq);
@@ -824,7 +819,7 @@ fn applyV1PsiQ(
 pub fn applyV1PsiQCached(
     alloc: std.mem.Allocator,
     grid: Grid,
-    map_kq: *const pw_grid_map.PwGridMap,
+    map_kq: *const scf_mod.PwGridMap,
     v1_r_complex: []const math.Complex,
     psi0_r: []const math.Complex,
     n_pw_kq: usize,
@@ -841,7 +836,7 @@ pub fn applyV1PsiQCached(
     // FFT back to reciprocal space
     const work_g_out = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_g_out);
-    try fft_grid.fftComplexToReciprocalInPlace(alloc, grid, work_r, work_g_out, null);
+    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, work_r, work_g_out, null);
 
     // Gather to k+q-basis
     const result = try alloc.alloc(math.Complex, n_pw_kq);
@@ -860,8 +855,8 @@ pub fn applyV1PsiQCached(
 fn computeRho1Q(
     alloc: std.mem.Allocator,
     grid: Grid,
-    map_k: *const pw_grid_map.PwGridMap,
-    map_kq: *const pw_grid_map.PwGridMap,
+    map_k: *const scf_mod.PwGridMap,
+    map_kq: *const scf_mod.PwGridMap,
     psi0_k: []const []const math.Complex,
     psi1_kq: []const []const math.Complex,
     n_occ: usize,
@@ -891,12 +886,12 @@ fn computeRho1Q(
         // ψ^(0)(r) via IFFT using k-basis map
         @memset(work_g0, math.complex.init(0.0, 0.0));
         map_k.scatter(psi0_k[n], work_g0);
-        try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, work_g0, work_r0, null);
+        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g0, work_r0, null);
 
         // ψ^(1)(r) via IFFT using k+q-basis map
         @memset(work_g1, math.complex.init(0.0, 0.0));
         map_kq.scatter(psi1_kq[n], work_g1);
-        try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, work_g1, work_r1, null);
+        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g1, work_r1, null);
 
         // ρ^(1)(r) += (4×wtk/Ω) × ψ^(0)*(r) × ψ^(1)(r)  [complex]
         for (0..total) |i| {
@@ -916,7 +911,7 @@ fn computeRho1Q(
 pub fn computeRho1QCached(
     alloc: std.mem.Allocator,
     grid: Grid,
-    map_kq: *const pw_grid_map.PwGridMap,
+    map_kq: *const scf_mod.PwGridMap,
     psi0_r_cache: []const []const math.Complex,
     psi1_kq: []const []const math.Complex,
     n_occ: usize,
@@ -940,7 +935,7 @@ pub fn computeRho1QCached(
         // ψ^(1)(r) via IFFT using k+q-basis map
         @memset(work_g1, math.complex.init(0.0, 0.0));
         map_kq.scatter(psi1_kq[n], work_g1);
-        try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, work_g1, work_r1, null);
+        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g1, work_r1, null);
 
         // ρ^(1)(r) += (4×wtk/Ω) × ψ^(0)*(r) × ψ^(1)(r)  [complex]
         for (0..total) |i| {
@@ -961,7 +956,7 @@ fn complexRealToReciprocal(
 ) ![]math.Complex {
     const total = grid.count();
     const out = try alloc.alloc(math.Complex, total);
-    try fft_grid.fftComplexToReciprocalInPlace(alloc, grid, rho1_r, out, null);
+    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, rho1_r, out, null);
     return out;
 }
 
@@ -991,7 +986,7 @@ pub fn computeNonlocalResponseDynmatQ(
     gs: GroundState,
     pert_results: []PerturbationResult,
     gvecs_kq: []const plane_wave.GVector,
-    apply_ctx_kq: *apply_mod.ApplyContext,
+    apply_ctx_kq: *scf_mod.ApplyContext,
     n_atoms: usize,
 ) ![]math.Complex {
     const dim = 3 * n_atoms;
@@ -1076,7 +1071,7 @@ pub fn computeNlccCrossDynmatQ(
         @memcpy(rho1_core_i_copy, rho1_core_gs[i]);
         const rho1_core_i_r = try alloc.alloc(math.Complex, total);
         defer alloc.free(rho1_core_i_r);
-        try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, rho1_core_i_copy, rho1_core_i_r, null);
+        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rho1_core_i_copy, rho1_core_i_r, null);
 
         // Build V_xc^(1)[ρ^(1)_core,I] using GGA-aware kernel
         const vxc1_core_i = try perturbation.buildXcPerturbationFullComplex(alloc, gs, rho1_core_i_r);
@@ -1090,7 +1085,7 @@ pub fn computeNlccCrossDynmatQ(
             @memcpy(rho1_val_g_copy, rho1_val_gs[j]);
             const work_r_j = try alloc.alloc(math.Complex, total);
             defer alloc.free(work_r_j);
-            try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, rho1_val_g_copy, work_r_j, null);
+            try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rho1_val_g_copy, work_r_j, null);
 
             // Get ρ^(1)_core,Jβ(r)
             const rho1_core_j_copy = try alloc.alloc(math.Complex, total);
@@ -1098,7 +1093,7 @@ pub fn computeNlccCrossDynmatQ(
             @memcpy(rho1_core_j_copy, rho1_core_gs[j]);
             const rho1_core_j_r = try alloc.alloc(math.Complex, total);
             defer alloc.free(rho1_core_j_r);
-            try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, rho1_core_j_copy, rho1_core_j_r, null);
+            try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rho1_core_j_copy, rho1_core_j_r, null);
 
             // D(I,J) = ∫ conj(V_xc^(1)[ρ^(1)_core,I]) × ρ^(1)_total,J dr
             var sum = math.complex.init(0.0, 0.0);
@@ -1129,8 +1124,8 @@ pub fn solvePerturbationQ(
     cfg: DfptConfig,
     q_cart: math.Vec3,
     gvecs_kq: []const plane_wave.GVector,
-    apply_ctx_kq: *apply_mod.ApplyContext,
-    map_kq: *const pw_grid_map.PwGridMap,
+    apply_ctx_kq: *scf_mod.ApplyContext,
+    map_kq: *const scf_mod.PwGridMap,
     occ_kq: []const []const math.Complex,
     n_occ_kq: usize,
 ) !PerturbationResult {
@@ -1200,7 +1195,7 @@ pub fn solvePerturbationQ(
     @memcpy(rho1_core_g_copy, rho1_core_g);
     const rho1_core_r = try alloc.alloc(math.Complex, total);
     defer alloc.free(rho1_core_r);
-    try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, rho1_core_g_copy, rho1_core_r, null);
+    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rho1_core_g_copy, rho1_core_r, null);
 
     // Allocate first-order wavefunctions in k+q basis
     var psi1 = try alloc.alloc([]math.Complex, n_occ);
@@ -1210,7 +1205,7 @@ pub fn solvePerturbationQ(
     }
 
     // Map for k-basis
-    const map_k_ptr: *const pw_grid_map.PwGridMap = &gs.apply_ctx.map;
+    const map_k_ptr: *const scf_mod.PwGridMap = &gs.apply_ctx.map;
 
     // Initialize V_SCF(G) = V_loc^(1)(G) [bare perturbation, no screening]
     var v_scf_g = try alloc.alloc(math.Complex, total);
@@ -1228,12 +1223,12 @@ pub fn solvePerturbationQ(
         defer alloc.free(work);
         @memset(work, math.complex.init(0.0, 0.0));
         map_k_ptr.scatter(gs.wavefunctions[n], work);
-        try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, work, psi0_r_cache[n], null);
+        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work, psi0_r_cache[n], null);
     }
     const psi0_r_const: []const []const math.Complex = @ptrCast(psi0_r_cache);
 
     // Pulay mixer for potential mixing
-    var pulay = mixing.ComplexPulayMixer.init(alloc, cfg.pulay_history);
+    var pulay = scf_mod.ComplexPulayMixer.init(alloc, cfg.pulay_history);
     defer pulay.deinit();
 
     // Pulay restart state
@@ -1253,7 +1248,7 @@ pub fn solvePerturbationQ(
         @memcpy(v_scf_g_copy, v_scf_g);
         const v_scf_r = try alloc.alloc(math.Complex, total);
         defer alloc.free(v_scf_r);
-        try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, v_scf_g_copy, v_scf_r, null);
+        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, v_scf_g_copy, v_scf_r, null);
 
         // Debug: on first iteration, print some v_scf values
         if (iter == 0) {
@@ -1372,7 +1367,7 @@ pub fn solvePerturbationQ(
         @memcpy(rho1_g_copy2, rho1_g);
         const rho1_val_r = try alloc.alloc(math.Complex, total);
         defer alloc.free(rho1_val_r);
-        try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, rho1_g_copy2, rho1_val_r, null);
+        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rho1_g_copy2, rho1_val_r, null);
 
         const rho1_total_r = try alloc.alloc(math.Complex, total);
         defer alloc.free(rho1_total_r);
@@ -1389,7 +1384,7 @@ pub fn solvePerturbationQ(
         @memcpy(vxc1_r_fft, vxc1_r);
         const vxc1_g = try alloc.alloc(math.Complex, total);
         defer alloc.free(vxc1_g);
-        try fft_grid.fftComplexToReciprocalInPlace(alloc, grid, vxc1_r_fft, vxc1_g, null);
+        try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, vxc1_r_fft, vxc1_g, null);
 
         // V_out(G) = V_loc + V_H + V_xc
         const v_out_g = try alloc.alloc(math.Complex, total);
@@ -1484,7 +1479,6 @@ pub fn solvePerturbationQ(
 // Multi-k-point DFPT perturbation solver
 // =====================================================================
 
-const scf_kpoints = @import("../scf/kpoints.zig");
 
 /// Shared data for parallel DFPT k-point processing within one SCF iteration.
 const DfptKpointShared = struct {
@@ -1568,7 +1562,7 @@ fn processOneKpointDfpt(
     const kd = &shared.kpts[ik];
     const n_occ = kd.n_occ;
     const n_pw_kq = kd.n_pw_kq;
-    const map_kq_ptr: *const pw_grid_map.PwGridMap = &kd.map_kq;
+    const map_kq_ptr: *const scf_mod.PwGridMap = &kd.map_kq;
     const total = shared.total;
 
     // Nonlocal contexts
@@ -1710,7 +1704,7 @@ pub fn solvePerturbationQMultiK(
     @memcpy(rho1_core_g_copy, rho1_core_g);
     const rho1_core_r = try alloc.alloc(math.Complex, total);
     defer alloc.free(rho1_core_r);
-    try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, rho1_core_g_copy, rho1_core_r, null);
+    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rho1_core_g_copy, rho1_core_r, null);
 
     // Allocate per-k-point first-order wavefunctions
     var psi1_per_k = try alloc.alloc([][]math.Complex, n_kpts);
@@ -1745,12 +1739,12 @@ pub fn solvePerturbationQMultiK(
             defer alloc.free(work);
             @memset(work, math.complex.init(0.0, 0.0));
             kd.map_k.scatter(kd.wavefunctions_k_const[n], work);
-            try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, work, psi0_r_cache[ik][n], null);
+            try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work, psi0_r_cache[ik][n], null);
         }
     }
 
     // Pulay mixer for potential mixing
-    var pulay = mixing.ComplexPulayMixer.init(alloc, cfg.pulay_history);
+    var pulay = scf_mod.ComplexPulayMixer.init(alloc, cfg.pulay_history);
     defer pulay.deinit();
 
     // Pulay restart state
@@ -1770,21 +1764,21 @@ pub fn solvePerturbationQMultiK(
         @memcpy(v_scf_g_copy, v_scf_g);
         const v_scf_r = try alloc.alloc(math.Complex, total);
         defer alloc.free(v_scf_r);
-        try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, v_scf_g_copy, v_scf_r, null);
+        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, v_scf_g_copy, v_scf_r, null);
 
         // Accumulate ρ^(1) over all k-points (parallel or sequential)
         const rho1_r = try alloc.alloc(math.Complex, total);
         defer alloc.free(rho1_r);
         @memset(rho1_r, math.complex.init(0.0, 0.0));
 
-        const thread_count = scf_kpoints.kpointThreadCount(n_kpts, cfg.kpoint_threads);
+        const thread_count = scf_mod.kpointThreadCount(n_kpts, cfg.kpoint_threads);
 
         if (thread_count <= 1) {
             // Sequential path — use cached ψ^(0)(r)
             for (kpts, 0..) |*kd, ik| {
                 const n_occ = kd.n_occ;
                 const n_pw_kq = kd.n_pw_kq;
-                const map_kq_ptr: *const pw_grid_map.PwGridMap = &kd.map_kq;
+                const map_kq_ptr: *const scf_mod.PwGridMap = &kd.map_kq;
 
                 // Nonlocal contexts
                 const nl_ctx_k_opt = kd.apply_ctx_k.nonlocal_ctx;
@@ -1975,7 +1969,7 @@ pub fn solvePerturbationQMultiK(
         @memcpy(rho1_g_copy2, rho1_g);
         const rho1_val_r = try alloc.alloc(math.Complex, total);
         defer alloc.free(rho1_val_r);
-        try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, rho1_g_copy2, rho1_val_r, null);
+        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rho1_g_copy2, rho1_val_r, null);
 
         const rho1_total_r = try alloc.alloc(math.Complex, total);
         defer alloc.free(rho1_total_r);
@@ -1990,7 +1984,7 @@ pub fn solvePerturbationQMultiK(
         @memcpy(vxc1_r_fft, vxc1_r);
         const vxc1_g = try alloc.alloc(math.Complex, total);
         defer alloc.free(vxc1_g);
-        try fft_grid.fftComplexToReciprocalInPlace(alloc, grid, vxc1_r_fft, vxc1_g, null);
+        try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, vxc1_r_fft, vxc1_g, null);
 
         // V_out(G) = V_loc + V_H + V_xc
         const v_out_g = try alloc.alloc(math.Complex, total);
@@ -2128,7 +2122,7 @@ fn buildQDynmat(
     volume: f64,
     q_cart: math.Vec3,
     gvecs_kq: []const plane_wave.GVector,
-    apply_ctx_kq: *apply_mod.ApplyContext,
+    apply_ctx_kq: *scf_mod.ApplyContext,
     vxc_g: ?[]const math.Complex,
     irr_info: dynmat_mod.IrreducibleAtomInfo,
 ) ![]math.Complex {
@@ -2844,13 +2838,13 @@ pub fn runPhononBand(
     defer ionic.deinit(alloc);
 
     // Ground-state density in G-space
-    const rho0_g = try fft_grid.realToReciprocal(alloc, grid, scf_result.density, false);
+    const rho0_g = try scf_mod.realToReciprocal(alloc, grid, scf_result.density, false);
     defer alloc.free(rho0_g);
 
     // V_xc(G) for NLCC self-energy (need mutable copy since realToReciprocal requires mutable input)
     var vxc_g: ?[]math.Complex = null;
     if (prepared.vxc_r) |v| {
-        vxc_g = try fft_grid.realToReciprocal(alloc, grid, v, false);
+        vxc_g = try scf_mod.realToReciprocal(alloc, grid, v, false);
     }
     defer if (vxc_g) |v| alloc.free(v);
 
@@ -3336,13 +3330,13 @@ pub fn runPhononBandIFC(
     defer ionic.deinit(alloc);
 
     // Ground-state density in G-space
-    const rho0_g = try fft_grid.realToReciprocal(alloc, grid, scf_result.density, false);
+    const rho0_g = try scf_mod.realToReciprocal(alloc, grid, scf_result.density, false);
     defer alloc.free(rho0_g);
 
     // V_xc(G) for NLCC self-energy
     var vxc_g: ?[]math.Complex = null;
     if (prepared.vxc_r) |v| {
-        vxc_g = try fft_grid.realToReciprocal(alloc, grid, v, false);
+        vxc_g = try scf_mod.realToReciprocal(alloc, grid, v, false);
     }
     defer if (vxc_g) |v| alloc.free(v);
 

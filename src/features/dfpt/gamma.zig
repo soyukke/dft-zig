@@ -7,15 +7,12 @@ const std = @import("std");
 const math = @import("../math/math.zig");
 const xc = @import("../xc/xc.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
-const apply_mod = @import("../scf/apply.zig");
+const scf_mod = @import("../scf/scf.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const d3 = @import("../vdw/d3.zig");
 const d3_params = @import("../vdw/d3_params.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
-const fft_grid = @import("../scf/fft_grid.zig");
-const grid_mod = @import("../scf/grid.zig");
 const config_mod = @import("../config/config.zig");
-const scf_mod = @import("../scf/scf.zig");
 
 const symmetry_mod = @import("../symmetry/symmetry.zig");
 
@@ -33,7 +30,7 @@ const IonicData = dfpt.IonicData;
 const PerturbationResult = dfpt.PerturbationResult;
 const logDfpt = dfpt.logDfpt;
 
-const Grid = grid_mod.Grid;
+const Grid = scf_mod.Grid;
 
 /// Result of a full phonon calculation.
 pub const PhononResult = struct {
@@ -262,7 +259,7 @@ pub fn runPhonon(
     const ionic = try IonicData.init(alloc, species, atoms);
     defer ionic.deinit(alloc);
 
-    const rho0_g = try fft_grid.realToReciprocal(alloc, grid, scf_result.density, false);
+    const rho0_g = try scf_mod.realToReciprocal(alloc, grid, scf_result.density, false);
     defer alloc.free(rho0_g);
 
     // Build dynamical matrix from all contributions (only irreducible columns computed)
@@ -384,7 +381,7 @@ pub fn solvePerturbation(
     const rho1_core_g_for_ifft = try alloc.alloc(math.Complex, total);
     defer alloc.free(rho1_core_g_for_ifft);
     @memcpy(rho1_core_g_for_ifft, rho1_core_g);
-    const rho1_core_r = try fft_grid.reciprocalToReal(alloc, gs.grid, rho1_core_g_for_ifft);
+    const rho1_core_r = try scf_mod.reciprocalToReal(alloc, gs.grid, rho1_core_g_for_ifft);
     defer alloc.free(rho1_core_r);
 
     // Initialize ρ^(1)(G) = 0
@@ -410,7 +407,7 @@ pub fn solvePerturbation(
         const rho1_g_copy = try alloc.alloc(math.Complex, total);
         defer alloc.free(rho1_g_copy);
         @memcpy(rho1_g_copy, rho1_g);
-        const rho1_r = try fft_grid.reciprocalToReal(alloc, gs.grid, rho1_g_copy);
+        const rho1_r = try scf_mod.reciprocalToReal(alloc, gs.grid, rho1_g_copy);
         defer alloc.free(rho1_r);
 
         // Add ρ^(1)_core to get total density response for XC
@@ -424,7 +421,7 @@ pub fn solvePerturbation(
         defer alloc.free(vxc1_r);
 
         // FFT V_xc^(1)(r) → V_xc^(1)(G)
-        const vxc1_g = try fft_grid.realToReciprocal(alloc, gs.grid, vxc1_r, false);
+        const vxc1_g = try scf_mod.realToReciprocal(alloc, gs.grid, vxc1_r, false);
         defer alloc.free(vxc1_g);
 
         // Total first-order potential: V^(1)(G) = V_loc^(1) + V_H^(1) + V_xc^(1)
@@ -441,7 +438,7 @@ pub fn solvePerturbation(
         const vtot1_g_for_ifft = try alloc.alloc(math.Complex, total);
         defer alloc.free(vtot1_g_for_ifft);
         @memcpy(vtot1_g_for_ifft, vtot1_g);
-        const vtot1_r = try fft_grid.reciprocalToReal(alloc, gs.grid, vtot1_g_for_ifft);
+        const vtot1_r = try scf_mod.reciprocalToReal(alloc, gs.grid, vtot1_g_for_ifft);
         defer alloc.free(vtot1_r);
 
         // Solve Sternheimer for each occupied band
@@ -537,7 +534,7 @@ pub fn solvePerturbation(
 
         // FFT ρ^(1)(r) → ρ^(1)(G)
         alloc.free(new_rho1_g);
-        new_rho1_g = try fft_grid.realToReciprocal(alloc, gs.grid, new_rho1_r, false);
+        new_rho1_g = try scf_mod.realToReciprocal(alloc, gs.grid, new_rho1_r, false);
 
         // Check convergence: ||ρ^(1)_new - ρ^(1)_old||
         var diff_norm: f64 = 0.0;
@@ -570,7 +567,7 @@ pub fn solvePerturbation(
     // (The mixed rho1_g might differ slightly from ρ computed from psi1)
     const final_rho1_r = try computeRho1(alloc, gs.grid, gs.gvecs, gs.wavefunctions, psi1, n_occ, gs.apply_ctx);
     defer alloc.free(final_rho1_r);
-    const final_rho1_g = try fft_grid.realToReciprocal(alloc, gs.grid, final_rho1_r, false);
+    const final_rho1_g = try scf_mod.realToReciprocal(alloc, gs.grid, final_rho1_r, false);
 
     // Diagnostic: compare mixed vs recomputed density
     var rho1_norm: f64 = 0.0;
@@ -600,7 +597,7 @@ pub fn applyV1Psi(
     gvecs: []const plane_wave.GVector,
     v1_r: []const f64,
     psi: []const math.Complex,
-    ctx: *apply_mod.ApplyContext,
+    ctx: *scf_mod.ApplyContext,
 ) ![]math.Complex {
     const n_pw = gvecs.len;
     const total = grid.count();
@@ -614,7 +611,7 @@ pub fn applyV1Psi(
     // IFFT to real space
     const work_r = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_r);
-    try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, work_g, work_r, null);
+    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g, work_r, null);
 
     // Multiply by V^(1)(r)
     for (0..total) |i| {
@@ -624,7 +621,7 @@ pub fn applyV1Psi(
     // FFT back to reciprocal space
     const work_g_out = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_g_out);
-    try fft_grid.fftComplexToReciprocalInPlace(alloc, grid, work_r, work_g_out, null);
+    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, work_r, work_g_out, null);
 
     // Gather back to PW basis
     const result = try alloc.alloc(math.Complex, n_pw);
@@ -644,7 +641,7 @@ pub fn computeRho1(
     psi0: []const []const math.Complex,
     psi1: []const []const math.Complex,
     n_occ: usize,
-    ctx: *apply_mod.ApplyContext,
+    ctx: *scf_mod.ApplyContext,
 ) ![]f64 {
     const total = grid.count();
     const rho1_r = try alloc.alloc(f64, total);
@@ -666,12 +663,12 @@ pub fn computeRho1(
         // ψ_n^(0)(r) via IFFT
         @memset(work_g0, math.complex.init(0.0, 0.0));
         ctx.map.scatter(psi0[n], work_g0);
-        try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, work_g0, work_r0, null);
+        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g0, work_r0, null);
 
         // ψ_n^(1)(r) via IFFT
         @memset(work_g1, math.complex.init(0.0, 0.0));
         ctx.map.scatter(psi1[n], work_g1);
-        try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, work_g1, work_r1, null);
+        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g1, work_r1, null);
 
         // ρ^(1)(r) += (4/Ω) × Re[ψ_n^(0)*(r) × ψ_n^(1)(r)]
         for (0..total) |i| {
@@ -796,7 +793,7 @@ pub fn computeNlccCrossDynmat(
         const rho1_core_i_g_copy = try alloc.alloc(math.Complex, total);
         defer alloc.free(rho1_core_i_g_copy);
         @memcpy(rho1_core_i_g_copy, rho1_core_gs[i]);
-        const rho1_core_i_r = try fft_grid.reciprocalToReal(alloc, grid, rho1_core_i_g_copy);
+        const rho1_core_i_r = try scf_mod.reciprocalToReal(alloc, grid, rho1_core_i_g_copy);
         defer alloc.free(rho1_core_i_r);
 
         // Build V_xc^(1)[ρ^(1)_core,I] using full GGA-aware kernel
@@ -809,13 +806,13 @@ pub fn computeNlccCrossDynmat(
             const rho1_val_g_copy = try alloc.alloc(math.Complex, total);
             defer alloc.free(rho1_val_g_copy);
             @memcpy(rho1_val_g_copy, pert_results[j].rho1_g);
-            const rho1_val_r = try fft_grid.reciprocalToReal(alloc, grid, rho1_val_g_copy);
+            const rho1_val_r = try scf_mod.reciprocalToReal(alloc, grid, rho1_val_g_copy);
             defer alloc.free(rho1_val_r);
 
             const rho1_core_j_g_copy = try alloc.alloc(math.Complex, total);
             defer alloc.free(rho1_core_j_g_copy);
             @memcpy(rho1_core_j_g_copy, rho1_core_gs[j]);
-            const rho1_core_j_r = try fft_grid.reciprocalToReal(alloc, grid, rho1_core_j_g_copy);
+            const rho1_core_j_r = try scf_mod.reciprocalToReal(alloc, grid, rho1_core_j_g_copy);
             defer alloc.free(rho1_core_j_r);
 
             // D_NLCC(I,J) = ∫ V_xc^(1)[ρ^(1)_core,I](r) × ρ^(1)_total,J(r) dr
@@ -922,7 +919,7 @@ fn buildGammaDynmat(
         const vxc_r_copy = try alloc.alloc(f64, vxc_r_slice.len);
         defer alloc.free(vxc_r_copy);
         @memcpy(vxc_r_copy, vxc_r_slice);
-        const vxc_g = try fft_grid.realToReciprocal(alloc, grid, vxc_r_copy, false);
+        const vxc_g = try scf_mod.realToReciprocal(alloc, grid, vxc_r_copy, false);
         defer alloc.free(vxc_g);
 
         const nlcc_self_dyn = try dynmat_contrib.computeNlccSelfDynmat(alloc, grid, gs.species, gs.atoms, vxc_g, gs.rho_core_tables);
@@ -1088,10 +1085,10 @@ fn runDiagnostics(
                     const psi = gs.wavefunctions[n][g];
                     work_igpsi[g] = math.complex.init(-psi.i * g_d, psi.r * g_d);
                 }
-                try apply_mod.applyNonlocalPotential(gs.apply_ctx, work_igpsi, nl_out2);
+                try scf_mod.applyNonlocalPotential(gs.apply_ctx, work_igpsi, nl_out2);
 
                 // Compute iG_dir × (V_nl|ψ^(0)_n⟩)
-                try apply_mod.applyNonlocalPotential(gs.apply_ctx, gs.wavefunctions[n], nl_out3);
+                try scf_mod.applyNonlocalPotential(gs.apply_ctx, gs.wavefunctions[n], nl_out3);
                 for (0..n_pw) |g| {
                     const g_d = switch (dir) {
                         0 => gs.gvecs[g].cart.x,
@@ -1129,7 +1126,7 @@ fn runDiagnostics(
         const vloc1_0x_g_copy = try alloc.alloc(math.Complex, gs.grid.count());
         defer alloc.free(vloc1_0x_g_copy);
         @memcpy(vloc1_0x_g_copy, vloc1_gs[0]);
-        const vloc1_0x_r = try fft_grid.reciprocalToReal(alloc, gs.grid, vloc1_0x_g_copy);
+        const vloc1_0x_r = try scf_mod.reciprocalToReal(alloc, gs.grid, vloc1_0x_g_copy);
         defer alloc.free(vloc1_0x_r);
 
         var d_wf_00: f64 = 0.0;

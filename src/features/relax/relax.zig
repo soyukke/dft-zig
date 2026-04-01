@@ -9,8 +9,6 @@ const forces_mod = @import("../forces/forces.zig");
 pub const optimizer = @import("optimizer.zig");
 
 const stress_mod = @import("../stress/stress.zig");
-const kpoints_mod = @import("../scf/kpoints.zig");
-const apply_mod = @import("../scf/apply.zig");
 const output = @import("../dft/output.zig");
 
 /// Result of structure relaxation.
@@ -23,8 +21,8 @@ pub const RelaxResult = struct {
     trajectory: ?[]RelaxStep,
     // Caches for warmstarting final SCF after relax
     final_density: ?[]f64 = null,
-    final_kpoint_cache: ?[]kpoints_mod.KpointCache = null,
-    final_apply_caches: ?[]apply_mod.KpointApplyCache = null,
+    final_kpoint_cache: ?[]scf.KpointCache = null,
+    final_apply_caches: ?[]scf.KpointApplyCache = null,
     final_potential: ?hamiltonian.PotentialGrid = null,
     // vc-relax: final cell parameters
     final_cell: ?math.Mat3 = null,
@@ -148,14 +146,14 @@ pub fn run(
     defer if (prev_density) |pd| alloc.free(pd);
 
     // Wavefunction warmstart: reuse eigenvectors from previous SCF
-    var prev_kpoint_cache: ?[]kpoints_mod.KpointCache = null;
+    var prev_kpoint_cache: ?[]scf.KpointCache = null;
     defer if (prev_kpoint_cache) |cache| {
         for (cache) |*c| c.deinit();
         alloc.free(cache);
     };
 
     // NonlocalContext warmstart: reuse apply caches across relax steps
-    var prev_apply_caches: ?[]apply_mod.KpointApplyCache = null;
+    var prev_apply_caches: ?[]scf.KpointApplyCache = null;
     defer if (prev_apply_caches) |caches| {
         for (caches) |*ac| ac.deinit(alloc);
         alloc.free(caches);

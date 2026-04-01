@@ -1,6 +1,6 @@
 const std = @import("std");
 const math = @import("../math/math.zig");
-const gvec_iter = @import("../scf/gvec_iter.zig");
+const scf = @import("../scf/scf.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const local_force = @import("local_force.zig");
@@ -148,7 +148,7 @@ pub fn nlccForcesGSpace(
         var fy: f64 = 0.0;
         var fz: f64 = 0.0;
 
-        var it = gvec_iter.GVecIterator.init(grid);
+        var it = scf.GVecIterator.init(grid);
         while (it.next()) |g| {
             // Skip G=0
             if (g.gh == 0 and g.gk == 0 and g.gl == 0) {

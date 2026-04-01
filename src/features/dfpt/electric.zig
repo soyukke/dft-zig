@@ -15,12 +15,9 @@ const std = @import("std");
 const math = @import("../math/math.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
-const apply_mod = @import("../scf/apply.zig");
+const scf_mod = @import("../scf/scf.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const config_mod = @import("../config/config.zig");
-const grid_mod = @import("../scf/grid.zig");
-const fft_grid = @import("../scf/fft_grid.zig");
-const mixing = @import("../scf/mixing.zig");
 
 const dfpt = @import("dfpt.zig");
 const sternheimer = dfpt.sternheimer;
@@ -37,7 +34,6 @@ pub const DielectricResult = struct {
     epsilon: [3][3]f64,
 };
 
-const pw_grid_map = @import("../scf/pw_grid_map.zig");
 
 /// Compute ε∞ by solving ddk Sternheimer at all k-points,
 /// then self-consistently solving the efield Sternheimer with V^(1)_Hxc.
@@ -206,7 +202,7 @@ pub fn computeDielectricAllK(
             defer alloc.free(work);
             @memset(work, math.complex.init(0.0, 0.0));
             kg.map_k.scatter(kg.wavefunctions_k_const[n], work);
-            try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, work, psi0_r_cache[ik][n], null);
+            try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work, psi0_r_cache[ik][n], null);
             bands_built = n + 1;
         }
         psi0_cache_built = ik + 1;
@@ -252,7 +248,7 @@ pub fn computeDielectricAllK(
         }
 
         // Pulay mixer for V^(1)_Hxc potential mixing
-        var pulay = mixing.ComplexPulayMixer.init(alloc, dfpt_cfg.pulay_history);
+        var pulay = scf_mod.ComplexPulayMixer.init(alloc, dfpt_cfg.pulay_history);
         defer pulay.deinit();
 
         var best_vresid: f64 = std.math.inf(f64);
@@ -271,7 +267,7 @@ pub fn computeDielectricAllK(
             @memcpy(v1_g_copy, v1_hxc_g);
             const v1_hxc_r = try alloc.alloc(math.Complex, total);
             defer alloc.free(v1_hxc_r);
-            try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, v1_g_copy, v1_hxc_r, null);
+            try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, v1_g_copy, v1_hxc_r, null);
 
             // Accumulate ρ^(1) over all k-points
             const rho1_r = try alloc.alloc(math.Complex, total);
@@ -282,7 +278,7 @@ pub fn computeDielectricAllK(
                 const n_occ = kg.n_occ;
                 const n_pw = kg.n_pw_k;
                 const gvecs = kg.basis_k.gvecs;
-                const map_k_ptr: *const pw_grid_map.PwGridMap = &kg.map_k;
+                const map_k_ptr: *const scf_mod.PwGridMap = &kg.map_k;
 
                 for (0..n_occ) |n| {
                     // RHS = -P_c[+i × du/dk_β + V^(1)_Hxc |ψ_k⟩]
@@ -361,7 +357,7 @@ pub fn computeDielectricAllK(
             @memcpy(rho1_r_copy, rho1_r);
             const rho1_g = try alloc.alloc(math.Complex, total);
             defer alloc.free(rho1_g);
-            try fft_grid.fftComplexToReciprocalInPlace(alloc, grid, rho1_r_copy, rho1_g, null);
+            try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, rho1_r_copy, rho1_g, null);
 
             // Build V^(1)_H(G) = 8π ρ^(1)(G) / |G|²  (G=0 → 0)
             const vh1_g = try perturbation.buildHartreePerturbation(alloc, grid, rho1_g);
@@ -378,7 +374,7 @@ pub fn computeDielectricAllK(
             defer alloc.free(vxc1_r);
 
             // FFT V^(1)_xc(r) → V^(1)_xc(G)
-            const vxc1_g = try fft_grid.realToReciprocal(alloc, grid, vxc1_r, false);
+            const vxc1_g = try scf_mod.realToReciprocal(alloc, grid, vxc1_r, false);
             defer alloc.free(vxc1_g);
 
             // V^(1)_out(G) = V_H^(1) + V_xc^(1)
@@ -674,7 +670,7 @@ fn dYlm_dn(l: i32, m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
 fn applyDdkNonlocal(
     gvecs: []const plane_wave.GVector,
     atoms: []const hamiltonian.AtomData,
-    nl_ctx: apply_mod.NonlocalContext,
+    nl_ctx: scf_mod.NonlocalContext,
     direction: usize,
     inv_volume: f64,
     psi: []const math.Complex,
@@ -752,7 +748,7 @@ fn applyDdkNonlocal(
     }
 }
 
-fn applyDij(sp: apply_mod.NonlocalSpecies, input: []const math.Complex, output: []math.Complex) void {
+fn applyDij(sp: scf_mod.NonlocalSpecies, input: []const math.Complex, output: []math.Complex) void {
     var b: usize = 0;
     while (b < sp.beta_count) : (b += 1) {
         const l_val = sp.l_list[b];

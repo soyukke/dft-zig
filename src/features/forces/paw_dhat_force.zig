@@ -1,6 +1,6 @@
 const std = @import("std");
 const math = @import("../math/math.zig");
-const gvec_iter = @import("../scf/gvec_iter.zig");
+const scf = @import("../scf/scf.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const paw_mod = @import("../paw/paw.zig");
 const local_force = @import("local_force.zig");
@@ -61,7 +61,7 @@ pub fn pawDhatForces(
         var fy: f64 = 0.0;
         var fz: f64 = 0.0;
 
-        var it = gvec_iter.GVecIterator.init(grid);
+        var it = scf.GVecIterator.init(grid);
         while (it.next()) |g| {
             const g_abs = Vec3.norm(g.gvec);
 

@@ -7,7 +7,7 @@ const std = @import("std");
 const blas = @import("../../lib/linalg/blas.zig");
 const math = @import("../math/math.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
-const apply_mod = @import("../scf/apply.zig");
+const scf_mod = @import("../scf/scf.zig");
 
 pub const SternheimerParams = struct {
     tol: f64 = 1e-8,
@@ -147,7 +147,7 @@ fn packOccupiedMatrix(
 /// Apply Sternheimer operator: A|x⟩ = (H₀ - ε_n + α×P_v)|x⟩
 /// where P_v = Σ_m |ψ_m⟩⟨ψ_m|
 fn applySternheimer(
-    ctx: *apply_mod.ApplyContext,
+    ctx: *scf_mod.ApplyContext,
     x: []const math.Complex,
     y: []math.Complex,
     epsilon_n: f64,
@@ -159,7 +159,7 @@ fn applySternheimer(
     const n = x.len;
 
     // y = H₀|x⟩
-    try apply_mod.applyHamiltonian(ctx, x, y);
+    try scf_mod.applyHamiltonian(ctx, x, y);
 
     // y -= ε_n × x
     for (0..n) |g| {
@@ -185,7 +185,7 @@ fn applySternheimer(
 
 /// BLAS-optimized Sternheimer operator using contiguous occupied matrix.
 fn applySternheimerBlas(
-    ctx: *apply_mod.ApplyContext,
+    ctx: *scf_mod.ApplyContext,
     x: []const math.Complex,
     y: []math.Complex,
     epsilon_n: f64,
@@ -196,7 +196,7 @@ fn applySternheimerBlas(
     overlaps: []math.Complex,
 ) !void {
     // y = H₀|x⟩
-    try apply_mod.applyHamiltonian(ctx, x, y);
+    try scf_mod.applyHamiltonian(ctx, x, y);
 
     // y -= ε_n × x
     for (0..n_pw) |g| {
@@ -258,7 +258,7 @@ fn norm(x: []const math.Complex) f64 {
 /// - alloc: allocator
 pub fn solve(
     alloc: std.mem.Allocator,
-    ctx: *apply_mod.ApplyContext,
+    ctx: *scf_mod.ApplyContext,
     rhs: []const math.Complex,
     epsilon_n: f64,
     occupied: []const []const math.Complex,

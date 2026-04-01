@@ -1,6 +1,6 @@
 const std = @import("std");
 const math = @import("../math/math.zig");
-const gvec_iter = @import("../scf/gvec_iter.zig");
+const scf = @import("../scf/scf.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
@@ -57,7 +57,7 @@ pub fn localPseudoForces(
     // This matches ionicLocalPotential's phase exp(-iG·R) via E_loc = Re[ρ(G) V_loc(G)].
 
     // Loop over all G vectors
-    var it = gvec_iter.GVecIterator.init(grid);
+    var it = scf.GVecIterator.init(grid);
     while (it.next()) |g| {
         // Skip G=0 (no force contribution)
         if (g.gh == 0 and g.gk == 0 and g.gl == 0) {

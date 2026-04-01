@@ -10,7 +10,6 @@ const form_factor = @import("../pseudopotential/form_factor.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
 const scf = @import("../scf/scf.zig");
-const fft_grid = @import("../scf/fft_grid.zig");
 pub const local_force = @import("local_force.zig");
 pub const nonlocal_force = @import("nonlocal_force.zig");
 pub const residual_force = @import("residual_force.zig");
@@ -215,8 +214,7 @@ pub fn computeForces(
         // G-space NLCC force: FFT V_xc(r) → V_xc(G), then use form factor.
         // This avoids aliasing between bandwidth-limited V_xc and
         // the tabulated radial core charge derivative.
-        const grid_mod = @import("../scf/grid.zig");
-        const fft_grid_obj = grid_mod.Grid{
+        const fft_grid_obj = scf.Grid{
             .nx = grid.nx,
             .ny = grid.ny,
             .nz = grid.nz,
@@ -227,7 +225,7 @@ pub fn computeForces(
             .recip = grid.recip,
             .volume = volume,
         };
-        const vxc_g = try fft_grid.realToReciprocal(alloc, fft_grid_obj, vxc_r, false);
+        const vxc_g = try scf.realToReciprocal(alloc, fft_grid_obj, vxc_r, false);
         defer alloc.free(vxc_g);
         nlcc_forces = try nlcc_force.nlccForcesGSpace(
             alloc,

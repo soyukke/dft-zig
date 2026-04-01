@@ -8,18 +8,16 @@
 
 const std = @import("std");
 const math = @import("../math/math.zig");
-const gvec_iter = @import("../scf/gvec_iter.zig");
+const scf_mod = @import("../scf/scf.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
-const apply_mod = @import("../scf/apply.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
-const grid_mod = @import("../scf/grid.zig");
 
 const dfpt = @import("dfpt.zig");
 const GroundState = dfpt.GroundState;
 const logDfpt = dfpt.logDfpt;
 
-const Grid = grid_mod.Grid;
+const Grid = scf_mod.Grid;
 
 /// Compute the self-energy (non-variational) contribution to the dynamical matrix.
 /// D^{self}_{Iα,Iβ} = Ω × Σ_G conj(∂²V_loc/∂u_{Iα}∂u_{Iβ}(G)) × ρ(G)
@@ -45,7 +43,7 @@ pub fn computeSelfEnergyDynmat(
         const atom = atoms[ia];
         const sp = &species[atom.species_index];
 
-        var it = gvec_iter.GVecIterator.init(grid);
+        var it = scf_mod.GVecIterator.init(grid);
         while (it.next()) |g| {
             if (g.gh == 0 and g.gk == 0 and g.gl == 0) continue;
 
@@ -240,7 +238,7 @@ pub fn computeNlccSelfDynmat(
 
         if (sp.upf.nlcc.len == 0) continue;
 
-        var it = gvec_iter.GVecIterator.init(grid);
+        var it = scf_mod.GVecIterator.init(grid);
         while (it.next()) |g| {
             if (g.gh == 0 and g.gk == 0 and g.gl == 0) continue;
 

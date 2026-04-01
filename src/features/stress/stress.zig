@@ -2,16 +2,12 @@ const std = @import("std");
 const math = @import("../math/math.zig");
 const config = @import("../config/config.zig");
 const ewald = @import("../ewald/ewald.zig");
-const gvec_iter = @import("../scf/gvec_iter.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const scf = @import("../scf/scf.zig");
 const xc_mod = @import("../xc/xc.zig");
-const xc_fields_mod = @import("../scf/xc_fields.zig");
-const fft_grid = @import("../scf/fft_grid.zig");
-const grid_mod = @import("../scf/grid.zig");
 const paw_mod = @import("../paw/paw_tab.zig");
 
 pub const Stress3x3 = [3][3]f64;
@@ -129,7 +125,7 @@ pub fn computeStress(
     // The n̂ response to strain cancels between E_H and double-counting terms;
     // the net augmentation contribution is captured by augmentationStress.
     const rho_g_for_eh = if (rho_aug) |aug| blk: {
-        const fft_obj = grid_mod.Grid{
+        const fft_obj = scf.Grid{
             .nx = grid.nx,
             .ny = grid.ny,
             .nz = grid.nz,
@@ -140,7 +136,7 @@ pub fn computeStress(
             .recip = grid.recip,
             .volume = volume,
         };
-        break :blk try fft_grid.realToReciprocal(alloc, fft_obj, aug, false);
+        break :blk try scf.realToReciprocal(alloc, fft_obj, aug, false);
     } else null;
     defer if (rho_g_for_eh) |g| alloc.free(g);
     const sigma_hartree = hartreeStress(grid, rho_g_for_eh orelse rho_g, energy.hartree, inv_volume, ecutrho);
@@ -152,7 +148,7 @@ pub fn computeStress(
     // Local pseudopotential stress: for PAW, use augmented density (ρ̃+n̂) since V_loc acts on full density
     // (matching QE's stres_loc which uses rho%of_r that includes augmentation charges).
     const rho_g_for_loc = if (rho_aug) |aug| blk: {
-        const fft_obj = grid_mod.Grid{
+        const fft_obj = scf.Grid{
             .nx = grid.nx,
             .ny = grid.ny,
             .nz = grid.nz,
@@ -163,7 +159,7 @@ pub fn computeStress(
             .recip = grid.recip,
             .volume = volume,
         };
-        break :blk try fft_grid.realToReciprocal(alloc, fft_obj, aug, false);
+        break :blk try scf.realToReciprocal(alloc, fft_obj, aug, false);
     } else null;
     defer if (rho_g_for_loc) |g| alloc.free(g);
     const sigma_local = localStress(grid, rho_g_for_loc orelse rho_g, species, atoms, ff_tables, inv_volume, ecutrho);
@@ -490,7 +486,7 @@ fn kineticStress(alloc: std.mem.Allocator, wavefunctions: ?scf.WavefunctionData,
 fn hartreeStress(grid: Grid, rho_g: []const math.Complex, e_hartree: f64, inv_volume: f64, ecutrho: f64) Stress3x3 {
     var sigma = zeroStress();
 
-    var it = gvec_iter.GVecIterator.init(grid);
+    var it = scf.GVecIterator.init(grid);
     while (it.next()) |g| {
         if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
             continue;
@@ -555,7 +551,7 @@ fn xcStress(
         }
 
         // Compute density gradients in G-space
-        const fft_obj = grid_mod.Grid{
+        const fft_obj = scf.Grid{
             .nx = grid.nx,
             .ny = grid.ny,
             .nz = grid.nz,
@@ -566,7 +562,7 @@ fn xcStress(
             .recip = grid.recip,
             .volume = grid.volume,
         };
-        const rho_total_g = try fft_grid.realToReciprocal(alloc, fft_obj, rho_total, false);
+        const rho_total_g = try scf.realToReciprocal(alloc, fft_obj, rho_total, false);
         defer alloc.free(rho_total_g);
 
         // Compute gradient components: ∂ρ/∂x_α in real space
@@ -575,7 +571,7 @@ fn xcStress(
             const grad_g = try alloc.alloc(math.Complex, n_grid);
             defer alloc.free(grad_g);
 
-            var it_g = gvec_iter.GVecIterator.init(grid);
+            var it_g = scf.GVecIterator.init(grid);
             while (it_g.next()) |g| {
                 const gdir: f64 = switch (dir) {
                     0 => g.gvec.x,
@@ -588,7 +584,7 @@ fn xcStress(
                 grad_g[g.idx] = math.complex.init(-gdir * rho_val.i, gdir * rho_val.r);
             }
 
-            grad_r[dir] = try fft_grid.reciprocalToReal(alloc, fft_obj, grad_g);
+            grad_r[dir] = try scf.reciprocalToReal(alloc, fft_obj, grad_g);
         }
         defer for (0..3) |dir| alloc.free(grad_r[dir]);
 
@@ -637,7 +633,7 @@ fn localStress(
     // This matches QE's stres_loc which uses rho%of_r (augmented density).
     var evloc: f64 = 0.0;
 
-    var it = gvec_iter.GVecIterator.init(grid);
+    var it = scf.GVecIterator.init(grid);
     while (it.next()) |g| {
         if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
             continue;
@@ -1080,7 +1076,7 @@ fn nlccStress(
         if (rho_core) |rc| rho_total[i] += rc[i];
     }
 
-    const xc_fields = try xc_fields_mod.computeXcFields(alloc, grid_mod.Grid{
+    const xc_fields = try scf.computeXcFields(alloc, scf.Grid{
         .nx = grid.nx,
         .ny = grid.ny,
         .nz = grid.nz,
@@ -1096,7 +1092,7 @@ fn nlccStress(
         alloc.free(xc_fields.exc);
     }
 
-    const fft_obj = grid_mod.Grid{
+    const fft_obj = scf.Grid{
         .nx = grid.nx,
         .ny = grid.ny,
         .nz = grid.nz,
@@ -1107,10 +1103,10 @@ fn nlccStress(
         .recip = grid.recip,
         .volume = grid.volume,
     };
-    const vxc_g = try fft_grid.realToReciprocal(alloc, fft_obj, xc_fields.vxc, false);
+    const vxc_g = try scf.realToReciprocal(alloc, fft_obj, xc_fields.vxc, false);
     defer alloc.free(vxc_g);
 
-    var it = gvec_iter.GVecIterator.init(grid);
+    var it = scf.GVecIterator.init(grid);
     while (it.next()) |g| {
         if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
             continue;
@@ -1183,7 +1179,7 @@ fn buildAugmentedDensity(
 
     const inv_omega = 1.0 / grid.volume;
 
-    var it = gvec_iter.GVecIterator.init(grid);
+    var it = scf.GVecIterator.init(grid);
     while (it.next()) |g| {
         if (g.g2 >= ecutrho) {
             continue;
@@ -1231,7 +1227,7 @@ fn buildAugmentedDensity(
     }
 
     // IFFT n_hat(G) → n_hat(r) and add to density
-    const fft_obj = grid_mod.Grid{
+    const fft_obj = scf.Grid{
         .nx = grid.nx,
         .ny = grid.ny,
         .nz = grid.nz,
@@ -1242,7 +1238,7 @@ fn buildAugmentedDensity(
         .recip = grid.recip,
         .volume = grid.volume,
     };
-    const n_hat_r = try fft_grid.reciprocalToReal(alloc, fft_obj, n_hat_g);
+    const n_hat_r = try scf.reciprocalToReal(alloc, fft_obj, n_hat_g);
     defer alloc.free(n_hat_r);
     for (0..@min(rho.len, n_hat_r.len)) |i| {
         rho[i] += n_hat_r[i];
@@ -1269,7 +1265,7 @@ fn augmentationStress(
 
     const ylm_gaunt = 1.0 / (4.0 * std.math.pi); // Y_00 × Gaunt for L=0
 
-    var it = gvec_iter.GVecIterator.init(grid);
+    var it = scf.GVecIterator.init(grid);
     while (it.next()) |g| {
         if (g.g2 >= ecutrho) {
             continue;

@@ -23,19 +23,14 @@ const std = @import("std");
 const math = @import("../math/math.zig");
 const xc = @import("../xc/xc.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
-const apply_mod = @import("../scf/apply.zig");
+const scf_mod = @import("../scf/scf.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
-const fft_grid = @import("../scf/fft_grid.zig");
-const grid_mod = @import("../scf/grid.zig");
-const potential_mod = @import("../scf/potential.zig");
 const config_mod = @import("../config/config.zig");
-const scf_mod = @import("../scf/scf.zig");
 const iterative = @import("../linalg/iterative.zig");
 const linalg = @import("../linalg/linalg.zig");
-const core_density = @import("../scf/core_density.zig");
 
-const Grid = grid_mod.Grid;
+const Grid = scf_mod.Grid;
 
 // =====================================================================
 // Re-exports for external callers (preserves dfpt.runPhonon etc.)
@@ -75,7 +70,7 @@ pub const GroundState = struct {
     /// Form factor tables
     ff_tables: ?[]const form_factor.LocalFormFactorTable,
     /// Apply context for H₀ application
-    apply_ctx: *apply_mod.ApplyContext,
+    apply_ctx: *scf_mod.ApplyContext,
     /// NLCC core charge density on real-space grid (null if no NLCC)
     rho_core: ?[]const f64 = null,
     /// NLCC core charge form factor tables (for ρ^(1)_core computation)
@@ -101,7 +96,7 @@ pub const PreparedGroundState = struct {
     basis: plane_wave.Basis,
     ionic: hamiltonian.PotentialGrid,
     local_r: []f64,
-    apply_ctx_ptr: *apply_mod.ApplyContext,
+    apply_ctx_ptr: *scf_mod.ApplyContext,
     eig: linalg.EigenDecomp,
     wf_2d: [][]math.Complex,
     wf_const: [][]const math.Complex,
@@ -250,19 +245,19 @@ pub fn prepareGroundState(
     logDfpt("dfpt: nelec={d:.1} n_occ={d} n_pw={d}\n", .{ nelec, n_occ, n_pw });
 
     // Build ionic potential grid
-    var ionic = try potential_mod.buildIonicPotentialGrid(alloc, grid, species, @constCast(atoms), null, null);
+    var ionic = try scf_mod.buildIonicPotentialGrid(alloc, grid, species, @constCast(atoms), null, null);
     errdefer ionic.deinit(alloc);
 
     // Build local_r = IFFT(ionic + SCF potential)
-    const local_r = try potential_mod.buildLocalPotentialReal(alloc, grid, ionic, scf_result.potential);
+    const local_r = try scf_mod.buildLocalPotentialReal(alloc, grid, ionic, scf_result.potential);
     errdefer alloc.free(local_r);
 
     // Build ApplyContext for H₀ at Γ-point (heap-allocated for stable pointer)
     // Use multiple workspaces to support perturbation parallelism
     const pert_threads = perturbationThreadCount(3 * atoms.len, cfg.dfpt.perturbation_threads);
-    const apply_ctx_ptr = try alloc.create(apply_mod.ApplyContext);
+    const apply_ctx_ptr = try alloc.create(scf_mod.ApplyContext);
     errdefer alloc.destroy(apply_ctx_ptr);
-    apply_ctx_ptr.* = try apply_mod.ApplyContext.initWithWorkspaces(
+    apply_ctx_ptr.* = try scf_mod.ApplyContext.initWithWorkspaces(
         alloc,
         grid,
         @constCast(gvecs),
@@ -291,8 +286,8 @@ pub fn prepareGroundState(
     const op = iterative.Operator{
         .n = n_pw,
         .ctx = @ptrCast(apply_ctx_ptr),
-        .apply = &apply_mod.applyHamiltonian,
-        .apply_batch = &apply_mod.applyHamiltonianBatched,
+        .apply = &scf_mod.applyHamiltonian,
+        .apply_batch = &scf_mod.applyHamiltonianBatched,
     };
     var eig = try iterative.hermitianEigenDecompIterative(
         alloc,
@@ -326,8 +321,8 @@ pub fn prepareGroundState(
 
     // Build NLCC core charge density on grid (if any species has NLCC)
     var rho_core: ?[]f64 = null;
-    if (core_density.hasNlcc(species)) {
-        rho_core = try core_density.buildCoreDensity(alloc, grid, species, @constCast(atoms));
+    if (scf_mod.hasNlcc(species)) {
+        rho_core = try scf_mod.buildCoreDensity(alloc, grid, species, @constCast(atoms));
         logDfpt("dfpt: NLCC core charge built on grid\n", .{});
     }
     errdefer if (rho_core) |rc| alloc.free(rc);
@@ -353,9 +348,8 @@ pub fn prepareGroundState(
     // For PBE, must use computeXcFields to properly include gradient corrections
     var vxc_r: ?[]f64 = null;
     if (rho_core != null) {
-        const xc_fields = @import("../scf/xc_fields.zig");
         if (cfg.scf.xc == .pbe) {
-            const fields = try xc_fields.computeXcFields(alloc, grid, scf_result.density, rho_core, false, .pbe);
+            const fields = try scf_mod.computeXcFields(alloc, grid, scf_result.density, rho_core, false, .pbe);
             alloc.free(fields.exc);
             vxc_r = fields.vxc;
         } else {
@@ -478,8 +472,6 @@ pub fn buildFxcGrid(
     xc_func: xc.Functional,
 ) !FxcGridResult {
     const total = grid.count();
-    const xc_fields = @import("../scf/xc_fields.zig");
-
     // Build total density
     const density = try alloc.alloc(f64, total);
     defer alloc.free(density);
@@ -500,7 +492,7 @@ pub fn buildFxcGrid(
     }
 
     // PBE: compute ∇n₀ and gradient-dependent kernel
-    var grad = try xc_fields.gradientFromReal(alloc, grid, density, false);
+    var grad = try scf_mod.gradientFromReal(alloc, grid, density, false);
     // Transfer ownership of gradient arrays to result
     errdefer grad.deinit(alloc);
 

@@ -4,19 +4,16 @@
 
 const std = @import("std");
 const math = @import("../math/math.zig");
-const gvec_iter = @import("../scf/gvec_iter.zig");
+const scf_mod = @import("../scf/scf.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
-const grid_mod = @import("../scf/grid.zig");
-const xc_fields = @import("../scf/xc_fields.zig");
 const xc = @import("../xc/xc.zig");
-const fft_grid = @import("../scf/fft_grid.zig");
 const dfpt_mod = @import("dfpt.zig");
 
-const Grid = grid_mod.Grid;
+const Grid = scf_mod.Grid;
 const GroundState = dfpt_mod.GroundState;
 
 /// Perturbation specification: atom index and Cartesian direction.
@@ -44,7 +41,7 @@ pub fn buildLocalPerturbation(
 
     const inv_volume = 1.0 / grid.volume;
 
-    var it = gvec_iter.GVecIterator.init(grid);
+    var it = scf_mod.GVecIterator.init(grid);
     while (it.next()) |g| {
         if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
             result[g.idx] = math.complex.init(0.0, 0.0);
@@ -99,7 +96,7 @@ pub fn buildCorePerturbation(
 
     const inv_volume = 1.0 / grid.volume;
 
-    var it = gvec_iter.GVecIterator.init(grid);
+    var it = scf_mod.GVecIterator.init(grid);
     while (it.next()) |g| {
         if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
             result[g.idx] = math.complex.init(0.0, 0.0);
@@ -136,7 +133,7 @@ pub fn buildHartreePerturbation(
     const result = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(result);
 
-    var it = gvec_iter.GVecIterator.init(grid);
+    var it = scf_mod.GVecIterator.init(grid);
     while (it.next()) |g| {
         if (g.g2 > 1e-12) {
             result[g.idx] = math.complex.scale(rho1_g[g.idx], 8.0 * std.math.pi / g.g2);
@@ -187,7 +184,7 @@ pub fn buildXcPerturbationFull(
     const gn0_z = gs.grad_n0_z.?;
 
     // 1. ∇n¹ = gradientFromReal(n¹)
-    var grad1 = try xc_fields.gradientFromReal(alloc, grid, rho1_r, false);
+    var grad1 = try scf_mod.gradientFromReal(alloc, grid, rho1_r, false);
     defer grad1.deinit(alloc);
 
     // 2. σ¹(r) = 2·Σ_α (∂n₀/∂x_α)(∂n¹/∂x_α)
@@ -214,7 +211,7 @@ pub fn buildXcPerturbationFull(
     }
 
     // 5. div_A = divergenceFromReal(A_x, A_y, A_z)
-    const div_a = try xc_fields.divergenceFromReal(alloc, grid, ax, ay, az, false);
+    const div_a = try scf_mod.divergenceFromReal(alloc, grid, ax, ay, az, false);
     defer alloc.free(div_a);
 
     // 6. result = direct - 2·div_A
@@ -328,7 +325,7 @@ fn gradientFromComplex(
     @memcpy(values_r_copy, values_r);
     const values_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(values_g);
-    try fft_grid.fftComplexToReciprocalInPlace(alloc, grid, values_r_copy, values_g, null);
+    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, values_r_copy, values_g, null);
 
     const gx_g = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(gx_g);
@@ -339,7 +336,7 @@ fn gradientFromComplex(
 
     const i_unit = math.complex.init(0.0, 1.0);
 
-    var it = gvec_iter.GVecIterator.init(grid);
+    var it = scf_mod.GVecIterator.init(grid);
     while (it.next()) |g| {
         const i_rho = math.complex.mul(values_g[g.idx], i_unit);
         gx_g[g.idx] = math.complex.scale(i_rho, g.gvec.x);
@@ -350,17 +347,17 @@ fn gradientFromComplex(
     // IFFT each component back to real space
     const gx_r = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(gx_r);
-    try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, gx_g, gx_r, null);
+    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, gx_g, gx_r, null);
     alloc.free(gx_g);
 
     const gy_r = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(gy_r);
-    try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, gy_g, gy_r, null);
+    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, gy_g, gy_r, null);
     alloc.free(gy_g);
 
     const gz_r = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(gz_r);
-    try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, gz_g, gz_r, null);
+    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, gz_g, gz_r, null);
     alloc.free(gz_g);
 
     return .{ .x = gx_r, .y = gy_r, .z = gz_r };
@@ -381,28 +378,28 @@ fn divergenceFromComplex(
     @memcpy(bx_copy, bx);
     const bx_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(bx_g);
-    try fft_grid.fftComplexToReciprocalInPlace(alloc, grid, bx_copy, bx_g, null);
+    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, bx_copy, bx_g, null);
 
     const by_copy = try alloc.alloc(math.Complex, total);
     defer alloc.free(by_copy);
     @memcpy(by_copy, by);
     const by_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(by_g);
-    try fft_grid.fftComplexToReciprocalInPlace(alloc, grid, by_copy, by_g, null);
+    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, by_copy, by_g, null);
 
     const bz_copy = try alloc.alloc(math.Complex, total);
     defer alloc.free(bz_copy);
     @memcpy(bz_copy, bz);
     const bz_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(bz_g);
-    try fft_grid.fftComplexToReciprocalInPlace(alloc, grid, bz_copy, bz_g, null);
+    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, bz_copy, bz_g, null);
 
     const div_g = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(div_g);
 
     const i_unit = math.complex.init(0.0, 1.0);
 
-    var it = gvec_iter.GVecIterator.init(grid);
+    var it = scf_mod.GVecIterator.init(grid);
     while (it.next()) |g| {
         const sum = math.complex.add(
             math.complex.add(math.complex.scale(bx_g[g.idx], g.gvec.x), math.complex.scale(by_g[g.idx], g.gvec.y)),
@@ -413,7 +410,7 @@ fn divergenceFromComplex(
 
     // IFFT back to real space
     const div_r = try alloc.alloc(math.Complex, total);
-    try fft_grid.fftReciprocalToComplexInPlace(alloc, grid, div_g, div_r, null);
+    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, div_g, div_r, null);
     alloc.free(div_g);
     return div_r;
 }
@@ -791,7 +788,7 @@ pub fn buildLocalPerturbationQ(
 
     const inv_volume = 1.0 / grid.volume;
 
-    var it = gvec_iter.GVecIterator.init(grid);
+    var it = scf_mod.GVecIterator.init(grid);
     while (it.next()) |g| {
         // G+q vector
         const gpq = math.Vec3.add(g.gvec, q_cart);
@@ -848,7 +845,7 @@ pub fn buildCorePerturbationQ(
 
     const inv_volume = 1.0 / grid.volume;
 
-    var it = gvec_iter.GVecIterator.init(grid);
+    var it = scf_mod.GVecIterator.init(grid);
     while (it.next()) |g| {
         const gpq = math.Vec3.add(g.gvec, q_cart);
         const gpq_norm = math.Vec3.norm(gpq);
@@ -885,7 +882,7 @@ pub fn buildHartreePerturbationQ(
     const result = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(result);
 
-    var it = gvec_iter.GVecIterator.init(grid);
+    var it = scf_mod.GVecIterator.init(grid);
     while (it.next()) |g| {
         const gpq = math.Vec3.add(g.gvec, q_cart);
         const gpq2 = math.Vec3.dot(gpq, gpq);
@@ -1003,7 +1000,7 @@ test "V_loc perturbation finite difference" {
     // Compute V_loc at displaced positions for each G point
     var max_rel_err: f64 = 0.0;
     var tested: usize = 0;
-    var it2 = gvec_iter.GVecIterator.init(grid);
+    var it2 = scf_mod.GVecIterator.init(grid);
     while (it2.next()) |g| {
         if (g.gh == 0 and g.gk == 0 and g.gl == 0) continue;
 

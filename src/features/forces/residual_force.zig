@@ -1,6 +1,6 @@
 const std = @import("std");
 const math = @import("../math/math.zig");
-const gvec_iter = @import("../scf/gvec_iter.zig");
+const scf = @import("../scf/scf.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const local_force = @import("local_force.zig");
@@ -32,7 +32,7 @@ pub fn residualForces(
         if (entry.upf.rho_atom.len == 0) continue;
         const pos = atom.position;
 
-        var it = gvec_iter.GVecIterator.init(grid);
+        var it = scf.GVecIterator.init(grid);
         while (it.next()) |g| {
             const g_norm = math.Vec3.norm(g.gvec);
             if (g_norm > 1e-12) {

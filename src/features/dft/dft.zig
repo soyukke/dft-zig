@@ -5,7 +5,6 @@ const cube = @import("cube.zig");
 const dos = @import("../dos/dos.zig");
 const pdos_mod = @import("../dos/pdos.zig");
 const scf = @import("../scf/scf.zig");
-const apply = @import("../scf/apply.zig");
 const kpath = @import("../kpath/kpath.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const linear_scaling = @import("../linear_scaling/linear_scaling.zig");
@@ -106,7 +105,7 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
         // apply_caches ownership is transferred to scf.run
         const init_density: ?[]const f64 = if (relax_result) |rr| rr.final_density else null;
         const init_kpoint_cache: ?[]scf.KpointCache = if (relax_result) |rr| rr.final_kpoint_cache else null;
-        var init_apply_caches: ?[]apply.KpointApplyCache = null;
+        var init_apply_caches: ?[]scf.KpointApplyCache = null;
         if (relax_result) |*rr| {
             init_apply_caches = rr.final_apply_caches;
             rr.final_apply_caches = null; // transfer ownership

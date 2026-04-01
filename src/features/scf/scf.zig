@@ -27,6 +27,7 @@ const smearing_mod = @import("smearing.zig");
 const symmetry = @import("../symmetry/symmetry.zig");
 const thread_pool = @import("../thread_pool.zig");
 const util = @import("util.zig");
+const gvec_iter = @import("gvec_iter.zig");
 const ctrapWeight = @import("../math/math.zig").radial.ctrapWeight;
 
 pub const ThreadPool = thread_pool.ThreadPool;
@@ -35,10 +36,20 @@ const KPoint = symmetry.KPoint;
 
 pub const Grid = grid_mod.Grid;
 
-const ApplyContext = apply.ApplyContext;
-const applyHamiltonian = apply.applyHamiltonian;
-const applyHamiltonianBatched = apply.applyHamiltonianBatched;
+pub const ApplyContext = apply.ApplyContext;
+pub const applyHamiltonian = apply.applyHamiltonian;
+pub const applyHamiltonianBatched = apply.applyHamiltonianBatched;
 const checkHamiltonianApply = apply.checkHamiltonianApply;
+pub const KpointApplyCache = apply.KpointApplyCache;
+pub const NonlocalContext = apply.NonlocalContext;
+pub const NonlocalSpecies = apply.NonlocalSpecies;
+pub const applyNonlocalPotential = apply.applyNonlocalPotential;
+const applyOverlap = apply.applyOverlap;
+const buildNonlocalContextWithTables = apply.buildNonlocalContextWithTables;
+const buildNonlocalContextPaw = apply.buildNonlocalContextPaw;
+const buildNonlocalContextPub = apply.buildNonlocalContextPub;
+const accumulatePawRhoIJ = apply.accumulatePawRhoIJ;
+const ApplyWorkspace = apply.ApplyWorkspace;
 
 pub const KpointCache = kpoints_mod.KpointCache;
 const KpointShared = kpoints_mod.KpointShared;
@@ -46,26 +57,29 @@ const KpointWorker = kpoints_mod.KpointWorker;
 const KpointEigenData = kpoints_mod.KpointEigenData;
 const computeKpointContribution = kpoints_mod.computeKpointContribution;
 const computeKpointEigenData = kpoints_mod.computeKpointEigenData;
-const kpointThreadCount = kpoints_mod.kpointThreadCount;
+pub const kpointThreadCount = kpoints_mod.kpointThreadCount;
 const kpointWorker = kpoints_mod.kpointWorker;
 const findFermiLevelSpin = kpoints_mod.findFermiLevelSpin;
 const accumulateKpointDensitySmearingSpin = kpoints_mod.accumulateKpointDensitySmearingSpin;
+const SmearingShared = kpoints_mod.SmearingShared;
 
 const GridRequirement = util.GridRequirement;
 const gridRequirement = util.gridRequirement;
 const nextFftSize = util.nextFftSize;
 
 const buildFftIndexMap = fft_grid.buildFftIndexMap;
-const realToReciprocal = fft_grid.realToReciprocal;
-const reciprocalToReal = fft_grid.reciprocalToReal;
-const fftReciprocalToComplexInPlace = fft_grid.fftReciprocalToComplexInPlace;
+pub const realToReciprocal = fft_grid.realToReciprocal;
+pub const reciprocalToReal = fft_grid.reciprocalToReal;
+pub const fftReciprocalToComplexInPlace = fft_grid.fftReciprocalToComplexInPlace;
 const fftReciprocalToComplexInPlaceMapped = fft_grid.fftReciprocalToComplexInPlaceMapped;
-const fftComplexToReciprocalInPlace = fft_grid.fftComplexToReciprocalInPlace;
+pub const fftComplexToReciprocalInPlace = fft_grid.fftComplexToReciprocalInPlace;
 const fftComplexToReciprocalInPlaceMapped = fft_grid.fftComplexToReciprocalInPlaceMapped;
+const indexToFreq = fft_grid.indexToFreq;
 
 const mixDensity = mixing.mixDensity;
 const mixDensityKerker = mixing.mixDensityKerker;
 const PulayMixer = mixing.PulayMixer;
+pub const ComplexPulayMixer = mixing.ComplexPulayMixer;
 
 const ScfLog = logging.ScfLog;
 const ScfProfile = logging.ScfProfile;
@@ -79,7 +93,32 @@ const profileStart = logging.profileStart;
 const profileAdd = logging.profileAdd;
 const mergeProfile = logging.mergeProfile;
 
-const PwGridMap = pw_grid_map.PwGridMap;
+pub const PwGridMap = pw_grid_map.PwGridMap;
+
+// gvec_iter re-exports
+pub const GVecIterator = gvec_iter.GVecIterator;
+const GVecItem = gvec_iter.GVecItem;
+
+// xc_fields re-exports
+const XcFields = xc_fields_mod.XcFields;
+const XcFieldsSpin = xc_fields_mod.XcFieldsSpin;
+const Gradient = xc_fields_mod.Gradient;
+pub const computeXcFields = xc_fields_mod.computeXcFields;
+const computeXcFieldsSpin = xc_fields_mod.computeXcFieldsSpin;
+pub const gradientFromReal = xc_fields_mod.gradientFromReal;
+pub const divergenceFromReal = xc_fields_mod.divergenceFromReal;
+
+// potential re-exports
+const buildPotentialGrid = potential_mod.buildPotentialGrid;
+const buildPotentialGridSpin = potential_mod.buildPotentialGridSpin;
+pub const buildIonicPotentialGrid = potential_mod.buildIonicPotentialGrid;
+pub const buildLocalPotentialReal = potential_mod.buildLocalPotentialReal;
+const filterDensityToEcutrho = potential_mod.filterDensityToEcutrho;
+const SpinPotentialGrids = potential_mod.SpinPotentialGrids;
+
+// core_density re-exports
+pub const hasNlcc = core_density.hasNlcc;
+pub const buildCoreDensity = core_density.buildCoreDensity;
 
 /// Wavefunction data for a single k-point.
 pub const KpointWavefunction = struct {
