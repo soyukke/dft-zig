@@ -1116,29 +1116,39 @@ fn applyLocalPotentialSafe(
         const inv_scale = 1.0 / total;
 
         // Scatter PW -> FFT order with iFFT scaling
+        const t_scatter = if (ctx.profile != null) profileStart() else null;
         ctx.map.scatterFft(x, work_real, total);
+        if (ctx.profile) |p| profileAdd(&p.local_scatter_ns, t_scatter);
 
         // iFFT in-place
+        const t_ifft = if (ctx.profile != null) profileStart() else null;
         if (plan) |p| {
             try fft.fft3dInverseInPlacePlan(p, work_real);
         } else {
             try fft.fft3dInverseInPlace(ctx.alloc, work_real, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz);
         }
+        if (ctx.profile) |p| profileAdd(&p.local_ifft_ns, t_ifft);
 
         // V(r) * psi(r)
+        const t_vmul = if (ctx.profile != null) profileStart() else null;
         for (work_real, 0..) |*v, i| {
             v.* = math.complex.scale(v.*, ctx.local_r[i]);
         }
+        if (ctx.profile) |p| profileAdd(&p.local_vmul_ns, t_vmul);
 
         // FFT in-place
+        const t_fft = if (ctx.profile != null) profileStart() else null;
         if (plan) |p| {
             try fft.fft3dForwardInPlacePlan(p, work_real);
         } else {
             try fft.fft3dForwardInPlace(ctx.alloc, work_real, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz);
         }
+        if (ctx.profile) |p| profileAdd(&p.local_fft_ns, t_fft);
 
         // Gather FFT order -> PW with FFT scaling
+        const t_gather = if (ctx.profile != null) profileStart() else null;
         ctx.map.gatherFft(work_real, out, inv_scale);
+        if (ctx.profile) |p| profileAdd(&p.local_gather_ns, t_gather);
     } else {
         // Original path with full-grid remap
         ctx.map.scatter(x, work_recip);
@@ -1615,7 +1625,10 @@ pub fn applyHamiltonianBatched(
     const ctx: *ApplyContext = @ptrCast(@alignCast(ctx_ptr));
     if (n_pw != ctx.gvecs.len) return error.InvalidMatrixSize;
 
+    const h_start = if (ctx.profile != null) profileStart() else null;
+
     // Kinetic + local: per-vector (FFT can't easily be batched)
+    const local_start = if (ctx.profile != null) profileStart() else null;
     for (0..ncols) |col| {
         const x = x_batch[col * n_pw .. (col + 1) * n_pw];
         const y = y_batch[col * n_pw .. (col + 1) * n_pw];
@@ -1645,9 +1658,11 @@ pub fn applyHamiltonianBatched(
             }
         }
     }
+    if (ctx.profile) |p| profileAdd(&p.apply_local_ns, local_start);
 
     // Nonlocal potential: batched BLAS-3
     if (ctx.nonlocal_ctx != null) {
+        const nonlocal_start = if (ctx.profile != null) profileStart() else null;
         const nl_out = try ctx.alloc.alloc(math.Complex, n_pw * ncols);
         defer ctx.alloc.free(nl_out);
         const work_phase = try ctx.alloc.alloc(math.Complex, n_pw);
@@ -1658,6 +1673,7 @@ pub fn applyHamiltonianBatched(
         for (0..n_pw * ncols) |i| {
             y_batch[i] = math.complex.add(y_batch[i], nl_out[i]);
         }
+        if (ctx.profile) |p| profileAdd(&p.apply_nonlocal_ns, nonlocal_start);
     } else if (ctx.vnl) |mat| {
         for (0..ncols) |col| {
             const x = x_batch[col * n_pw .. (col + 1) * n_pw];
@@ -1669,6 +1685,11 @@ pub fn applyHamiltonianBatched(
                 y[g] = math.complex.add(y[g], ws_vec[g]);
             }
         }
+    }
+
+    if (ctx.profile) |p| {
+        profileAdd(&p.apply_h_ns, h_start);
+        p.apply_h_calls += 1;
     }
 }
 

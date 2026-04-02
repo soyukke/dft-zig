@@ -1154,10 +1154,25 @@ pub fn run(params: ScfParams) !ScfResult {
             const n_f64 = n_complex * 2;
             const v_in: []f64 = @as([*]f64, @ptrCast(potential.values.ptr))[0..n_f64];
 
-            const v_out: []const f64 = @as([*]const f64, @ptrCast(potential_out.values.ptr))[0..n_f64];
             if (common.pulay_mixer != null and iterations >= cfg.scf.pulay_start) {
-                try common.pulay_mixer.?.mix(v_in, v_out, cfg.scf.mixing_beta);
+                // Compute complex residual R(G) = V_out(G) - V_in(G)
+                const residual_g = try alloc.alloc(math.Complex, n_complex);
+                // Ownership transfers to mixer via mixWithResidual — no defer free.
+                // Safety: Complex{r:f64,i:f64} has same size/align as [2]f64,
+                // so alloc(Complex, n) can be freed as alloc.free([]f64) of len n*2.
+                for (0..n_complex) |idx| {
+                    residual_g[idx] = math.complex.sub(potential_out.values[idx], potential.values[idx]);
+                }
+
+                // Apply model dielectric preconditioner if enabled
+                if (cfg.scf.diemac > 1.0) {
+                    mixing.applyModelDielectricPreconditioner(grid, residual_g, cfg.scf.diemac, cfg.scf.dielng);
+                }
+
+                const precond_f64: []f64 = @as([*]f64, @ptrCast(residual_g.ptr))[0..n_f64];
+                try common.pulay_mixer.?.mixWithResidual(v_in, precond_f64, cfg.scf.mixing_beta);
             } else {
+                const v_out: []const f64 = @as([*]const f64, @ptrCast(potential_out.values.ptr))[0..n_f64];
                 mixDensity(v_in, v_out, cfg.scf.mixing_beta);
             }
 
@@ -2032,11 +2047,11 @@ fn computeDensity(
     var profiles: ?[]ScfProfile = null;
     if (cfg.scf.profile) {
         profiles = try alloc.alloc(ScfProfile, thread_count);
-        defer alloc.free(profiles.?);
         for (profiles.?) |*p| {
             p.* = ScfProfile{};
         }
     }
+    defer if (profiles) |p| alloc.free(p);
 
     // Pre-create FFT plans for each thread to avoid mutex contention
     // This is the key fix for k-point parallelization performance
@@ -2769,16 +2784,32 @@ fn runSpinPolarizedLoop(
 
             // Concatenate for Pulay
             if (common.pulay_mixer != null and iterations >= cfg.scf.pulay_start) {
-                // Concatenate up+down into a single array for Pulay
+                // Compute complex residual for up and down, concatenated
+                const residual_concat = try alloc.alloc(f64, n_f64 * 2);
+                // Ownership transfers to mixer via mixWithResidual — no defer free
+                for (0..n_f64) |i| {
+                    residual_concat[i] = @as([*]const f64, @ptrCast(pot_out_up.values.ptr))[i] - v_in_up[i];
+                }
+                for (0..n_f64) |i| {
+                    residual_concat[n_f64 + i] = @as([*]const f64, @ptrCast(pot_out_down.values.ptr))[i] - v_in_down[i];
+                }
+
+                // Apply model dielectric preconditioner if enabled
+                if (cfg.scf.diemac > 1.0) {
+                    // Reinterpret as Complex slices and precondition each spin channel
+                    const res_up_c: []math.Complex = @as([*]math.Complex, @ptrCast(@alignCast(residual_concat.ptr)))[0..n_complex];
+                    const res_down_c: []math.Complex = @as([*]math.Complex, @ptrCast(@alignCast(residual_concat[n_f64..].ptr)))[0..n_complex];
+                    mixing.applyModelDielectricPreconditioner(grid, res_up_c, cfg.scf.diemac, cfg.scf.dielng);
+                    mixing.applyModelDielectricPreconditioner(grid, res_down_c, cfg.scf.diemac, cfg.scf.dielng);
+                }
+
+                // Concatenate v_in for Pulay
                 const concat_in = try alloc.alloc(f64, n_f64 * 2);
                 defer alloc.free(concat_in);
-                const concat_out = try alloc.alloc(f64, n_f64 * 2);
-                defer alloc.free(concat_out);
                 @memcpy(concat_in[0..n_f64], v_in_up);
                 @memcpy(concat_in[n_f64..], v_in_down);
-                @memcpy(concat_out[0..n_f64], v_out_up_f);
-                @memcpy(concat_out[n_f64..], v_out_down_f);
-                try common.pulay_mixer.?.mix(concat_in, concat_out, cfg.scf.mixing_beta);
+
+                try common.pulay_mixer.?.mixWithResidual(concat_in, residual_concat, cfg.scf.mixing_beta);
                 @memcpy(v_in_up, concat_in[0..n_f64]);
                 @memcpy(v_in_down, concat_in[n_f64..]);
             } else {

@@ -164,11 +164,16 @@ pub const PulayMixer = struct {
 
         // Store current input and preconditioned residual
         const rho_copy = try self.alloc.alloc(f64, n);
-        errdefer self.alloc.free(rho_copy);
         @memcpy(rho_copy, rho);
 
-        try self.rho_history.append(self.alloc, rho_copy);
-        try self.residual_history.append(self.alloc, precond_residual);
+        self.rho_history.append(self.alloc, rho_copy) catch |err| {
+            self.alloc.free(rho_copy);
+            return err;
+        };
+        self.residual_history.append(self.alloc, precond_residual) catch |err| {
+            self.alloc.free(self.rho_history.pop().?);
+            return err;
+        };
 
         // Remove oldest entries if history is full
         while (self.rho_history.items.len > self.history) {
@@ -316,6 +321,37 @@ fn applyKerkerPreconditioner(alloc: std.mem.Allocator, grid: Grid, residual: []c
     return fft_grid.reciprocalToReal(alloc, grid, res_g);
 }
 
+/// Apply ABINIT-style model dielectric preconditioner to a G-space potential residual.
+/// P(G) = (dielng^2 * |G|^2 + 1/diemac) / (dielng^2 * |G|^2 + 1)
+/// G=0: P = 1/diemac.  G→∞: P → 1.
+/// Modifies residual_g in place. No FFTs needed since input is already in G-space.
+///
+/// Corresponds to ABINIT's moddiel subroutine (m_prcref.F90) with diemix=1.
+/// The mixing parameter (beta/diemix) is applied separately in PulayMixer.mixWithResidual().
+///
+/// Note: For metals with very large diemac (>1e4), G=0 is nearly zeroed (P≈0),
+/// which may cause slow convergence of the macroscopic potential component.
+pub fn applyModelDielectricPreconditioner(
+    grid: Grid,
+    residual_g: []math.Complex,
+    diemac: f64,
+    dielng: f64,
+) void {
+    const dielng_sq = dielng * dielng;
+    const inv_diemac = 1.0 / diemac;
+
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        if (g.g2 < 1e-12) {
+            residual_g[g.idx] = math.complex.scale(residual_g[g.idx], inv_diemac);
+        } else {
+            const x = dielng_sq * g.g2;
+            const precond = (x + inv_diemac) / (x + 1.0);
+            residual_g[g.idx] = math.complex.scale(residual_g[g.idx], precond);
+        }
+    }
+}
+
 /// Solve the Pulay linear system using simple Gaussian elimination.
 fn solvePulaySystem(alloc: std.mem.Allocator, B: []f64, rhs: []f64, size: usize) ![]f64 {
     // Copy matrix and rhs for in-place solving
@@ -426,11 +462,16 @@ pub const ComplexPulayMixer = struct {
 
         // Store current input and preconditioned residual
         const rho_copy = try self.alloc.alloc(math.Complex, n);
-        errdefer self.alloc.free(rho_copy);
         @memcpy(rho_copy, rho);
 
-        try self.rho_history.append(self.alloc, rho_copy);
-        try self.residual_history.append(self.alloc, precond_residual);
+        self.rho_history.append(self.alloc, rho_copy) catch |err| {
+            self.alloc.free(rho_copy);
+            return err;
+        };
+        self.residual_history.append(self.alloc, precond_residual) catch |err| {
+            self.alloc.free(self.rho_history.pop().?);
+            return err;
+        };
 
         // Remove oldest entries if history is full
         while (self.rho_history.items.len > self.history) {

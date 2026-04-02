@@ -109,6 +109,12 @@ pub const ScfProfile = struct {
     apply_nonlocal_ns: u64 = 0,
     density_ns: u64 = 0,
     apply_h_calls: usize = 0,
+    // Local potential sub-timers
+    local_scatter_ns: u64 = 0,
+    local_ifft_ns: u64 = 0,
+    local_vmul_ns: u64 = 0,
+    local_fft_ns: u64 = 0,
+    local_gather_ns: u64 = 0,
 };
 
 pub fn profileStart() ?std.time.Instant {
@@ -128,7 +134,7 @@ pub fn logProfile(profile: ScfProfile, kpoints: usize) !void {
     const out = &writer.interface;
     const to_ms = 1.0 / @as(f64, @floatFromInt(std.time.ns_per_ms));
     try out.print(
-        "profile kpoints={d} basis_ms={d:.3} eig_ms={d:.3} h_ms={d:.3} vnl_ms={d:.3} s_ms={d:.3} apply_ms={d:.3} density_ms={d:.3} local_ms={d:.3} nonlocal_ms={d:.3} apply_calls={d}\n",
+        "profile kpoints={d} basis_ms={d:.3} eig_ms={d:.3} h_ms={d:.3} vnl_ms={d:.3} s_ms={d:.3} apply_ms={d:.3} density_ms={d:.3} local_ms={d:.3} nonlocal_ms={d:.3} apply_calls={d} scatter_ms={d:.3} ifft_ms={d:.3} vmul_ms={d:.3} fft_ms={d:.3} gather_ms={d:.3}\n",
         .{
             kpoints,
             @as(f64, @floatFromInt(profile.basis_ns)) * to_ms,
@@ -141,6 +147,11 @@ pub fn logProfile(profile: ScfProfile, kpoints: usize) !void {
             @as(f64, @floatFromInt(profile.apply_local_ns)) * to_ms,
             @as(f64, @floatFromInt(profile.apply_nonlocal_ns)) * to_ms,
             profile.apply_h_calls,
+            @as(f64, @floatFromInt(profile.local_scatter_ns)) * to_ms,
+            @as(f64, @floatFromInt(profile.local_ifft_ns)) * to_ms,
+            @as(f64, @floatFromInt(profile.local_vmul_ns)) * to_ms,
+            @as(f64, @floatFromInt(profile.local_fft_ns)) * to_ms,
+            @as(f64, @floatFromInt(profile.local_gather_ns)) * to_ms,
         },
     );
     try out.flush();
@@ -157,6 +168,11 @@ pub fn mergeProfile(dest: *ScfProfile, src: ScfProfile) void {
     dest.apply_nonlocal_ns += src.apply_nonlocal_ns;
     dest.density_ns += src.density_ns;
     dest.apply_h_calls += src.apply_h_calls;
+    dest.local_scatter_ns += src.local_scatter_ns;
+    dest.local_ifft_ns += src.local_ifft_ns;
+    dest.local_vmul_ns += src.local_vmul_ns;
+    dest.local_fft_ns += src.local_fft_ns;
+    dest.local_gather_ns += src.local_gather_ns;
 }
 
 pub fn logNonlocalDiagnostics(

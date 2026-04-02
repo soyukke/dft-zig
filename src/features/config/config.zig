@@ -61,6 +61,8 @@ pub const ScfConfig = struct {
     iterative_warmup_tol: f64,
     iterative_reuse_vectors: bool,
     kerker_q0: f64, // Kerker preconditioning parameter (0 = disabled)
+    diemac: f64, // Macroscopic dielectric constant for model preconditioner (1.0 = disabled, ~12 for Si, 1e6 for metals)
+    dielng: f64, // Thomas-Fermi screening length in Bohr for model preconditioner (default 1.0)
     pulay_history: usize, // Pulay/DIIS mixing history (0 = disabled, use linear mixing)
     pulay_start: usize, // Number of simple mixing iterations before Pulay kicks in
     mixing_mode: MixingMode, // density or potential mixing
@@ -431,6 +433,8 @@ pub fn load(alloc: std.mem.Allocator, path: []const u8) !Config {
         .iterative_warmup_tol = 1e-3,
         .iterative_reuse_vectors = true,
         .kerker_q0 = 0.0,
+        .diemac = 1.0, // 1.0 = disabled (no dielectric screening)
+        .dielng = 1.0, // Thomas-Fermi screening length in Bohr
         .pulay_history = 8, // Pulay/DIIS mixing for faster SCF convergence
         .pulay_start = 4, // Simple mixing iterations before Pulay starts
         .mixing_mode = .potential, // Potential mixing for fast convergence (like ABINIT iscf=7)
@@ -779,6 +783,14 @@ pub fn load(alloc: std.mem.Allocator, path: []const u8) !Config {
                     scf.iterative_reuse_vectors = try parseBool(value);
                 } else if (std.mem.eql(u8, key, "kerker_q0")) {
                     scf.kerker_q0 = try parseFloat(value);
+                } else if (std.mem.eql(u8, key, "diemac")) {
+                    const v = try parseFloat(value);
+                    if (v < 1.0) return error.InvalidConfig;
+                    scf.diemac = v;
+                } else if (std.mem.eql(u8, key, "dielng")) {
+                    const v = try parseFloat(value);
+                    if (v <= 0.0) return error.InvalidConfig;
+                    scf.dielng = v;
                 } else if (std.mem.eql(u8, key, "pulay_history")) {
                     scf.pulay_history = try floatToIndex(try parseFloat(value));
                 } else if (std.mem.eql(u8, key, "pulay_start")) {

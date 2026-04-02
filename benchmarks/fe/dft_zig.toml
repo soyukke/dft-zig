@@ -28,6 +28,8 @@ pulay_history = 8
 pulay_start = 4
 max_iter = 100
 convergence = 1e-6
+# Note: diemac not used for Fe — spin-polarized metals are sensitive to
+# strong G=0 damping, which can suppress magnetization convergence.
 use_rfft = true
 smearing = "fermi"
 smear_ry = 0.02
