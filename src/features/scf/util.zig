@@ -1,3 +1,4 @@
+const std = @import("std");
 const plane_wave = @import("../plane_wave/basis.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 
@@ -51,6 +52,16 @@ fn isFftSize(value: usize) bool {
     while (n % 3 == 0) n /= 3;
     while (n % 5 == 0) n /= 5;
     return n == 1;
+}
+
+/// Compute RMS density difference.
+pub fn densityDiff(rho: []f64, rho_new: []f64) f64 {
+    var sum: f64 = 0.0;
+    for (rho, 0..) |value, i| {
+        const diff = rho_new[i] - value;
+        sum += diff * diff;
+    }
+    return std.math.sqrt(sum / @as(f64, @floatFromInt(rho.len)));
 }
 
 /// Check if any species has nonlocal coefficients.

@@ -1543,75 +1543,7 @@ pub fn run(params: ScfParams) !ScfResult {
 
 
 
-/// Compute atomic density form factor: ∫ rho_atom(r) × j₀(Gr) × rab(r) dr
-/// UPF rho_atom includes 4πr² factor, so no extra r² needed.
-fn rhoAtomFormFactor(upf: *const @import("../pseudopotential/pseudopotential.zig").UpfData, g: f64) f64 {
-    if (upf.rho_atom.len == 0) return 0.0;
-    const n = @min(upf.rho_atom.len, @min(upf.r.len, upf.rab.len));
-    var sum: f64 = 0.0;
-    for (0..n) |i| {
-        const x = g * upf.r[i];
-        const j0 = nonlocal_mod.sphericalBessel(0, x);
-        sum += upf.rho_atom[i] * j0 * upf.rab[i] * ctrapWeight(i, n);
-    }
-    return sum;
-}
-
-/// Build initial density from superposition of atomic pseudo-charge densities.
-/// ρ_init(G) = (1/Ω) Σ_atom ρ_atom_form(|G|) × exp(-iG·R_atom)
-/// Then inverse FFT to real space.
-pub fn buildAtomicDensity(
-    alloc: std.mem.Allocator,
-    grid: Grid,
-    species: []const hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
-) ![]f64 {
-    const total = grid.count();
-    const inv_volume = 1.0 / grid.volume;
-    const b1 = grid.recip.row(0);
-    const b2 = grid.recip.row(1);
-    const b3 = grid.recip.row(2);
-
-    const rho_g = try alloc.alloc(math.Complex, total);
-    defer alloc.free(rho_g);
-
-    var idx: usize = 0;
-    var il: usize = 0;
-    while (il < grid.nz) : (il += 1) {
-        var ik: usize = 0;
-        while (ik < grid.ny) : (ik += 1) {
-            var ih: usize = 0;
-            while (ih < grid.nx) : (ih += 1) {
-                const gh = grid.min_h + @as(i32, @intCast(ih));
-                const gk = grid.min_k + @as(i32, @intCast(ik));
-                const gl = grid.min_l + @as(i32, @intCast(il));
-                const gvec = math.Vec3.add(
-                    math.Vec3.add(
-                        math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
-                        math.Vec3.scale(b2, @as(f64, @floatFromInt(gk))),
-                    ),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                );
-                const g_norm = math.Vec3.norm(gvec);
-
-                var sum_r: f64 = 0.0;
-                var sum_i: f64 = 0.0;
-                for (atoms) |atom| {
-                    const rho_g_val = rhoAtomFormFactor(species[atom.species_index].upf, g_norm);
-                    const g_dot_r = math.Vec3.dot(gvec, atom.position);
-                    sum_r += rho_g_val * @cos(g_dot_r);
-                    sum_i -= rho_g_val * @sin(g_dot_r);
-                }
-                rho_g[idx] = .{ .r = sum_r * inv_volume, .i = sum_i * inv_volume };
-                idx += 1;
-            }
-        }
-    }
-
-    // Inverse FFT to real space
-    const rho_r = try reciprocalToReal(alloc, grid, rho_g);
-    return rho_r;
-}
+pub const buildAtomicDensity = core_density.buildAtomicDensity;
 
 /// Generate Monkhorst-Pack k-mesh.
 /// Determine grid from config or cutoff.
@@ -2153,15 +2085,7 @@ fn computeDensity(
 
 const computeDensitySmearing = smearing_mod.computeDensitySmearing;
 
-/// Compute RMS density difference.
-pub fn densityDiff(rho: []f64, rho_new: []f64) f64 {
-    var sum: f64 = 0.0;
-    for (rho, 0..) |value, i| {
-        const diff = rho_new[i] - value;
-        sum += diff * diff;
-    }
-    return std.math.sqrt(sum / @as(f64, @floatFromInt(rho.len)));
-}
+pub const densityDiff = util.densityDiff;
 
 pub const hasNonlocal = util.hasNonlocal;
 pub const hasQij = util.hasQij;
