@@ -27,9 +27,9 @@ const smearing_mod = @import("smearing.zig");
 const symmetry = @import("../symmetry/symmetry.zig");
 const thread_pool = @import("../thread_pool.zig");
 const util = @import("util.zig");
+const band_solver = @import("band_solver.zig");
 const gvec_iter = @import("gvec_iter.zig");
 const scf_spin = @import("scf_spin.zig");
-const ctrapWeight = @import("../math/math.zig").radial.ctrapWeight;
 
 pub const ThreadPool = thread_pool.ThreadPool;
 
@@ -45,12 +45,6 @@ pub const KpointApplyCache = apply.KpointApplyCache;
 pub const NonlocalContext = apply.NonlocalContext;
 pub const NonlocalSpecies = apply.NonlocalSpecies;
 pub const applyNonlocalPotential = apply.applyNonlocalPotential;
-const applyOverlap = apply.applyOverlap;
-const buildNonlocalContextWithTables = apply.buildNonlocalContextWithTables;
-const buildNonlocalContextPaw = apply.buildNonlocalContextPaw;
-const buildNonlocalContextPub = apply.buildNonlocalContextPub;
-const accumulatePawRhoIJ = apply.accumulatePawRhoIJ;
-const ApplyWorkspace = apply.ApplyWorkspace;
 
 pub const KpointCache = kpoints_mod.KpointCache;
 const KpointShared = kpoints_mod.KpointShared;
@@ -64,9 +58,6 @@ const findFermiLevelSpin = kpoints_mod.findFermiLevelSpin;
 const accumulateKpointDensitySmearingSpin = kpoints_mod.accumulateKpointDensitySmearingSpin;
 const SmearingShared = kpoints_mod.SmearingShared;
 
-const GridRequirement = util.GridRequirement;
-const gridRequirement = util.gridRequirement;
-const nextFftSize = util.nextFftSize;
 
 const buildFftIndexMap = fft_grid.buildFftIndexMap;
 pub const realToReciprocal = fft_grid.realToReciprocal;
@@ -235,326 +226,13 @@ pub const EnergyTerms = energy_mod.EnergyTerms;
 
 pub const DensityResult = smearing_mod.DensityResult;
 
-pub const BandIterativeContext = struct {
-    grid: Grid,
-    local_r: []f64,
-    fft_index_map: ?[]usize,
-    inv_volume: f64,
-    /// PAW tables for band calculation (borrowed, NOT owned)
-    paw_tabs: ?[]const paw_mod.PawTab = null,
-    /// Per-atom converged D_ij from SCF: [natom][nbeta*nbeta] (owned)
-    paw_dij: ?[][]f64 = null,
-
-    pub fn deinit(self: *BandIterativeContext, alloc: std.mem.Allocator) void {
-        if (self.local_r.len > 0) {
-            alloc.free(self.local_r);
-        }
-        if (self.fft_index_map) |map| {
-            alloc.free(map);
-        }
-        if (self.paw_dij) |dij| {
-            for (dij) |d| alloc.free(d);
-            alloc.free(dij);
-        }
-    }
-};
-
-pub const BandVectorCache = struct {
-    n: usize = 0,
-    nbands: usize = 0,
-    vectors: []math.Complex = &[_]math.Complex{},
-
-    pub fn deinit(self: *BandVectorCache) void {
-        if (self.vectors.len > 0) {
-            std.heap.c_allocator.free(self.vectors);
-        }
-        self.* = .{};
-    }
-
-    pub fn store(self: *BandVectorCache, n: usize, nbands: usize, values: []const math.Complex) !void {
-        const total = n * nbands;
-        if (values.len < total) return error.InvalidMatrixSize;
-        if (self.vectors.len != total) {
-            if (self.vectors.len > 0) {
-                std.heap.c_allocator.free(self.vectors);
-            }
-            self.vectors = try std.heap.c_allocator.alloc(math.Complex, total);
-        }
-        self.n = n;
-        self.nbands = nbands;
-        @memcpy(self.vectors, values[0..total]);
-    }
-};
-
-pub fn initBandIterativeContext(
-    alloc: std.mem.Allocator,
-    cfg: config.Config,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
-    recip: math.Mat3,
-    volume: f64,
-    extra: hamiltonian.PotentialGrid,
-) !BandIterativeContext {
-    const grid = gridFromConfig(cfg, recip, volume);
-    if (extra.nx != grid.nx or extra.ny != grid.ny or extra.nz != grid.nz or
-        extra.min_h != grid.min_h or extra.min_k != grid.min_k or extra.min_l != grid.min_l)
-    {
-        return error.InvalidGrid;
-    }
-    var ionic = try potential_mod.buildIonicPotentialGrid(alloc, grid, species, atoms, null, null);
-    defer ionic.deinit(alloc);
-    const local_r = try potential_mod.buildLocalPotentialReal(alloc, grid, ionic, extra);
-
-    if (cfg.scf.debug_fermi) {
-        var sum: f64 = 0.0;
-        for (local_r) |value| {
-            sum += value;
-        }
-        const mean_local = sum / @as(f64, @floatFromInt(local_r.len));
-        const ionic_g0 = ionic.valueAt(0, 0, 0);
-        const extra_g0 = extra.valueAt(0, 0, 0);
-        var buffer: [256]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
-        const out = &writer.interface;
-        try out.print(
-            "band: local_r mean={d:.6} ionic_g0={d:.6} extra_g0={d:.6}\n",
-            .{ mean_local, ionic_g0.r, extra_g0.r },
-        );
-        try out.flush();
-    }
-
-    const fft_index_map = try buildFftIndexMap(alloc, grid);
-    return BandIterativeContext{
-        .grid = grid,
-        .local_r = local_r,
-        .fft_index_map = fft_index_map,
-        .inv_volume = 1.0 / volume,
-    };
-}
-
-/// Options for band eigenvalue calculation
-pub const BandEigenOptions = struct {
-    reuse_vectors: bool = true,
-    pool: ?*ThreadPool = null,
-    shared_fft_plan: ?fft.Fft3dPlan = null,
-    radial_tables: ?[]const nonlocal_mod.RadialTableSet = null,
-    paw_tabs: ?[]const paw_mod.PawTab = null,
-    paw_dij: ?[]const []const f64 = null,
-};
-
-pub fn bandEigenvaluesIterative(
-    alloc: std.mem.Allocator,
-    cfg: config.Config,
-    ctx: *const BandIterativeContext,
-    k_cart: math.Vec3,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
-    recip: math.Mat3,
-    nbands: usize,
-    reuse_vectors: bool,
-    cache: ?*BandVectorCache,
-) ![]f64 {
-    return bandEigenvaluesIterativeExt(alloc, cfg, ctx, k_cart, species, atoms, recip, nbands, cache, .{
-        .reuse_vectors = reuse_vectors,
-        .pool = null,
-    });
-}
-
-/// Extended band eigenvalue calculation with optional thread pool for parallel LOBPCG
-pub fn bandEigenvaluesIterativeExt(
-    alloc: std.mem.Allocator,
-    cfg: config.Config,
-    ctx: *const BandIterativeContext,
-    k_cart: math.Vec3,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
-    recip: math.Mat3,
-    nbands: usize,
-    cache: ?*BandVectorCache,
-    opts: BandEigenOptions,
-) ![]f64 {
-    var basis = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, k_cart);
-    defer basis.deinit(alloc);
-    if (basis.gvecs.len == 0) return error.NoPlaneWaves;
-
-    const nbands_use = @min(nbands, basis.gvecs.len);
-    if (nbands_use == 0) return error.InvalidBandConfig;
-
-    const req = gridRequirement(basis.gvecs);
-    if (req.nx > ctx.grid.nx or req.ny > ctx.grid.ny or req.nz > ctx.grid.nz) {
-        return error.InvalidGrid;
-    }
-
-    const diag = try alloc.alloc(f64, basis.gvecs.len);
-    defer alloc.free(diag);
-    for (basis.gvecs, 0..) |g, i| {
-        diag[i] = g.kinetic;
-    }
-
-    var init_vectors: ?[]const math.Complex = null;
-    var init_cols: usize = 0;
-    if (opts.reuse_vectors) {
-        if (cache) |c| {
-            if (c.vectors.len > 0 and c.n == basis.gvecs.len and c.nbands == nbands_use) {
-                init_vectors = c.vectors;
-                init_cols = c.nbands;
-            }
-        }
-    }
-
-    const nonlocal_enabled = cfg.scf.enable_nonlocal and hasNonlocal(species);
-    const has_paw = opts.paw_tabs != null and opts.paw_dij != null;
-    // Use multiple workspaces for parallel LOBPCG to avoid allocation during apply
-    const num_workspaces: usize = if (opts.pool != null) @min(16, nbands_use + 4) else 1;
-
-    // Build NonlocalContext:
-    // - For PAW: always build ourselves with buildNonlocalContextPaw (sets up D_ij buffer + overlap)
-    // - For NC with radial tables: use buildNonlocalContextWithTables (fast path)
-    // - Otherwise: let ApplyContext build it internally
-    var owned_nonlocal_ctx: ?apply.NonlocalContext = null;
-    const build_nonlocal_ourselves = has_paw or (opts.radial_tables != null and nonlocal_enabled and num_workspaces <= 1);
-    if (has_paw) {
-        owned_nonlocal_ctx = try apply.buildNonlocalContextPaw(alloc, species, basis.gvecs, opts.radial_tables, opts.paw_tabs.?);
-    } else if (opts.radial_tables != null and nonlocal_enabled and num_workspaces <= 1) {
-        owned_nonlocal_ctx = try apply.buildNonlocalContextWithTables(alloc, species, basis.gvecs, opts.radial_tables.?);
-    }
-    errdefer if (owned_nonlocal_ctx) |*nc| nc.deinit(alloc);
-
-    // Copy per-atom D_ij into the NonlocalContext for PAW
-    if (has_paw) {
-        if (owned_nonlocal_ctx) |*nc| {
-            const paw_dij = opts.paw_dij.?;
-            var atom_idx: usize = 0;
-            for (species, 0..) |_, si| {
-                var natom_for_species: usize = 0;
-                for (atoms) |atom| {
-                    if (atom.species_index == si) natom_for_species += 1;
-                }
-                if (natom_for_species > 0) {
-                    try nc.ensureDijPerAtom(alloc, si, natom_for_species);
-                    var a_of_s: usize = 0;
-                    for (atoms) |atom| {
-                        if (atom.species_index != si) continue;
-                        if (atom_idx < paw_dij.len) {
-                            nc.updateDijAtom(si, a_of_s, paw_dij[atom_idx]);
-                        }
-                        a_of_s += 1;
-                        atom_idx += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    // Build ApplyContext:
-    // When we built NonlocalContext ourselves, use initWithCache path
-    // Otherwise fall back to initWithFftPlan or initWithWorkspaces
-    var apply_ctx = if (build_nonlocal_ourselves) blk: {
-        var map = try PwGridMap.init(alloc, basis.gvecs, ctx.grid);
-        errdefer map.deinit(alloc);
-        if (ctx.fft_index_map) |idx_map| {
-            try map.buildFftIndices(alloc, idx_map);
-        }
-        const fft_plan = if (opts.shared_fft_plan) |plan| plan else try fft.Fft3dPlan.initWithBackend(alloc, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz, cfg.scf.fft_backend);
-        const owns_plan = opts.shared_fft_plan == null;
-        var actx = try ApplyContext.initWithCache(
-            alloc,
-            ctx.grid,
-            basis.gvecs,
-            ctx.local_r,
-            null,
-            owned_nonlocal_ctx,
-            map,
-            atoms,
-            ctx.inv_volume,
-            null,
-            ctx.fft_index_map,
-            fft_plan,
-            owns_plan,
-        );
-        actx.owns_nonlocal = true;
-        actx.owns_map = true;
-        owned_nonlocal_ctx = null; // ownership transferred
-        break :blk actx;
-    } else if (opts.shared_fft_plan != null and num_workspaces <= 1)
-        try ApplyContext.initWithFftPlan(
-            alloc,
-            ctx.grid,
-            basis.gvecs,
-            ctx.local_r,
-            null,
-            species,
-            atoms,
-            ctx.inv_volume,
-            nonlocal_enabled,
-            null,
-            ctx.fft_index_map,
-            opts.shared_fft_plan.?,
-        )
-    else
-        try ApplyContext.initWithWorkspaces(
-            alloc,
-            ctx.grid,
-            basis.gvecs,
-            ctx.local_r,
-            null,
-            species,
-            atoms,
-            ctx.inv_volume,
-            nonlocal_enabled,
-            null,
-            ctx.fft_index_map,
-            cfg.scf.fft_backend,
-            num_workspaces,
-        );
-    defer apply_ctx.deinit(alloc);
-
-    // For PAW, set the overlap operator S for generalized eigenvalue problem H|ψ> = ε S|ψ>
-    const apply_s_fn: ?*const fn (*anyopaque, []const math.Complex, []math.Complex) anyerror!void =
-        if (has_paw and apply_ctx.nonlocal_ctx != null and apply_ctx.nonlocal_ctx.?.has_paw)
-            apply.applyOverlap
-        else
-            null;
-    const op = iterative.Operator{
-        .n = basis.gvecs.len,
-        .ctx = &apply_ctx,
-        .apply = applyHamiltonian,
-        .apply_batch = applyHamiltonianBatched,
-        .apply_s = apply_s_fn,
-    };
-    const lobpcg_opts = iterative.Options{
-        .max_iter = cfg.band.iterative_max_iter,
-        .tol = cfg.band.iterative_tol,
-        .max_subspace = cfg.band.iterative_max_subspace,
-        .block_size = cfg.band.iterative_block_size,
-        .init_diagonal = cfg.band.iterative_init_diagonal,
-        .init_vectors = init_vectors,
-        .init_vectors_cols = init_cols,
-    };
-
-    // Select solver: CG or LOBPCG (serial/parallel)
-    var eig = if (cfg.band.solver == .cg)
-        try iterative.hermitianEigenDecompCG(alloc, op, diag, nbands_use, lobpcg_opts)
-    else if (opts.pool) |pool|
-        try iterative.hermitianEigenDecompIterativeExt(alloc, cfg.linalg_backend, op, diag, nbands_use, .{
-            .base = lobpcg_opts,
-            .lobpcg_backend = .parallel,
-            .pool = pool,
-        })
-    else
-        try iterative.hermitianEigenDecompIterative(alloc, cfg.linalg_backend, op, diag, nbands_use, lobpcg_opts);
-    defer eig.deinit(alloc);
-
-    if (opts.reuse_vectors) {
-        if (cache) |c| {
-            try c.store(basis.gvecs.len, nbands_use, eig.vectors);
-        }
-    }
-
-    const values = try alloc.alloc(f64, nbands_use);
-    @memcpy(values, eig.values[0..nbands_use]);
-    return values;
-}
+// Band solver re-exports
+pub const BandIterativeContext = band_solver.BandIterativeContext;
+pub const BandVectorCache = band_solver.BandVectorCache;
+pub const BandEigenOptions = band_solver.BandEigenOptions;
+pub const initBandIterativeContext = band_solver.initBandIterativeContext;
+pub const bandEigenvaluesIterative = band_solver.bandEigenvaluesIterative;
+pub const bandEigenvaluesIterativeExt = band_solver.bandEigenvaluesIterativeExt;
 
 fn totalCharge(rho: []f64, grid: Grid) f64 {
     const dv = grid.volume / @as(f64, @floatFromInt(grid.count()));
@@ -711,7 +389,7 @@ fn initScfCommon(params: ScfParams) !ScfCommon {
     const volume_bohr = params.volume_bohr;
     const ff_tables = params.ff_tables;
 
-    const grid = gridFromConfig(cfg, recip, volume_bohr);
+    const grid = grid_mod.gridFromConfig(cfg, recip, volume_bohr);
     const total_electrons = totalElectrons(species, atoms);
 
     // Compute cutoff radius for isolated systems
@@ -1545,57 +1223,6 @@ pub fn run(params: ScfParams) !ScfResult {
 
 pub const buildAtomicDensity = core_density.buildAtomicDensity;
 
-/// Generate Monkhorst-Pack k-mesh.
-/// Determine grid from config or cutoff.
-fn gridFromConfig(cfg: config.Config, recip: math.Mat3, volume: f64) Grid {
-    var nx = cfg.scf.grid[0];
-    var ny = cfg.scf.grid[1];
-    var nz = cfg.scf.grid[2];
-    if (nx == 0 or ny == 0 or nz == 0) {
-        const auto = autoGrid(cfg.scf.ecut_ry, cfg.scf.grid_scale, recip);
-        if (nx == 0) nx = auto[0];
-        if (ny == 0) ny = auto[1];
-        if (nz == 0) nz = auto[2];
-    }
-    const min_h = minIndex(nx);
-    const min_k = minIndex(ny);
-    const min_l = minIndex(nz);
-    return Grid{
-        .nx = nx,
-        .ny = ny,
-        .nz = nz,
-        .cell = cfg.cell.scale(math.unitsScaleToBohr(cfg.units)),
-        .recip = recip,
-        .volume = volume,
-        .min_h = min_h,
-        .min_k = min_k,
-        .min_l = min_l,
-    };
-}
-
-/// Compute automatic grid size from cutoff.
-/// The FFT grid must accommodate:
-///   - Density bandwidth: 2*sqrt(ecut) (product of two wavefunctions)
-///   - ecutrho sphere: grid_scale * sqrt(ecut) (for PAW augmentation charges)
-/// The grid half-width is ceil(density_gmax / |b_i|), full grid is 2*half+1.
-fn autoGrid(ecut_ry: f64, grid_scale: f64, recip: math.Mat3) [3]usize {
-    const scale = if (grid_scale > 0.0) grid_scale else 1.0;
-    // Maximum |G| that the grid must support: density bandwidth = 2*sqrt(ecut) (from |ψ|²),
-    // ecutrho bandwidth = scale * sqrt(ecut). Grid must accommodate the larger of the two.
-    const density_gmax = @max(2.0, scale) * @sqrt(ecut_ry);
-    const b1 = math.Vec3.norm(recip.row(0));
-    const b2 = math.Vec3.norm(recip.row(1));
-    const b3 = math.Vec3.norm(recip.row(2));
-    const n1 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b1))) * 2 + 1;
-    const n2 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b2))) * 2 + 1;
-    const n3 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b3))) * 2 + 1;
-    return .{
-        nextFftSize(@max(n1, 3)),
-        nextFftSize(@max(n2, 3)),
-        nextFftSize(@max(n3, 3)),
-    };
-}
-
 const WavefunctionResult = struct {
     wavefunctions: WavefunctionData,
     band_energy: f64,
@@ -2103,13 +1730,8 @@ fn localPotentialAlpha(cfg: config.Config) f64 {
     return 5.0 / lmin;
 }
 
-/// Compute minimum index for FFT grid.
-fn minIndex(n: usize) i32 {
-    return -@as(i32, @intCast(n / 2));
-}
-
-
 test {
+    _ = @import("band_solver.zig");
     _ = @import("gvec_iter.zig");
     _ = @import("paw_scf.zig");
     _ = @import("smearing.zig");
@@ -2123,9 +1745,7 @@ test "auto grid chooses fft-friendly size for aluminum" {
     );
     const cell_bohr = cell_ang.scale(math.unitsScaleToBohr(.angstrom));
     const recip = math.reciprocal(cell_bohr);
-    const grid = autoGrid(15.0, 1.0, recip);
-    // With QE-like algorithm, FCC cell with ecut=15 gives smaller grid
-    // than the old formula which overestimated for non-orthogonal cells
+    const grid = grid_mod.autoGrid(15.0, 1.0, recip);
     try std.testing.expect(grid[0] >= 3);
     try std.testing.expect(grid[1] >= 3);
     try std.testing.expect(grid[2] >= 3);
