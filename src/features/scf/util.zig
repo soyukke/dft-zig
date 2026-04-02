@@ -1,4 +1,5 @@
 const plane_wave = @import("../plane_wave/basis.zig");
+const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 
 pub const GridRequirement = struct {
     nx: usize,
@@ -50,4 +51,37 @@ fn isFftSize(value: usize) bool {
     while (n % 3 == 0) n /= 3;
     while (n % 5 == 0) n /= 5;
     return n == 1;
+}
+
+/// Check if any species has nonlocal coefficients.
+pub fn hasNonlocal(species: []hamiltonian.SpeciesEntry) bool {
+    for (species) |entry| {
+        if (entry.upf.dij.len > 0) return true;
+    }
+    return false;
+}
+
+/// Check if any species has QIJ coefficients.
+pub fn hasQij(species: []hamiltonian.SpeciesEntry) bool {
+    for (species) |entry| {
+        if (entry.upf.qij.len > 0) return true;
+    }
+    return false;
+}
+
+/// Check if any species uses PAW.
+pub fn hasPaw(species: []hamiltonian.SpeciesEntry) bool {
+    for (species) |entry| {
+        if (entry.upf.paw != null) return true;
+    }
+    return false;
+}
+
+/// Compute total valence electrons in the cell.
+pub fn totalElectrons(species: []hamiltonian.SpeciesEntry, atoms: []hamiltonian.AtomData) f64 {
+    var total: f64 = 0.0;
+    for (atoms) |atom| {
+        total += species[atom.species_index].z_valence;
+    }
+    return total;
 }

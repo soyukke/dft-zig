@@ -5,6 +5,11 @@ const math = @import("../math/math.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 
+pub const ScfLoopProfile = struct {
+    build_local_r_ns: *u64,
+    build_fft_map_ns: *u64,
+};
+
 pub fn logProgress(iter: usize, diff: f64, vresid: f64, band_energy: f64, nonlocal_energy: f64) !void {
     var buffer: [512]u8 = undefined;
     var writer = std.fs.File.stderr().writer(&buffer);
