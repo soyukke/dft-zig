@@ -260,6 +260,8 @@ fn makeScfConfig(alloc: std.mem.Allocator, out_dir: []const u8, cell: math.Mat3)
         .iterative_warmup_tol = 1e-3,
         .iterative_reuse_vectors = true,
         .kerker_q0 = 0.0,
+        .diemac = 1.0,
+        .dielng = 1.0,
         .pulay_history = 6,
         .pulay_start = 0,
         .mixing_mode = .potential,

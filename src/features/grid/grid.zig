@@ -8,7 +8,7 @@
 pub const lebedev = @import("lebedev.zig");
 pub const radial = @import("radial.zig");
 pub const becke = @import("becke.zig");
-pub const xc_functionals = @import("xc_functionals.zig");
+pub const xc_functionals = @import("../xc/xc_functionals.zig");
 
 // Re-export commonly used types
 pub const GridPoint = becke.GridPoint;

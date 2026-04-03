@@ -1,6 +1,6 @@
 const std = @import("std");
 const math = @import("../math/math.zig");
-const grid_mod = @import("grid.zig");
+const grid_mod = @import("pw_grid.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 
 pub const Grid = grid_mod.Grid;

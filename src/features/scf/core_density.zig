@@ -1,6 +1,6 @@
 const std = @import("std");
 const fft_grid = @import("fft_grid.zig");
-const grid_mod = @import("grid.zig");
+const grid_mod = @import("pw_grid.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const math = @import("../math/math.zig");
 const nonlocal_mod = @import("../pseudopotential/nonlocal.zig");

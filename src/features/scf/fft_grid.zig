@@ -1,7 +1,7 @@
 const std = @import("std");
 const fft = @import("../fft/fft.zig");
 const math = @import("../math/math.zig");
-const grid_mod = @import("grid.zig");
+const grid_mod = @import("pw_grid.zig");
 
 pub const Grid = grid_mod.Grid;
 

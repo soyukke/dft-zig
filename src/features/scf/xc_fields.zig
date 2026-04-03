@@ -1,6 +1,6 @@
 const std = @import("std");
 const fft_grid = @import("fft_grid.zig");
-const grid_mod = @import("grid.zig");
+const grid_mod = @import("pw_grid.zig");
 const gvec_iter = @import("gvec_iter.zig");
 const math = @import("../math/math.zig");
 const xc = @import("../xc/xc.zig");
