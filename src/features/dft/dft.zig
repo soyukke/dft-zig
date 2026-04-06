@@ -43,7 +43,15 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
     const volume_bohr = @abs(math.Vec3.dot(cell_bohr.row(0), math.Vec3.cross(cell_bohr.row(1), cell_bohr.row(2))));
 
     try logStep("step: generate k-path");
-    var kpoints = try kpath.generate(alloc, cfg.band, recip);
+    // Resolve path_string ("auto" or "G-X-W-K-G-L") to BandPathPoint array
+    var resolved_band = cfg.band;
+    var auto_path_result: ?kpath.auto_kpath.AutoKPathResult = null;
+    defer if (auto_path_result) |*r| r.deinit(alloc);
+    if (resolved_band.path_string) |ps| {
+        auto_path_result = try kpath.auto_kpath.resolvePathString(alloc, ps, cell_bohr);
+        resolved_band.path = auto_path_result.?.points;
+    }
+    var kpoints = try kpath.generate(alloc, resolved_band, recip);
     defer kpoints.deinit(alloc);
 
     try logStep("step: load pseudopotentials");

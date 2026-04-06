@@ -2,6 +2,12 @@ const std = @import("std");
 const config = @import("../config/config.zig");
 const math = @import("../math/math.zig");
 
+pub const auto_kpath = @import("auto_kpath.zig");
+
+test {
+    _ = auto_kpath;
+}
+
 pub const KPoint = struct {
     k_frac: math.Vec3,
     k_cart: math.Vec3,

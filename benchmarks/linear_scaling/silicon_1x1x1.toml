@@ -32,14 +32,7 @@ solver = "iterative"
 points = 1
 nbands = 1
 use_symmetry = false
-
-[[band.path]]
-label = "G"
-k = [0.0, 0.0, 0.0]
-
-[[band.path]]
-label = "G"
-k = [0.0, 0.0, 0.0]
+path = "G-G"
 
 [ewald]
 tol = 1e-8

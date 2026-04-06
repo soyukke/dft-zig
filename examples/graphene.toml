@@ -28,25 +28,10 @@ profile = true
 [band]
 points = 60
 nbands = 8
+path = "G-K-M-G"
 
 [ewald]
 alpha = 0.0
 rcut = 0.0
 gcut = 0.0
 tol = 1e-8
-
-[[band.path]]
-label = "G"
-k = [0.0, 0.0, 0.0]
-
-[[band.path]]
-label = "K"
-k = [0.33333333, 0.66666667, 0.0]
-
-[[band.path]]
-label = "M"
-k = [0.5, 0.0, 0.0]
-
-[[band.path]]
-label = "G"
-k = [0.0, 0.0, 0.0]

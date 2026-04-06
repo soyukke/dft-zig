@@ -157,21 +157,7 @@ smear_ry = 0.01
 points = 60
 nbands = 8
 solver = "iterative"
-[[band.path]]
-label = "G"
-k = [0.0, 0.0, 0.0]
-[[band.path]]
-label = "X"
-k = [1.0, 0.0, 0.0]
-[[band.path]]
-label = "W"
-k = [1.0, 0.5, 0.0]
-[[band.path]]
-label = "L"
-k = [0.5, 0.5, 0.5]
-[[band.path]]
-label = "G"
-k = [0.0, 0.0, 0.0]
+path = "G-X-W-L-G"
 
 [dfpt]
 enabled = true

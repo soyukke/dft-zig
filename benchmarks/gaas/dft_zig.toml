@@ -43,31 +43,7 @@ points = 20
 nbands = 14
 use_symmetry = false
 iterative_max_iter = 100
+path = "G-X-W-K-G-L"
 
 [ewald]
 tol = 1e-8
-
-# G -> X -> W -> K -> G -> L path (FCC Brillouin zone)
-[[band.path]]
-label = "G"
-k = [0.0, 0.0, 0.0]
-
-[[band.path]]
-label = "X"
-k = [0.5, 0.0, 0.5]
-
-[[band.path]]
-label = "W"
-k = [0.5, 0.25, 0.75]
-
-[[band.path]]
-label = "K"
-k = [0.375, 0.375, 0.75]
-
-[[band.path]]
-label = "G"
-k = [0.0, 0.0, 0.0]
-
-[[band.path]]
-label = "L"
-k = [0.5, 0.5, 0.5]

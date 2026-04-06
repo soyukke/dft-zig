@@ -51,11 +51,4 @@ tol = 1e-8
 solver = "iterative"
 points = 5
 nbands = 8
-
-[[band.path]]
-label = "G"
-k = [0.0, 0.0, 0.0]
-
-[[band.path]]
-label = "X"
-k = [0.0, 1.0, 0.0]
+path = "G-X"

@@ -13,7 +13,8 @@ pub const BandPathPoint = struct {
 pub const BandConfig = struct {
     points_per_segment: usize,
     nbands: usize,
-    path: []BandPathPoint,
+    path: []BandPathPoint, // resolved from path_string at band calc time
+    path_string: ?[]u8 = null, // "auto" or "G-X-W-K-G-L" style string
     solver: BandSolver,
     iterative_max_iter: usize,
     iterative_tol: f64,
@@ -344,10 +345,7 @@ pub const Config = struct {
         if (self.scf.compare_tolerance_json) |path| {
             alloc.free(path);
         }
-        for (self.band.path) |p| {
-            alloc.free(p.label);
-        }
-        alloc.free(self.band.path);
+        if (self.band.path_string) |s| alloc.free(s);
         for (self.dfpt.qpath) |p| {
             alloc.free(p.label);
         }
@@ -371,7 +369,6 @@ const Section = enum {
     ewald,
     vdw,
     band,
-    band_path,
     pseudopotential,
     relax,
     dfpt,
@@ -531,13 +528,8 @@ pub fn load(alloc: std.mem.Allocator, path: []const u8) !Config {
     var band_iterative_reuse_vectors: bool = true;
     var band_use_symmetry: bool = false; // TODO: proper symmetry-adapted basis transformation needed
     var band_lobpcg_parallel: bool = false; // k-point parallel is more efficient
-    var band_path: std.ArrayList(BandPathPoint) = .empty;
-    errdefer {
-        for (band_path.items) |p| {
-            alloc.free(p.label);
-        }
-        band_path.deinit(alloc);
-    }
+    var band_path_string: ?[]u8 = null; // "auto" or "G-X-W-K-G-L" style path
+    errdefer if (band_path_string) |s| alloc.free(s);
 
     var pseudo_list: std.ArrayList(pseudo.Spec) = .empty;
     errdefer {
@@ -549,7 +541,6 @@ pub fn load(alloc: std.mem.Allocator, path: []const u8) !Config {
     }
 
     var current_section: Section = .root;
-    var current_path_index: ?usize = null;
     var current_pseudo_index: ?usize = null;
 
     var it = std.mem.splitScalar(u8, content, '\n');
@@ -565,21 +556,13 @@ pub fn load(alloc: std.mem.Allocator, path: []const u8) !Config {
                     return error.InvalidToml;
                 }
                 const name = std.mem.trim(u8, line[2 .. line.len - 2], " \t");
-                if (std.mem.eql(u8, name, "band.path")) {
-                    current_section = .band_path;
-                    current_path_index = band_path.items.len;
-                    current_pseudo_index = null;
-                    current_dfpt_qpath_index = null;
-                    try band_path.append(alloc, .{ .label = try alloc.dupe(u8, ""), .k = .{ .x = 0, .y = 0, .z = 0 } });
-                } else if (std.mem.eql(u8, name, "dfpt.qpath")) {
+                if (std.mem.eql(u8, name, "dfpt.qpath")) {
                     current_section = .dfpt_qpath;
                     current_dfpt_qpath_index = dfpt_qpath_list.items.len;
-                    current_path_index = null;
                     current_pseudo_index = null;
                     try dfpt_qpath_list.append(alloc, .{ .label = try alloc.dupe(u8, ""), .k = .{ .x = 0, .y = 0, .z = 0 } });
                 } else if (std.mem.eql(u8, name, "pseudopotential")) {
                     current_section = .pseudopotential;
-                    current_path_index = null;
                     current_pseudo_index = pseudo_list.items.len;
                     current_dfpt_qpath_index = null;
                     try pseudo_list.append(alloc, .{
@@ -595,39 +578,30 @@ pub fn load(alloc: std.mem.Allocator, path: []const u8) !Config {
                 const name = std.mem.trim(u8, line[1 .. line.len - 1], " \t");
                 if (std.mem.eql(u8, name, "cell")) {
                     current_section = .cell;
-                    current_path_index = null;
                     current_pseudo_index = null;
                 } else if (std.mem.eql(u8, name, "scf")) {
                     current_section = .scf;
-                    current_path_index = null;
                     current_pseudo_index = null;
                 } else if (std.mem.eql(u8, name, "ewald")) {
                     current_section = .ewald;
-                    current_path_index = null;
                     current_pseudo_index = null;
                 } else if (std.mem.eql(u8, name, "vdw")) {
                     current_section = .vdw;
-                    current_path_index = null;
                     current_pseudo_index = null;
                 } else if (std.mem.eql(u8, name, "band")) {
                     current_section = .band;
-                    current_path_index = null;
                     current_pseudo_index = null;
                 } else if (std.mem.eql(u8, name, "relax")) {
                     current_section = .relax;
-                    current_path_index = null;
                     current_pseudo_index = null;
                 } else if (std.mem.eql(u8, name, "dfpt")) {
                     current_section = .dfpt;
-                    current_path_index = null;
                     current_pseudo_index = null;
                 } else if (std.mem.eql(u8, name, "dos")) {
                     current_section = .dos;
-                    current_path_index = null;
                     current_pseudo_index = null;
                 } else if (std.mem.eql(u8, name, "output")) {
                     current_section = .output;
-                    current_path_index = null;
                     current_pseudo_index = null;
                 } else {
                     return error.UnsupportedToml;
@@ -1007,17 +981,9 @@ pub fn load(alloc: std.mem.Allocator, path: []const u8) !Config {
                 } else if (std.mem.eql(u8, key, "lobpcg_parallel")) {
                     band_lobpcg_parallel = try parseBool(value);
                     band_lobpcg_parallel_explicit = true;
-                } else {
-                    return error.UnsupportedToml;
-                }
-            },
-            .band_path => {
-                const idx = current_path_index orelse return error.InvalidToml;
-                if (std.mem.eql(u8, key, "label")) {
-                    alloc.free(band_path.items[idx].label);
-                    band_path.items[idx].label = try parseString(alloc, value);
-                } else if (std.mem.eql(u8, key, "k")) {
-                    band_path.items[idx].k = try parseVec3(value);
+                } else if (std.mem.eql(u8, key, "path")) {
+                    if (band_path_string) |old| alloc.free(old);
+                    band_path_string = try parseString(alloc, value);
                 } else {
                     return error.UnsupportedToml;
                 }
@@ -1071,7 +1037,7 @@ pub fn load(alloc: std.mem.Allocator, path: []const u8) !Config {
 
     if (xyz_path == null) return error.MissingXyz;
     if (a1 == null or a2 == null or a3 == null) return error.MissingCell;
-    // band_path is optional: skip band calculation if no path points given
+
     for (pseudo_list.items) |p| {
         if (p.element.len == 0 or p.path.len == 0) return error.InvalidPseudopotential;
     }
@@ -1091,7 +1057,6 @@ pub fn load(alloc: std.mem.Allocator, path: []const u8) !Config {
         band_lobpcg_parallel = (if (band_kpoint_threads_explicit) band_kpoint_threads else top_threads) == 1;
     }
 
-    const path_slice = try band_path.toOwnedSlice(alloc);
     const dfpt_qpath_slice = try dfpt_qpath_list.toOwnedSlice(alloc);
     dfpt_cfg.qpath = dfpt_qpath_slice;
     const cell = math.Mat3.fromRows(a1.?, a2.?, a3.?);
@@ -1115,7 +1080,8 @@ pub fn load(alloc: std.mem.Allocator, path: []const u8) !Config {
         .band = .{
             .points_per_segment = band_points,
             .nbands = band_nbands,
-            .path = path_slice,
+            .path = &.{},
+            .path_string = band_path_string,
             .solver = band_solver,
             .iterative_max_iter = band_iterative_max_iter,
             .iterative_tol = band_iterative_tol,

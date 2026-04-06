@@ -36,18 +36,7 @@ use_symmetry = false
 iterative_max_iter = 100
 iterative_tol = 1e-8
 iterative_reuse_vectors = false
+path = "G-X-G"
 
 [ewald]
 tol = 1e-8
-
-[[band.path]]
-label = "G"
-k = [0.0, 0.0, 0.0]
-
-[[band.path]]
-label = "X"
-k = [0.5, 0.0, 0.5]
-
-[[band.path]]
-label = "G"
-k = [0.0, 0.0, 0.0]

@@ -56,6 +56,11 @@ just build && ./zig-out/bin/dft_zig examples/silicon.toml
 - Use `fft_backend = "fftw"` (other backends are too slow for production)
 - Use `solver = "iterative"` (LOBPCG) for band calculations; `"dense"` is very slow
 
+## Design Principles
+
+- **後方互換性を入れない**: 負債になるため、古いインターフェースは完全に削除する。互換レイヤーや非推奨ラッパーは作らない。
+- Band k-path は `path = "auto"` または `path = "G-X-W-K-G-L"` 形式のみ（旧 `[[band.path]]` は廃止済み）
+
 ## Architecture
 
 ### Execution Flow
