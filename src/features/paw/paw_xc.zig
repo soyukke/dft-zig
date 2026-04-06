@@ -2437,9 +2437,9 @@ test "evalPointSpin nonmagnetic consistency" {
     // df/dn_up = df/dn_down = df/dn
     try std.testing.expectApproxEqAbs(ns.df_dn, sp.df_dn_up, 1e-8);
     try std.testing.expectApproxEqAbs(ns.df_dn, sp.df_dn_down, 1e-8);
-    // df/dσ consistency: df_dg2 = df_dg2_uu + df_dg2_dd + 2*df_dg2_ud (chain rule)
-    // For PBE: σ = σ_uu + σ_dd + 2σ_ud, and df/dσ = df/dσ_uu + df/dσ_dd + 2df/dσ_ud
-    // when σ_uu = σ_dd = σ_ud = σ/4
-    const dg2_total = sp.df_dg2_uu + sp.df_dg2_dd + 2.0 * sp.df_dg2_ud;
+    // df/dσ consistency: at the nonmagnetic point σ_uu = σ_dd = σ_ud = σ/4,
+    // so dσ_xx/dσ = 1/4 for each component, and by chain rule:
+    // df/dσ = (df/dσ_uu + df/dσ_dd + df/dσ_ud) / 4
+    const dg2_total = (sp.df_dg2_uu + sp.df_dg2_dd + sp.df_dg2_ud) / 4.0;
     try std.testing.expectApproxEqAbs(ns.df_dg2, dg2_total, 1e-8);
 }
