@@ -157,7 +157,7 @@ smear_ry = 0.01
 points = 60
 nbands = 8
 solver = "iterative"
-path = "G-X-W-L-G"
+path = "auto"  # Bravais格子から自動検出、または明示指定 "G-X-W-L-G"
 
 [dfpt]
 enabled = true
@@ -185,6 +185,113 @@ method = "d3bj"
 | `[ewald]` | Ewaldサマレーションパラメータ |
 | `[vdw]` | van der Waals補正（D3-BJ） |
 | `[[pseudopotential]]` | 擬ポテンシャル指定（複数元素対応） |
+
+### 設定リファレンス
+
+#### ルート
+
+| キー | 型 | デフォルト | 説明 |
+|------|-----|-----------|------|
+| `title` | string | — | 計算タイトル |
+| `xyz` | string | — | XYZ構造ファイルのパス |
+| `out_dir` | string | — | 出力ディレクトリ |
+| `units` | string | `"angstrom"` | 座標の単位（`"angstrom"` / `"bohr"`） |
+| `boundary` | string | `"periodic"` | `"periodic"`（結晶）または `"isolated"`（分子、カットオフクーロン） |
+| `linalg_backend` | string | auto | BLAS/LAPACKバックエンド |
+| `threads` | int | `0` | グローバルスレッド数（`0` = 自動） |
+
+#### `[scf]`
+
+| キー | 型 | デフォルト | 説明 |
+|------|-----|-----------|------|
+| `enabled` | bool | `true` | SCFを有効化 |
+| `solver` | string | `"iterative"` | `"iterative"`（LOBPCG）、`"dense"`、`"cg"`、`"auto"` |
+| `xc` | string | `"lda_pz"` | 交換相関汎関数（`"lda_pz"` / `"pbe"`） |
+| `ecut_ry` | float | — | 平面波カットオフ（Ry） |
+| `kmesh` | [3]int | — | Monkhorst-Pack k点メッシュ |
+| `kmesh_shift` | [3]float | `[0,0,0]` | k点メッシュのシフト |
+| `grid` | [3]int | `[0,0,0]` | FFTグリッド（`[0,0,0]` = ecutから自動決定） |
+| `grid_scale` | float | `1.0` | 自動グリッドのスケール係数（ecutrho = ecut × grid_scale²） |
+| `max_iter` | int | `50` | SCF最大反復回数 |
+| `convergence` | float | `1e-6` | 収束閾値 |
+| `convergence_metric` | string | `"density"` | `"density"` または `"potential"` |
+| `mixing_beta` | float | `0.3` | 混合パラメータ |
+| `mixing_mode` | string | `"potential"` | `"potential"`（推奨）または `"density"` |
+| `pulay_history` | int | `8` | Pulay/DIIS履歴数（`0` = 線形混合のみ） |
+| `pulay_start` | int | `4` | Pulay開始前の単純混合回数 |
+| `diemac` | float | `1.0` | モデル誘電関数（`1.0` = 無効、半導体~12、金属1e6） |
+| `dielng` | float | `1.0` | Thomas-Fermiスクリーニング長（Bohr） |
+| `smearing` | string | `"none"` | `"none"` または `"fermi_dirac"` |
+| `smear_ry` | float | `0.01` | スメアリング幅（Ry） |
+| `fft_backend` | string | `"zig"` | `"fftw"`（推奨）、`"zig"`、`"zig_parallel"`、`"vdsp"`、`"metal"` |
+| `nspin` | int | `1` | `1` = 非分極、`2` = collinearスピン分極 |
+| `spinat` | [float] | — | 原子ごとの初期磁気モーメント（μ_B） |
+| `symmetry` | bool | `true` | IBZ k点削減を有効化 |
+| `time_reversal` | bool | `true` | 時間反転対称性を有効化 |
+| `compute_stress` | bool | `false` | SCF後にストレステンソルを計算 |
+| `kpoint_threads` | int | `0` | k点並列数（`0` = 自動） |
+
+#### `[band]`
+
+| キー | 型 | デフォルト | 説明 |
+|------|-----|-----------|------|
+| `points` | int | `50` | k経路セグメントあたりの点数 |
+| `nbands` | int | — | バンド数 |
+| `solver` | string | `"iterative"` | `"iterative"`、`"dense"`、`"cg"`、`"auto"` |
+| `path` | string | — | `"auto"`（Bravais格子から自動検出）または明示指定 `"G-X-W-K-G-L"` |
+| `kpoint_threads` | int | `0` | k点並列数（`0` = 自動） |
+| `use_symmetry` | bool | `false` | バンドk点に対称性を使用 |
+
+#### `[dfpt]`
+
+| キー | 型 | デフォルト | 説明 |
+|------|-----|-----------|------|
+| `enabled` | bool | `false` | DFPTフォノン計算を有効化 |
+| `sternheimer_tol` | float | `1e-8` | Sternheimer方程式の収束閾値 |
+| `sternheimer_max_iter` | int | `100` | Sternheimer最大反復回数 |
+| `scf_tol` | float | `1e-8` | DFPT SCF収束閾値 |
+| `scf_max_iter` | int | `50` | DFPT SCF最大反復回数 |
+| `mixing_beta` | float | `0.7` | DFPT混合パラメータ |
+| `pulay_history` | int | `8` | DIIS履歴数 |
+| `pulay_start` | int | `2` | DIIS開始前の単純混合回数 |
+| `qpath_npoints` | int | `0` | セグメントあたりq点数（`0` = Γ点のみ） |
+| `qgrid` | [3]int | — | IFC q-grid（例: `[1,1,8]`、1D系） |
+| `dos_qmesh` | [3]int | — | フォノンDOS q-mesh（例: `[20,20,20]`） |
+| `dos_sigma` | float | `5.0` | フォノンDOSガウス幅（cm⁻¹） |
+| `compute_dielectric` | bool | `false` | 誘電テンソル ε∞ を計算 |
+| `kpoint_threads` | int | `0` | k点並列数 |
+| `perturbation_threads` | int | `1` | 摂動並列数 |
+
+#### `[relax]`
+
+| キー | 型 | デフォルト | 説明 |
+|------|-----|-----------|------|
+| `enabled` | bool | `false` | 構造緩和を有効化 |
+| `algorithm` | string | `"bfgs"` | `"bfgs"`、`"cg"`、`"steepest_descent"` |
+| `max_iter` | int | `50` | 最大緩和ステップ数 |
+| `force_tol` | float | `0.001` | 力の収束閾値（Ry/Bohr） |
+| `max_step` | float | `0.5` | 最大ステップ幅（Bohr） |
+| `cell_relax` | bool | `false` | vc-relax: セル形状・体積を最適化 |
+| `stress_tol` | float | `0.5` | 応力の収束閾値（GPa） |
+| `target_pressure` | float | `0.0` | 外部圧力（GPa） |
+
+#### `[vdw]`
+
+| キー | 型 | デフォルト | 説明 |
+|------|-----|-----------|------|
+| `enabled` | bool | `false` | van der Waals補正を有効化 |
+| `method` | string | `"none"` | `"d3bj"`（DFT-D3 BJダンピング） |
+| `cutoff_radius` | float | `95.0` | 分散力カットオフ（Bohr） |
+| `s6`, `s8`, `a1`, `a2` | float | auto | D3(BJ)パラメータ（XC汎関数から自動設定） |
+
+#### `[dos]`
+
+| キー | 型 | デフォルト | 説明 |
+|------|-----|-----------|------|
+| `enabled` | bool | `false` | 状態密度計算を有効化 |
+| `sigma` | float | `0.01` | ガウスブロードニング（Ry） |
+| `npoints` | int | `1001` | エネルギー点数 |
+| `pdos` | bool | `false` | 射影状態密度（原子・軌道分解） |
 
 ### 設定バリデーション
 

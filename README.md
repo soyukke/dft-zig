@@ -157,7 +157,7 @@ smear_ry = 0.01
 points = 60
 nbands = 8
 solver = "iterative"
-path = "G-X-W-L-G"
+path = "auto"  # auto-detect from Bravais lattice, or explicit e.g. "G-X-W-L-G"
 
 [dfpt]
 enabled = true
@@ -185,6 +185,113 @@ method = "d3bj"
 | `[ewald]` | Ewald summation parameters |
 | `[vdw]` | van der Waals correction (D3-BJ) |
 | `[[pseudopotential]]` | Pseudopotential specification (multi-element) |
+
+### Configuration Reference
+
+#### Root
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `title` | string | — | Calculation title |
+| `xyz` | string | — | Path to XYZ structure file |
+| `out_dir` | string | — | Output directory |
+| `units` | string | `"angstrom"` | Coordinate units (`"angstrom"` / `"bohr"`) |
+| `boundary` | string | `"periodic"` | `"periodic"` (crystal) or `"isolated"` (molecule, cutoff Coulomb) |
+| `linalg_backend` | string | auto | BLAS/LAPACK backend |
+| `threads` | int | `0` | Global thread count (`0` = auto) |
+
+#### `[scf]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `true` | Enable SCF |
+| `solver` | string | `"iterative"` | `"iterative"` (LOBPCG), `"dense"`, `"cg"`, `"auto"` |
+| `xc` | string | `"lda_pz"` | XC functional (`"lda_pz"` / `"pbe"`) |
+| `ecut_ry` | float | — | Plane-wave cutoff (Ry) |
+| `kmesh` | [3]int | — | Monkhorst-Pack k-mesh |
+| `kmesh_shift` | [3]float | `[0,0,0]` | k-mesh shift |
+| `grid` | [3]int | `[0,0,0]` | FFT grid (`[0,0,0]` = auto from ecut) |
+| `grid_scale` | float | `1.0` | Scale factor for auto grid (ecutrho = ecut × grid_scale²) |
+| `max_iter` | int | `50` | Max SCF iterations |
+| `convergence` | float | `1e-6` | Convergence threshold |
+| `convergence_metric` | string | `"density"` | `"density"` or `"potential"` |
+| `mixing_beta` | float | `0.3` | Mixing parameter |
+| `mixing_mode` | string | `"potential"` | `"potential"` (recommended) or `"density"` |
+| `pulay_history` | int | `8` | Pulay/DIIS history depth (`0` = linear mixing only) |
+| `pulay_start` | int | `4` | Simple mixing iterations before Pulay starts |
+| `diemac` | float | `1.0` | Model dielectric constant (`1.0` = disabled, ~12 for semiconductors, 1e6 for metals) |
+| `dielng` | float | `1.0` | Thomas-Fermi screening length (Bohr) |
+| `smearing` | string | `"none"` | `"none"` or `"fermi_dirac"` |
+| `smear_ry` | float | `0.01` | Smearing width (Ry) |
+| `fft_backend` | string | `"zig"` | `"fftw"` (recommended), `"zig"`, `"zig_parallel"`, `"vdsp"`, `"metal"` |
+| `nspin` | int | `1` | `1` = unpolarized, `2` = collinear spin-polarized |
+| `spinat` | [float] | — | Initial magnetic moment per atom (μ_B) |
+| `symmetry` | bool | `true` | Enable IBZ k-point reduction |
+| `time_reversal` | bool | `true` | Enable time-reversal symmetry |
+| `compute_stress` | bool | `false` | Compute stress tensor after SCF |
+| `kpoint_threads` | int | `0` | k-point parallelism (`0` = auto) |
+
+#### `[band]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `points` | int | `50` | Points per k-path segment |
+| `nbands` | int | — | Number of bands |
+| `solver` | string | `"iterative"` | `"iterative"`, `"dense"`, `"cg"`, `"auto"` |
+| `path` | string | — | `"auto"` (detect from Bravais lattice) or explicit `"G-X-W-K-G-L"` |
+| `kpoint_threads` | int | `0` | k-point parallelism (`0` = auto) |
+| `use_symmetry` | bool | `false` | Use symmetry for band k-points |
+
+#### `[dfpt]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable DFPT phonon calculation |
+| `sternheimer_tol` | float | `1e-8` | Sternheimer equation tolerance |
+| `sternheimer_max_iter` | int | `100` | Max Sternheimer iterations |
+| `scf_tol` | float | `1e-8` | DFPT SCF tolerance |
+| `scf_max_iter` | int | `50` | Max DFPT SCF iterations |
+| `mixing_beta` | float | `0.7` | DFPT mixing parameter |
+| `pulay_history` | int | `8` | DIIS history depth |
+| `pulay_start` | int | `2` | Simple mixing before DIIS |
+| `qpath_npoints` | int | `0` | q-points per segment (`0` = Γ only) |
+| `qgrid` | [3]int | — | IFC q-grid (e.g. `[1,1,8]` for 1D) |
+| `dos_qmesh` | [3]int | — | Phonon DOS q-mesh (e.g. `[20,20,20]`) |
+| `dos_sigma` | float | `5.0` | Phonon DOS Gaussian width (cm⁻¹) |
+| `compute_dielectric` | bool | `false` | Compute dielectric tensor ε∞ |
+| `kpoint_threads` | int | `0` | k-point parallelism |
+| `perturbation_threads` | int | `1` | Perturbation parallelism |
+
+#### `[relax]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable structural relaxation |
+| `algorithm` | string | `"bfgs"` | `"bfgs"`, `"cg"`, `"steepest_descent"` |
+| `max_iter` | int | `50` | Max relaxation steps |
+| `force_tol` | float | `0.001` | Force convergence (Ry/Bohr) |
+| `max_step` | float | `0.5` | Maximum step size (Bohr) |
+| `cell_relax` | bool | `false` | vc-relax: optimize cell shape/volume |
+| `stress_tol` | float | `0.5` | Stress convergence (GPa) |
+| `target_pressure` | float | `0.0` | External pressure (GPa) |
+
+#### `[vdw]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable van der Waals correction |
+| `method` | string | `"none"` | `"d3bj"` (DFT-D3 with BJ damping) |
+| `cutoff_radius` | float | `95.0` | Dispersion cutoff (Bohr) |
+| `s6`, `s8`, `a1`, `a2` | float | auto | D3(BJ) parameters (auto from XC functional) |
+
+#### `[dos]`
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable density of states |
+| `sigma` | float | `0.01` | Gaussian broadening (Ry) |
+| `npoints` | int | `1001` | Number of energy points |
+| `pdos` | bool | `false` | Projected DOS (atom/orbital resolved) |
 
 ### Config Validation
 
