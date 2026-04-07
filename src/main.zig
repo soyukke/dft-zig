@@ -19,7 +19,8 @@ pub fn main() !void {
     var cfg = try dft.config.load(alloc, config_path);
     defer cfg.deinit(alloc);
 
-    // File existence checks (before semantic validation)
+    // Pre-flight file existence checks — intentional TOCTOU: we want to report
+    // all missing files up front rather than failing one-by-one during loading.
     var has_file_errors = false;
     if (std.fs.cwd().statFile(cfg.xyz_path)) |_| {} else |_| {
         std.debug.print("[ERROR] [root.xyz] file not found: \"{s}\"\n", .{cfg.xyz_path});

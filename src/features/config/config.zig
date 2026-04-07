@@ -503,6 +503,12 @@ pub const Config = struct {
             if (!self.scf.enabled) {
                 try addIssueLiteral(alloc, &issues, .err, "dfpt", "", "requires scf to be enabled");
             }
+            if (self.scf.smearing != .none) {
+                try addIssueLiteral(alloc, &issues, .err, "dfpt", "", "DFPT is incompatible with Fermi-Dirac smearing");
+            }
+            if (self.scf.nspin == 2) {
+                try addIssueLiteral(alloc, &issues, .err, "dfpt", "", "spin-polarized DFPT (nspin=2) is not supported");
+            }
             if (self.dfpt.sternheimer_max_iter == 0) {
                 try addIssueLiteral(alloc, &issues, .err, "dfpt", "sternheimer_max_iter", "must be positive");
             }
@@ -559,16 +565,6 @@ pub const Config = struct {
             try addIssueLiteral(alloc, &issues, .err, "vdw", "method", "vdw enabled but method = \"none\"; set method = \"d3bj\"");
         }
 
-        // --- DFPT incompatibilities ---
-        if (self.dfpt.enabled) {
-            if (self.scf.smearing != .none) {
-                try addIssueLiteral(alloc, &issues, .err, "dfpt", "", "DFPT is incompatible with Fermi-Dirac smearing");
-            }
-            if (self.scf.nspin == 2) {
-                try addIssueLiteral(alloc, &issues, .err, "dfpt", "", "spin-polarized DFPT (nspin=2) is not supported");
-            }
-        }
-
         // --- Band checks ---
         if (self.band.path.len > 0 or self.band.path_string != null) {
             if (self.band.points_per_segment == 0) {
@@ -586,18 +582,12 @@ pub const Config = struct {
         if (self.scf.grid[0] > 0 and self.scf.grid[1] > 0 and self.scf.grid[2] > 0 and
             self.scf.ecut_ry > 0 and @abs(volume) > 1e-12)
         {
-            // Compute recommended grid from ecut_ry (same formula as pw_grid.autoGrid)
+            const recip = math.reciprocal(cell_bohr);
             const scale = if (self.scf.grid_scale > 0) self.scf.grid_scale else 1.0;
             const density_gmax = @max(2.0, scale) * @sqrt(self.scf.ecut_ry);
-            const two_pi = 2.0 * std.math.pi;
-            const inv_vol = 1.0 / @abs(volume);
-            const b1_norm = math.Vec3.norm(a2.cross(a3).scale(two_pi * inv_vol));
-            const b2_norm = math.Vec3.norm(a3.cross(a1).scale(two_pi * inv_vol));
-            const b3_norm = math.Vec3.norm(a1.cross(a2).scale(two_pi * inv_vol));
-            const raw1 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b1_norm))) * 2 + 1;
-            const raw2 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b2_norm))) * 2 + 1;
-            const raw3 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b3_norm))) * 2 + 1;
-            // Round up to FFT-efficient sizes (products of 2, 3, 5)
+            const raw1 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / math.Vec3.norm(recip.row(0))))) * 2 + 1;
+            const raw2 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / math.Vec3.norm(recip.row(1))))) * 2 + 1;
+            const raw3 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / math.Vec3.norm(recip.row(2))))) * 2 + 1;
             const rec1 = scf_util.nextFftSize(@max(raw1, 3));
             const rec2 = scf_util.nextFftSize(@max(raw2, 3));
             const rec3 = scf_util.nextFftSize(@max(raw3, 3));
@@ -671,6 +661,7 @@ pub const Config = struct {
     }
 
     /// Append a validation issue. Takes ownership of `message` (must be heap-allocated).
+    /// Frees `message` if append fails.
     fn addIssue(
         alloc: std.mem.Allocator,
         issues: *std.ArrayList(ValidationIssue),
@@ -679,6 +670,7 @@ pub const Config = struct {
         field: []const u8,
         message: []const u8,
     ) !void {
+        errdefer alloc.free(message);
         try issues.append(alloc, .{
             .severity = severity,
             .section = section,
@@ -696,7 +688,9 @@ pub const Config = struct {
         field: []const u8,
         comptime message: []const u8,
     ) !void {
-        try addIssue(alloc, issues, severity, section, field, try alloc.dupe(u8, message));
+        const owned = try alloc.dupe(u8, message);
+        errdefer alloc.free(owned);
+        try addIssue(alloc, issues, severity, section, field, owned);
     }
 };
 
@@ -1710,26 +1704,10 @@ fn testDefaultConfig() Config {
     };
 }
 
-fn countErrors(issues: []const ValidationIssue) usize {
+fn countBySeverity(issues: []const ValidationIssue, severity: ValidationSeverity) usize {
     var n: usize = 0;
     for (issues) |issue| {
-        if (issue.severity == .err) n += 1;
-    }
-    return n;
-}
-
-fn countWarnings(issues: []const ValidationIssue) usize {
-    var n: usize = 0;
-    for (issues) |issue| {
-        if (issue.severity == .warning) n += 1;
-    }
-    return n;
-}
-
-fn countHints(issues: []const ValidationIssue) usize {
-    var n: usize = 0;
-    for (issues) |issue| {
-        if (issue.severity == .hint) n += 1;
+        if (issue.severity == severity) n += 1;
     }
     return n;
 }
@@ -1750,7 +1728,7 @@ test "validate: ecut_ry = 0 is an error" {
     var result = try cfg.validate(alloc);
     defer result.deinit();
     try std.testing.expect(result.hasErrors());
-    try std.testing.expect(countErrors(result.issues) >= 1);
+    try std.testing.expect(countBySeverity(result.issues, .err) >= 1);
 }
 
 test "validate: ecut_ry = 3.0 is a warning" {
@@ -1760,7 +1738,7 @@ test "validate: ecut_ry = 3.0 is a warning" {
     var result = try cfg.validate(alloc);
     defer result.deinit();
     try std.testing.expect(!result.hasErrors());
-    try std.testing.expect(countWarnings(result.issues) >= 1);
+    try std.testing.expect(countBySeverity(result.issues, .warning) >= 1);
 }
 
 test "validate: mixing_beta out of range" {
@@ -1832,7 +1810,7 @@ test "validate: isolated boundary with kmesh > 1 is a warning" {
     var result = try cfg.validate(alloc);
     defer result.deinit();
     try std.testing.expect(!result.hasErrors());
-    try std.testing.expect(countWarnings(result.issues) >= 1);
+    try std.testing.expect(countBySeverity(result.issues, .warning) >= 1);
 }
 
 test "validate: hint for dense solver" {
@@ -1842,7 +1820,7 @@ test "validate: hint for dense solver" {
     var result = try cfg.validate(alloc);
     defer result.deinit();
     try std.testing.expect(!result.hasErrors());
-    try std.testing.expect(countHints(result.issues) >= 1);
+    try std.testing.expect(countBySeverity(result.issues, .hint) >= 1);
 }
 
 test "validate: hint for non-fftw backend" {
@@ -1852,7 +1830,7 @@ test "validate: hint for non-fftw backend" {
     var result = try cfg.validate(alloc);
     defer result.deinit();
     try std.testing.expect(!result.hasErrors());
-    try std.testing.expect(countHints(result.issues) >= 1);
+    try std.testing.expect(countBySeverity(result.issues, .hint) >= 1);
 }
 
 test "validate: hint for diemac = 1.0 with tight convergence" {
@@ -1863,7 +1841,7 @@ test "validate: hint for diemac = 1.0 with tight convergence" {
     var result = try cfg.validate(alloc);
     defer result.deinit();
     try std.testing.expect(!result.hasErrors());
-    try std.testing.expect(countHints(result.issues) >= 1);
+    try std.testing.expect(countBySeverity(result.issues, .hint) >= 1);
 }
 
 test "validate: no diemac hint with loose convergence" {
@@ -1891,7 +1869,7 @@ test "validate: hint for density mixing" {
     var result = try cfg.validate(alloc);
     defer result.deinit();
     try std.testing.expect(!result.hasErrors());
-    try std.testing.expect(countHints(result.issues) >= 1);
+    try std.testing.expect(countBySeverity(result.issues, .hint) >= 1);
 }
 
 test "validate: hint for tight iterative_tol" {
@@ -1901,7 +1879,7 @@ test "validate: hint for tight iterative_tol" {
     var result = try cfg.validate(alloc);
     defer result.deinit();
     try std.testing.expect(!result.hasErrors());
-    try std.testing.expect(countHints(result.issues) >= 1);
+    try std.testing.expect(countBySeverity(result.issues, .hint) >= 1);
 }
 
 test "validate: hint for symmetry disabled" {
@@ -1911,7 +1889,7 @@ test "validate: hint for symmetry disabled" {
     var result = try cfg.validate(alloc);
     defer result.deinit();
     try std.testing.expect(!result.hasErrors());
-    try std.testing.expect(countHints(result.issues) >= 1);
+    try std.testing.expect(countBySeverity(result.issues, .hint) >= 1);
 }
 
 test "validate: no hints with recommended settings" {
@@ -1920,7 +1898,7 @@ test "validate: no hints with recommended settings" {
     var result = try cfg.validate(alloc);
     defer result.deinit();
     try std.testing.expect(!result.hasErrors());
-    try std.testing.expectEqual(@as(usize, 0), countHints(result.issues));
+    try std.testing.expectEqual(@as(usize, 0), countBySeverity(result.issues, .hint));
 }
 
 test "validate: vdw enabled with method none" {
@@ -1972,7 +1950,7 @@ test "validate: nspin=2 without spinat is warning" {
     var result = try cfg.validate(alloc);
     defer result.deinit();
     try std.testing.expect(!result.hasErrors());
-    try std.testing.expect(countWarnings(result.issues) >= 1);
+    try std.testing.expect(countBySeverity(result.issues, .warning) >= 1);
 }
 
 test "validate: grid too small for ecut is warning" {
@@ -1983,5 +1961,5 @@ test "validate: grid too small for ecut is warning" {
     var result = try cfg.validate(alloc);
     defer result.deinit();
     try std.testing.expect(!result.hasErrors());
-    try std.testing.expect(countWarnings(result.issues) >= 1);
+    try std.testing.expect(countBySeverity(result.issues, .warning) >= 1);
 }

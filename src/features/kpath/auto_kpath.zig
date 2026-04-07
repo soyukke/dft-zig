@@ -7,7 +7,8 @@ pub const BravaisLattice = enum {
     cub, // Simple cubic
     fcc, // Face-centered cubic
     bcc, // Body-centered cubic
-    hex, // Hexagonal
+    hex, // Hexagonal (gamma=120 convention)
+    hex60, // Hexagonal (gamma=60 convention)
     tet, // Simple tetragonal
     // Future: orc, rhl, mcl, tri, etc.
 };
@@ -51,14 +52,18 @@ pub fn detectBravaisLattice(cell: math.Mat3) !BravaisLattice {
     const beta_90 = @abs(cos_beta) < tol;
     const gamma_90 = @abs(cos_gamma) < tol;
     const gamma_120 = @abs(cos_gamma + 0.5) < tol; // 120 degrees
+    const gamma_60 = @abs(cos_gamma - 0.5) < tol; // 60 degrees (alternative HEX convention)
 
     const ab_eq = @abs(a - b) / a < tol;
     const ac_eq = @abs(a - c) / a < tol;
     const all_eq = ab_eq and ac_eq;
 
-    // Hexagonal: a == b != c, alpha=beta=90, gamma=120
+    // Hexagonal: a == b != c, alpha=beta=90, gamma=120 or 60
     if (ab_eq and alpha_90 and beta_90 and gamma_120) {
         return .hex;
+    }
+    if (ab_eq and alpha_90 and beta_90 and gamma_60) {
+        return .hex60;
     }
 
     // Cubic family: a == b == c, all angles 90
@@ -98,7 +103,7 @@ pub fn getStandardKPath(alloc: std.mem.Allocator, lattice: BravaisLattice) !Auto
         .cub => "G-X-M-G-R",
         .fcc => "G-X-W-K-G-L",
         .bcc => "G-H-N-G-P",
-        .hex => "G-M-K-G-A",
+        .hex, .hex60 => "G-M-K-G-A",
         .tet => "G-X-M-G-Z",
     };
     return parsePathString(alloc, default_path, lattice);
@@ -167,6 +172,14 @@ fn getHighSymTable(lattice: BravaisLattice) []const HighSymPoint {
             .{ .label = "A", .k = .{ .x = 0.0, .y = 0.0, .z = 0.5 } },
             .{ .label = "L", .k = .{ .x = 0.5, .y = 0.0, .z = 0.5 } },
             .{ .label = "H", .k = .{ .x = 1.0 / 3.0, .y = 1.0 / 3.0, .z = 0.5 } },
+        },
+        .hex60 => &.{
+            .{ .label = "G", .k = .{ .x = 0.0, .y = 0.0, .z = 0.0 } },
+            .{ .label = "M", .k = .{ .x = 0.5, .y = 0.0, .z = 0.0 } },
+            .{ .label = "K", .k = .{ .x = 1.0 / 3.0, .y = 2.0 / 3.0, .z = 0.0 } },
+            .{ .label = "A", .k = .{ .x = 0.0, .y = 0.0, .z = 0.5 } },
+            .{ .label = "L", .k = .{ .x = 0.5, .y = 0.0, .z = 0.5 } },
+            .{ .label = "H", .k = .{ .x = 1.0 / 3.0, .y = 2.0 / 3.0, .z = 0.5 } },
         },
         .tet => &.{
             .{ .label = "G", .k = .{ .x = 0.0, .y = 0.0, .z = 0.0 } },
