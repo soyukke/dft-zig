@@ -551,6 +551,71 @@ pub const Config = struct {
             }
         }
 
+        // --- File existence checks ---
+        if (std.fs.cwd().statFile(self.xyz_path)) |_| {} else |_| {
+            try addIssue(alloc, &issues, .err, "root", "xyz",
+                try std.fmt.allocPrint(alloc, "file not found: \"{s}\"", .{self.xyz_path}));
+        }
+        for (self.pseudopotentials) |pp| {
+            if (std.fs.cwd().statFile(pp.path)) |_| {} else |_| {
+                try addIssue(alloc, &issues, .err, "pseudopotential", "path",
+                    try std.fmt.allocPrint(alloc, "file not found: \"{s}\" (element {s})", .{ pp.path, pp.element }));
+            }
+        }
+
+        // --- VdW consistency ---
+        if (self.vdw.enabled and self.vdw.method == .none) {
+            try addIssueLiteral(alloc, &issues, .err, "vdw", "method", "vdw enabled but method = \"none\"; set method = \"d3bj\"");
+        }
+
+        // --- DFPT incompatibilities ---
+        if (self.dfpt.enabled) {
+            if (self.scf.smearing != .none) {
+                try addIssueLiteral(alloc, &issues, .err, "dfpt", "", "DFPT is incompatible with Fermi-Dirac smearing");
+            }
+            if (self.scf.nspin == 2) {
+                try addIssueLiteral(alloc, &issues, .err, "dfpt", "", "spin-polarized DFPT (nspin=2) is not supported");
+            }
+        }
+
+        // --- Band checks ---
+        if (self.band.path.len > 0 or self.band.path_string != null) {
+            if (self.band.points_per_segment == 0) {
+                try addIssueLiteral(alloc, &issues, .err, "band", "points", "points must be positive");
+            }
+        }
+
+        // --- Spin consistency ---
+        if (self.scf.nspin == 2 and self.scf.spinat == null) {
+            try addIssueLiteral(alloc, &issues, .warning, "scf", "spinat",
+                "nspin=2 but spinat not set; calculation may converge to non-magnetic solution");
+        }
+
+        // --- Grid vs ecut consistency ---
+        if (self.scf.grid[0] > 0 and self.scf.grid[1] > 0 and self.scf.grid[2] > 0 and
+            self.scf.ecut_ry > 0 and @abs(volume) > 1e-12)
+        {
+            // Compute minimum grid from ecut_ry (same formula as pw_grid.autoGrid)
+            const scale = if (self.scf.grid_scale > 0) self.scf.grid_scale else 1.0;
+            const density_gmax = @max(2.0, scale) * @sqrt(self.scf.ecut_ry);
+            const two_pi = 2.0 * std.math.pi;
+            const inv_vol = 1.0 / @abs(volume);
+            const b1_norm = math.Vec3.norm(a2.cross(a3).scale(two_pi * inv_vol));
+            const b2_norm = math.Vec3.norm(a3.cross(a1).scale(two_pi * inv_vol));
+            const b3_norm = math.Vec3.norm(a1.cross(a2).scale(two_pi * inv_vol));
+            const min1 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b1_norm))) * 2 + 1;
+            const min2 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b2_norm))) * 2 + 1;
+            const min3 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b3_norm))) * 2 + 1;
+            if (self.scf.grid[0] < min1 or self.scf.grid[1] < min2 or self.scf.grid[2] < min3) {
+                try addIssue(alloc, &issues, .warning, "scf", "grid",
+                    try std.fmt.allocPrint(alloc, "grid [{},{},{}] is smaller than minimum [{},{},{}] for ecut_ry={d:.1}; density may be undersampled", .{
+                        self.scf.grid[0], self.scf.grid[1], self.scf.grid[2],
+                        min1,             min2,             min3,
+                        self.scf.ecut_ry,
+                    }));
+            }
+        }
+
         // --- Recommendations (hints) ---
 
         // Solver: dense is very slow for non-trivial systems
@@ -1542,7 +1607,7 @@ fn floatToIndex(value: f64) !usize {
 fn testDefaultConfig() Config {
     return .{
         .title = @constCast("test"),
-        .xyz_path = @constCast("test.xyz"),
+        .xyz_path = @constCast("examples/silicon.xyz"),
         .out_dir = @constCast("out"),
         .units = .angstrom,
         .linalg_backend = .openblas,
@@ -1645,7 +1710,7 @@ fn testDefaultConfig() Config {
         },
         .dos = .{},
         .output = .{},
-        .pseudopotentials = @constCast(&[_]pseudo.Spec{.{ .element = @constCast("Si"), .path = @constCast("Si.upf"), .format = .upf }}),
+        .pseudopotentials = @constCast(&[_]pseudo.Spec{.{ .element = @constCast("Si"), .path = @constCast("pseudo/Si.upf"), .format = .upf }}),
     };
 }
 
@@ -1860,4 +1925,89 @@ test "validate: no hints with recommended settings" {
     defer result.deinit();
     try std.testing.expect(!result.hasErrors());
     try std.testing.expectEqual(@as(usize, 0), countHints(result.issues));
+}
+
+test "validate: xyz file not found" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.xyz_path = @constCast("nonexistent.xyz");
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(result.hasErrors());
+}
+
+test "validate: pseudopotential file not found" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.pseudopotentials = @constCast(&[_]pseudo.Spec{.{
+        .element = @constCast("Si"),
+        .path = @constCast("nonexistent.upf"),
+        .format = .upf,
+    }});
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(result.hasErrors());
+}
+
+test "validate: vdw enabled with method none" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.vdw.enabled = true;
+    cfg.vdw.method = .none;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(result.hasErrors());
+}
+
+test "validate: dfpt with smearing is error" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.dfpt.enabled = true;
+    cfg.scf.smearing = .fermi_dirac;
+    cfg.scf.smear_ry = 0.01;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(result.hasErrors());
+}
+
+test "validate: dfpt with nspin=2 is error" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.dfpt.enabled = true;
+    cfg.scf.nspin = 2;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(result.hasErrors());
+}
+
+test "validate: band points_per_segment = 0 is error" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.band.path_string = @constCast("G-X");
+    cfg.band.points_per_segment = 0;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(result.hasErrors());
+}
+
+test "validate: nspin=2 without spinat is warning" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.scf.nspin = 2;
+    cfg.scf.spinat = null;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(!result.hasErrors());
+    try std.testing.expect(countWarnings(result.issues) >= 1);
+}
+
+test "validate: grid too small for ecut is warning" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.scf.ecut_ry = 60.0;
+    cfg.scf.grid = .{ 8, 8, 8 }; // way too small for ecut=60
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(!result.hasErrors());
+    try std.testing.expect(countWarnings(result.issues) >= 1);
 }

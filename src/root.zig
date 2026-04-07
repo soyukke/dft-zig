@@ -33,6 +33,7 @@ pub const grid = @import("features/grid/grid.zig");
 
 test {
     _ = @import("tests.zig");
+    _ = config;
     _ = dfpt;
     _ = paw;
     _ = basis;
