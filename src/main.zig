@@ -19,6 +19,20 @@ pub fn main() !void {
     var cfg = try dft.config.load(alloc, config_path);
     defer cfg.deinit(alloc);
 
+    // File existence checks (before semantic validation)
+    var has_file_errors = false;
+    if (std.fs.cwd().statFile(cfg.xyz_path)) |_| {} else |_| {
+        std.debug.print("[ERROR] [root.xyz] file not found: \"{s}\"\n", .{cfg.xyz_path});
+        has_file_errors = true;
+    }
+    for (cfg.pseudopotentials) |pp| {
+        if (std.fs.cwd().statFile(pp.path)) |_| {} else |_| {
+            std.debug.print("[ERROR] [pseudopotential.path] file not found: \"{s}\" (element {s})\n", .{ pp.path, pp.element });
+            has_file_errors = true;
+        }
+    }
+
+    // Semantic validation
     var validation = try cfg.validate(alloc);
     defer validation.deinit();
 
@@ -32,7 +46,7 @@ pub fn main() !void {
         std.debug.print("[{s}] [{s}{s}{s}] {s}\n", .{ prefix, issue.section, field_sep, issue.field, issue.message });
     }
 
-    if (validation.hasErrors()) {
+    if (has_file_errors or validation.hasErrors()) {
         std.debug.print("Config validation failed. Aborting.\n", .{});
         return;
     }

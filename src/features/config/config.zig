@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const linalg = @import("../linalg/linalg.zig");
 const math = @import("../math/math.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
+const scf_util = @import("../scf/util.zig");
 const xc = @import("../xc/xc.zig");
 
 pub const BandPathPoint = struct {
@@ -401,10 +402,12 @@ pub const Config = struct {
             issues.deinit(alloc);
         }
 
-        // --- Cell validity ---
-        const a1 = self.cell.row(0);
-        const a2 = self.cell.row(1);
-        const a3 = self.cell.row(2);
+        // --- Cell validity (convert to Bohr for grid checks) ---
+        const unit_scale = math.unitsScaleToBohr(self.units);
+        const cell_bohr = self.cell.scale(unit_scale);
+        const a1 = cell_bohr.row(0);
+        const a2 = cell_bohr.row(1);
+        const a3 = cell_bohr.row(2);
         const volume = a1.dot(a2.cross(a3));
         if (@abs(volume) <= 1e-12) {
             try addIssueLiteral(alloc, &issues, .err, "cell", "a1,a2,a3", "cell has zero or near-zero volume (degenerate lattice vectors)");
@@ -551,18 +554,6 @@ pub const Config = struct {
             }
         }
 
-        // --- File existence checks ---
-        if (std.fs.cwd().statFile(self.xyz_path)) |_| {} else |_| {
-            try addIssue(alloc, &issues, .err, "root", "xyz",
-                try std.fmt.allocPrint(alloc, "file not found: \"{s}\"", .{self.xyz_path}));
-        }
-        for (self.pseudopotentials) |pp| {
-            if (std.fs.cwd().statFile(pp.path)) |_| {} else |_| {
-                try addIssue(alloc, &issues, .err, "pseudopotential", "path",
-                    try std.fmt.allocPrint(alloc, "file not found: \"{s}\" (element {s})", .{ pp.path, pp.element }));
-            }
-        }
-
         // --- VdW consistency ---
         if (self.vdw.enabled and self.vdw.method == .none) {
             try addIssueLiteral(alloc, &issues, .err, "vdw", "method", "vdw enabled but method = \"none\"; set method = \"d3bj\"");
@@ -595,7 +586,7 @@ pub const Config = struct {
         if (self.scf.grid[0] > 0 and self.scf.grid[1] > 0 and self.scf.grid[2] > 0 and
             self.scf.ecut_ry > 0 and @abs(volume) > 1e-12)
         {
-            // Compute minimum grid from ecut_ry (same formula as pw_grid.autoGrid)
+            // Compute recommended grid from ecut_ry (same formula as pw_grid.autoGrid)
             const scale = if (self.scf.grid_scale > 0) self.scf.grid_scale else 1.0;
             const density_gmax = @max(2.0, scale) * @sqrt(self.scf.ecut_ry);
             const two_pi = 2.0 * std.math.pi;
@@ -603,15 +594,20 @@ pub const Config = struct {
             const b1_norm = math.Vec3.norm(a2.cross(a3).scale(two_pi * inv_vol));
             const b2_norm = math.Vec3.norm(a3.cross(a1).scale(two_pi * inv_vol));
             const b3_norm = math.Vec3.norm(a1.cross(a2).scale(two_pi * inv_vol));
-            const min1 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b1_norm))) * 2 + 1;
-            const min2 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b2_norm))) * 2 + 1;
-            const min3 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b3_norm))) * 2 + 1;
-            if (self.scf.grid[0] < min1 or self.scf.grid[1] < min2 or self.scf.grid[2] < min3) {
+            const raw1 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b1_norm))) * 2 + 1;
+            const raw2 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b2_norm))) * 2 + 1;
+            const raw3 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / b3_norm))) * 2 + 1;
+            // Round up to FFT-efficient sizes (products of 2, 3, 5)
+            const rec1 = scf_util.nextFftSize(@max(raw1, 3));
+            const rec2 = scf_util.nextFftSize(@max(raw2, 3));
+            const rec3 = scf_util.nextFftSize(@max(raw3, 3));
+            if (self.scf.grid[0] < raw1 or self.scf.grid[1] < raw2 or self.scf.grid[2] < raw3) {
                 try addIssue(alloc, &issues, .warning, "scf", "grid",
-                    try std.fmt.allocPrint(alloc, "grid [{},{},{}] is smaller than minimum [{},{},{}] for ecut_ry={d:.1}; density may be undersampled", .{
+                    try std.fmt.allocPrint(alloc, "grid [{},{},{}] is smaller than recommended [{},{},{}] for ecut_ry={d:.1}; use grid = [{},{},{}] or set grid = [0,0,0] for auto", .{
                         self.scf.grid[0], self.scf.grid[1], self.scf.grid[2],
-                        min1,             min2,             min3,
+                        raw1,             raw2,             raw3,
                         self.scf.ecut_ry,
+                        rec1, rec2, rec3,
                     }));
             }
         }
@@ -1607,7 +1603,7 @@ fn floatToIndex(value: f64) !usize {
 fn testDefaultConfig() Config {
     return .{
         .title = @constCast("test"),
-        .xyz_path = @constCast("examples/silicon.xyz"),
+        .xyz_path = @constCast("test.xyz"),
         .out_dir = @constCast("out"),
         .units = .angstrom,
         .linalg_backend = .openblas,
@@ -1710,7 +1706,7 @@ fn testDefaultConfig() Config {
         },
         .dos = .{},
         .output = .{},
-        .pseudopotentials = @constCast(&[_]pseudo.Spec{.{ .element = @constCast("Si"), .path = @constCast("pseudo/Si.upf"), .format = .upf }}),
+        .pseudopotentials = @constCast(&[_]pseudo.Spec{.{ .element = @constCast("Si"), .path = @constCast("Si.upf"), .format = .upf }}),
     };
 }
 
@@ -1925,28 +1921,6 @@ test "validate: no hints with recommended settings" {
     defer result.deinit();
     try std.testing.expect(!result.hasErrors());
     try std.testing.expectEqual(@as(usize, 0), countHints(result.issues));
-}
-
-test "validate: xyz file not found" {
-    const alloc = std.testing.allocator;
-    var cfg = testDefaultConfig();
-    cfg.xyz_path = @constCast("nonexistent.xyz");
-    var result = try cfg.validate(alloc);
-    defer result.deinit();
-    try std.testing.expect(result.hasErrors());
-}
-
-test "validate: pseudopotential file not found" {
-    const alloc = std.testing.allocator;
-    var cfg = testDefaultConfig();
-    cfg.pseudopotentials = @constCast(&[_]pseudo.Spec{.{
-        .element = @constCast("Si"),
-        .path = @constCast("nonexistent.upf"),
-        .format = .upf,
-    }});
-    var result = try cfg.validate(alloc);
-    defer result.deinit();
-    try std.testing.expect(result.hasErrors());
 }
 
 test "validate: vdw enabled with method none" {
