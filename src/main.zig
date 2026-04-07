@@ -19,6 +19,24 @@ pub fn main() !void {
     var cfg = try dft.config.load(alloc, config_path);
     defer cfg.deinit(alloc);
 
+    var validation = try cfg.validate(alloc);
+    defer validation.deinit();
+
+    for (validation.issues) |issue| {
+        const prefix: []const u8 = switch (issue.severity) {
+            .err => "ERROR",
+            .warning => "WARNING",
+            .hint => "HINT",
+        };
+        const field_sep: []const u8 = if (issue.field.len > 0) "." else "";
+        std.debug.print("[{s}] [{s}{s}{s}] {s}\n", .{ prefix, issue.section, field_sep, issue.field, issue.message });
+    }
+
+    if (validation.hasErrors()) {
+        std.debug.print("Config validation failed. Aborting.\n", .{});
+        return;
+    }
+
     var atoms = try dft.xyz.load(alloc, cfg.xyz_path);
     defer atoms.deinit(alloc);
 

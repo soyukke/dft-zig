@@ -306,6 +306,38 @@ pub const RelaxConfig = struct {
     target_pressure: f64 = 0.0, // GPa, target external pressure (compensates Pulay stress)
 };
 
+pub const ValidationSeverity = enum {
+    err,
+    warning,
+    hint, // recommendations for better performance/convergence
+};
+
+pub const ValidationIssue = struct {
+    severity: ValidationSeverity,
+    section: []const u8,
+    field: []const u8,
+    message: []const u8, // heap-allocated
+};
+
+pub const ValidationResult = struct {
+    issues: []ValidationIssue,
+    allocator: std.mem.Allocator,
+
+    pub fn hasErrors(self: ValidationResult) bool {
+        for (self.issues) |issue| {
+            if (issue.severity == .err) return true;
+        }
+        return false;
+    }
+
+    pub fn deinit(self: *ValidationResult) void {
+        for (self.issues) |issue| {
+            self.allocator.free(issue.message);
+        }
+        self.allocator.free(self.issues);
+    }
+};
+
 pub const Config = struct {
     title: []u8,
     xyz_path: []u8,
@@ -359,6 +391,251 @@ pub const Config = struct {
         if (self.pseudopotentials.len > 0) {
             alloc.free(self.pseudopotentials);
         }
+    }
+
+    /// Validate config after parsing. Returns all issues (errors + warnings).
+    pub fn validate(self: *const Config, alloc: std.mem.Allocator) !ValidationResult {
+        var issues: std.ArrayList(ValidationIssue) = .empty;
+        errdefer {
+            for (issues.items) |issue| alloc.free(issue.message);
+            issues.deinit(alloc);
+        }
+
+        // --- Cell validity ---
+        const a1 = self.cell.row(0);
+        const a2 = self.cell.row(1);
+        const a3 = self.cell.row(2);
+        const volume = a1.dot(a2.cross(a3));
+        if (@abs(volume) <= 1e-12) {
+            try addIssueLiteral(alloc, &issues, .err, "cell", "a1,a2,a3", "cell has zero or near-zero volume (degenerate lattice vectors)");
+        }
+
+        // --- Pseudopotentials ---
+        if (self.pseudopotentials.len == 0) {
+            try addIssueLiteral(alloc, &issues, .err, "pseudopotential", "", "at least one pseudopotential must be specified");
+        }
+
+        // --- SCF checks ---
+        if (self.scf.ecut_ry <= 0) {
+            try addIssue(alloc, &issues, .err, "scf", "ecut_ry",
+                try std.fmt.allocPrint(alloc, "must be positive (got {d:.2})", .{self.scf.ecut_ry}));
+        } else if (self.scf.ecut_ry < 5.0) {
+            try addIssue(alloc, &issues, .warning, "scf", "ecut_ry",
+                try std.fmt.allocPrint(alloc, "{d:.1} is unusually low; typical range is 15-100 Ry", .{self.scf.ecut_ry}));
+        }
+
+        for (self.scf.kmesh, 0..) |k, i| {
+            if (k == 0) {
+                try addIssue(alloc, &issues, .err, "scf", "kmesh",
+                    try std.fmt.allocPrint(alloc, "dimension [{d}] must be positive", .{i}));
+            }
+        }
+
+        if (self.scf.grid_scale <= 0) {
+            try addIssueLiteral(alloc, &issues, .err, "scf", "grid_scale", "must be positive");
+        }
+
+        if (self.scf.max_iter == 0) {
+            try addIssueLiteral(alloc, &issues, .err, "scf", "max_iter", "must be positive");
+        }
+
+        if (self.scf.convergence <= 0) {
+            try addIssueLiteral(alloc, &issues, .err, "scf", "convergence", "must be positive");
+        } else if (self.scf.convergence > 1e-3) {
+            try addIssue(alloc, &issues, .warning, "scf", "convergence",
+                try std.fmt.allocPrint(alloc, "{e} is loose; results may be inaccurate", .{self.scf.convergence}));
+        }
+
+        if (self.scf.mixing_beta <= 0 or self.scf.mixing_beta > 1.0) {
+            try addIssue(alloc, &issues, .err, "scf", "mixing_beta",
+                try std.fmt.allocPrint(alloc, "must be in (0, 1] (got {d:.3})", .{self.scf.mixing_beta}));
+        } else if (self.scf.mixing_beta > 0.7) {
+            try addIssue(alloc, &issues, .warning, "scf", "mixing_beta",
+                try std.fmt.allocPrint(alloc, "{d:.2} is high; may cause SCF oscillation", .{self.scf.mixing_beta}));
+        }
+
+        if (self.scf.smearing != .none and self.scf.smear_ry <= 0) {
+            try addIssueLiteral(alloc, &issues, .err, "scf", "smear_ry", "must be > 0 when smearing is enabled");
+        }
+        if (self.scf.smearing == .none and self.scf.smear_ry > 0) {
+            try addIssueLiteral(alloc, &issues, .warning, "scf", "smear_ry", "is set but smearing is disabled; value will be ignored");
+        }
+
+        if (self.scf.pulay_history > 0 and self.scf.pulay_start > self.scf.pulay_history) {
+            try addIssue(alloc, &issues, .err, "scf", "pulay_start",
+                try std.fmt.allocPrint(alloc, "({d}) exceeds pulay_history ({d})", .{ self.scf.pulay_start, self.scf.pulay_history }));
+        }
+
+        // --- Boundary + kmesh consistency ---
+        if (self.boundary == .isolated) {
+            for (self.scf.kmesh) |k| {
+                if (k > 1) {
+                    try addIssueLiteral(alloc, &issues, .warning, "scf", "kmesh", "isolated boundary with kmesh > [1,1,1]; only Gamma point is meaningful");
+                    break;
+                }
+            }
+        }
+
+        // --- Relax checks (when enabled) ---
+        if (self.relax.enabled) {
+            if (!self.scf.enabled) {
+                try addIssueLiteral(alloc, &issues, .err, "relax", "", "requires scf to be enabled");
+            }
+            if (self.relax.max_iter == 0) {
+                try addIssueLiteral(alloc, &issues, .err, "relax", "max_iter", "must be positive");
+            }
+            if (self.relax.force_tol <= 0) {
+                try addIssueLiteral(alloc, &issues, .err, "relax", "force_tol", "must be positive");
+            }
+            if (self.relax.max_step <= 0) {
+                try addIssueLiteral(alloc, &issues, .err, "relax", "max_step", "must be positive");
+            }
+            if (self.relax.cell_relax and !self.scf.compute_stress) {
+                try addIssueLiteral(alloc, &issues, .warning, "relax", "cell_relax", "cell_relax is enabled but compute_stress is off; stress will be auto-enabled");
+            }
+        }
+
+        // --- DFPT checks (when enabled) ---
+        if (self.dfpt.enabled) {
+            if (!self.scf.enabled) {
+                try addIssueLiteral(alloc, &issues, .err, "dfpt", "", "requires scf to be enabled");
+            }
+            if (self.dfpt.sternheimer_max_iter == 0) {
+                try addIssueLiteral(alloc, &issues, .err, "dfpt", "sternheimer_max_iter", "must be positive");
+            }
+            if (self.dfpt.sternheimer_tol <= 0) {
+                try addIssueLiteral(alloc, &issues, .err, "dfpt", "sternheimer_tol", "must be positive");
+            }
+            if (self.dfpt.scf_max_iter == 0) {
+                try addIssueLiteral(alloc, &issues, .err, "dfpt", "scf_max_iter", "must be positive");
+            }
+            if (self.dfpt.scf_tol <= 0) {
+                try addIssueLiteral(alloc, &issues, .err, "dfpt", "scf_tol", "must be positive");
+            }
+            if (self.dfpt.mixing_beta <= 0 or self.dfpt.mixing_beta > 1.0) {
+                try addIssue(alloc, &issues, .err, "dfpt", "mixing_beta",
+                    try std.fmt.allocPrint(alloc, "must be in (0, 1] (got {d:.3})", .{self.dfpt.mixing_beta}));
+            }
+            if (self.dfpt.pulay_history > 0 and self.dfpt.pulay_start > self.dfpt.pulay_history) {
+                try addIssue(alloc, &issues, .err, "dfpt", "pulay_start",
+                    try std.fmt.allocPrint(alloc, "({d}) exceeds pulay_history ({d})", .{ self.dfpt.pulay_start, self.dfpt.pulay_history }));
+            }
+            if (self.dfpt.qgrid) |qg| {
+                for (qg, 0..) |q, i| {
+                    if (q == 0) {
+                        try addIssue(alloc, &issues, .err, "dfpt", "qgrid",
+                            try std.fmt.allocPrint(alloc, "dimension [{d}] must be positive", .{i}));
+                    }
+                }
+            }
+            if (self.dfpt.dos_qmesh) |qm| {
+                for (qm, 0..) |q, i| {
+                    if (q == 0) {
+                        try addIssue(alloc, &issues, .err, "dfpt", "dos_qmesh",
+                            try std.fmt.allocPrint(alloc, "dimension [{d}] must be positive", .{i}));
+                    }
+                }
+            }
+        }
+
+        // --- DOS checks (when enabled) ---
+        if (self.dos.enabled) {
+            if (self.dos.sigma <= 0) {
+                try addIssueLiteral(alloc, &issues, .err, "dos", "sigma", "must be positive");
+            }
+            if (self.dos.npoints == 0) {
+                try addIssueLiteral(alloc, &issues, .err, "dos", "npoints", "must be positive");
+            }
+            if (self.dos.emin != null and self.dos.emax != null and self.dos.emin.? >= self.dos.emax.?) {
+                try addIssueLiteral(alloc, &issues, .err, "dos", "emin/emax", "emin must be less than emax");
+            }
+        }
+
+        // --- Recommendations (hints) ---
+
+        // Solver: dense is very slow for non-trivial systems
+        if (self.scf.enabled and self.scf.solver == .dense) {
+            try addIssueLiteral(alloc, &issues, .hint, "scf", "solver",
+                "solver = \"dense\" is slow for large systems; consider solver = \"iterative\" (LOBPCG)");
+        }
+
+        // FFT backend: fftw is significantly faster than pure Zig backends
+        if (self.scf.enabled and self.scf.fft_backend != .fftw) {
+            try addIssueLiteral(alloc, &issues, .hint, "scf", "fft_backend",
+                "fft_backend = \"fftw\" is recommended for production calculations");
+        }
+
+        // Dielectric preconditioner: diemac=1.0 means disabled
+        if (self.scf.enabled and self.scf.diemac == 1.0 and self.scf.convergence < 1e-6) {
+            try addIssueLiteral(alloc, &issues, .hint, "scf", "diemac",
+                "diemac = 1.0 (disabled); for tight convergence (<1e-6), set ~12 for semiconductors or ~1e6 for metals");
+        }
+
+        // Pulay/DIIS disabled
+        if (self.scf.enabled and self.scf.pulay_history == 0) {
+            try addIssueLiteral(alloc, &issues, .hint, "scf", "pulay_history",
+                "pulay_history = 0 (DIIS disabled); pulay_history = 8 with pulay_start = 4 typically improves SCF convergence");
+        }
+
+        // Density mixing is known to oscillate for large ecut
+        if (self.scf.enabled and self.scf.mixing_mode == .density) {
+            try addIssueLiteral(alloc, &issues, .hint, "scf", "mixing_mode",
+                "mixing_mode = \"density\" can oscillate at large ecut; mixing_mode = \"potential\" is recommended");
+        }
+
+        // iterative_tol too tight increases per-iteration cost
+        if (self.scf.enabled and self.scf.solver == .iterative and self.scf.iterative_tol < 1e-6) {
+            try addIssueLiteral(alloc, &issues, .hint, "scf", "iterative_tol",
+                "iterative_tol < 1e-6 increases eigensolver cost per SCF iteration; 1e-4 is usually sufficient");
+        }
+
+        // Symmetry disabled
+        if (self.scf.enabled and !self.scf.symmetry) {
+            try addIssueLiteral(alloc, &issues, .hint, "scf", "symmetry",
+                "symmetry = false; enabling symmetry reduces k-points and speeds up the calculation");
+        }
+
+        // Band solver recommendation
+        if (self.band.path.len > 0 or self.band.path_string != null) {
+            if (self.band.solver == .dense) {
+                try addIssueLiteral(alloc, &issues, .hint, "band", "solver",
+                    "solver = \"dense\" is slow for band structure; consider solver = \"iterative\"");
+            }
+        }
+
+        return .{
+            .issues = try issues.toOwnedSlice(alloc),
+            .allocator = alloc,
+        };
+    }
+
+    /// Append a validation issue. Takes ownership of `message` (must be heap-allocated).
+    fn addIssue(
+        alloc: std.mem.Allocator,
+        issues: *std.ArrayList(ValidationIssue),
+        severity: ValidationSeverity,
+        section: []const u8,
+        field: []const u8,
+        message: []const u8,
+    ) !void {
+        try issues.append(alloc, .{
+            .severity = severity,
+            .section = section,
+            .field = field,
+            .message = message,
+        });
+    }
+
+    /// Convenience: addIssue with a comptime string literal (dupes it).
+    fn addIssueLiteral(
+        alloc: std.mem.Allocator,
+        issues: *std.ArrayList(ValidationIssue),
+        severity: ValidationSeverity,
+        section: []const u8,
+        field: []const u8,
+        comptime message: []const u8,
+    ) !void {
+        try addIssue(alloc, issues, severity, section, field, try alloc.dupe(u8, message));
     }
 };
 
@@ -1257,4 +1534,330 @@ fn floatToIndex(value: f64) !usize {
     const rounded = std.math.floor(value + 0.5);
     if (rounded < 0.0) return error.InvalidArray;
     return @intFromFloat(rounded);
+}
+
+// --- Tests ---
+
+/// Build a minimal valid Config for testing (all defaults are valid).
+fn testDefaultConfig() Config {
+    return .{
+        .title = @constCast("test"),
+        .xyz_path = @constCast("test.xyz"),
+        .out_dir = @constCast("out"),
+        .units = .angstrom,
+        .linalg_backend = .openblas,
+        .threads = 0,
+        .cell = math.Mat3.fromRows(
+            .{ .x = 10.0, .y = 0.0, .z = 0.0 },
+            .{ .x = 0.0, .y = 10.0, .z = 0.0 },
+            .{ .x = 0.0, .y = 0.0, .z = 10.0 },
+        ),
+        .scf = .{
+            .enabled = true,
+            .solver = .iterative,
+            .xc = .lda_pz,
+            .smearing = .none,
+            .smear_ry = 0.0,
+            .ecut_ry = 30.0,
+            .kmesh = .{ 4, 4, 4 },
+            .kmesh_shift = .{ 0.0, 0.0, 0.0 },
+            .grid = .{ 0, 0, 0 },
+            .grid_scale = 1.0,
+            .mixing_beta = 0.3,
+            .max_iter = 50,
+            .convergence = 1e-6,
+            .convergence_metric = .density,
+            .profile = false,
+            .quiet = false,
+            .debug_nonlocal = false,
+            .debug_local = false,
+            .debug_fermi = false,
+            .enable_nonlocal = true,
+            .local_potential = .short_range,
+            .symmetry = true,
+            .time_reversal = true,
+            .kpoint_threads = 0,
+            .iterative_max_iter = 20,
+            .iterative_tol = 1e-4,
+            .iterative_max_subspace = 0,
+            .iterative_block_size = 0,
+            .iterative_init_diagonal = false,
+            .iterative_warmup_steps = 2,
+            .iterative_warmup_max_iter = 10,
+            .iterative_warmup_tol = 1e-3,
+            .iterative_reuse_vectors = true,
+            .kerker_q0 = 0.0,
+            .diemac = 12.0,
+            .dielng = 1.0,
+            .pulay_history = 8,
+            .pulay_start = 4,
+            .mixing_mode = .potential,
+            .use_rfft = false,
+            .fft_backend = .fftw,
+            .nspin = 1,
+            .spinat = null,
+            .compute_stress = false,
+            .reference_json = null,
+            .compare_reference_json = null,
+            .comparison_json = null,
+            .compare_tolerance_json = null,
+        },
+        .ewald = .{ .alpha = 0.0, .rcut = 0.0, .gcut = 0.0, .tol = 1e-8 },
+        .vdw = .{},
+        .band = .{
+            .points_per_segment = 60,
+            .nbands = 8,
+            .path = &.{},
+            .solver = .dense,
+            .iterative_max_iter = 40,
+            .iterative_tol = 1e-6,
+            .iterative_max_subspace = 0,
+            .iterative_block_size = 0,
+            .iterative_init_diagonal = false,
+            .kpoint_threads = 0,
+            .iterative_reuse_vectors = true,
+            .use_symmetry = false,
+            .lobpcg_parallel = false,
+        },
+        .relax = .{
+            .enabled = false,
+            .algorithm = .bfgs,
+            .max_iter = 100,
+            .force_tol = 1e-4,
+            .max_step = 0.5,
+            .output_trajectory = false,
+        },
+        .dfpt = .{
+            .enabled = false,
+            .sternheimer_tol = 1e-8,
+            .sternheimer_max_iter = 200,
+            .scf_tol = 1e-10,
+            .scf_max_iter = 50,
+            .mixing_beta = 0.3,
+            .alpha_shift = 0.01,
+            .qpath_npoints = 0,
+            .pulay_history = 8,
+            .pulay_start = 4,
+            .kpoint_threads = 0,
+            .perturbation_threads = 1,
+            .qgrid = null,
+            .qpath = &.{},
+        },
+        .dos = .{},
+        .output = .{},
+        .pseudopotentials = @constCast(&[_]pseudo.Spec{.{ .element = @constCast("Si"), .path = @constCast("Si.upf"), .format = .upf }}),
+    };
+}
+
+fn countErrors(issues: []const ValidationIssue) usize {
+    var n: usize = 0;
+    for (issues) |issue| {
+        if (issue.severity == .err) n += 1;
+    }
+    return n;
+}
+
+fn countWarnings(issues: []const ValidationIssue) usize {
+    var n: usize = 0;
+    for (issues) |issue| {
+        if (issue.severity == .warning) n += 1;
+    }
+    return n;
+}
+
+fn countHints(issues: []const ValidationIssue) usize {
+    var n: usize = 0;
+    for (issues) |issue| {
+        if (issue.severity == .hint) n += 1;
+    }
+    return n;
+}
+
+test "validate: valid default config produces no issues" {
+    const alloc = std.testing.allocator;
+    const cfg = testDefaultConfig();
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expectEqual(@as(usize, 0), result.issues.len);
+    try std.testing.expect(!result.hasErrors());
+}
+
+test "validate: ecut_ry = 0 is an error" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.scf.ecut_ry = 0;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(result.hasErrors());
+    try std.testing.expect(countErrors(result.issues) >= 1);
+}
+
+test "validate: ecut_ry = 3.0 is a warning" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.scf.ecut_ry = 3.0;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(!result.hasErrors());
+    try std.testing.expect(countWarnings(result.issues) >= 1);
+}
+
+test "validate: mixing_beta out of range" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.scf.mixing_beta = 1.5;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(result.hasErrors());
+}
+
+test "validate: smearing enabled with smear_ry = 0" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.scf.smearing = .fermi_dirac;
+    cfg.scf.smear_ry = 0.0;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(result.hasErrors());
+}
+
+test "validate: pulay_start exceeds pulay_history" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.scf.pulay_history = 5;
+    cfg.scf.pulay_start = 10;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(result.hasErrors());
+}
+
+test "validate: degenerate cell" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.cell = math.Mat3.fromRows(
+        .{ .x = 0.0, .y = 0.0, .z = 0.0 },
+        .{ .x = 0.0, .y = 0.0, .z = 0.0 },
+        .{ .x = 0.0, .y = 0.0, .z = 0.0 },
+    );
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(result.hasErrors());
+}
+
+test "validate: no pseudopotentials" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.pseudopotentials = &.{};
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(result.hasErrors());
+}
+
+test "validate: relax requires scf" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.relax.enabled = true;
+    cfg.scf.enabled = false;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(result.hasErrors());
+}
+
+test "validate: isolated boundary with kmesh > 1 is a warning" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.boundary = .isolated;
+    cfg.scf.kmesh = .{ 4, 4, 4 };
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(!result.hasErrors());
+    try std.testing.expect(countWarnings(result.issues) >= 1);
+}
+
+test "validate: hint for dense solver" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.scf.solver = .dense;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(!result.hasErrors());
+    try std.testing.expect(countHints(result.issues) >= 1);
+}
+
+test "validate: hint for non-fftw backend" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.scf.fft_backend = .zig;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(!result.hasErrors());
+    try std.testing.expect(countHints(result.issues) >= 1);
+}
+
+test "validate: hint for diemac = 1.0 with tight convergence" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.scf.diemac = 1.0;
+    cfg.scf.convergence = 1e-8;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(!result.hasErrors());
+    try std.testing.expect(countHints(result.issues) >= 1);
+}
+
+test "validate: no diemac hint with loose convergence" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.scf.diemac = 1.0;
+    cfg.scf.convergence = 1e-6; // loose enough that diemac doesn't matter
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(!result.hasErrors());
+    // diemac hint should NOT fire when convergence >= 1e-6
+    var has_diemac_hint = false;
+    for (result.issues) |issue| {
+        if (issue.severity == .hint and std.mem.eql(u8, issue.field, "diemac")) {
+            has_diemac_hint = true;
+        }
+    }
+    try std.testing.expect(!has_diemac_hint);
+}
+
+test "validate: hint for density mixing" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.scf.mixing_mode = .density;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(!result.hasErrors());
+    try std.testing.expect(countHints(result.issues) >= 1);
+}
+
+test "validate: hint for tight iterative_tol" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.scf.iterative_tol = 1e-8;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(!result.hasErrors());
+    try std.testing.expect(countHints(result.issues) >= 1);
+}
+
+test "validate: hint for symmetry disabled" {
+    const alloc = std.testing.allocator;
+    var cfg = testDefaultConfig();
+    cfg.scf.symmetry = false;
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(!result.hasErrors());
+    try std.testing.expect(countHints(result.issues) >= 1);
+}
+
+test "validate: no hints with recommended settings" {
+    const alloc = std.testing.allocator;
+    const cfg = testDefaultConfig(); // default uses recommended settings
+    var result = try cfg.validate(alloc);
+    defer result.deinit();
+    try std.testing.expect(!result.hasErrors());
+    try std.testing.expectEqual(@as(usize, 0), countHints(result.issues));
 }
