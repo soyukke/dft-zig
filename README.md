@@ -186,6 +186,20 @@ method = "d3bj"
 | `[vdw]` | van der Waals correction (D3-BJ) |
 | `[[pseudopotential]]` | Pseudopotential specification (multi-element) |
 
+### Config Validation
+
+DFT-Zig validates configuration before starting calculations. Three severity levels:
+
+- **ERROR** — Invalid config, calculation aborted (missing files, degenerate cell, invalid parameter ranges, incompatible settings like DFPT+smearing)
+- **WARNING** — Suspicious settings that may produce poor results (grid too small for ecut, nspin=2 without spinat, loose convergence)
+- **HINT** — Performance recommendations based on benchmarks (use fftw, iterative solver, diemac, Pulay mixing, potential mixing, symmetry)
+
+Example output:
+```
+[WARNING] [scf.grid] grid [8,8,8] is smaller than recommended [17,17,17] for ecut_ry=15.0; use grid = [18,18,18] or set grid = [0,0,0] for auto
+[HINT] [scf.fft_backend] fft_backend = "fftw" is recommended for production calculations
+```
+
 ## Output
 
 Results are written to `out_dir`.

@@ -186,6 +186,20 @@ method = "d3bj"
 | `[vdw]` | van der Waals補正（D3-BJ） |
 | `[[pseudopotential]]` | 擬ポテンシャル指定（複数元素対応） |
 
+### 設定バリデーション
+
+DFT-Zigは計算開始前に設定ファイルを検証する。3段階の重要度：
+
+- **ERROR** — 無効な設定。計算中止（ファイル不在、縮退セル、パラメータ範囲外、非互換設定など）
+- **WARNING** — 精度低下のリスクがある設定（gridがecutに対して小さい、nspin=2でspinat未設定、緩い収束条件）
+- **HINT** — ベンチマークに基づく性能推奨（fftw、iterativeソルバー、diemac、Pulay混合、ポテンシャル混合、対称性）
+
+出力例：
+```
+[WARNING] [scf.grid] grid [8,8,8] is smaller than recommended [17,17,17] for ecut_ry=15.0; use grid = [18,18,18] or set grid = [0,0,0] for auto
+[HINT] [scf.fft_backend] fft_backend = "fftw" is recommended for production calculations
+```
+
 ## 出力
 
 計算結果は `out_dir` に出力される。

@@ -66,7 +66,11 @@ just build && ./zig-out/bin/dft_zig examples/silicon.toml
 ### Execution Flow
 
 ```
-main.zig → load TOML config → load XYZ structure → dft.run()
+main.zig → load TOML config → file existence checks → config.validate() → load XYZ structure → dft.run()
+  config.validate():
+    - Errors: degenerate cell, missing pseudopotentials, invalid ranges, cross-section consistency
+    - Warnings: low ecut, nspin=2 without spinat, grid too small for ecut
+    - Hints: fftw, iterative solver, diemac, pulay, potential mixing, symmetry
   dft.run():
     1. Load pseudopotentials, build species/atom data
     2. relax.run()   (if enabled — runs SCF iteratively)
