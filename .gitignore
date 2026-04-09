@@ -71,7 +71,8 @@ benchmarks/silicon/main
 __pycache__/
 
 # Claude Code
-.claude/
+.claude/*
+!.claude/skills/
 
 # Nix
 .direnv/
