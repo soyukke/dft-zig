@@ -3,6 +3,9 @@ pub const radial_grid = @import("radial_grid.zig");
 pub const schrodinger = @import("schrodinger.zig");
 pub const atomic_solver = @import("atomic_solver.zig");
 pub const diagnostics = @import("diagnostics.zig");
+pub const tm_generator = @import("tm_generator.zig");
+pub const kb_projector = @import("kb_projector.zig");
+pub const upf_writer = @import("upf_writer.zig");
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
@@ -23,4 +26,7 @@ test {
     _ = schrodinger;
     _ = atomic_solver;
     _ = diagnostics;
+    _ = tm_generator;
+    _ = kb_projector;
+    _ = upf_writer;
 }
