@@ -17,8 +17,10 @@
         # libcint: general GTO integrals for quantum chemistry
         libcint = pkgs.libcint;
 
-        # OpenBLAS: LAPACK/BLAS for non-macOS platforms
+        # OpenBLAS for BLAS, Netlib LAPACK for LAPACK routines (dsygv etc.)
+        # OpenBLAS 0.3.30 has LAPACK issues (dsygv SIGABRT in workspace query)
         openblas = pkgs.openblas;
+        lapack = pkgs.lapack-reference;
 
         # Python environment for plotting and analysis
         pythonEnv = pkgs.python3.withPackages (ps: with ps; [
@@ -41,6 +43,7 @@
             pkgs.apple-sdk_15
           ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
             openblas
+            lapack
           ];
 
           shellHook = ''
@@ -51,6 +54,7 @@
           '' + pkgs.lib.optionalString pkgs.stdenv.isLinux ''
             export OPENBLAS_INCLUDE="${openblas.dev}/include"
             export OPENBLAS_LIB="${openblas}/lib"
+            export LAPACK_LIB="${lapack}/lib"
           '' + ''
             # Ensure Zig can write to cache
             export ZIG_GLOBAL_CACHE_DIR="$HOME/.cache/zig"

@@ -9,8 +9,11 @@ on:
 jobs:
   unit-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - run: nix develop --command zig build test
+        env:
+          OPENBLAS_NUM_THREADS: 1
