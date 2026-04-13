@@ -97,16 +97,30 @@ pub fn generatePseudopotential(
         );
     }
 
-    // 5. Build Hartree and XC potentials for unscreening
-    const rho = ae_result.rho;
+    // 5. Build VALENCE density and its Hartree/XC potentials for unscreening.
+    //    The ionic pseudopotential = V_screened - V_H[ρ_val] - V_xc[ρ_val].
+    //    This ensures V_ion → -2*Z_val/r at large r (not -2*Z/r).
+    const rho_val = try allocator.alloc(f64, n);
+    defer allocator.free(rho_val);
+    @memset(rho_val, 0);
+    for (0..n_val) |vi| {
+        const u = pw_list[vi].u;
+        const occ = config.valence_channels[vi].occupation;
+        for (0..n) |i| {
+            const r = grid.r[i];
+            const r2 = if (r > 1e-30) r * r else 1e-30;
+            rho_val[i] += occ * u[i] * u[i] / (4.0 * std.math.pi * r2);
+        }
+    }
+
     const v_h = try allocator.alloc(f64, n);
     defer allocator.free(v_h);
-    atomic_solver.radialPoisson(&grid, rho, v_h);
+    atomic_solver.radialPoisson(&grid, rho_val, v_h);
 
     const v_xc = try allocator.alloc(f64, n);
     defer allocator.free(v_xc);
     for (0..n) |i| {
-        const xc_pt = xc_mod.evalPoint(config.xc, rho[i], 0);
+        const xc_pt = xc_mod.evalPoint(config.xc, rho_val[i], 0);
         v_xc[i] = xc_pt.df_dn;
     }
 
@@ -169,11 +183,11 @@ pub fn generatePseudopotential(
         dij_matrix[i * nb + i] = dij_list.items[i];
     }
 
-    // 8. Build atomic charge density (4πr²ρ format for UPF)
+    // 8. Build atomic valence charge density (4πr²ρ_val format for UPF)
     const rho_atom = try allocator.alloc(f64, n);
     defer allocator.free(rho_atom);
     for (0..n) |i| {
-        rho_atom[i] = rho[i] * 4.0 * std.math.pi * grid.r[i] * grid.r[i];
+        rho_atom[i] = rho_val[i] * 4.0 * std.math.pi * grid.r[i] * grid.r[i];
     }
 
     // 9. Determine l_max

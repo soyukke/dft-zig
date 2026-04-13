@@ -8,19 +8,57 @@ pub const kb_projector = @import("kb_projector.zig");
 pub const upf_writer = @import("upf_writer.zig");
 pub const pipeline = @import("pipeline.zig");
 pub const si_test = @import("si_test.zig");
+pub const integration_test = @import("integration_test.zig");
 
 pub fn main() !void {
-    const allocator = std.heap.page_allocator;
+    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
     if (args.len < 2) {
-        std.debug.print("Usage: ppgen <config.toml>\n", .{});
+        std.debug.print("Usage: ppgen <output.upf>\n", .{});
+        std.debug.print("  Generates Si LDA norm-conserving pseudopotential.\n", .{});
         return;
     }
 
-    std.debug.print("ppgen: pseudopotential generator (Phase 1: atomic solver)\n", .{});
-    std.debug.print("Config file: {s}\n", .{args[1]});
+    const output_path = args[1];
+
+    // Si: Z=14, [Ne] 3s² 3p²
+    const all_orbs = [_]pipeline.OrbitalDef{
+        .{ .n = 1, .l = 0, .occupation = 2.0 },
+        .{ .n = 2, .l = 0, .occupation = 2.0 },
+        .{ .n = 2, .l = 1, .occupation = 6.0 },
+        .{ .n = 3, .l = 0, .occupation = 2.0 },
+        .{ .n = 3, .l = 1, .occupation = 2.0 },
+    };
+
+    const val_channels = [_]pipeline.ChannelConfig{
+        .{ .n = 3, .l = 0, .occupation = 2.0, .rc = 1.8 },
+        .{ .n = 3, .l = 1, .occupation = 2.0, .rc = 2.0 },
+    };
+
+    // Generate into memory buffer, then write to file
+    var buf: [2 * 1024 * 1024]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+
+    try pipeline.generatePseudopotential(allocator, .{
+        .z = 14,
+        .element = "Si",
+        .xc = .lda_pz,
+        .all_orbitals = &all_orbs,
+        .valence_channels = &val_channels,
+        .l_local = 1,
+    }, fbs.writer());
+
+    const output = fbs.getWritten();
+    const file = try std.fs.cwd().createFile(output_path, .{});
+    defer file.close();
+    try file.writeAll(output);
+
+    std.debug.print("Written: {s}\n", .{output_path});
 }
 
 test {
@@ -33,4 +71,5 @@ test {
     _ = upf_writer;
     _ = pipeline;
     _ = si_test;
+    _ = integration_test;
 }
