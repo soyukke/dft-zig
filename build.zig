@@ -338,4 +338,5 @@ fn linkLinearAlgebra(
     if (openblas_include) |inc| {
         step.root_module.addIncludePath(.{ .cwd_relative = inc });
     }
+    step.linkLibC();
 }
