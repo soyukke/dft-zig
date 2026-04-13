@@ -20,7 +20,7 @@ pub const PseudopotentialData = struct {
     r: []const f64,
     /// Radial grid dr(i)
     rab: []const f64,
-    /// Local ionic potential V_loc(r) * r (Ry, stored as r*V for UPF convention)
+    /// Local ionic potential V_loc(r) (Ry)
     v_local: []const f64,
     /// KB projectors β_l(r)
     betas: []const BetaData,

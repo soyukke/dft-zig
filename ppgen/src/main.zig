@@ -6,6 +6,7 @@ pub const diagnostics = @import("diagnostics.zig");
 pub const tm_generator = @import("tm_generator.zig");
 pub const kb_projector = @import("kb_projector.zig");
 pub const upf_writer = @import("upf_writer.zig");
+pub const pipeline = @import("pipeline.zig");
 
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
@@ -29,4 +30,5 @@ test {
     _ = tm_generator;
     _ = kb_projector;
     _ = upf_writer;
+    _ = pipeline;
 }
