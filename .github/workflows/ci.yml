@@ -13,7 +13,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: DeterminateSystems/nix-installer-action@main
-      - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: actions/cache@v4
+        with:
+          path: /nix/store
+          key: nix-store-${{ hashFiles('flake.lock') }}
+          restore-keys: nix-store-
       - run: nix develop --command zig build test
         env:
           OPENBLAS_NUM_THREADS: 1
