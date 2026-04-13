@@ -1,0 +1,25 @@
+title = "silicon_ppgen"
+xyz = "examples/silicon.xyz"
+out_dir = "out/silicon_ppgen"
+units = "angstrom"
+linalg_backend = "accelerate"
+
+[[pseudopotential]]
+element = "Si"
+path = "pseudo/Si_ppgen_LDA.upf"
+format = "upf"
+
+[cell]
+a1 = [5.431, 0.0, 0.0]
+a2 = [0.0, 5.431, 0.0]
+a3 = [0.0, 0.0, 5.431]
+
+[scf]
+enabled = true
+solver = "iterative"
+ecut_ry = 20.0
+kmesh = [4, 4, 4]
+mixing_beta = 0.3
+max_iter = 100
+convergence = 1e-6
+fft_backend = "fftw"

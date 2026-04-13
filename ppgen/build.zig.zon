@@ -1,0 +1,16 @@
+.{
+    .name = .ppgen,
+    .version = "0.0.0",
+    .fingerprint = 0xabd7b9563f727fac,
+    .minimum_zig_version = "0.15.2",
+    .dependencies = .{
+        .dft_zig = .{
+            .path = "..",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
