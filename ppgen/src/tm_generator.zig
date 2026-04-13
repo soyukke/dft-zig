@@ -429,7 +429,7 @@ fn integrateNorm(grid: *const RadialGrid, u: []const f64, i_rc: usize) f64 {
 }
 
 /// Find grid index closest to target radius.
-fn findGridIndex(grid: *const RadialGrid, r_target: f64) usize {
+pub fn findGridIndex(grid: *const RadialGrid, r_target: f64) usize {
     var best: usize = 0;
     var best_diff: f64 = @abs(grid.r[0] - r_target);
     for (1..grid.n) |i| {
