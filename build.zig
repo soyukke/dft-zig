@@ -47,6 +47,10 @@ pub fn build(b: *std.Build) void {
     const openblas_include = openblas_include_opt orelse std.process.getEnvVarOwned(b.allocator, "OPENBLAS_INCLUDE") catch null;
     const openblas_lib = openblas_lib_opt orelse std.process.getEnvVarOwned(b.allocator, "OPENBLAS_LIB") catch null;
 
+    // Netlib LAPACK (optional, for Linux where OpenBLAS LAPACK may have issues)
+    const lapack_lib_opt = b.option([]const u8, "lapack-lib", "Path to LAPACK library directory");
+    const lapack_lib = lapack_lib_opt orelse std.process.getEnvVarOwned(b.allocator, "LAPACK_LIB") catch null;
+
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
     const mod = b.addModule("dft_zig", .{
@@ -80,7 +84,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    linkLinearAlgebra(exe, target_os, openblas_include, openblas_lib);
+    linkLinearAlgebra(exe, target_os, openblas_include, openblas_lib, lapack_lib);
 
     // Link FFTW3 if paths are provided
     if (fftw_include) |inc| {
@@ -116,7 +120,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    linkLinearAlgebra(linear_scaling_exe, target_os, openblas_include, openblas_lib);
+    linkLinearAlgebra(linear_scaling_exe, target_os, openblas_include, openblas_lib, lapack_lib);
     b.installArtifact(linear_scaling_exe);
 
     const run_linear_scaling = b.addRunArtifact(linear_scaling_exe);
@@ -156,7 +160,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    linkLinearAlgebra(fft_all_bench_exe, target_os, openblas_include, openblas_lib);
+    linkLinearAlgebra(fft_all_bench_exe, target_os, openblas_include, openblas_lib, lapack_lib);
     b.installArtifact(fft_all_bench_exe);
 
     const run_fft_all_bench = b.addRunArtifact(fft_all_bench_exe);
@@ -176,7 +180,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    linkLinearAlgebra(rys_test_exe, target_os, openblas_include, openblas_lib);
+    linkLinearAlgebra(rys_test_exe, target_os, openblas_include, openblas_lib, lapack_lib);
     b.installArtifact(rys_test_exe);
 
     const run_rys_test = b.addRunArtifact(rys_test_exe);
@@ -196,7 +200,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    linkLinearAlgebra(grad_test_exe, target_os, openblas_include, openblas_lib);
+    linkLinearAlgebra(grad_test_exe, target_os, openblas_include, openblas_lib, lapack_lib);
     b.installArtifact(grad_test_exe);
 
     const run_grad_test = b.addRunArtifact(grad_test_exe);
@@ -216,7 +220,7 @@ pub fn build(b: *std.Build) void {
             },
         }),
     });
-    linkLinearAlgebra(df_bench_exe, target_os, openblas_include, openblas_lib);
+    linkLinearAlgebra(df_bench_exe, target_os, openblas_include, openblas_lib, lapack_lib);
     b.installArtifact(df_bench_exe);
 
     const run_df_bench = b.addRunArtifact(df_bench_exe);
@@ -259,7 +263,7 @@ pub fn build(b: *std.Build) void {
         .root_module = mod,
         .filters = test_filters,
     });
-    linkLinearAlgebra(mod_tests, target_os, openblas_include, openblas_lib);
+    linkLinearAlgebra(mod_tests, target_os, openblas_include, openblas_lib, lapack_lib);
 
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
@@ -267,7 +271,7 @@ pub fn build(b: *std.Build) void {
         .root_module = exe.root_module,
         .filters = test_filters,
     });
-    linkLinearAlgebra(exe_tests, target_os, openblas_include, openblas_lib);
+    linkLinearAlgebra(exe_tests, target_os, openblas_include, openblas_lib, lapack_lib);
 
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
@@ -319,23 +323,33 @@ pub fn build(b: *std.Build) void {
     }
 }
 
-/// Link linear algebra libraries (Accelerate on macOS, OpenBLAS on other platforms).
+/// Link linear algebra libraries (Accelerate on macOS, OpenBLAS+LAPACK on other platforms).
 fn linkLinearAlgebra(
     step: *std.Build.Step.Compile,
     target_os: std.Target.Os.Tag,
     openblas_include: ?[]const u8,
     openblas_lib: ?[]const u8,
+    lapack_lib_path: ?[]const u8,
 ) void {
     if (target_os == .macos) {
         step.linkFramework("Accelerate");
         step.linkFramework("Metal");
         step.linkFramework("MetalPerformanceShaders");
         step.linkFramework("Foundation");
-    } else if (openblas_lib) |lib| {
-        step.root_module.addLibraryPath(.{ .cwd_relative = lib });
-        step.linkSystemLibrary("openblas");
+    } else {
+        // Link Netlib LAPACK first (takes priority for LAPACK symbols like dsygv_)
+        if (lapack_lib_path) |lib| {
+            step.root_module.addLibraryPath(.{ .cwd_relative = lib });
+            step.linkSystemLibrary("lapack");
+        }
+        // Then OpenBLAS for BLAS symbols
+        if (openblas_lib) |lib| {
+            step.root_module.addLibraryPath(.{ .cwd_relative = lib });
+            step.linkSystemLibrary("openblas");
+        }
     }
     if (openblas_include) |inc| {
         step.root_module.addIncludePath(.{ .cwd_relative = inc });
     }
+    step.linkLibC();
 }

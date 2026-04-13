@@ -17,6 +17,17 @@ const verbose_tests = false;
 const scf_fd_verbose = false;
 const scf_fd_enabled = true;
 
+/// Skip test if a required file does not exist (e.g. pseudo/ files in CI).
+fn requireFile(path: []const u8) !void {
+    std.fs.cwd().access(path, .{}) catch |err| {
+        if (err == error.FileNotFound) {
+            std.debug.print("  [SKIP] file not found: {s}\n", .{path});
+            return error.SkipZigTest;
+        }
+        return err;
+    };
+}
+
 fn vprint(comptime fmt: []const u8, args: anytype) void {
     if (verbose_tests) std.debug.print(fmt, args);
 }
@@ -101,6 +112,7 @@ test "local pseudopotential V(q) for Carbon" {
     var element_buf: [2]u8 = .{ 'C', 0 };
     var path_buf: [20]u8 = undefined;
     const path_slice = "pseudo/C.upf";
+    try requireFile(path_slice);
     @memcpy(path_buf[0..path_slice.len], path_slice);
 
     const spec = pseudo.Spec{
@@ -317,6 +329,7 @@ test "scf total force finite difference" {
     var element_buf: [2]u8 = .{ 'S', 'i' };
     var path_buf: [24]u8 = undefined;
     const path_slice = "pseudo/Si.upf";
+    try requireFile(path_slice);
     @memcpy(path_buf[0..path_slice.len], path_slice);
 
     const spec = pseudo.Spec{
@@ -585,6 +598,7 @@ test "scf total force finite difference (self-consistent)" {
     var element_buf: [2]u8 = .{ 'S', 'i' };
     var path_buf: [24]u8 = undefined;
     const path_slice = "pseudo/Si.upf";
+    try requireFile(path_slice);
     @memcpy(path_buf[0..path_slice.len], path_slice);
 
     const spec = pseudo.Spec{
@@ -795,6 +809,7 @@ test "scf force FD FCC cell" {
     var element_buf: [2]u8 = .{ 'S', 'i' };
     var path_buf: [24]u8 = undefined;
     const path_slice = "pseudo/Si.upf";
+    try requireFile(path_slice);
     @memcpy(path_buf[0..path_slice.len], path_slice);
 
     const spec = pseudo.Spec{
@@ -1088,6 +1103,7 @@ test "nonlocal projector radial integral" {
     var element_buf: [2]u8 = .{ 'C', 0 };
     var path_buf: [20]u8 = undefined;
     const path_slice = "pseudo/C.upf";
+    try requireFile(path_slice);
     @memcpy(path_buf[0..path_slice.len], path_slice);
 
     const spec = pseudo.Spec{
