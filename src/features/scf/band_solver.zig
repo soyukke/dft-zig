@@ -106,7 +106,7 @@ pub fn initBandIterativeContext(
         const ionic_g0 = ionic.valueAt(0, 0, 0);
         const extra_g0 = extra.valueAt(0, 0, 0);
         var buffer: [256]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(&buffer);
         const out = &writer.interface;
         try out.print(
             "band: local_r mean={d:.6} ionic_g0={d:.6} extra_g0={d:.6}\n",

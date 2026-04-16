@@ -332,7 +332,7 @@ pub fn computeForces(
             const total_ms = if (after_nlcc) |t1| @as(f64, @floatFromInt(t1.since(t0))) / 1_000_000.0 else 0.0;
             var buf: [256]u8 = undefined;
             const msg = std.fmt.bufPrint(&buf, "force_profile ewald_ms={d:.1} local_ms={d:.1} nonlocal_ms={d:.1} nlcc_ms={d:.1} total_ms={d:.1}\n", .{ ewald_ms, local_ms, nl_ms, nlcc_ms, total_ms }) catch "";
-            std.fs.File.stderr().writeAll(msg) catch {};
+            std.Io.File.stderr().writeAll(msg) catch {};
         }
     }
 
@@ -360,7 +360,7 @@ pub fn computeForces(
     // Debug output for force components
     if (!quiet) {
         var buffer: [1024]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(&buffer);
         const out = &writer.interface;
         out.print("\n=== Force Components (Ry/Bohr) ===\n", .{}) catch {};
         for (0..n_atoms) |i| {

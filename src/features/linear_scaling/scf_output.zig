@@ -24,7 +24,7 @@ pub const ScfReferenceData = struct {
 /// Write SCF reference data to JSON file
 pub fn writeReferenceJson(
     alloc: std.mem.Allocator,
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     path: []const u8,
     result: *const local_orbital_scf.ScfGridResult,
 ) !void {
@@ -58,7 +58,7 @@ pub fn writeReferenceJson(
 /// Read SCF reference data from JSON file
 pub fn readReferenceJson(
     alloc: std.mem.Allocator,
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     path: []const u8,
 ) !ScfReferenceOwned {
     const content = try dir.readFileAlloc(alloc, path, 64 * 1024 * 1024);

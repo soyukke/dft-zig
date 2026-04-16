@@ -251,7 +251,7 @@ pub fn computePdos(
 }
 
 /// Write PDOS to CSV file.
-pub fn writePdosCSV(dir: std.fs.Dir, result: PdosResult, fermi_level: f64) !void {
+pub fn writePdosCSV(dir: std.Io.Dir, result: PdosResult, fermi_level: f64) !void {
     const file = try dir.createFile("pdos.csv", .{});
     defer file.close();
     var buf: [4096]u8 = undefined;

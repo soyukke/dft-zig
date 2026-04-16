@@ -12,7 +12,7 @@ pub const ScfLoopProfile = struct {
 
 pub fn logProgress(iter: usize, diff: f64, vresid: f64, band_energy: f64, nonlocal_energy: f64) !void {
     var buffer: [512]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     try out.print(
         "scf iter={d} diff={d:.6} vresid={d:.6} band={d:.6} nonlocal={d:.6}\n",
@@ -23,7 +23,7 @@ pub fn logProgress(iter: usize, diff: f64, vresid: f64, band_energy: f64, nonloc
 
 pub fn logIterStart(iter: usize) !void {
     var buffer: [128]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     try out.print("scf iter={d} start\n", .{iter});
     try out.flush();
@@ -33,14 +33,14 @@ pub fn logKpoint(index: usize, total: usize) !void {
     if (total == 0) return;
     if (index % 10 != 0 and index + 1 != total) return;
     var buffer: [128]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     try out.print("scf kpoint {d}/{d}\n", .{ index + 1, total });
     try out.flush();
 }
 
 pub const ScfLog = struct {
-    file: std.fs.File,
+    file: std.Io.File,
 
     pub fn init(alloc: std.mem.Allocator, out_dir: []const u8) !ScfLog {
         try std.fs.cwd().makePath(out_dir);
@@ -135,7 +135,7 @@ pub fn profileAdd(accum: *u64, start: ?std.time.Instant) void {
 
 pub fn logProfile(profile: ScfProfile, kpoints: usize) !void {
     var buffer: [512]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     const to_ms = 1.0 / @as(f64, @floatFromInt(std.time.ns_per_ms));
     try out.print(
@@ -207,7 +207,7 @@ pub fn logNonlocalDiagnostics(
     }
 
     var buffer: [512]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     try out.print(
         "scf: nonlocal diag g_count={d} g_min={d:.6} g_max={d:.6}\n",
@@ -335,7 +335,7 @@ pub fn logLocalDiagnostics(
     if (g_min_nonzero == std.math.inf(f64)) g_min_nonzero = 0.0;
 
     var buffer: [512]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     try out.print(
         "scf: local diag g_count={d} g_min={d:.6} g_min_nz={d:.6} g_max={d:.6}\n",

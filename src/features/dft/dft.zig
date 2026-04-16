@@ -17,7 +17,7 @@ const xyz = @import("../structure/xyz.zig");
 
 fn logStep(msg: []const u8) !void {
     var buffer: [256]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     try out.print("{s}\n", .{msg});
     try out.flush();
@@ -311,7 +311,7 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
                 // Print frequencies
                 {
                     var buffer: [256]u8 = undefined;
-                    var writer = std.fs.File.stderr().writer(&buffer);
+                    var writer = std.Io.File.stderr().writer(&buffer);
                     const out = &writer.interface;
                     try out.print("phonon frequencies (cm⁻¹):\n", .{});
                     for (phonon.frequencies_cm1) |f| {

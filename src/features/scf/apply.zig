@@ -552,7 +552,7 @@ pub fn checkHamiltonianApply(
     }
 
     var buffer: [160]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     const rel = if (max_abs > 0.0) max_diff / max_abs else 0.0;
     try out.print("scf: apply_check max_abs={d:.6} max_diff={d:.6} rel={d:.6}\n", .{ max_abs, max_diff, rel });

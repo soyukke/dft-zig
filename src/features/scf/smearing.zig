@@ -52,7 +52,7 @@ fn isGammaKpoint(kp: KPoint) bool {
 fn logEigenvalues(prefix: []const u8, label: []const u8, values: []const f64, count: usize) !void {
     const limit = @min(count, 8);
     var buffer: [512]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     try out.print("{s}: eig {s} nbands={d}", .{ prefix, label, count });
     var i: usize = 0;
@@ -124,7 +124,7 @@ pub fn computeDensitySmearing(
             const mean_local = sum / @as(f64, @floatFromInt(values.len));
             const pot_g0 = potential.valueAt(0, 0, 0);
             var buffer: [256]u8 = undefined;
-            var writer = std.fs.File.stderr().writer(&buffer);
+            var writer = std.Io.File.stderr().writer(&buffer);
             const out = &writer.interface;
             try out.print(
                 "scf: local_r mean={d:.6} pot_g0={d:.6}\n",
@@ -357,7 +357,7 @@ pub fn computeDensitySmearing(
     if (cfg.scf.debug_fermi) {
         const outside = mu < min_energy or mu > max_energy;
         var buffer: [256]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(&buffer);
         const out = &writer.interface;
         try out.print(
             "scf: fermi diag min={d:.6} max={d:.6} mu={d:.6} outside={s} nelec={d:.6} nbands={d}-{d} smear={s} sigma={d:.6}\n",

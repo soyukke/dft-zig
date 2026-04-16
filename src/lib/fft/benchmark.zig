@@ -3,7 +3,6 @@
 //! Run with: zig build-exe src/lib/fft/benchmark.zig -O ReleaseFast && ./benchmark
 
 const std = @import("std");
-const Timer = @import("../timer.zig").Timer;
 const Complex = @import("complex.zig").Complex;
 const radix2 = @import("radix2.zig");
 const radix2_simd = @import("radix2_simd.zig");
@@ -61,7 +60,7 @@ fn benchmark1d(allocator: std.mem.Allocator, n: usize, iterations: usize) !void 
         const data_copy = try allocator.alloc(Complex, n);
         defer allocator.free(data_copy);
 
-        var timer = try Timer.start();
+        var timer = try std.time.Timer.start();
 
         for (0..iterations) |_| {
             @memcpy(data_copy, data);
@@ -83,7 +82,7 @@ fn benchmark1d(allocator: std.mem.Allocator, n: usize, iterations: usize) !void 
         const data_copy = try allocator.alloc(Complex, n);
         defer allocator.free(data_copy);
 
-        var timer = try Timer.start();
+        var timer = try std.time.Timer.start();
 
         for (0..iterations) |_| {
             @memcpy(data_copy, data);
@@ -107,7 +106,7 @@ fn benchmark1d(allocator: std.mem.Allocator, n: usize, iterations: usize) !void 
         const data_copy = try allocator.alloc(Complex, n);
         defer allocator.free(data_copy);
 
-        var timer = try Timer.start();
+        var timer = try std.time.Timer.start();
 
         for (0..iterations) |_| {
             @memcpy(data_copy, data);
@@ -129,7 +128,7 @@ fn benchmark1d(allocator: std.mem.Allocator, n: usize, iterations: usize) !void 
         const data_copy = try allocator.alloc(Complex, n);
         defer allocator.free(data_copy);
 
-        var timer = try Timer.start();
+        var timer = try std.time.Timer.start();
 
         for (0..iterations) |_| {
             @memcpy(data_copy, data);
@@ -157,7 +156,7 @@ fn benchmark1d(allocator: std.mem.Allocator, n: usize, iterations: usize) !void 
         const spectrum = try allocator.alloc(Complex, n / 2 + 1);
         defer allocator.free(spectrum);
 
-        var timer = try Timer.start();
+        var timer = try std.time.Timer.start();
 
         for (0..iterations) |_| {
             plan.forward(real_data, spectrum);
@@ -201,7 +200,7 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
         var plan_z = try bluestein.Plan.init(allocator, nz);
         defer plan_z.deinit();
 
-        var timer = try Timer.start();
+        var timer = try std.time.Timer.start();
 
         for (0..iterations) |_| {
             @memcpy(data_copy, data);
@@ -257,7 +256,7 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
         var plan_z = try MixedRadixPlan.init(allocator, nz);
         defer plan_z.deinit();
 
-        var timer = try Timer.start();
+        var timer = try std.time.Timer.start();
 
         for (0..iterations) |_| {
             @memcpy(data_copy, data);
@@ -315,7 +314,7 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
         var plan_z = try radix2.Plan.init(allocator, nz);
         defer plan_z.deinit();
 
-        var timer = try Timer.start();
+        var timer = try std.time.Timer.start();
 
         for (0..iterations) |_| {
             @memcpy(data_copy, data);
@@ -371,7 +370,7 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
         var plan_z = try radix2_simd.Plan.init(allocator, nz);
         defer plan_z.deinit();
 
-        var timer = try Timer.start();
+        var timer = try std.time.Timer.start();
 
         for (0..iterations) |_| {
             @memcpy(data_copy, data);
@@ -423,7 +422,7 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
         var plan = try fft.Plan3d.init(allocator, nx, ny, nz);
         defer plan.deinit();
 
-        var timer = try Timer.start();
+        var timer = try std.time.Timer.start();
 
         for (0..iterations) |_| {
             @memcpy(data_copy, data);
@@ -444,7 +443,7 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
 
         std.debug.print("(using {d} threads)\n", .{plan.thread_count});
 
-        var timer = try Timer.start();
+        var timer = try std.time.Timer.start();
 
         for (0..iterations) |_| {
             @memcpy(data_copy, data);
@@ -473,7 +472,7 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
         const spectrum = try allocator.alloc(Complex, complex_size);
         defer allocator.free(spectrum);
 
-        var timer = try Timer.start();
+        var timer = try std.time.Timer.start();
 
         for (0..iterations) |_| {
             plan.forward(real_data, spectrum);

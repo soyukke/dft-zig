@@ -893,7 +893,7 @@ pub fn run(params: ScfParams) !ScfResult {
     if (cfg.scf.profile and !cfg.scf.quiet) {
         const to_ms = 1.0 / @as(f64, @floatFromInt(std.time.ns_per_ms));
         var buffer2: [512]u8 = undefined;
-        var writer2 = std.fs.File.stderr().writer(&buffer2);
+        var writer2 = std.Io.File.stderr().writer(&buffer2);
         const out2 = &writer2.interface;
         try out2.print(
             "scf_loop_profile compute_density_ms={d:.3} build_potential_ms={d:.3} residual_ms={d:.3} mixing_ms={d:.3} build_local_r_ms={d:.3} build_fft_map_ms={d:.3}\n",
@@ -1272,7 +1272,7 @@ pub fn computeFinalWavefunctionsWithSpinFactor(
             const mean_local = sum / @as(f64, @floatFromInt(values.len));
             const pot_g0 = potential.valueAt(0, 0, 0);
             var buffer: [256]u8 = undefined;
-            var writer = std.fs.File.stderr().writer(&buffer);
+            var writer = std.Io.File.stderr().writer(&buffer);
             const out = &writer.interface;
             try out.print(
                 "scf: local_r mean={d:.6} pot_g0={d:.6}\n",
@@ -1418,7 +1418,7 @@ fn computeDensity(
 
     if ((cfg.scf.solver == .iterative or cfg.scf.solver == .cg or cfg.scf.solver == .auto) and !use_iterative_config) {
         var buffer: [256]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(&buffer);
         const out = &writer.interface;
         if (has_qij) {
             try out.writeAll("scf: iterative solver disabled (QIJ present)\n");

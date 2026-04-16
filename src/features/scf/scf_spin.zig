@@ -201,7 +201,7 @@ pub fn runSpinPolarizedLoop(
 
     if (!cfg.scf.quiet) {
         var buffer: [256]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(&buffer);
         const out = &writer.interface;
         try out.print("spin-scf: nspin=2, nelec={d:.1}, m_init={d:.2}\n", .{ total_electrons, m_total });
         try out.flush();
@@ -657,7 +657,7 @@ pub fn runSpinPolarizedLoop(
 
     if (!cfg.scf.quiet) {
         var buffer: [256]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(&buffer);
         const out = &writer.interface;
         try out.print("spin-scf: magnetization = {d:.6} μ_B\n", .{magnetization});
         try out.flush();
@@ -940,7 +940,7 @@ pub fn runSpinPolarizedLoop(
 
     if (!cfg.scf.quiet) {
         var buffer: [256]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(&buffer);
         const out = &writer.interface;
         try out.print("spin-scf: total_energy = {d:.10} Ry\n", .{energy_terms.total});
         try out.print("spin-scf: E_band={d:.8} E_H={d:.8} E_xc={d:.8} E_ion={d:.8}\n", .{ energy_terms.band, energy_terms.hartree, energy_terms.xc, energy_terms.ion_ion });

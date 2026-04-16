@@ -38,14 +38,14 @@ pub fn generateKmeshSymmetry(
 
     if (filtered_ops.len != ops.len) {
         var buffer: [128]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(&buffer);
         const out = &writer.interface;
         try out.print("scf: kmesh-compatible symmetry ops {d}/{d}\n", .{ filtered_ops.len, ops.len });
         try out.flush();
     }
 
     var ops_buffer: [128]u8 = undefined;
-    var ops_writer = std.fs.File.stderr().writer(&ops_buffer);
+    var ops_writer = std.Io.File.stderr().writer(&ops_buffer);
     const ops_out = &ops_writer.interface;
     try ops_out.print("scf: symmetry ops {d}\n", .{ops.len});
     try ops_out.flush();
@@ -63,7 +63,7 @@ pub fn generateKmeshSymmetry(
     );
     if (!verified) {
         var buffer: [192]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(&buffer);
         const out = &writer.interface;
         try out.writeAll("scf: kpoint reduction failed verification; using full mesh\n");
         try out.flush();
@@ -73,7 +73,7 @@ pub fn generateKmeshSymmetry(
 
     if (reduced.len < full.len) {
         var buffer: [128]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(&buffer);
         const out = &writer.interface;
         try out.print("scf: kpoints reduced {d} -> {d}\n", .{ full.len, reduced.len });
         try out.flush();

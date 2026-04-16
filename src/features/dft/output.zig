@@ -38,7 +38,7 @@ pub const Timing = struct {
 };
 
 /// Write input summary for reproducibility.
-pub fn writeRunInfo(dir: std.fs.Dir, cfg: config.Config, atoms: []xyz.Atom, cell_ang: math.Mat3) !void {
+pub fn writeRunInfo(dir: std.Io.Dir, cfg: config.Config, atoms: []xyz.Atom, cell_ang: math.Mat3) !void {
     var file = try dir.createFile("run_info.txt", .{ .truncate = true });
     defer file.close();
 
@@ -102,7 +102,7 @@ pub fn writeRunInfo(dir: std.fs.Dir, cfg: config.Config, atoms: []xyz.Atom, cell
 }
 
 /// Write k-point path CSV.
-pub fn writeKpoints(dir: std.fs.Dir, path: kpath.KPath) !void {
+pub fn writeKpoints(dir: std.Io.Dir, path: kpath.KPath) !void {
     var file = try dir.createFile("band_kpoints.csv", .{ .truncate = true });
     defer file.close();
 
@@ -121,7 +121,7 @@ pub fn writeKpoints(dir: std.fs.Dir, path: kpath.KPath) !void {
 }
 
 /// Write atoms to CSV in angstrom.
-pub fn writeAtoms(dir: std.fs.Dir, atoms: []xyz.Atom, unit_scale: f64) !void {
+pub fn writeAtoms(dir: std.Io.Dir, atoms: []xyz.Atom, unit_scale: f64) !void {
     var file = try dir.createFile("atoms.csv", .{ .truncate = true });
     defer file.close();
 
@@ -141,7 +141,7 @@ pub fn writeAtoms(dir: std.fs.Dir, atoms: []xyz.Atom, unit_scale: f64) !void {
 }
 
 /// Write current feature status.
-pub fn writeStatus(dir: std.fs.Dir, cfg: config.Config, scf_result: ?scf.ScfResult) !void {
+pub fn writeStatus(dir: std.Io.Dir, cfg: config.Config, scf_result: ?scf.ScfResult) !void {
     var file = try dir.createFile("status.txt", .{ .truncate = true });
     defer file.close();
 
@@ -198,7 +198,7 @@ pub fn writeStatus(dir: std.fs.Dir, cfg: config.Config, scf_result: ?scf.ScfResu
 }
 
 /// Write parsed pseudopotential metadata.
-pub fn writePseudopotentials(dir: std.fs.Dir, items: []pseudo.Parsed) !void {
+pub fn writePseudopotentials(dir: std.Io.Dir, items: []pseudo.Parsed) !void {
     var file = try dir.createFile("pseudopotentials.csv", .{ .truncate = true });
     defer file.close();
 
@@ -243,7 +243,7 @@ pub fn writePseudopotentials(dir: std.fs.Dir, items: []pseudo.Parsed) !void {
 }
 
 /// Write timing information.
-pub fn writeTiming(dir: std.fs.Dir, timing: Timing, band_kpoints: usize) !void {
+pub fn writeTiming(dir: std.Io.Dir, timing: Timing, band_kpoints: usize) !void {
     var file = try dir.createFile("timing.txt", .{ .truncate = true });
     defer file.close();
 

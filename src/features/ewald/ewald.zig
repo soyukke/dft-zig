@@ -47,7 +47,7 @@ pub fn ionIonEnergy(
     const quiet = if (params) |p| p.quiet else false;
     if (!quiet and @abs(qsum) > 1e-6) {
         var buffer: [128]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(&buffer);
         const out = &writer.interface;
         try out.print("ewald: non-neutral ionic charge {d:.6}, applying neutralizing background\n", .{qsum});
         try out.flush();

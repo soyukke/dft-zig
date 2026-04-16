@@ -770,7 +770,7 @@ fn applyDij(sp: scf_mod.NonlocalSpecies, input: []const math.Complex, output: []
 }
 
 pub fn writeElectricResults(
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     dielectric: DielectricResult,
 ) !void {
     const file = try dir.createFile("electric.dat", .{});

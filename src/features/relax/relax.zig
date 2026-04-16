@@ -426,7 +426,7 @@ pub fn run(
                 const cpu_ms = @as(f64, @floatFromInt(step_cpu_end - relax_step_cpu_start)) / 1_000.0;
                 var tbuf: [512]u8 = undefined;
                 const msg = std.fmt.bufPrint(&tbuf, "relax_step_profile iter={d} scf_iters={d} scf_ms={d:.1} force_ms={d:.1} wall_ms={d:.1} cpu_ms={d:.1}\n", .{ iter, scf_result.iterations, scf_ms, force_ms, step_ms, cpu_ms }) catch "";
-                std.fs.File.stderr().writeAll(msg) catch {};
+                std.Io.File.stderr().writeAll(msg) catch {};
             }
         }
 
@@ -802,7 +802,7 @@ fn densityToReciprocal(
 
 fn logWarn(msg: []const u8) !void {
     var buffer: [512]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     try out.print("WARNING: {s}\n", .{msg});
     try out.flush();
@@ -810,7 +810,7 @@ fn logWarn(msg: []const u8) !void {
 
 fn logRelaxIter(iter: usize, energy: ?f64, max_force: ?f64) !void {
     var buffer: [256]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     if (energy != null and max_force != null) {
         try out.print("relax iter={d} energy={d:.8} max_force={d:.6}\n", .{ iter + 1, energy.?, max_force.? });
@@ -822,7 +822,7 @@ fn logRelaxIter(iter: usize, energy: ?f64, max_force: ?f64) !void {
 
 fn logRelaxConverged(iter: usize, energy: f64, max_force: f64) !void {
     var buffer: [256]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     try out.print("relax CONVERGED after {d} iterations, energy={d:.8} Ry, max_force={d:.6} Ry/Bohr\n", .{ iter + 1, energy, max_force });
     try out.flush();
@@ -830,7 +830,7 @@ fn logRelaxConverged(iter: usize, energy: f64, max_force: f64) !void {
 
 fn logBacktrack(count: usize, new_energy: f64, prev_energy_val: f64) !void {
     var buffer: [256]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     const scale = std.math.pow(f64, 0.5, @as(f64, @floatFromInt(count)));
     try out.print("relax BACKTRACK #{d}: E={d:.8} > E_prev={d:.8} (dE={d:.6}), scale={d:.4}\n", .{ count, new_energy, prev_energy_val, new_energy - prev_energy_val, scale });
@@ -839,7 +839,7 @@ fn logBacktrack(count: usize, new_energy: f64, prev_energy_val: f64) !void {
 
 fn logVcRelaxIter(iter: usize, pressure_gpa: f64, max_stress_gpa: f64, volume: f64) !void {
     var buffer: [256]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     try out.print("vc-relax iter={d} P={d:.2} GPa  max_stress={d:.4} GPa  vol={d:.4} Bohr³\n", .{ iter, pressure_gpa, max_stress_gpa, volume });
     try out.flush();
@@ -847,7 +847,7 @@ fn logVcRelaxIter(iter: usize, pressure_gpa: f64, max_stress_gpa: f64, volume: f
 
 fn logRelaxNotConverged(iter: usize, energy: f64, max_force: f64) !void {
     var buffer: [256]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     try out.print("relax NOT CONVERGED after {d} iterations, energy={d:.8} Ry, max_force={d:.6} Ry/Bohr\n", .{ iter, energy, max_force });
     try out.flush();
@@ -856,7 +856,7 @@ fn logRelaxNotConverged(iter: usize, energy: f64, max_force: f64) !void {
 /// Write relaxation results to output files.
 pub fn writeOutput(
     alloc: std.mem.Allocator,
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     result: *const RelaxResult,
     species: []const hamiltonian.SpeciesEntry,
     unit_scale_ang: f64,
@@ -945,7 +945,7 @@ pub fn writeOutput(
 /// Write trajectory in extended XYZ format for visualization.
 /// Compatible with ASE, OVITO, and other tools.
 pub fn writeTrajectoryXyz(
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     result: *const RelaxResult,
     species: []const hamiltonian.SpeciesEntry,
     cell: math.Mat3,

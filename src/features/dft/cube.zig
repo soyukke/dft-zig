@@ -7,7 +7,7 @@ const d3_params = @import("../vdw/d3_params.zig");
 /// Density is in electrons/Bohr³ (converted from Ry units).
 /// Grid ordering: x-outer, y-middle, z-inner (Fortran convention).
 pub fn writeCubeFile(
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     filename: []const u8,
     density: []const f64,
     grid: [3]usize,

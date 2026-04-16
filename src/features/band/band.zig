@@ -1,5 +1,4 @@
 const std = @import("std");
-const Timer = @import("../../lib/timer.zig").Timer;
 const config = @import("../config/config.zig");
 const fft = @import("../fft/fft.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
@@ -17,7 +16,7 @@ const ThreadPool = thread_pool.ThreadPool;
 
 fn logStep(msg: []const u8) !void {
     var buffer: [256]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     try out.print("{s}\n", .{msg});
     try out.flush();
@@ -33,7 +32,7 @@ fn bandThreadCount(total: usize, cfg_threads: usize) usize {
 
 fn logBandKpoint(idx: usize, total: usize) void {
     var buffer: [128]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     out.print("band kpoint {d}/{d}\n", .{ idx + 1, total }) catch {};
     out.flush() catch {};
@@ -41,7 +40,7 @@ fn logBandKpoint(idx: usize, total: usize) void {
 
 fn logBandTiming(idx: usize, total: usize, ns: u64) void {
     var buffer: [128]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     const ms = @as(f64, @floatFromInt(ns)) / 1e6;
     out.print("band_profile kpoint={d}/{d} ms={d:.1}\n", .{ idx + 1, total, ms }) catch {};
@@ -51,7 +50,7 @@ fn logBandTiming(idx: usize, total: usize, ns: u64) void {
 /// Write band energies for k-path.
 pub fn writeBandEnergies(
     alloc: std.mem.Allocator,
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     cfg: config.Config,
     path: kpath.KPath,
     species: []hamiltonian.SpeciesEntry,
@@ -191,7 +190,7 @@ pub fn writeBandEnergies(
 
         var cache = scf.BandVectorCache{};
         defer cache.deinit();
-        var band_timer = Timer.start() catch null;
+        var band_timer = std.time.Timer.start() catch null;
         for (path.points, 0..) |kp, idx| {
             const offset = idx * nbands;
             var eigvals_opt: ?[]f64 = null;
@@ -499,7 +498,7 @@ pub fn writeBandEnergies(
             try logEigenvalues("band", "gamma_dense", eig_dense.values, count);
         } else {
             var buffer: [128]u8 = undefined;
-            var writer = std.fs.File.stderr().writer(&buffer);
+            var writer = std.Io.File.stderr().writer(&buffer);
             const out = &writer.interface;
             try out.writeAll("band: eig gamma not found\n");
             try out.flush();
@@ -511,7 +510,7 @@ pub fn writeBandEnergies(
             max_energy = @max(max_energy, value);
         }
         var buffer: [256]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(&buffer);
         const out = &writer.interface;
         try out.print(
             "band: eig min={d:.6} max={d:.6} nbands={d} points={d}\n",
@@ -549,7 +548,7 @@ pub fn writeBandEnergies(
 /// Write band energies for a single spin channel.
 fn writeBandEnergiesForSpin(
     alloc: std.mem.Allocator,
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     cfg: config.Config,
     path: kpath.KPath,
     species: []hamiltonian.SpeciesEntry,
@@ -725,7 +724,7 @@ fn writeBandEnergiesForSpin(
 fn logEigenvalues(prefix: []const u8, label: []const u8, values: []const f64, count: usize) !void {
     const limit = @min(count, 8);
     var buffer: [512]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(&buffer);
     const out = &writer.interface;
     try out.print("{s}: eig {s} nbands={d}", .{ prefix, label, count });
     var i: usize = 0;

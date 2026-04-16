@@ -415,7 +415,7 @@ pub fn computeKpointContribution(
         const req = gridRequirement(basis.gvecs);
         if (req.nx > grid.nx or req.ny > grid.ny or req.nz > grid.nz) {
             var buffer: [256]u8 = undefined;
-            var writer = std.fs.File.stderr().writer(&buffer);
+            var writer = std.Io.File.stderr().writer(&buffer);
             const out = &writer.interface;
             try out.print(
                 "scf: iterative grid too small (need >= {d},{d},{d}, suggest {d},{d},{d})\n",
@@ -732,7 +732,7 @@ pub fn computeKpointEigenData(
         const req = gridRequirement(basis.gvecs);
         if (req.nx > grid.nx or req.ny > grid.ny or req.nz > grid.nz) {
             var buffer: [256]u8 = undefined;
-            var writer = std.fs.File.stderr().writer(&buffer);
+            var writer = std.Io.File.stderr().writer(&buffer);
             const out = &writer.interface;
             try out.print(
                 "scf: iterative grid too small (need >= {d},{d},{d}, suggest {d},{d},{d})\n",

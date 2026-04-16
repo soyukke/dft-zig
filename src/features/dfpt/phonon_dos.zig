@@ -121,7 +121,7 @@ pub fn computePhononDos(
 }
 
 /// Write phonon DOS to CSV file.
-pub fn writePhononDosCsv(dir: std.fs.Dir, result: PhononDosResult) !void {
+pub fn writePhononDosCsv(dir: std.Io.Dir, result: PhononDosResult) !void {
     const file = try dir.createFile("phonon_dos.csv", .{});
     defer file.close();
     var buf: [256]u8 = undefined;

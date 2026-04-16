@@ -31,7 +31,7 @@ pub const ScfComparisonJson = struct {
 };
 
 pub fn writeReferenceJson(
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     path: []const u8,
     snapshot: scf_harness.ScfSnapshot,
 ) !void {
@@ -52,7 +52,7 @@ pub fn writeReferenceJson(
 }
 
 pub fn writeReferenceFromScfResult(
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     path: []const u8,
     result: *const scf.ScfResult,
 ) !void {
@@ -62,7 +62,7 @@ pub fn writeReferenceFromScfResult(
 
 pub fn readReferenceJson(
     alloc: std.mem.Allocator,
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     path: []const u8,
 ) !ScfReferenceOwned {
     const content = try dir.readFileAlloc(alloc, path, 64 * 1024 * 1024);
@@ -93,7 +93,7 @@ pub fn compareReferenceToScfResult(
 }
 
 pub fn writeComparisonJson(
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     path: []const u8,
     report: scf_harness.ScfComparisonReport,
 ) !void {
@@ -114,7 +114,7 @@ pub fn writeComparisonJson(
 }
 
 pub fn writeComparisonFromScfResults(
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     path: []const u8,
     reference_result: *const scf.ScfResult,
     candidate_result: *const scf.ScfResult,
