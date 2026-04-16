@@ -329,6 +329,7 @@ pub fn writeBandEnergies(
                     if (use_iter) {
                         const result = scf.bandEigenvaluesIterativeExt(
                             kalloc,
+                            shared.io,
                             shared.cfg.*,
                             shared.ctx.?,
                             kp.k_cart,
@@ -495,7 +496,7 @@ pub fn writeBandEnergies(
             var eig_dense = try linalg.hermitianEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h);
             defer eig_dense.deinit(alloc);
             const count = @min(nbands, eig_dense.values.len);
-            try logEigenvalues("band", "gamma_dense", eig_dense.values, count);
+            try logEigenvalues(io, "band", "gamma_dense", eig_dense.values, count);
         } else {
             var buffer: [128]u8 = undefined;
             var writer = std.Io.File.stderr().writer(io, &buffer);

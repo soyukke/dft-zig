@@ -47,7 +47,8 @@ fn checkERI(
     }
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
     std.debug.print("=== Rys Quadrature ERI Validation ===\n", .{});
 
     // (ss|ss) - single primitive
@@ -204,18 +205,18 @@ pub fn main() !void {
         const n_repeats: usize = 10000;
 
         // Time Rys
-        var timer = try std.time.Timer.start();
+        const t_start = std.Io.Clock.Timestamp.now(io, .awake);
         for (0..n_repeats) |_| {
             _ = rys_eri.contractedShellQuartetERI(shell_p_multi, shell_p2_multi, shell_p_multi, shell_p2_multi, &output_rys);
         }
-        const rys_ns = timer.read();
-        timer.reset();
+        const rys_ns: u64 = @intCast(t_start.untilNow(io).raw.nanoseconds);
+        const t_start2 = std.Io.Clock.Timestamp.now(io, .awake);
 
         // Time OS
         for (0..n_repeats) |_| {
             _ = obara_saika.contractedShellQuartetERI(shell_p_multi, shell_p2_multi, shell_p_multi, shell_p2_multi, &output_os);
         }
-        const os_ns = timer.read();
+        const os_ns: u64 = @intCast(t_start2.untilNow(io).raw.nanoseconds);
 
         const rys_us = @as(f64, @floatFromInt(rys_ns)) / 1000.0 / @as(f64, @floatFromInt(n_repeats));
         const os_us = @as(f64, @floatFromInt(os_ns)) / 1000.0 / @as(f64, @floatFromInt(n_repeats));
@@ -247,16 +248,16 @@ pub fn main() !void {
         var output_os2: [1296]f64 = undefined;
 
         const n_repeats2: usize = 10000;
-        var timer2 = try std.time.Timer.start();
+        const t2_start = std.Io.Clock.Timestamp.now(io, .awake);
         for (0..n_repeats2) |_| {
             _ = rys_eri.contractedShellQuartetERI(shell_d1, shell_d2, shell_d1, shell_d2, output_rys2[0..total_dd]);
         }
-        const rys_ns2 = timer2.read();
-        timer2.reset();
+        const rys_ns2: u64 = @intCast(t2_start.untilNow(io).raw.nanoseconds);
+        const t2_start2 = std.Io.Clock.Timestamp.now(io, .awake);
         for (0..n_repeats2) |_| {
             _ = obara_saika.contractedShellQuartetERI(shell_d1, shell_d2, shell_d1, shell_d2, output_os2[0..total_dd]);
         }
-        const os_ns2 = timer2.read();
+        const os_ns2: u64 = @intCast(t2_start2.untilNow(io).raw.nanoseconds);
         const rys_us2 = @as(f64, @floatFromInt(rys_ns2)) / 1000.0 / @as(f64, @floatFromInt(n_repeats2));
         const os_us2 = @as(f64, @floatFromInt(os_ns2)) / 1000.0 / @as(f64, @floatFromInt(n_repeats2));
         std.debug.print("\n=== Timing: (dd|dd) 1-prim x {d} repeats ===\n", .{n_repeats2});
@@ -287,16 +288,16 @@ pub fn main() !void {
         var output_os3: [10000]f64 = undefined;
 
         const n_repeats3: usize = 100;
-        var timer3 = try std.time.Timer.start();
+        const t3_start = std.Io.Clock.Timestamp.now(io, .awake);
         for (0..n_repeats3) |_| {
             _ = rys_eri.contractedShellQuartetERI(shell_f1, shell_f2, shell_f1, shell_f2, output_rys3[0..total_ff]);
         }
-        const rys_ns3 = timer3.read();
-        timer3.reset();
+        const rys_ns3: u64 = @intCast(t3_start.untilNow(io).raw.nanoseconds);
+        const t3_start2 = std.Io.Clock.Timestamp.now(io, .awake);
         // Note: OS (ff|ff) hits the per-integral fallback and is ~100x slower.
         // Only time 1 repeat for OS to avoid timeout.
         _ = obara_saika.contractedShellQuartetERI(shell_f1, shell_f2, shell_f1, shell_f2, output_os3[0..total_ff]);
-        const os_ns3 = timer3.read();
+        const os_ns3: u64 = @intCast(t3_start2.untilNow(io).raw.nanoseconds);
         const rys_us3 = @as(f64, @floatFromInt(rys_ns3)) / 1000.0 / @as(f64, @floatFromInt(n_repeats3));
         const os_us3 = @as(f64, @floatFromInt(os_ns3)) / 1000.0; // only 1 repeat
         std.debug.print("\n=== Timing: (ff|ff) 1-prim x {d} repeats ===\n", .{n_repeats3});

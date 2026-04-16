@@ -73,7 +73,7 @@ fn benchmarkParallel(allocator: std.mem.Allocator, io: std.Io, grid: usize, iter
         c.* = Complex.init(@floatFromInt(i % 17), @floatFromInt(i % 13));
     }
 
-    var plan = try fft_lib.parallel_fft.ParallelPlan3d.init(allocator, grid, grid, grid);
+    var plan = try fft_lib.parallel_fft.ParallelPlan3d.init(allocator, io, grid, grid, grid);
     defer plan.deinit();
 
     // Warmup
@@ -111,7 +111,7 @@ fn benchmarkTranspose(allocator: std.mem.Allocator, io: std.Io, grid: usize, ite
         c.* = Complex.init(@floatFromInt(i % 17), @floatFromInt(i % 13));
     }
 
-    var plan = try fft_lib.parallel_fft_transpose.TransposePlan3d.init(allocator, grid, grid, grid);
+    var plan = try fft_lib.parallel_fft_transpose.TransposePlan3d.init(allocator, io, grid, grid, grid);
     defer plan.deinit();
 
     // Warmup
@@ -150,7 +150,7 @@ fn benchmarkComptime24(allocator: std.mem.Allocator, io: std.Io, iterations: usi
         c.* = Complex.init(@floatFromInt(i % 17), @floatFromInt(i % 13));
     }
 
-    var plan = try fft_lib.parallel_fft24.ParallelPlan3d24.init(allocator, grid, grid, grid);
+    var plan = try fft_lib.parallel_fft24.ParallelPlan3d24.init(allocator, io, grid, grid, grid);
     defer plan.deinit();
 
     // Warmup

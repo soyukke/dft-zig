@@ -69,14 +69,15 @@ const RunResult = struct {
     converged: bool,
 };
 
-fn runScf(alloc: std.mem.Allocator, ref: MolRef, params: KsParams) !RunResult {
-    var mol = try molecule_mod.loadXyzFile(alloc, ref.xyz_file, .@"6-31g_2dfp", 0);
+fn runScf(alloc: std.mem.Allocator, io: std.Io, ref: MolRef, params: KsParams) !RunResult {
+    var mol = try molecule_mod.loadXyzFile(alloc, io, ref.xyz_file, .@"6-31g_2dfp", 0);
     defer mol.deinit();
 
-    var timer = try std.time.Timer.start();
+    const timer_start = std.Io.Clock.Timestamp.now(io, .awake);
 
     var result = try kohn_sham.runKohnShamScf(
         alloc,
+        io,
         mol.shells,
         mol.positions,
         mol.charges,
@@ -85,7 +86,7 @@ fn runScf(alloc: std.mem.Allocator, ref: MolRef, params: KsParams) !RunResult {
     );
     defer result.deinit(alloc);
 
-    const elapsed = @as(f64, @floatFromInt(timer.read())) / 1e9;
+    const elapsed = @as(f64, @floatFromInt(timer_start.untilNow(io).raw.nanoseconds)) / 1e9;
 
     return .{
         .energy = result.total_energy,
@@ -95,10 +96,9 @@ fn runScf(alloc: std.mem.Allocator, ref: MolRef, params: KsParams) !RunResult {
     };
 }
 
-pub fn main() !void {
-    var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const alloc = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const alloc = init.gpa;
+    const io = init.io;
 
     std.debug.print("\n", .{});
     std.debug.print("========================================================================\n", .{});
@@ -115,13 +115,13 @@ pub fn main() !void {
 
     for (molecules) |ref| {
         // Conventional
-        const conv = runScf(alloc, ref, ks_params_conv) catch |err| {
+        const conv = runScf(alloc, io, ref, ks_params_conv) catch |err| {
             std.debug.print("  {s:<8} Conv FAILED: {}\n", .{ ref.name, err });
             continue;
         };
 
         // Density Fitting
-        const df = runScf(alloc, ref, ks_params_df) catch |err| {
+        const df = runScf(alloc, io, ref, ks_params_df) catch |err| {
             std.debug.print("  {s:<8} DF FAILED: {}\n", .{ ref.name, err });
             continue;
         };
