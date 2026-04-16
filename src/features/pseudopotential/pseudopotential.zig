@@ -122,8 +122,8 @@ pub fn formatName(format: Format) []const u8 {
 }
 
 /// Load and parse a pseudopotential file.
-pub fn load(alloc: std.mem.Allocator, spec: Spec) !Parsed {
-    const content = try std.fs.cwd().readFileAlloc(alloc, spec.path, 8 * 1024 * 1024);
+pub fn load(alloc: std.mem.Allocator, io: std.Io, spec: Spec) !Parsed {
+    const content = try std.Io.Dir.cwd().readFileAlloc(io, spec.path, alloc, .limited(8 * 1024 * 1024));
     defer alloc.free(content);
 
     var header = Header{

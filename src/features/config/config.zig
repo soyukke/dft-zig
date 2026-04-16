@@ -710,8 +710,8 @@ const Section = enum {
 };
 
 /// Load config from a minimal TOML subset.
-pub fn load(alloc: std.mem.Allocator, path: []const u8) !Config {
-    const content = try std.fs.cwd().readFileAlloc(alloc, path, 1024 * 1024);
+pub fn load(alloc: std.mem.Allocator, io: std.Io, path: []const u8) !Config {
+    const content = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .limited(1024 * 1024));
     defer alloc.free(content);
 
     var title = try alloc.dupe(u8, "dft_zig");

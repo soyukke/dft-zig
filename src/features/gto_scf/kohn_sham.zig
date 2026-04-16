@@ -776,6 +776,7 @@ fn buildExchangeMatrix(
 /// Run a Kohn-Sham DFT SCF calculation.
 pub fn runKohnShamScf(
     alloc: std.mem.Allocator,
+    io: std.Io,
     shells: []const ContractedShell,
     nuc_positions: []const math_mod.Vec3,
     nuc_charges: []const f64,
@@ -793,7 +794,7 @@ pub fn runKohnShamScf(
     };
 
     // Step 1: Build one-electron integrals
-    var timer = try std.time.Timer.start();
+    var timer = std.Io.Clock.Timestamp.now(io, .awake);
     if (params.verbose) std.debug.print("  [KS] Step 1: Building one-electron integrals (n={d}, libcint={})...\n", .{ n, params.use_libcint });
 
     // Initialize libcint data if enabled
@@ -830,7 +831,7 @@ pub fn runKohnShamScf(
     else
         try obara_saika.buildNuclearMatrix(alloc, shells, nuc_positions, nuc_charges);
     defer alloc.free(v_mat);
-    if (params.verbose) std.debug.print("  [KS] Step 1: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(timer.read())) / 1e9});
+    if (params.verbose) std.debug.print("  [KS] Step 1: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
 
     const h_core = try alloc.alloc(f64, n * n);
     defer alloc.free(h_core);
@@ -839,7 +840,7 @@ pub fn runKohnShamScf(
     }
 
     // Step 2: Build ERI table or Schwarz table
-    timer.reset();
+    timer = std.Io.Clock.Timestamp.now(io, .awake);
     if (params.verbose) std.debug.print("  [KS] Step 2: Building Schwarz/ERI table (direct={}, libcint={})...\n", .{ params.use_direct_scf, use_libcint_actual });
     var eri_table: ?obara_saika.GeneralEriTable = null;
     var schwarz_table: ?fock.SchwarzTable = null;
@@ -853,7 +854,7 @@ pub fn runKohnShamScf(
     } else {
         eri_table = try obara_saika.buildEriTable(alloc, shells);
     }
-    if (params.verbose) std.debug.print("  [KS] Step 2: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(timer.read())) / 1e9});
+    if (params.verbose) std.debug.print("  [KS] Step 2: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
     defer {
         if (eri_table) |*et| et.deinit(alloc);
         if (schwarz_table) |*st| st.deinit(alloc);
@@ -863,7 +864,7 @@ pub fn runKohnShamScf(
     // Step 2b: Build density fitting context if requested
     var df_context: ?DensityFittingContext = null;
     if (params.use_density_fitting) {
-        timer.reset();
+        timer = std.Io.Clock.Timestamp.now(io, .awake);
         if (params.verbose) std.debug.print("  [KS] Step 2b: Building density fitting context...\n", .{});
 
         var aux_buf_to_free: ?[]ContractedShell = null;
@@ -891,7 +892,7 @@ pub fn runKohnShamScf(
             alloc.free(buf);
         }
 
-        if (params.verbose) std.debug.print("  [KS] Step 2b: Done (n_aux={d}). ({d:.2}s)\n", .{ df_context.?.n_aux, @as(f64, @floatFromInt(timer.read())) / 1e9 });
+        if (params.verbose) std.debug.print("  [KS] Step 2b: Done (n_aux={d}). ({d:.2}s)\n", .{ df_context.?.n_aux, @as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9 });
     }
     defer if (df_context) |*dfc| dfc.deinit();
 
@@ -919,25 +920,25 @@ pub fn runKohnShamScf(
         .becke_hardness = 3,
     };
 
-    timer.reset();
+    timer = std.Io.Clock.Timestamp.now(io, .awake);
     if (params.verbose) std.debug.print("  [KS] Step 3: Building molecular grid ({d} radial, {d} angular)...\n", .{ params.n_radial, params.n_angular });
     const grid_points = try becke.buildMolecularGrid(alloc, atoms, grid_config);
     defer alloc.free(grid_points);
-    if (params.verbose) std.debug.print("  [KS] Step 3: Done ({d} grid points). ({d:.2}s)\n", .{ grid_points.len, @as(f64, @floatFromInt(timer.read())) / 1e9 });
+    if (params.verbose) std.debug.print("  [KS] Step 3: Done ({d} grid points). ({d:.2}s)\n", .{ grid_points.len, @as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9 });
 
     // Step 4: Pre-evaluate basis functions on grid
-    timer.reset();
+    timer = std.Io.Clock.Timestamp.now(io, .awake);
     if (params.verbose) std.debug.print("  [KS] Step 4: Pre-evaluating basis functions on grid...\n", .{});
     var bog = try evaluateBasisOnGrid(alloc, shells, grid_points);
     defer bog.deinit(alloc);
-    if (params.verbose) std.debug.print("  [KS] Step 4: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(timer.read())) / 1e9});
+    if (params.verbose) std.debug.print("  [KS] Step 4: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
 
     // Step 5: Initial guess — diagonalize H_core
-    timer.reset();
+    timer = std.Io.Clock.Timestamp.now(io, .awake);
     if (params.verbose) std.debug.print("  [KS] Step 5: Initial guess (diagonalize H_core)...\n", .{});
     var eigen = try solveRoothaanHall(alloc, n, h_core, s_mat);
     if (params.verbose) {
-        std.debug.print("  [KS] Step 5: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(timer.read())) / 1e9});
+        std.debug.print("  [KS] Step 5: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
         // Print initial orbital eigenvalues for comparison with PySCF
         std.debug.print("  [KS] Initial orbital eigenvalues (ALL {d}):\n", .{n});
         for (0..n) |i| {
@@ -1014,7 +1015,7 @@ pub fn runKohnShamScf(
 
     while (iter < params.max_iter) : (iter += 1) {
         // Build J and K matrices
-        timer.reset();
+        timer = std.Io.Clock.Timestamp.now(io, .awake);
         if (df_context != null) {
             try df_context.?.buildJ(alloc, p_mat, j_mat);
             if (hf_frac > 0.0) {
@@ -1042,10 +1043,10 @@ pub fn runKohnShamScf(
                 buildExchangeMatrix(n, p_mat, eri_table.?, k_mat);
             }
         }
-        scf_jk_ns += timer.read();
+        scf_jk_ns += @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
 
         // Compute density on grid
-        timer.reset();
+        timer = std.Io.Clock.Timestamp.now(io, .awake);
         const dens = try computeDensityOnGrid(alloc, n, grid_points.len, p_mat, bog);
         defer {
             alloc.free(dens.rho);
@@ -1068,7 +1069,7 @@ pub fn runKohnShamScf(
             vxc_mat,
             xc_work_buf,
         );
-        scf_xc_ns += timer.read();
+        scf_xc_ns += @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
 
         // Build Fock matrix: F = H_core + J - 0.5 * hf_frac * K + Vxc
         // The factor of 0.5 on K comes from the closed-shell RHF antisymmetry:
@@ -1158,9 +1159,9 @@ pub fn runKohnShamScf(
         alloc.free(eigen.vectors);
         alloc.free(eigen.values);
 
-        timer.reset();
+        timer = std.Io.Clock.Timestamp.now(io, .awake);
         eigen = try solveRoothaanHall(alloc, n, f_to_diag, s_mat);
-        scf_diag_ns += timer.read();
+        scf_diag_ns += @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
 
         density_matrix.updateDensityMatrix(n, n_occ, eigen.vectors, p_mat);
     }
@@ -1539,7 +1540,7 @@ test "KS-DFT H2O STO-3G LDA (SVWN)" {
         .{ .center = nuc_positions[2], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    var result = try runKohnShamScf(alloc, &shells, &nuc_positions, &nuc_charges, 10, .{
+    var result = try runKohnShamScf(alloc, std.testing.io, &shells, &nuc_positions, &nuc_charges, 10, .{
         .xc_functional = .lda_svwn,
         .n_radial = 99,
         .n_angular = 590,
@@ -1582,7 +1583,7 @@ test "KS-DFT H2O STO-3G B3LYP" {
         .{ .center = nuc_positions[2], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    var result = try runKohnShamScf(alloc, &shells, &nuc_positions, &nuc_charges, 10, .{
+    var result = try runKohnShamScf(alloc, std.testing.io, &shells, &nuc_positions, &nuc_charges, 10, .{
         .xc_functional = .b3lyp,
         .n_radial = 99,
         .n_angular = 590,
@@ -1649,7 +1650,7 @@ test "QM9 validation: H2O B3LYP/6-31G(2df,p) vs PySCF" {
     std.debug.print("\n=== QM9 validation: H2O B3LYP/6-31G(2df,p) ===\n", .{});
     std.debug.print("  Shells: {d}, Basis functions: {d}\n", .{ count, obara_saika.totalBasisFunctions(shells) });
 
-    var result = try runKohnShamScf(alloc, shells, &nuc_positions, &nuc_charges, 10, .{
+    var result = try runKohnShamScf(alloc, std.testing.io, shells, &nuc_positions, &nuc_charges, 10, .{
         .xc_functional = .b3lyp,
         .n_radial = 50,
         .n_angular = 302,
@@ -1705,7 +1706,7 @@ test "QM9 validation: CH4 B3LYP/6-31G(2df,p) vs PySCF" {
     std.debug.print("\n=== QM9 validation: CH4 B3LYP/6-31G(2df,p) ===\n", .{});
     std.debug.print("  Shells: {d}, Basis functions: {d}\n", .{ count, obara_saika.totalBasisFunctions(shells) });
 
-    var result = try runKohnShamScf(alloc, shells, &nuc_positions, &nuc_charges, 10, .{
+    var result = try runKohnShamScf(alloc, std.testing.io, shells, &nuc_positions, &nuc_charges, 10, .{
         .xc_functional = .b3lyp,
         .n_radial = 50,
         .n_angular = 302,
@@ -1759,7 +1760,7 @@ test "QM9 validation: CH2O B3LYP/6-31G(2df,p) vs PySCF" {
     std.debug.print("\n=== QM9 validation: CH2O B3LYP/6-31G(2df,p) ===\n", .{});
     std.debug.print("  Shells: {d}, Basis functions: {d}\n", .{ count, obara_saika.totalBasisFunctions(shells) });
 
-    var result = try runKohnShamScf(alloc, shells, &nuc_positions, &nuc_charges, 16, .{
+    var result = try runKohnShamScf(alloc, std.testing.io, shells, &nuc_positions, &nuc_charges, 16, .{
         .xc_functional = .b3lyp,
         .n_radial = 50,
         .n_angular = 302,
