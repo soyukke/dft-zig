@@ -184,7 +184,7 @@ pub fn writeBandEnergies(
         // expensive FFTW plan creation for each k-point
         var band_fft_plan: ?fft.Fft3dPlan = null;
         if (band_ctx) |ctx| {
-            band_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz, cfg.scf.fft_backend);
+            band_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, io, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz, cfg.scf.fft_backend);
         }
         defer if (band_fft_plan) |*plan| plan.deinit(alloc);
 
@@ -282,8 +282,8 @@ pub fn writeBandEnergies(
             stop: *std.atomic.Value(u8),
             fallback_dense: *std.atomic.Value(u8),
             err: *?anyerror,
-            err_mutex: *std.Thread.Mutex,
-            log_mutex: *std.Thread.Mutex,
+            err_mutex: *std.Io.Mutex,
+            log_mutex: *std.Io.Mutex,
         };
 
         const BandWorker = struct {
@@ -419,8 +419,8 @@ pub fn writeBandEnergies(
         var stop = std.atomic.Value(u8).init(0);
         var fallback_dense = std.atomic.Value(u8).init(0);
         var worker_error: ?anyerror = null;
-        var err_mutex = std.Thread.Mutex{};
-        var log_mutex = std.Thread.Mutex{};
+        var err_mutex = std.Io.Mutex.init;
+        var log_mutex = std.Io.Mutex.init;
 
         const caches = try alloc.alloc(scf.BandVectorCache, thread_count);
         defer {
@@ -644,7 +644,7 @@ fn writeBandEnergiesForSpin(
     // Serial band calculation
     var band_fft_plan: ?fft.Fft3dPlan = null;
     if (band_ctx) |ctx| {
-        band_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz, cfg.scf.fft_backend);
+        band_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, io, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz, cfg.scf.fft_backend);
     }
     defer if (band_fft_plan) |*plan| plan.deinit(alloc);
 

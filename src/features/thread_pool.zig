@@ -92,7 +92,7 @@ pub const ThreadPool = struct {
         const Wrapper = struct {
             ctx: Context,
             err: ?anyerror = null,
-            err_mutex: std.Thread.Mutex = .{},
+            err_mutex: std.Io.Mutex = .init,
 
             fn run(wrapper: *@This(), idx: usize) void {
                 func(wrapper.ctx, idx) catch |e| {

@@ -247,10 +247,11 @@ pub fn bandEigenvaluesIterativeExt(
         if (ctx.fft_index_map) |idx_map| {
             try map.buildFftIndices(alloc, idx_map);
         }
-        const fft_plan = if (opts.shared_fft_plan) |plan| plan else try fft.Fft3dPlan.initWithBackend(alloc, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz, cfg.scf.fft_backend);
+        const fft_plan = if (opts.shared_fft_plan) |plan| plan else try fft.Fft3dPlan.initWithBackend(alloc, io, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz, cfg.scf.fft_backend);
         const owns_plan = opts.shared_fft_plan == null;
         var actx = try ApplyContext.initWithCache(
             alloc,
+            io,
             ctx.grid,
             basis.gvecs,
             ctx.local_r,
@@ -271,6 +272,7 @@ pub fn bandEigenvaluesIterativeExt(
     } else if (opts.shared_fft_plan != null and num_workspaces <= 1)
         try ApplyContext.initWithFftPlan(
             alloc,
+            io,
             ctx.grid,
             basis.gvecs,
             ctx.local_r,
@@ -286,6 +288,7 @@ pub fn bandEigenvaluesIterativeExt(
     else
         try ApplyContext.initWithWorkspaces(
             alloc,
+            io,
             ctx.grid,
             basis.gvecs,
             ctx.local_r,

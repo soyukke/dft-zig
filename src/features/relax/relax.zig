@@ -768,7 +768,7 @@ fn densityToReciprocal(
     }
 
     // 3D FFT in place using the specified backend
-    var plan = try fft.Fft3dPlan.initWithBackend(alloc, nx, ny, nz, fft_backend);
+    var plan = try fft.Fft3dPlan.initWithBackend(alloc, io, nx, ny, nz, fft_backend);
     defer plan.deinit(alloc);
     plan.forward(data);
 

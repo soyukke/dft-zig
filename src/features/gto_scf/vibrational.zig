@@ -41,7 +41,7 @@ extern fn dsyev_(
     info: *c_int,
 ) callconv(.c) void;
 
-var lapack_mutex: std.Thread.Mutex = .{};
+var lapack_mutex: @import("../../lib/spinlock.zig").SpinLock = .{};
 
 // ============================================================================
 // Physical constants

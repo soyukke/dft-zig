@@ -54,12 +54,14 @@ const ThreadPoolState = struct {
     task_generation: usize,
     barrier_count: std.atomic.Value(usize),
     num_threads: usize,
-    mutex: std.Thread.Mutex,
-    work_available: std.Thread.Condition,
-    work_done: std.Thread.Condition,
+    io: std.Io,
+    mutex: std.Io.Mutex,
+    work_available: std.Io.Condition,
+    work_done: std.Io.Condition,
 
-    fn init(nx: usize, ny: usize, nz: usize, num_threads: usize) ThreadPoolState {
+    fn init(nx: usize, ny: usize, nz: usize, num_threads: usize, io: std.Io) ThreadPoolState {
         return .{
+            .io = io,
             .task = .none,
             .src = null,
             .dst = null,
@@ -94,11 +96,11 @@ pub const TransposePlan3d = struct {
     state: *ThreadPoolState,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !TransposePlan3d {
-        return initWithThreads(allocator, nx, ny, nz, 0);
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, nx: usize, ny: usize, nz: usize) !TransposePlan3d {
+        return initWithThreads(allocator, io, nx, ny, nz, 0);
     }
 
-    pub fn initWithThreads(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, num_threads_hint: usize) !TransposePlan3d {
+    pub fn initWithThreads(allocator: std.mem.Allocator, io: std.Io, nx: usize, ny: usize, nz: usize, num_threads_hint: usize) !TransposePlan3d {
         if (nx == 0 or ny == 0 or nz == 0) return error.InvalidSize;
 
         const cpu_count = std.Thread.getCpuCount() catch 4;
@@ -144,7 +146,7 @@ pub const TransposePlan3d = struct {
         // Allocate shared state
         const state = try allocator.create(ThreadPoolState);
         errdefer allocator.destroy(state);
-        state.* = ThreadPoolState.init(nx, ny, nz, num_threads);
+        state.* = ThreadPoolState.init(nx, ny, nz, num_threads, io);
 
         // Allocate thread handles
         const threads = try allocator.alloc(std.Thread, num_threads);
@@ -152,11 +154,11 @@ pub const TransposePlan3d = struct {
 
         var spawned: usize = 0;
         errdefer {
-            state.mutex.lock();
+            state.mutex.lockUncancelable(state.io);
             state.task_generation += 1;
             state.task = .shutdown;
-            state.work_available.broadcast();
-            state.mutex.unlock();
+            state.work_available.broadcast(state.io);
+            state.mutex.unlock(state.io);
             for (0..spawned) |i| {
                 threads[i].join();
             }
@@ -190,11 +192,11 @@ pub const TransposePlan3d = struct {
 
     pub fn deinit(self: *TransposePlan3d) void {
         // Signal shutdown
-        self.state.mutex.lock();
+        self.state.mutex.lockUncancelable(self.state.io);
         self.state.task_generation += 1;
         self.state.task = .shutdown;
-        self.state.work_available.broadcast();
-        self.state.mutex.unlock();
+        self.state.work_available.broadcast(self.state.io);
+        self.state.mutex.unlock(self.state.io);
 
         // Wait for all threads to finish
         for (self.threads) |t| {
@@ -251,7 +253,7 @@ pub const TransposePlan3d = struct {
     }
 
     fn dispatchFft(self: *TransposePlan3d, task: TaskType, data: []Complex, axis_size: usize, num_ffts: usize, inv: bool) void {
-        self.state.mutex.lock();
+        self.state.mutex.lockUncancelable(self.state.io);
 
         self.state.task_generation += 1;
         self.state.task = task;
@@ -263,20 +265,20 @@ pub const TransposePlan3d = struct {
         self.state.next_work_item.store(0, .seq_cst);
         self.state.barrier_count.store(0, .seq_cst);
 
-        self.state.work_available.broadcast();
-        self.state.mutex.unlock();
+        self.state.work_available.broadcast(self.state.io);
+        self.state.mutex.unlock(self.state.io);
 
         // Wait for completion
-        self.state.mutex.lock();
+        self.state.mutex.lockUncancelable(self.state.io);
         while (self.state.barrier_count.load(.seq_cst) < self.num_threads) {
-            self.state.work_done.wait(&self.state.mutex);
+            self.state.work_done.waitUncancelable(self.state.io, &self.state.mutex);
         }
         self.state.task = .none;
-        self.state.mutex.unlock();
+        self.state.mutex.unlock(self.state.io);
     }
 
     fn dispatchTranspose(self: *TransposePlan3d, task: TaskType, src: []Complex, dst: []Complex) void {
-        self.state.mutex.lock();
+        self.state.mutex.lockUncancelable(self.state.io);
 
         self.state.task_generation += 1;
         self.state.task = task;
@@ -286,16 +288,16 @@ pub const TransposePlan3d = struct {
         self.state.next_work_item.store(0, .seq_cst);
         self.state.barrier_count.store(0, .seq_cst);
 
-        self.state.work_available.broadcast();
-        self.state.mutex.unlock();
+        self.state.work_available.broadcast(self.state.io);
+        self.state.mutex.unlock(self.state.io);
 
         // Wait for completion
-        self.state.mutex.lock();
+        self.state.mutex.lockUncancelable(self.state.io);
         while (self.state.barrier_count.load(.seq_cst) < self.num_threads) {
-            self.state.work_done.wait(&self.state.mutex);
+            self.state.work_done.waitUncancelable(self.state.io, &self.state.mutex);
         }
         self.state.task = .none;
-        self.state.mutex.unlock();
+        self.state.mutex.unlock(self.state.io);
     }
 
     fn computeTransposeWork(self: *TransposePlan3d, task: TaskType) usize {
@@ -316,13 +318,13 @@ pub const TransposePlan3d = struct {
         var last_generation: usize = 0;
 
         while (true) {
-            state.mutex.lock();
+            state.mutex.lockUncancelable(state.io);
             while (state.task == .none or state.task_generation == last_generation) {
                 if (state.task == .shutdown) {
-                    state.mutex.unlock();
+                    state.mutex.unlock(state.io);
                     return;
                 }
-                state.work_available.wait(&state.mutex);
+                state.work_available.waitUncancelable(state.io, &state.mutex);
             }
 
             const task = state.task;
@@ -331,7 +333,7 @@ pub const TransposePlan3d = struct {
             const inv = state.inverse;
             const axis_size = state.axis_size;
             last_generation = state.task_generation;
-            state.mutex.unlock();
+            state.mutex.unlock(state.io);
 
             if (task == .shutdown) return;
 
@@ -378,9 +380,9 @@ pub const TransposePlan3d = struct {
             // Barrier
             const count = state.barrier_count.fetchAdd(1, .seq_cst) + 1;
             if (count == state.num_threads) {
-                state.mutex.lock();
-                state.work_done.signal();
-                state.mutex.unlock();
+                state.mutex.lockUncancelable(state.io);
+                state.work_done.signal(state.io);
+                state.mutex.unlock(state.io);
             }
         }
     }

@@ -266,7 +266,7 @@ fn applyOperatorParallel(
         v: []const math.Complex,
         w: []math.Complex,
         err: ?anyerror = null,
-        err_mutex: std.Thread.Mutex = .{},
+        err_mutex: std.Io.Mutex = .init,
 
         fn run(self: *@This(), col: usize) void {
             const v_col = common.columnConst(self.v, self.op.n, col);
@@ -324,7 +324,7 @@ fn applySParallel(
         v: []const math.Complex,
         sv: []math.Complex,
         err: ?anyerror = null,
-        err_mutex: std.Thread.Mutex = .{},
+        err_mutex: std.Io.Mutex = .init,
 
         fn run(self: *@This(), col: usize) void {
             const v_col = common.columnConst(self.v, self.n, col);
@@ -435,7 +435,7 @@ fn applyOperatorParallelRange(
         w: []math.Complex,
         start: usize,
         err: ?anyerror = null,
-        err_mutex: std.Thread.Mutex = .{},
+        err_mutex: std.Io.Mutex = .init,
 
         fn run(self: *@This(), i: usize) void {
             const col = self.start + i;
@@ -497,7 +497,7 @@ fn applySParallelRange(
         sv: []math.Complex,
         start: usize,
         err: ?anyerror = null,
-        err_mutex: std.Thread.Mutex = .{},
+        err_mutex: std.Io.Mutex = .init,
 
         fn run(self: *@This(), i: usize) void {
             const col = self.start + i;

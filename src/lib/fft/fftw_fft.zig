@@ -36,7 +36,7 @@ const FftwComplex = c.fftw_complex;
 /// Global mutex for FFTW planner thread safety.
 /// FFTW's planner is NOT thread-safe by default, so we must serialize
 /// all plan creation/destruction calls.
-var planner_mutex: std.Thread.Mutex = .{};
+var planner_mutex: @import("../spinlock.zig").SpinLock = .{};
 
 /// FFTW 3D Plan
 pub const FftwPlan3d = struct {

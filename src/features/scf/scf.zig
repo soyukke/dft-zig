@@ -1296,7 +1296,7 @@ pub fn computeFinalWavefunctionsWithSpinFactor(
     }
 
     // Pre-create shared FFT plan for final wavefunction computation
-    var wf_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
+    var wf_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
     defer wf_fft_plan.deinit(alloc);
 
     var band_energy: f64 = 0.0;
@@ -1536,7 +1536,7 @@ fn computeDensity(
     if (thread_count <= 1) {
         // Pre-create shared FFT plan for single-threaded mode to avoid
         // expensive FFTW plan creation for each kpoint
-        var shared_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
+        var shared_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
         defer shared_fft_plan.deinit(alloc);
 
         const profile_ptr: ?*ScfProfile = if (cfg.scf.profile) &profile_total else null;
@@ -1622,14 +1622,14 @@ fn computeDensity(
         alloc.free(fft_plans);
     }
     for (fft_plans) |*plan| {
-        plan.* = try fft.Fft3dPlan.initWithBackend(alloc, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
+        plan.* = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
     }
 
     var next_index = std.atomic.Value(usize).init(0);
     var stop = std.atomic.Value(u8).init(0);
     var worker_error: ?anyerror = null;
-    var err_mutex = std.Thread.Mutex{};
-    var log_mutex = std.Thread.Mutex{};
+    var err_mutex = std.Io.Mutex.init;
+    var log_mutex = std.Io.Mutex.init;
 
     var shared = KpointShared{
         .cfg = cfg_ptr,

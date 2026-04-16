@@ -125,6 +125,7 @@ pub fn prepareFullBZKpoints(
         errdefer alloc.destroy(apply_ctx_k);
         apply_ctx_k.* = try scf_mod.ApplyContext.init(
             alloc,
+                io,
             grid,
             @constCast(basis_k.gvecs),
             local_r,
@@ -268,6 +269,7 @@ pub fn prepareFullBZKpointsFromIBZ(
         errdefer alloc.destroy(apply_ctx_k);
         apply_ctx_k.* = try scf_mod.ApplyContext.init(
             alloc,
+                io,
             grid,
             @constCast(basis_k.gvecs),
             local_r,
@@ -424,6 +426,7 @@ pub fn prepareFullBZKpointsFromIBZ(
         errdefer alloc.destroy(apply_ctx_sk);
         apply_ctx_sk.* = try scf_mod.ApplyContext.init(
             alloc,
+                io,
             grid,
             @constCast(basis_sk.gvecs),
             local_r,
@@ -587,6 +590,7 @@ fn buildKPointDfptDataFromGS(
         errdefer alloc.destroy(apply_ctx_kq);
         apply_ctx_kq.* = try scf_mod.ApplyContext.initWithWorkspaces(
             alloc,
+                io,
             grid,
             @constCast(basis_kq.gvecs),
             local_r,
@@ -1502,8 +1506,8 @@ const DfptKpointShared = struct {
     next_index: *std.atomic.Value(usize),
     stop: *std.atomic.Value(u8),
     err: *?anyerror,
-    err_mutex: *std.Thread.Mutex,
-    log_mutex: *std.Thread.Mutex,
+    err_mutex: *std.Io.Mutex,
+    log_mutex: *std.Io.Mutex,
 };
 
 const DfptKpointWorker = struct {
@@ -1877,8 +1881,8 @@ pub fn solvePerturbationQMultiK(
             var next_index = std.atomic.Value(usize).init(0);
             var stop = std.atomic.Value(u8).init(0);
             var worker_err: ?anyerror = null;
-            var err_mutex = std.Thread.Mutex{};
-            var log_mutex = std.Thread.Mutex{};
+            var err_mutex = std.Io.Mutex.init;
+            var log_mutex = std.Io.Mutex.init;
 
             // Build const view of psi0_r_cache for parallel workers
             const psi0_r_const_view = try alloc.alloc([]const []const math.Complex, n_kpts);
@@ -3071,8 +3075,8 @@ pub fn runPhononBand(
             var next_index = std.atomic.Value(usize).init(0);
             var stop_flag = std.atomic.Value(u8).init(0);
             var worker_err: ?anyerror = null;
-            var err_mutex = std.Thread.Mutex{};
-            var log_mutex = std.Thread.Mutex{};
+            var err_mutex = std.Io.Mutex.init;
+            var log_mutex = std.Io.Mutex.init;
 
             var qshared = QPointPertShared{
                 .alloc = alloc,
@@ -3222,8 +3226,8 @@ const QPointPertShared = struct {
     next_index: *std.atomic.Value(usize),
     stop: *std.atomic.Value(u8),
     err: *?anyerror,
-    err_mutex: *std.Thread.Mutex,
-    log_mutex: *std.Thread.Mutex,
+    err_mutex: *std.Io.Mutex,
+    log_mutex: *std.Io.Mutex,
 };
 
 const QPointPertWorker = struct {
@@ -3544,8 +3548,8 @@ pub fn runPhononBandIFC(
             var next_index = std.atomic.Value(usize).init(0);
             var stop_flag = std.atomic.Value(u8).init(0);
             var worker_err: ?anyerror = null;
-            var err_mutex = std.Thread.Mutex{};
-            var log_mutex = std.Thread.Mutex{};
+            var err_mutex = std.Io.Mutex.init;
+            var log_mutex = std.Io.Mutex.init;
 
             var qshared = QPointPertShared{
                 .alloc = alloc,

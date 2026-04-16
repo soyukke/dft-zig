@@ -259,6 +259,7 @@ pub fn prepareGroundState(
     errdefer alloc.destroy(apply_ctx_ptr);
     apply_ctx_ptr.* = try scf_mod.ApplyContext.initWithWorkspaces(
         alloc,
+                io,
         grid,
         @constCast(gvecs),
         local_r,

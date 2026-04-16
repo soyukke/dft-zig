@@ -2,7 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const math = @import("../math/math.zig");
 
-var lapack_mutex = std.Thread.Mutex{};
+var lapack_mutex: @import("../../lib/spinlock.zig").SpinLock = .{};
 
 extern fn zheev_(
     jobz: [*]u8,

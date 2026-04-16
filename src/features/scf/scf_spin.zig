@@ -280,7 +280,7 @@ pub fn runSpinPolarizedLoop(
         @memset(rho_out_down, 0.0);
 
         // Solve spin-up and spin-down channels
-        var shared_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
+        var shared_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
         defer shared_fft_plan.deinit(alloc);
 
         var result_up = try solveKpointsForSpin(alloc, cfg, common, potential_up, kpoint_cache_up, apply_caches_up, iterations, shared_fft_plan);

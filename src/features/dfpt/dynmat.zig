@@ -35,7 +35,7 @@ extern fn zheev_(
     info: *c_int,
 ) callconv(.c) void;
 
-var lapack_mutex = std.Thread.Mutex{};
+var lapack_mutex: @import("../../lib/spinlock.zig").SpinLock = .{};
 
 pub const ComplexPhononResult = struct {
     /// Eigenvalues ω² in Ry/(bohr²·amu)

@@ -47,7 +47,7 @@ pub const ApplyWorkspace = struct {
 
     pub fn init(alloc: std.mem.Allocator, grid: Grid, n_gvecs: usize, max_m_total: usize, fft_backend: fft.FftBackend) !ApplyWorkspace {
         // Create new FFT plan
-        const fft_plan: ?fft.Fft3dPlan = try fft.Fft3dPlan.initWithBackend(alloc, grid.nx, grid.ny, grid.nz, fft_backend);
+        const fft_plan: ?fft.Fft3dPlan = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, fft_backend);
         return initWithPlan(alloc, grid, n_gvecs, max_m_total, fft_plan);
     }
 
@@ -128,6 +128,7 @@ pub const KpointApplyCache = struct {
 
 pub const ApplyContext = struct {
     alloc: std.mem.Allocator,
+    io: std.Io,
     grid: Grid,
     map: PwGridMap,
     gvecs: []plane_wave.GVector,
@@ -147,7 +148,7 @@ pub const ApplyContext = struct {
     num_workspaces: usize,
     // Workspace allocation tracking for parallel use
     ws_in_use: []std.atomic.Value(u8),
-    ws_mutex: std.Thread.Mutex,
+    ws_mutex: std.Io.Mutex,
     // Backward compatibility: first workspace fields
     work_recip: []math.Complex,
     work_real: []math.Complex,
@@ -161,6 +162,7 @@ pub const ApplyContext = struct {
     /// Initialize with single workspace (backward compatible)
     pub fn init(
         alloc: std.mem.Allocator,
+        io: std.Io,
         grid: Grid,
         gvecs: []plane_wave.GVector,
         local_r: []const f64,
@@ -173,12 +175,13 @@ pub const ApplyContext = struct {
         fft_index_map: ?[]const usize,
         fft_backend: fft.FftBackend,
     ) !ApplyContext {
-        return initWithWorkspaces(alloc, grid, gvecs, local_r, vnl, species, atoms, inv_volume, enable_nonlocal, profile, fft_index_map, fft_backend, 1);
+        return initWithWorkspaces(alloc, io, grid, gvecs, local_r, vnl, species, atoms, inv_volume, enable_nonlocal, profile, fft_index_map, fft_backend, 1);
     }
 
     /// Initialize with pre-created FFT plan (avoids mutex contention in parallel execution)
     pub fn initWithFftPlan(
         alloc: std.mem.Allocator,
+        io: std.Io,
         grid: Grid,
         gvecs: []plane_wave.GVector,
         local_r: []const f64,
@@ -220,6 +223,7 @@ pub const ApplyContext = struct {
 
         return .{
             .alloc = alloc,
+            .io = io,
             .grid = grid,
             .map = map,
             .gvecs = gvecs,
@@ -237,7 +241,7 @@ pub const ApplyContext = struct {
             .workspaces = workspaces,
             .num_workspaces = 1,
             .ws_in_use = ws_in_use,
-            .ws_mutex = .{},
+            .ws_mutex = .init,
             .work_recip = workspaces[0].work_recip,
             .work_real = workspaces[0].work_real,
             .work_recip_out = workspaces[0].work_recip_out,
@@ -253,6 +257,7 @@ pub const ApplyContext = struct {
     /// The caller retains ownership of the cached components (nonlocal_ctx and map).
     pub fn initWithCache(
         alloc: std.mem.Allocator,
+        io: std.Io,
         grid: Grid,
         gvecs: []plane_wave.GVector,
         local_r: []const f64,
@@ -277,6 +282,7 @@ pub const ApplyContext = struct {
 
         return .{
             .alloc = alloc,
+            .io = io,
             .grid = grid,
             .map = cached_map, // Borrowed from cache
             .gvecs = gvecs,
@@ -294,7 +300,7 @@ pub const ApplyContext = struct {
             .workspaces = workspaces,
             .num_workspaces = 1,
             .ws_in_use = ws_in_use,
-            .ws_mutex = .{},
+            .ws_mutex = .init,
             .work_recip = workspaces[0].work_recip,
             .work_real = workspaces[0].work_real,
             .work_recip_out = workspaces[0].work_recip_out,
@@ -309,6 +315,7 @@ pub const ApplyContext = struct {
     /// Initialize with multiple workspaces for parallel execution
     pub fn initWithWorkspaces(
         alloc: std.mem.Allocator,
+        io: std.Io,
         grid: Grid,
         gvecs: []plane_wave.GVector,
         local_r: []const f64,
@@ -334,7 +341,7 @@ pub const ApplyContext = struct {
             try map.buildFftIndices(alloc, idx_map);
         }
 
-        var plan = try fft.Fft3dPlan.initWithBackend(alloc, grid.nx, grid.ny, grid.nz, fft_backend);
+        var plan = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, fft_backend);
         errdefer plan.deinit(alloc);
 
         const max_m_total = if (nonlocal_ctx) |ctx| ctx.max_m_total else 0;
@@ -360,6 +367,7 @@ pub const ApplyContext = struct {
 
         return .{
             .alloc = alloc,
+            .io = io,
             .grid = grid,
             .map = map,
             .gvecs = gvecs,
@@ -377,7 +385,7 @@ pub const ApplyContext = struct {
             .workspaces = workspaces,
             .num_workspaces = ws_count,
             .ws_in_use = ws_in_use,
-            .ws_mutex = .{},
+            .ws_mutex = .init,
             .work_recip = workspaces[0].work_recip,
             .work_real = workspaces[0].work_real,
             .work_recip_out = workspaces[0].work_recip_out,
@@ -435,7 +443,7 @@ fn applyHamiltonianWithWorkspace(ctx: *ApplyContext, ws: *ApplyWorkspace, x: []c
     const n = ctx.gvecs.len;
     if (x.len != n or y.len != n) return error.InvalidMatrixSize;
 
-    const start = if (ctx.profile != null) profileStart(params.io) else null;
+    const start = if (ctx.profile != null) profileStart(ctx.io) else null;
 
     // Kinetic energy: y = T*x
     var i: usize = 0;
@@ -444,10 +452,10 @@ fn applyHamiltonianWithWorkspace(ctx: *ApplyContext, ws: *ApplyWorkspace, x: []c
     }
 
     // Local potential: y += V_local * x
-    const local_start = if (ctx.profile != null) profileStart(params.io) else null;
+    const local_start = if (ctx.profile != null) profileStart(ctx.io) else null;
     const plan_ptr: ?*fft.Fft3dPlan = if (ws.fft_plan != null) @constCast(&ws.fft_plan.?) else null;
     try applyLocalPotentialSafe(ctx, x, ws.work_vec, ws.work_recip, ws.work_real, ws.work_recip_out, plan_ptr);
-    if (ctx.profile) |p| profileAdd(params.io, &p.apply_local_ns, local_start);
+    if (ctx.profile) |p| profileAdd(ctx.io, &p.apply_local_ns, local_start);
     i = 0;
     while (i < n) : (i += 1) {
         y[i] = math.complex.add(y[i], ws.work_vec[i]);
@@ -455,9 +463,9 @@ fn applyHamiltonianWithWorkspace(ctx: *ApplyContext, ws: *ApplyWorkspace, x: []c
 
     // Nonlocal potential: y += V_nl * x
     if (ctx.nonlocal_ctx != null) {
-        const nonlocal_start = if (ctx.profile != null) profileStart(params.io) else null;
+        const nonlocal_start = if (ctx.profile != null) profileStart(ctx.io) else null;
         try applyNonlocalPotentialSafe(ctx, x, ws.work_vec, ws.work_phase, ws.work_xphase, ws.work_coeff, ws.work_coeff2);
-        if (ctx.profile) |p| profileAdd(params.io, &p.apply_nonlocal_ns, nonlocal_start);
+        if (ctx.profile) |p| profileAdd(ctx.io, &p.apply_nonlocal_ns, nonlocal_start);
         i = 0;
         while (i < n) : (i += 1) {
             y[i] = math.complex.add(y[i], ws.work_vec[i]);
@@ -471,7 +479,7 @@ fn applyHamiltonianWithWorkspace(ctx: *ApplyContext, ws: *ApplyWorkspace, x: []c
     }
 
     if (ctx.profile) |p| {
-        profileAdd(params.io, &p.apply_h_ns, start);
+        profileAdd(ctx.io, &p.apply_h_ns, start);
         p.apply_h_calls += 1;
     }
 }
@@ -485,14 +493,15 @@ pub fn applyHamiltonian(ctx_ptr: *anyopaque, x: []const math.Complex, y: []math.
         try applyHamiltonianWithWorkspace(ctx, &ctx.workspaces[ws_idx], x, y);
     } else {
         // All workspaces in use - use first one with lock
-        ctx.ws_mutex.lock();
-        defer ctx.ws_mutex.unlock();
+        ctx.ws_mutex.lockUncancelable(ctx.io);
+        defer ctx.ws_mutex.unlock(ctx.io);
         try applyHamiltonianWithWorkspace(ctx, &ctx.workspaces[0], x, y);
     }
 }
 
 pub fn checkHamiltonianApply(
     alloc: std.mem.Allocator,
+    io: std.Io,
     grid: Grid,
     gvecs: []plane_wave.GVector,
     species: []hamiltonian.SpeciesEntry,
@@ -505,6 +514,7 @@ pub fn checkHamiltonianApply(
 ) !void {
     var ctx = try ApplyContext.init(
         alloc,
+        io,
         grid,
         gvecs,
         local_r,
@@ -713,39 +723,39 @@ fn applyLocalPotentialSafe(
         const inv_scale = 1.0 / total;
 
         // Scatter PW -> FFT order with iFFT scaling
-        const t_scatter = if (ctx.profile != null) profileStart(params.io) else null;
+        const t_scatter = if (ctx.profile != null) profileStart(ctx.io) else null;
         ctx.map.scatterFft(x, work_real, total);
-        if (ctx.profile) |p| profileAdd(params.io, &p.local_scatter_ns, t_scatter);
+        if (ctx.profile) |p| profileAdd(ctx.io, &p.local_scatter_ns, t_scatter);
 
         // iFFT in-place
-        const t_ifft = if (ctx.profile != null) profileStart(params.io) else null;
+        const t_ifft = if (ctx.profile != null) profileStart(ctx.io) else null;
         if (plan) |p| {
             try fft.fft3dInverseInPlacePlan(p, work_real);
         } else {
             try fft.fft3dInverseInPlace(ctx.alloc, work_real, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz);
         }
-        if (ctx.profile) |p| profileAdd(params.io, &p.local_ifft_ns, t_ifft);
+        if (ctx.profile) |p| profileAdd(ctx.io, &p.local_ifft_ns, t_ifft);
 
         // V(r) * psi(r)
-        const t_vmul = if (ctx.profile != null) profileStart(params.io) else null;
+        const t_vmul = if (ctx.profile != null) profileStart(ctx.io) else null;
         for (work_real, 0..) |*v, i| {
             v.* = math.complex.scale(v.*, ctx.local_r[i]);
         }
-        if (ctx.profile) |p| profileAdd(params.io, &p.local_vmul_ns, t_vmul);
+        if (ctx.profile) |p| profileAdd(ctx.io, &p.local_vmul_ns, t_vmul);
 
         // FFT in-place
-        const t_fft = if (ctx.profile != null) profileStart(params.io) else null;
+        const t_fft = if (ctx.profile != null) profileStart(ctx.io) else null;
         if (plan) |p| {
             try fft.fft3dForwardInPlacePlan(p, work_real);
         } else {
             try fft.fft3dForwardInPlace(ctx.alloc, work_real, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz);
         }
-        if (ctx.profile) |p| profileAdd(params.io, &p.local_fft_ns, t_fft);
+        if (ctx.profile) |p| profileAdd(ctx.io, &p.local_fft_ns, t_fft);
 
         // Gather FFT order -> PW with FFT scaling
-        const t_gather = if (ctx.profile != null) profileStart(params.io) else null;
+        const t_gather = if (ctx.profile != null) profileStart(ctx.io) else null;
         ctx.map.gatherFft(work_real, out, inv_scale);
-        if (ctx.profile) |p| profileAdd(params.io, &p.local_gather_ns, t_gather);
+        if (ctx.profile) |p| profileAdd(ctx.io, &p.local_gather_ns, t_gather);
     } else {
         // Original path with full-grid remap
         ctx.map.scatter(x, work_recip);
@@ -888,8 +898,8 @@ pub fn applyOverlap(ctx_ptr: *anyopaque, x: []const math.Complex, y: []math.Comp
         const ws = &ctx.workspaces[ws_idx];
         try applyOverlapSafe(ctx, x, y, ws.work_phase, ws.work_xphase, ws.work_coeff, ws.work_coeff2);
     } else {
-        ctx.ws_mutex.lock();
-        defer ctx.ws_mutex.unlock();
+        ctx.ws_mutex.lockUncancelable(ctx.io);
+        defer ctx.ws_mutex.unlock(ctx.io);
         const ws = &ctx.workspaces[0];
         try applyOverlapSafe(ctx, x, y, ws.work_phase, ws.work_xphase, ws.work_coeff, ws.work_coeff2);
     }
@@ -1222,10 +1232,10 @@ pub fn applyHamiltonianBatched(
     const ctx: *ApplyContext = @ptrCast(@alignCast(ctx_ptr));
     if (n_pw != ctx.gvecs.len) return error.InvalidMatrixSize;
 
-    const h_start = if (ctx.profile != null) profileStart(params.io) else null;
+    const h_start = if (ctx.profile != null) profileStart(ctx.io) else null;
 
     // Kinetic + local: per-vector (FFT can't easily be batched)
-    const local_start = if (ctx.profile != null) profileStart(params.io) else null;
+    const local_start = if (ctx.profile != null) profileStart(ctx.io) else null;
     for (0..ncols) |col| {
         const x = x_batch[col * n_pw .. (col + 1) * n_pw];
         const y = y_batch[col * n_pw .. (col + 1) * n_pw];
@@ -1245,8 +1255,8 @@ pub fn applyHamiltonianBatched(
                 y[g] = math.complex.add(y[g], ws.work_vec[g]);
             }
         } else {
-            ctx.ws_mutex.lock();
-            defer ctx.ws_mutex.unlock();
+            ctx.ws_mutex.lockUncancelable(ctx.io);
+            defer ctx.ws_mutex.unlock(ctx.io);
             const ws = &ctx.workspaces[0];
             const plan_ptr: ?*fft.Fft3dPlan = if (ws.fft_plan != null) @constCast(&ws.fft_plan.?) else null;
             try applyLocalPotentialSafe(ctx, x, ws.work_vec, ws.work_recip, ws.work_real, ws.work_recip_out, plan_ptr);
@@ -1255,11 +1265,11 @@ pub fn applyHamiltonianBatched(
             }
         }
     }
-    if (ctx.profile) |p| profileAdd(params.io, &p.apply_local_ns, local_start);
+    if (ctx.profile) |p| profileAdd(ctx.io, &p.apply_local_ns, local_start);
 
     // Nonlocal potential: batched BLAS-3
     if (ctx.nonlocal_ctx != null) {
-        const nonlocal_start = if (ctx.profile != null) profileStart(params.io) else null;
+        const nonlocal_start = if (ctx.profile != null) profileStart(ctx.io) else null;
         const nl_out = try ctx.alloc.alloc(math.Complex, n_pw * ncols);
         defer ctx.alloc.free(nl_out);
         const work_phase = try ctx.alloc.alloc(math.Complex, n_pw);
@@ -1270,7 +1280,7 @@ pub fn applyHamiltonianBatched(
         for (0..n_pw * ncols) |i| {
             y_batch[i] = math.complex.add(y_batch[i], nl_out[i]);
         }
-        if (ctx.profile) |p| profileAdd(params.io, &p.apply_nonlocal_ns, nonlocal_start);
+        if (ctx.profile) |p| profileAdd(ctx.io, &p.apply_nonlocal_ns, nonlocal_start);
     } else if (ctx.vnl) |mat| {
         for (0..ncols) |col| {
             const x = x_batch[col * n_pw .. (col + 1) * n_pw];
@@ -1285,7 +1295,7 @@ pub fn applyHamiltonianBatched(
     }
 
     if (ctx.profile) |p| {
-        profileAdd(params.io, &p.apply_h_ns, h_start);
+        profileAdd(ctx.io, &p.apply_h_ns, h_start);
         p.apply_h_calls += 1;
     }
 }

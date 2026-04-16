@@ -206,8 +206,8 @@ pub fn runPhonon(
         var next_index = std.atomic.Value(usize).init(0);
         var stop = std.atomic.Value(u8).init(0);
         var worker_err: ?anyerror = null;
-        var err_mutex = std.Thread.Mutex{};
-        var log_mutex = std.Thread.Mutex{};
+        var err_mutex = std.Io.Mutex.init;
+        var log_mutex = std.Io.Mutex.init;
 
         var shared = GammaPertShared{
             .alloc = alloc,
@@ -1171,8 +1171,8 @@ const GammaPertShared = struct {
     next_index: *std.atomic.Value(usize),
     stop: *std.atomic.Value(u8),
     err: *?anyerror,
-    err_mutex: *std.Thread.Mutex,
-    log_mutex: *std.Thread.Mutex,
+    err_mutex: *std.Io.Mutex,
+    log_mutex: *std.Io.Mutex,
 };
 
 const GammaPertWorker = struct {
