@@ -9,6 +9,28 @@
 //! eigenvalue problems.
 
 const std = @import("std");
+const WaitGroup = struct {
+    counter: std.atomic.Value(usize) = .init(0),
+
+    pub fn start(self: *WaitGroup) void {
+        _ = self.counter.fetchAdd(1, .acq_rel);
+    }
+    pub fn finish(self: *WaitGroup) void {
+        _ = self.counter.fetchSub(1, .acq_rel);
+    }
+    pub fn wait(self: *WaitGroup) void {
+        while (self.counter.load(.acquire) != 0) {
+            std.atomic.spinLoopHint();
+        }
+    }
+};
+fn spawnDetached(alloc: std.mem.Allocator, comptime func: anytype, args: anytype) !void {
+    _ = alloc;
+    const t = try std.Thread.spawn(.{}, func, args);
+    t.detach();
+}
+
+
 const math = @import("../../math/math.zig");
 const linalg = @import("../linalg.zig");
 const common = @import("common.zig");
@@ -266,26 +288,24 @@ fn applyOperatorParallel(
         v: []const math.Complex,
         w: []math.Complex,
         err: ?anyerror = null,
-        err_mutex: std.Io.Mutex = .init,
+        err_flag: std.atomic.Value(bool) = .init(false),
 
         fn run(self: *@This(), col: usize) void {
             const v_col = common.columnConst(self.v, self.op.n, col);
             const w_col = common.column(self.w, self.op.n, col);
             self.op.apply(self.op.ctx, v_col, w_col) catch |e| {
-                self.err_mutex.lock();
-                defer self.err_mutex.unlock();
-                if (self.err == null) self.err = e;
+                if (!self.err_flag.swap(true, .acq_rel)) self.err = e;
             };
         }
     };
 
     var ctx = Context{ .op = op, .v = v, .w = w };
 
-    var wg = std.Thread.WaitGroup{};
+    var wg: WaitGroup = .{};
     for (0..count) |col| {
         wg.start();
-        pool.inner.spawn(struct {
-            fn task(c: *Context, wg_ptr: *std.Thread.WaitGroup, idx: usize) void {
+        spawnDetached(pool.allocator, struct {
+            fn task(c: *Context, wg_ptr: *WaitGroup, idx: usize) void {
                 defer wg_ptr.finish();
                 c.run(idx);
             }
@@ -324,26 +344,24 @@ fn applySParallel(
         v: []const math.Complex,
         sv: []math.Complex,
         err: ?anyerror = null,
-        err_mutex: std.Io.Mutex = .init,
+        err_flag: std.atomic.Value(bool) = .init(false),
 
         fn run(self: *@This(), col: usize) void {
             const v_col = common.columnConst(self.v, self.n, col);
             const sv_col = common.column(self.sv, self.n, col);
             self.apply_fn(self.ctx_ptr, v_col, sv_col) catch |e| {
-                self.err_mutex.lock();
-                defer self.err_mutex.unlock();
-                if (self.err == null) self.err = e;
+                if (!self.err_flag.swap(true, .acq_rel)) self.err = e;
             };
         }
     };
 
     var ctx = Context{ .apply_fn = apply_s_fn, .ctx_ptr = op.ctx, .n = op.n, .v = v, .sv = sv };
 
-    var wg = std.Thread.WaitGroup{};
+    var wg: WaitGroup = .{};
     for (0..count) |col| {
         wg.start();
-        pool.inner.spawn(struct {
-            fn task(c: *Context, wg_ptr: *std.Thread.WaitGroup, idx: usize) void {
+        spawnDetached(pool.allocator, struct {
+            fn task(c: *Context, wg_ptr: *WaitGroup, idx: usize) void {
                 defer wg_ptr.finish();
                 c.run(idx);
             }
@@ -393,11 +411,11 @@ fn buildProjectedParallel(
 
     var ctx = Context{ .n = n, .m = m, .v = v, .w = w, .out = out };
 
-    var wg = std.Thread.WaitGroup{};
+    var wg: WaitGroup = .{};
     for (0..m) |j| {
         wg.start();
-        pool.inner.spawn(struct {
-            fn task(c: *Context, wg_ptr: *std.Thread.WaitGroup, idx: usize) void {
+        spawnDetached(pool.allocator, struct {
+            fn task(c: *Context, wg_ptr: *WaitGroup, idx: usize) void {
                 defer wg_ptr.finish();
                 c.run(idx);
             }
@@ -435,27 +453,25 @@ fn applyOperatorParallelRange(
         w: []math.Complex,
         start: usize,
         err: ?anyerror = null,
-        err_mutex: std.Io.Mutex = .init,
+        err_flag: std.atomic.Value(bool) = .init(false),
 
         fn run(self: *@This(), i: usize) void {
             const col = self.start + i;
             const v_col = common.columnConst(self.v, self.op.n, col);
             const w_col = common.column(self.w, self.op.n, col);
             self.op.apply(self.op.ctx, v_col, w_col) catch |e| {
-                self.err_mutex.lock();
-                defer self.err_mutex.unlock();
-                if (self.err == null) self.err = e;
+                if (!self.err_flag.swap(true, .acq_rel)) self.err = e;
             };
         }
     };
 
     var ctx = Context{ .op = op, .v = v, .w = w, .start = start };
 
-    var wg = std.Thread.WaitGroup{};
+    var wg: WaitGroup = .{};
     for (0..count) |i| {
         wg.start();
-        pool.inner.spawn(struct {
-            fn task(c: *Context, wg_ptr: *std.Thread.WaitGroup, idx: usize) void {
+        spawnDetached(pool.allocator, struct {
+            fn task(c: *Context, wg_ptr: *WaitGroup, idx: usize) void {
                 defer wg_ptr.finish();
                 c.run(idx);
             }
@@ -497,27 +513,25 @@ fn applySParallelRange(
         sv: []math.Complex,
         start: usize,
         err: ?anyerror = null,
-        err_mutex: std.Io.Mutex = .init,
+        err_flag: std.atomic.Value(bool) = .init(false),
 
         fn run(self: *@This(), i: usize) void {
             const col = self.start + i;
             const v_col = common.columnConst(self.v, self.n, col);
             const sv_col = common.column(self.sv, self.n, col);
             self.apply_fn(self.ctx_ptr, v_col, sv_col) catch |e| {
-                self.err_mutex.lock();
-                defer self.err_mutex.unlock();
-                if (self.err == null) self.err = e;
+                if (!self.err_flag.swap(true, .acq_rel)) self.err = e;
             };
         }
     };
 
     var ctx = Context{ .apply_fn = apply_s_fn, .ctx_ptr = op.ctx, .n = op.n, .v = v, .sv = sv, .start = start };
 
-    var wg = std.Thread.WaitGroup{};
+    var wg: WaitGroup = .{};
     for (0..count) |i| {
         wg.start();
-        pool.inner.spawn(struct {
-            fn task(c: *Context, wg_ptr: *std.Thread.WaitGroup, idx: usize) void {
+        spawnDetached(pool.allocator, struct {
+            fn task(c: *Context, wg_ptr: *WaitGroup, idx: usize) void {
                 defer wg_ptr.finish();
                 c.run(idx);
             }

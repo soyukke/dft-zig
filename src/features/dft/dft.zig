@@ -205,6 +205,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         if (scf_result) |*result| {
             try logStep(io, "step: cube output start");
             try cube.writeCubeFile(
+                io,
                 out_dir,
                 "density.cube",
                 result.density,
@@ -223,14 +224,14 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
 
     if (scf_result) |*result| {
         if (cfg.scf.reference_json) |path| {
-            try linear_scaling.writeReferenceFromScfResult(out_dir, path, result);
+            try linear_scaling.writeReferenceFromScfResult(io, out_dir, path, result);
         }
         if (cfg.scf.compare_reference_json) |ref_path| {
-            var reference = try linear_scaling.readReferenceJson(alloc, io, std.Io.Dir.cwd(), ref_path);
+            var reference = try linear_scaling.readReferenceJson(io, alloc, std.Io.Dir.cwd(), ref_path);
             defer reference.deinit(alloc);
             const report = try linear_scaling.compareReferenceToScfResult(&reference, result);
             if (cfg.scf.comparison_json) |out_path| {
-                try linear_scaling.writeComparisonJson(out_dir, out_path, report);
+                try linear_scaling.writeComparisonJson(io, out_dir, out_path, report);
             } else {
                 return error.MissingComparisonOutput;
             }

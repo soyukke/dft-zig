@@ -1489,6 +1489,7 @@ pub fn solvePerturbationQ(
 
 /// Shared data for parallel DFPT k-point processing within one SCF iteration.
 const DfptKpointShared = struct {
+    io: std.Io,
     kpts: []KPointDfptData,
     v_scf_r: []const math.Complex,
     vloc1_g: []const math.Complex,
@@ -1519,8 +1520,8 @@ const DfptKpointWorker = struct {
 };
 
 fn setDfptWorkerError(shared: *DfptKpointShared, e: anyerror) void {
-    shared.err_mutex.lock();
-    defer shared.err_mutex.unlock();
+    shared.err_mutex.lockUncancelable(shared.io);
+    defer shared.err_mutex.unlock(shared.io);
     if (shared.err.* == null) {
         shared.err.* = e;
     }
@@ -1666,6 +1667,7 @@ fn processOneKpointDfpt(
 /// per-k-point ψ^(1) wavefunctions.
 pub fn solvePerturbationQMultiK(
     alloc: std.mem.Allocator,
+    io: std.Io,
     kpts: []KPointDfptData,
     atom_index: usize,
     direction: usize,
@@ -1895,6 +1897,7 @@ pub fn solvePerturbationQMultiK(
             }
 
             var shared = DfptKpointShared{
+                .io = io,
                 .kpts = kpts,
                 .v_scf_r = v_scf_r,
                 .vloc1_g = vloc1_g,
@@ -3010,7 +3013,7 @@ pub fn runPhononBand(
                     const pidx = 3 * ia + dir;
 
                     pert_results_mk[pidx] = try solvePerturbationQMultiK(
-                        alloc,
+                        alloc, io,
                         kpts,
                         ia,
                         dir,
@@ -3084,6 +3087,7 @@ pub fn runPhononBand(
 
             var qshared = QPointPertShared{
                 .alloc = alloc,
+                .io = io,
                 .kpts = kpts,
                 .dfpt_cfg = &pert_dfpt_cfg,
                 .q_cart = q_cart,
@@ -3212,6 +3216,7 @@ pub fn runPhononBand(
 
 const QPointPertShared = struct {
     alloc: std.mem.Allocator,
+    io: std.Io,
     kpts: []KPointDfptData,
     dfpt_cfg: *const DfptConfig,
     q_cart: math.Vec3,
@@ -3240,8 +3245,8 @@ const QPointPertWorker = struct {
 };
 
 fn setQPointPertError(shared: *QPointPertShared, e: anyerror) void {
-    shared.err_mutex.lock();
-    defer shared.err_mutex.unlock();
+    shared.err_mutex.lockUncancelable(shared.io);
+    defer shared.err_mutex.unlock(shared.io);
     if (shared.err.* == null) {
         shared.err.* = e;
     }
@@ -3262,8 +3267,8 @@ fn qpointPertWorkerFn(worker: *QPointPertWorker) void {
         const dir = idx % 3;
 
         {
-            shared.log_mutex.lock();
-            defer shared.log_mutex.unlock();
+            shared.log_mutex.lockUncancelable(shared.io);
+            defer shared.log_mutex.unlock(shared.io);
             const dir_names = [_][]const u8{ "x", "y", "z" };
             logDfpt("dfpt_band: [thread {d}] solving perturbation atom={d} dir={s} ({d}/{d})\n", .{ worker.thread_index, ia, dir_names[dir], work_idx + 1, shared.dim });
         }
@@ -3271,6 +3276,7 @@ fn qpointPertWorkerFn(worker: *QPointPertWorker) void {
         // Solve perturbation SCF with all k-points (vloc1/rho1_core already built by caller)
         shared.pert_results_mk[idx] = solvePerturbationQMultiK(
             alloc,
+            shared.io,
             shared.kpts,
             ia,
             dir,
@@ -3294,8 +3300,8 @@ fn qpointPertWorkerFn(worker: *QPointPertWorker) void {
             for (shared.pert_results_mk[idx].rho1_g) |c| {
                 rho1_norm += c.r * c.r + c.i * c.i;
             }
-            shared.log_mutex.lock();
-            defer shared.log_mutex.unlock();
+            shared.log_mutex.lockUncancelable(shared.io);
+            defer shared.log_mutex.unlock(shared.io);
             logDfpt("dfptQ_mk: pert({d},{d}) |rho1_g|={e:.6}\n", .{ ia, dir, @sqrt(rho1_norm) });
         }
     }
@@ -3496,7 +3502,7 @@ pub fn runPhononBandIFC(
                     const pidx = 3 * ia + dir;
 
                     pert_results_mk[pidx] = try solvePerturbationQMultiK(
-                        alloc,
+                        alloc, io,
                         kpts,
                         ia,
                         dir,
@@ -3558,6 +3564,7 @@ pub fn runPhononBandIFC(
 
             var qshared = QPointPertShared{
                 .alloc = alloc,
+                .io = io,
                 .kpts = kpts,
                 .dfpt_cfg = &pert_dfpt_cfg,
                 .q_cart = q_cart,
@@ -3764,9 +3771,9 @@ pub fn runPhononBandIFC(
         defer pdos.deinit(alloc);
 
         // Write to out_dir
-        var out_dir = try std.fs.cwd().openDir(cfg.out_dir, .{});
-        defer out_dir.close();
-        try phonon_dos_mod.writePhononDosCsv(out_dir, pdos);
+        var out_dir = try std.Io.Dir.cwd().openDir(io, cfg.out_dir, .{});
+        defer out_dir.close(io);
+        try phonon_dos_mod.writePhononDosCsv(io, out_dir, pdos);
         logDfpt("dfpt_ifc: phonon DOS written to phonon_dos.csv\n", .{});
     }
 

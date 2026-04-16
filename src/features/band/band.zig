@@ -191,12 +191,11 @@ pub fn writeBandEnergies(
 
         var cache = scf.BandVectorCache{};
         defer cache.deinit();
-        var band_timer = std.time.Timer.start() catch null;
         for (path.points, 0..) |kp, idx| {
             const offset = idx * nbands;
             var eigvals_opt: ?[]f64 = null;
+            const band_start_ts = std.Io.Clock.Timestamp.now(io, .awake);
             if (use_iterative) {
-                if (band_timer) |*t| t.reset();
                 const result = scf.bandEigenvaluesIterativeExt(
                     alloc, io,
                     cfg,
@@ -216,11 +215,9 @@ pub fn writeBandEnergies(
                         .paw_dij = if (band_ctx) |ctx| ctx.paw_dij else null,
                     },
                 );
-                if (band_timer) |*t| {
-                    const band_ns = t.read();
-                    if (idx < 5 or idx % 20 == 0) {
-                        logBandTiming(idx, total_points, band_ns);
-                    }
+                const band_ns: u64 = @intCast(band_start_ts.untilNow(io).raw.nanoseconds);
+                if (idx < 5 or idx % 20 == 0) {
+                    logBandTiming(io, idx, total_points, band_ns);
                 }
                 if (result) |values| {
                     eigvals_opt = values;
@@ -265,6 +262,7 @@ pub fn writeBandEnergies(
         }
     } else {
         const BandWork = struct {
+            io: std.Io,
             cfg: *const config.Config,
             points: []const kpath.KPoint,
             species: []hamiltonian.SpeciesEntry,
@@ -294,8 +292,8 @@ pub fn writeBandEnergies(
 
         const setBandError = struct {
             fn run(shared: *BandWork, err: anyerror) void {
-                shared.err_mutex.lock();
-                defer shared.err_mutex.unlock();
+                shared.err_mutex.lockUncancelable(shared.io);
+                defer shared.err_mutex.unlock(shared.io);
                 if (shared.err.* == null) {
                     shared.err.* = err;
                 }
@@ -314,11 +312,11 @@ pub fn writeBandEnergies(
                     if (idx >= shared.points.len) break;
                     const offset = idx * shared.nbands;
 
-                    shared.log_mutex.lock();
+                    shared.log_mutex.lockUncancelable(shared.io);
                     if (idx % 10 == 0 or idx + 1 == shared.points.len) {
-                        logBandKpoint(idx, shared.points.len);
+                        logBandKpoint(shared.io, idx, shared.points.len);
                     }
-                    shared.log_mutex.unlock();
+                    shared.log_mutex.unlock(shared.io);
 
                     _ = arena.reset(.retain_capacity);
                     const kalloc = arena.allocator();
@@ -435,6 +433,7 @@ pub fn writeBandEnergies(
         }
 
         var shared = BandWork{
+            .io = io,
             .cfg = &cfg,
             .points = path.points,
             .species = species,
@@ -485,7 +484,7 @@ pub fn writeBandEnergies(
         if (gamma_index) |idx| {
             const offset = idx * nbands;
             const eigvals = results[offset .. offset + nbands];
-            try logEigenvalues("band", "gamma", eigvals, nbands);
+            try logEigenvalues(io, "band", "gamma", eigvals, nbands);
 
             var basis = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, path.points[idx].k_cart);
             defer basis.deinit(alloc);
@@ -520,11 +519,11 @@ pub fn writeBandEnergies(
         try out.flush();
     }
 
-    var file = try dir.createFile("band_energies.csv", .{ .truncate = true });
-    defer file.close();
+    var file = try dir.createFile(io, "band_energies.csv", .{ .truncate = true });
+    defer file.close(io);
 
     var buffer: [4096]u8 = undefined;
-    var writer = file.writer(&buffer);
+    var writer = file.writer(io, &buffer);
     const out = &writer.interface;
 
     try out.writeAll("index,dist");
@@ -697,11 +696,11 @@ fn writeBandEnergiesForSpin(
     }
 
     // Write CSV
-    var file = try dir.createFile(filename, .{ .truncate = true });
-    defer file.close();
+    var file = try dir.createFile(io, filename, .{ .truncate = true });
+    defer file.close(io);
 
     var buffer: [4096]u8 = undefined;
-    var writer = file.writer(&buffer);
+    var writer = file.writer(io, &buffer);
     const out = &writer.interface;
 
     try out.writeAll("index,dist");

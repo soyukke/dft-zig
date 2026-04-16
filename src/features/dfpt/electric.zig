@@ -771,13 +771,14 @@ fn applyDij(sp: scf_mod.NonlocalSpecies, input: []const math.Complex, output: []
 }
 
 pub fn writeElectricResults(
+    io: std.Io,
     dir: std.Io.Dir,
     dielectric: DielectricResult,
 ) !void {
-    const file = try dir.createFile("electric.dat", .{});
-    defer file.close();
+    const file = try dir.createFile(io, "electric.dat", .{});
+    defer file.close(io);
     var buf: [1024]u8 = undefined;
-    var writer = file.writer(&buf);
+    var writer = file.writer(io, &buf);
     const out = &writer.interface;
 
     try out.print("# Dielectric tensor epsilon_inf\n", .{});

@@ -212,6 +212,7 @@ pub fn runPhonon(
 
         var shared = GammaPertShared{
             .alloc = alloc,
+            .io = io,
             .gs = &gs,
             .dfpt_cfg = &dfpt_cfg,
             .pert_results = pert_results,
@@ -326,10 +327,10 @@ pub fn runPhonon(
         }
 
         // Write results
-        var out_dir = std.fs.cwd().openDir(cfg.out_dir, .{}) catch null;
-        defer if (out_dir) |*d| d.close();
+        var out_dir = std.Io.Dir.cwd().openDir(io, cfg.out_dir, .{}) catch null;
+        defer if (out_dir) |*d| d.close(io);
         if (out_dir) |od| {
-            electric.writeElectricResults(od, dielectric) catch |err| {
+            electric.writeElectricResults(io, od, dielectric) catch |err| {
                 logDfpt("dfpt: warning: failed to write electric.dat: {}\n", .{err});
             };
         }
@@ -1161,6 +1162,7 @@ fn runDiagnostics(
 
 const GammaPertShared = struct {
     alloc: std.mem.Allocator,
+    io: std.Io,
     gs: *const GroundState,
     dfpt_cfg: *const DfptConfig,
     pert_results: []PerturbationResult,
@@ -1182,8 +1184,8 @@ const GammaPertWorker = struct {
 };
 
 fn setGammaPertError(shared: *GammaPertShared, e: anyerror) void {
-    shared.err_mutex.lock();
-    defer shared.err_mutex.unlock();
+    shared.err_mutex.lockUncancelable(shared.io);
+    defer shared.err_mutex.unlock(shared.io);
     if (shared.err.* == null) {
         shared.err.* = e;
     }
@@ -1206,8 +1208,8 @@ fn gammaPertWorkerFn(worker: *GammaPertWorker) void {
         const dir_names = [_][]const u8{ "x", "y", "z" };
 
         {
-            shared.log_mutex.lock();
-            defer shared.log_mutex.unlock();
+            shared.log_mutex.lockUncancelable(shared.io);
+            defer shared.log_mutex.unlock(shared.io);
             logDfpt("dfpt: [thread {d}] solving perturbation atom={d} dir={s} ({d}/{d})\n", .{ worker.thread_index, ia, dir_names[dir], work_idx + 1, shared.dim });
         }
 

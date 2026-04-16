@@ -79,8 +79,8 @@ pub const BandVectorCache = struct {
 };
 
 pub fn initBandIterativeContext(
-    io: std.Io,
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config.Config,
     species: []hamiltonian.SpeciesEntry,
     atoms: []hamiltonian.AtomData,

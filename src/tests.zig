@@ -19,7 +19,7 @@ const scf_fd_enabled = true;
 
 /// Skip test if a required file does not exist (e.g. pseudo/ files in CI).
 fn requireFile(path: []const u8) !void {
-    std.fs.cwd().access(path, .{}) catch |err| {
+    std.Io.Dir.cwd().access(path, .{}) catch |err| {
         if (err == error.FileNotFound) {
             std.debug.print("  [SKIP] file not found: {s}\n", .{path});
             return error.SkipZigTest;
