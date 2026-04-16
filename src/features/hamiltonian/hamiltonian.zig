@@ -19,13 +19,10 @@ pub const SpeciesEntry = struct {
     epsatm_ry: f64,
     local_mode: config.LocalPotentialMode,
     local_alpha: f64,
-    cache: std.AutoHashMap(u64, f64),
-    cache_mutex: std.Thread.Mutex,
     is_paw: bool = false,
 
-    /// Free cached form factors.
     pub fn deinit(self: *SpeciesEntry) void {
-        self.cache.deinit();
+        _ = self;
     }
 };
 
@@ -104,8 +101,6 @@ pub fn buildSpeciesEntries(alloc: std.mem.Allocator, items: []pseudo.Parsed) ![]
                 .epsatm_ry = form_factor.computeEpsatm(upf.*, z),
                 .local_mode = .short_range,
                 .local_alpha = 0.0,
-                .cache = std.AutoHashMap(u64, f64).init(alloc),
-                .cache_mutex = .{},
                 .is_paw = upf.paw != null,
             });
         } else {
@@ -124,7 +119,6 @@ pub fn configureLocalPotential(
         if (entry.local_mode == mode and entry.local_alpha == alpha) continue;
         entry.local_mode = mode;
         entry.local_alpha = alpha;
-        entry.cache.clearRetainingCapacity();
     }
 }
 
@@ -456,15 +450,9 @@ pub fn localFormFactor(entry: *const SpeciesEntry, q: f64) f64 {
     };
 }
 
-/// Get cached local form factor for a species with Coulomb tail correction.
+/// Get local form factor for a species with Coulomb tail correction.
 fn localVqCached(entry: *SpeciesEntry, q: f64) !f64 {
-    entry.cache_mutex.lock();
-    defer entry.cache_mutex.unlock();
-    const key: u64 = @bitCast(q);
-    if (entry.cache.get(key)) |value| return value;
-    const value = localFormFactor(entry, q);
-    try entry.cache.put(key, value);
-    return value;
+    return localFormFactor(entry, q);
 }
 
 /// Convert integer coordinate into flat index component.
