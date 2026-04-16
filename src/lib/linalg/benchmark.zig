@@ -3,6 +3,7 @@
 //! Compare SIMD-optimized vs scalar implementations.
 
 const std = @import("std");
+const Timer = @import("../timer.zig").Timer;
 const complex_vec = @import("complex_vec.zig");
 const Complex = complex_vec.Complex;
 
@@ -58,7 +59,7 @@ fn axpyScalar(y: []Complex, x: []const Complex, alpha: f64) void {
 var volatile_sink: f64 = 0;
 
 fn benchmarkInnerProduct(comptime name: []const u8, comptime func: anytype, a: []const Complex, b: []const Complex, iterations: usize) f64 {
-    var timer = std.time.Timer.start() catch return 0;
+    var timer = Timer.start() catch return 0;
     var acc: f64 = 0;
 
     for (0..iterations) |_| {
@@ -74,7 +75,7 @@ fn benchmarkInnerProduct(comptime name: []const u8, comptime func: anytype, a: [
 }
 
 fn benchmarkNorm(comptime name: []const u8, func: *const fn ([]const Complex) f64, a: []const Complex, iterations: usize) f64 {
-    var timer = std.time.Timer.start() catch return 0;
+    var timer = Timer.start() catch return 0;
     var acc: f64 = 0;
 
     for (0..iterations) |_| {
@@ -92,7 +93,7 @@ pub fn main() !void {
     const sizes = [_]usize{ 500, 1000, 2000, 5000 };
     const iterations = 50000;
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
 
@@ -136,14 +137,14 @@ pub fn main() !void {
         const y_copy = try alloc.alloc(Complex, size);
         defer alloc.free(y_copy);
 
-        var timer_scalar = std.time.Timer.start() catch unreachable;
+        var timer_scalar = Timer.start() catch unreachable;
         for (0..iterations) |_| {
             @memcpy(y_copy, y);
             axpyScalar(y_copy, a, 0.5);
         }
         const scalar_axpy = @as(f64, @floatFromInt(timer_scalar.read())) / 1_000_000.0;
 
-        var timer_simd = std.time.Timer.start() catch unreachable;
+        var timer_simd = Timer.start() catch unreachable;
         for (0..iterations) |_| {
             @memcpy(y_copy, y);
             complex_vec.axpy(y_copy, a, 0.5);

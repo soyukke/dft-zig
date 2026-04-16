@@ -9,6 +9,42 @@
   outputs = { self, nixpkgs, flake-utils }:
     flake-utils.lib.eachDefaultSystem (system:
       let
+        zig_0_16 = let
+          zigBin = {
+            "aarch64-darwin" = {
+              url = "https://ziglang.org/download/0.16.0/zig-aarch64-macos-0.16.0.tar.xz";
+              hash = "0yqiq1nrjfawh1k24mf969q1w9bhwfbwqi2x8f9zklca7bsyza26";
+            };
+            "x86_64-darwin" = {
+              url = "https://ziglang.org/download/0.16.0/zig-x86_64-macos-0.16.0.tar.xz";
+              hash = "0dibmghlqrr8qi5cqs9n0nl25qdnb5jvr542dyljfqdyy2bzzh2x";
+            };
+            "x86_64-linux" = {
+              url = "https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz";
+              hash = "1kgamnyy7vsw5alb5r4xk8nmgvmgbmxkza5hs7b51x6dbgags1h6";
+            };
+            "aarch64-linux" = {
+              url = "https://ziglang.org/download/0.16.0/zig-aarch64-linux-0.16.0.tar.xz";
+              hash = "12gf4d1rjncc8r4i32sfdmnwdl0d6hg717hb3801zxjlmzmpsns0";
+            };
+          }.${system};
+          src = builtins.fetchTarball {
+            url = zigBin.url;
+            sha256 = zigBin.hash;
+          };
+        in nixpkgs.legacyPackages.${system}.stdenv.mkDerivation {
+          pname = "zig";
+          version = "0.16.0";
+          inherit src;
+          dontBuild = true;
+          installPhase = ''
+            mkdir -p $out
+            cp -r ./* $out/
+            mkdir -p $out/bin
+            ln -sf $out/zig $out/bin/zig
+          '';
+        };
+
         pkgs = nixpkgs.legacyPackages.${system};
 
         # FFTW3 library (double precision)
@@ -32,7 +68,7 @@
       {
         devShells.default = pkgs.mkShell {
           buildInputs = [
-            pkgs.zig
+            zig_0_16
             fftw
             libcint
             pythonEnv
@@ -78,7 +114,7 @@
           version = "0.1.0";
           src = ./.;
 
-          nativeBuildInputs = [ pkgs.zig ];
+          nativeBuildInputs = [ zig_0_16 ];
           buildInputs = [ fftw libcint ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
             pkgs.apple-sdk_15
           ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [

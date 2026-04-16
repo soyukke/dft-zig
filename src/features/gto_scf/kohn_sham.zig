@@ -22,6 +22,7 @@
 //! Units: Hartree atomic units throughout.
 
 const std = @import("std");
+const Timer = @import("../../lib/timer.zig").Timer;
 const math_mod = @import("../math/math.zig");
 const basis_mod = @import("../basis/basis.zig");
 const integrals = @import("../integrals/integrals.zig");
@@ -793,7 +794,7 @@ pub fn runKohnShamScf(
     };
 
     // Step 1: Build one-electron integrals
-    var timer = try std.time.Timer.start();
+    var timer = try Timer.start();
     if (params.verbose) std.debug.print("  [KS] Step 1: Building one-electron integrals (n={d}, libcint={})...\n", .{ n, params.use_libcint });
 
     // Initialize libcint data if enabled

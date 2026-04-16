@@ -11,7 +11,7 @@ pub const si_test = @import("si_test.zig");
 pub const integration_test = @import("integration_test.zig");
 
 pub fn main() !void {
-    var gpa: std.heap.GeneralPurposeAllocator(.{}) = .init;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

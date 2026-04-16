@@ -1,4 +1,5 @@
 const std = @import("std");
+const Timer = @import("../../lib/timer.zig").Timer;
 const config = @import("../config/config.zig");
 const fft = @import("../fft/fft.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
@@ -190,7 +191,7 @@ pub fn writeBandEnergies(
 
         var cache = scf.BandVectorCache{};
         defer cache.deinit();
-        var band_timer = std.time.Timer.start() catch null;
+        var band_timer = Timer.start() catch null;
         for (path.points, 0..) |kp, idx| {
             const offset = idx * nbands;
             var eigvals_opt: ?[]f64 = null;

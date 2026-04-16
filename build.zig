@@ -22,8 +22,8 @@ pub fn build(b: *std.Build) void {
     // FFTW3 options (default to environment variables when not provided)
     const fftw_include_opt = b.option([]const u8, "fftw-include", "Path to FFTW3 include directory");
     const fftw_lib_opt = b.option([]const u8, "fftw-lib", "Path to FFTW3 library directory");
-    const fftw_include = fftw_include_opt orelse std.process.getEnvVarOwned(b.allocator, "FFTW_INCLUDE") catch null;
-    const fftw_lib = fftw_lib_opt orelse std.process.getEnvVarOwned(b.allocator, "FFTW_LIB") catch null;
+    const fftw_include = fftw_include_opt orelse b.graph.environ_map.get("FFTW_INCLUDE");
+    const fftw_lib = fftw_lib_opt orelse b.graph.environ_map.get("FFTW_LIB");
     const enable_fftw = fftw_include != null and fftw_lib != null;
 
     // Create FFTW options module (used by fftw_fft.zig for conditional compilation)
@@ -33,8 +33,8 @@ pub fn build(b: *std.Build) void {
     // libcint options (default to environment variables when not provided)
     const libcint_include_opt = b.option([]const u8, "libcint-include", "Path to libcint include directory");
     const libcint_lib_opt = b.option([]const u8, "libcint-lib", "Path to libcint library directory");
-    const libcint_include = libcint_include_opt orelse std.process.getEnvVarOwned(b.allocator, "LIBCINT_INCLUDE") catch null;
-    const libcint_lib = libcint_lib_opt orelse std.process.getEnvVarOwned(b.allocator, "LIBCINT_LIB") catch null;
+    const libcint_include = libcint_include_opt orelse b.graph.environ_map.get("LIBCINT_INCLUDE");
+    const libcint_lib = libcint_lib_opt orelse b.graph.environ_map.get("LIBCINT_LIB");
     const enable_libcint = libcint_include != null and libcint_lib != null;
 
     // Create libcint options module (used by libcint.zig for conditional compilation)
@@ -44,12 +44,12 @@ pub fn build(b: *std.Build) void {
     // OpenBLAS options (default to environment variables when not provided)
     const openblas_include_opt = b.option([]const u8, "openblas-include", "Path to OpenBLAS include directory");
     const openblas_lib_opt = b.option([]const u8, "openblas-lib", "Path to OpenBLAS library directory");
-    const openblas_include = openblas_include_opt orelse std.process.getEnvVarOwned(b.allocator, "OPENBLAS_INCLUDE") catch null;
-    const openblas_lib = openblas_lib_opt orelse std.process.getEnvVarOwned(b.allocator, "OPENBLAS_LIB") catch null;
+    const openblas_include = openblas_include_opt orelse b.graph.environ_map.get("OPENBLAS_INCLUDE");
+    const openblas_lib = openblas_lib_opt orelse b.graph.environ_map.get("OPENBLAS_LIB");
 
     // Netlib LAPACK (optional, for Linux where OpenBLAS LAPACK may have issues)
     const lapack_lib_opt = b.option([]const u8, "lapack-lib", "Path to LAPACK library directory");
-    const lapack_lib = lapack_lib_opt orelse std.process.getEnvVarOwned(b.allocator, "LAPACK_LIB") catch null;
+    const lapack_lib = lapack_lib_opt orelse b.graph.environ_map.get("LAPACK_LIB");
 
     // This creates a module, which represents a collection of source files alongside
     // some compilation options, such as optimization mode and linked system libraries.
@@ -93,7 +93,7 @@ pub fn build(b: *std.Build) void {
     }
     if (fftw_lib) |lib| {
         exe.root_module.addLibraryPath(.{ .cwd_relative = lib });
-        exe.linkSystemLibrary("fftw3");
+        exe.root_module.linkSystemLibrary("fftw3", .{});
     }
 
     // Link libcint if paths are provided
@@ -103,7 +103,7 @@ pub fn build(b: *std.Build) void {
     }
     if (libcint_lib) |lib| {
         exe.root_module.addLibraryPath(.{ .cwd_relative = lib });
-        exe.linkSystemLibrary("cint");
+        exe.root_module.linkSystemLibrary("cint", .{});
     }
 
     b.installArtifact(exe);
@@ -284,19 +284,19 @@ pub fn build(b: *std.Build) void {
         const fftw_lib_path = std.Build.LazyPath{ .cwd_relative = lib };
 
         linear_scaling_exe.root_module.addLibraryPath(fftw_lib_path);
-        linear_scaling_exe.linkSystemLibrary("fftw3");
+        linear_scaling_exe.root_module.linkSystemLibrary("fftw3", .{});
 
         fft_all_bench_exe.root_module.addLibraryPath(fftw_lib_path);
-        fft_all_bench_exe.linkSystemLibrary("fftw3");
+        fft_all_bench_exe.root_module.linkSystemLibrary("fftw3", .{});
 
         df_bench_exe.root_module.addLibraryPath(fftw_lib_path);
-        df_bench_exe.linkSystemLibrary("fftw3");
+        df_bench_exe.root_module.linkSystemLibrary("fftw3", .{});
 
         mod_tests.root_module.addLibraryPath(fftw_lib_path);
-        mod_tests.linkSystemLibrary("fftw3");
+        mod_tests.root_module.linkSystemLibrary("fftw3", .{});
 
         exe_tests.root_module.addLibraryPath(fftw_lib_path);
-        exe_tests.linkSystemLibrary("fftw3");
+        exe_tests.root_module.linkSystemLibrary("fftw3", .{});
     }
 
     // Link libcint to all executables that use the dft_zig module
@@ -304,22 +304,22 @@ pub fn build(b: *std.Build) void {
         const libcint_lib_path = std.Build.LazyPath{ .cwd_relative = lib };
 
         linear_scaling_exe.root_module.addLibraryPath(libcint_lib_path);
-        linear_scaling_exe.linkSystemLibrary("cint");
+        linear_scaling_exe.root_module.linkSystemLibrary("cint", .{});
 
         df_bench_exe.root_module.addLibraryPath(libcint_lib_path);
-        df_bench_exe.linkSystemLibrary("cint");
+        df_bench_exe.root_module.linkSystemLibrary("cint", .{});
 
         rys_test_exe.root_module.addLibraryPath(libcint_lib_path);
-        rys_test_exe.linkSystemLibrary("cint");
+        rys_test_exe.root_module.linkSystemLibrary("cint", .{});
 
         grad_test_exe.root_module.addLibraryPath(libcint_lib_path);
-        grad_test_exe.linkSystemLibrary("cint");
+        grad_test_exe.root_module.linkSystemLibrary("cint", .{});
 
         mod_tests.root_module.addLibraryPath(libcint_lib_path);
-        mod_tests.linkSystemLibrary("cint");
+        mod_tests.root_module.linkSystemLibrary("cint", .{});
 
         exe_tests.root_module.addLibraryPath(libcint_lib_path);
-        exe_tests.linkSystemLibrary("cint");
+        exe_tests.root_module.linkSystemLibrary("cint", .{});
     }
 }
 
@@ -332,24 +332,24 @@ fn linkLinearAlgebra(
     lapack_lib_path: ?[]const u8,
 ) void {
     if (target_os == .macos) {
-        step.linkFramework("Accelerate");
-        step.linkFramework("Metal");
-        step.linkFramework("MetalPerformanceShaders");
-        step.linkFramework("Foundation");
+        step.root_module.linkFramework("Accelerate", .{});
+        step.root_module.linkFramework("Metal", .{});
+        step.root_module.linkFramework("MetalPerformanceShaders", .{});
+        step.root_module.linkFramework("Foundation", .{});
     } else {
         // Link Netlib LAPACK first (takes priority for LAPACK symbols like dsygv_)
         if (lapack_lib_path) |lib| {
             step.root_module.addLibraryPath(.{ .cwd_relative = lib });
-            step.linkSystemLibrary("lapack");
+            step.root_module.linkSystemLibrary("lapack", .{});
         }
         // Then OpenBLAS for BLAS symbols
         if (openblas_lib) |lib| {
             step.root_module.addLibraryPath(.{ .cwd_relative = lib });
-            step.linkSystemLibrary("openblas");
+            step.root_module.linkSystemLibrary("openblas", .{});
         }
     }
     if (openblas_include) |inc| {
         step.root_module.addIncludePath(.{ .cwd_relative = inc });
     }
-    step.linkLibC();
+    step.root_module.link_libc = true;
 }

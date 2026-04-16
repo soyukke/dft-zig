@@ -96,7 +96,7 @@ fn runScf(alloc: std.mem.Allocator, ref: MolRef, params: KsParams) !RunResult {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
 

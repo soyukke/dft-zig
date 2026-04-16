@@ -22,7 +22,7 @@ const KsParams = kohn_sham.KsParams;
 const b631g2dfp = basis_mod.basis631g_2dfp;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
 
