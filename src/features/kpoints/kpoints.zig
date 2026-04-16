@@ -18,6 +18,7 @@ pub fn generateKmesh(
 
 pub fn generateKmeshSymmetry(
     alloc: std.mem.Allocator,
+    io: std.Io,
     kmesh: [3]usize,
     shift: math.Vec3,
     recip: math.Mat3,
@@ -38,14 +39,14 @@ pub fn generateKmeshSymmetry(
 
     if (filtered_ops.len != ops.len) {
         var buffer: [128]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(io, &buffer);
         const out = &writer.interface;
         try out.print("scf: kmesh-compatible symmetry ops {d}/{d}\n", .{ filtered_ops.len, ops.len });
         try out.flush();
     }
 
     var ops_buffer: [128]u8 = undefined;
-    var ops_writer = std.Io.File.stderr().writer(&ops_buffer);
+    var ops_writer = std.Io.File.stderr().writer(io, &ops_buffer);
     const ops_out = &ops_writer.interface;
     try ops_out.print("scf: symmetry ops {d}\n", .{ops.len});
     try ops_out.flush();
@@ -63,7 +64,7 @@ pub fn generateKmeshSymmetry(
     );
     if (!verified) {
         var buffer: [192]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(io, &buffer);
         const out = &writer.interface;
         try out.writeAll("scf: kpoint reduction failed verification; using full mesh\n");
         try out.flush();
@@ -73,7 +74,7 @@ pub fn generateKmeshSymmetry(
 
     if (reduced.len < full.len) {
         var buffer: [128]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(io, &buffer);
         const out = &writer.interface;
         try out.print("scf: kpoints reduced {d} -> {d}\n", .{ full.len, reduced.len });
         try out.flush();
@@ -94,7 +95,7 @@ test "abinit kmesh reduction for aluminum fcc" {
     const recip = math.reciprocal(cell_bohr);
     const atoms = [_]hamiltonian.AtomData{.{ .position = .{ .x = 0.0, .y = 0.0, .z = 0.0 }, .species_index = 0 }};
     const shift = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-    const kpoints = try generateKmeshSymmetry(alloc, .{ 6, 6, 6 }, shift, recip, cell_bohr, atoms[0..], true);
+    const kpoints = try generateKmeshSymmetry(alloc, std.testing.io, .{ 6, 6, 6 }, shift, recip, cell_bohr, atoms[0..], true);
     defer alloc.free(kpoints);
     try std.testing.expectEqual(@as(usize, 16), kpoints.len);
     var weight_sum: f64 = 0.0;

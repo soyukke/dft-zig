@@ -403,7 +403,7 @@ pub fn computeDensitySmearing(
     }
 
     if (cfg.scf.profile and !cfg.scf.quiet) {
-        try logProfile(profile_total, kpoints.len);
+        try logProfile(params.io, profile_total, kpoints.len);
     }
 
     // Use correct allocator based on whether parallel path was used

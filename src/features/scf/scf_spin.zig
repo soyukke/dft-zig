@@ -257,7 +257,7 @@ pub fn runSpinPolarizedLoop(
 
     while (iterations < cfg.scf.max_iter) : (iterations += 1) {
         if (!cfg.scf.quiet) {
-            try logIterStart(iterations);
+            try logIterStart(params.io, iterations);
         }
 
         // PAW: reset rhoij before accumulation
@@ -504,7 +504,7 @@ pub fn runSpinPolarizedLoop(
 
         try common.log.writeIter(iterations, diff, last_potential_residual, last_band_energy, last_nonlocal_energy);
         if (!cfg.scf.quiet) {
-            try logProgress(iterations, diff, last_potential_residual, last_band_energy, last_nonlocal_energy);
+            try logProgress(params.io, iterations, diff, last_potential_residual, last_band_energy, last_nonlocal_energy);
         }
 
         if (conv_value < cfg.scf.convergence) {

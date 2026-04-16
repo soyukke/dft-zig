@@ -84,12 +84,12 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
     if (cfg.relax.enabled) {
         const relax_start_ns = nowNs(io);
         try logStep(io, "step: structure relaxation start");
-        relax_result = try relax.run(alloc, cfg, species, atom_data, cell_bohr, recip, volume_bohr);
+        relax_result = try relax.run(alloc, io, cfg, species, atom_data, cell_bohr, recip, volume_bohr);
 
         // Write relaxation output files
         const bohr_to_ang = 0.529177; // 1 Bohr = 0.529177 Angstrom
-        try relax.writeOutput(alloc, out_dir, &relax_result.?, species, bohr_to_ang);
-        try relax.writeTrajectoryXyz(out_dir, &relax_result.?, species, cell_bohr, bohr_to_ang);
+        try relax.writeOutput(alloc, io, out_dir, &relax_result.?, species, bohr_to_ang);
+        try relax.writeTrajectoryXyz(io, out_dir, &relax_result.?, species, cell_bohr, bohr_to_ang);
 
         // Update atom_data with relaxed positions
         if (relax_result.?.converged) {
@@ -124,6 +124,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         }
         const result = try scf.run(.{
             .alloc = alloc,
+            .io = io,
             .cfg = cfg,
             .species = species,
             .atoms = atom_data,

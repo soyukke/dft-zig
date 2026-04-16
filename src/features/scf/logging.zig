@@ -10,9 +10,9 @@ pub const ScfLoopProfile = struct {
     build_fft_map_ns: *u64,
 };
 
-pub fn logProgress(iter: usize, diff: f64, vresid: f64, band_energy: f64, nonlocal_energy: f64) !void {
+pub fn logProgress(io: std.Io, iter: usize, diff: f64, vresid: f64, band_energy: f64, nonlocal_energy: f64) !void {
     var buffer: [512]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     try out.print(
         "scf iter={d} diff={d:.6} vresid={d:.6} band={d:.6} nonlocal={d:.6}\n",
@@ -21,19 +21,19 @@ pub fn logProgress(iter: usize, diff: f64, vresid: f64, band_energy: f64, nonloc
     try out.flush();
 }
 
-pub fn logIterStart(iter: usize) !void {
+pub fn logIterStart(io: std.Io, iter: usize) !void {
     var buffer: [128]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     try out.print("scf iter={d} start\n", .{iter});
     try out.flush();
 }
 
-pub fn logKpoint(index: usize, total: usize) !void {
+pub fn logKpoint(io: std.Io, index: usize, total: usize) !void {
     if (total == 0) return;
     if (index % 10 != 0 and index + 1 != total) return;
     var buffer: [128]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     try out.print("scf kpoint {d}/{d}\n", .{ index + 1, total });
     try out.flush();
@@ -41,22 +41,24 @@ pub fn logKpoint(index: usize, total: usize) !void {
 
 pub const ScfLog = struct {
     file: std.Io.File,
+    io: std.Io,
 
-    pub fn init(alloc: std.mem.Allocator, out_dir: []const u8) !ScfLog {
-        try std.fs.cwd().makePath(out_dir);
+    pub fn init(alloc: std.mem.Allocator, io: std.Io, out_dir: []const u8) !ScfLog {
+        const cwd = std.Io.Dir.cwd();
+        try cwd.createDirPath(io, out_dir);
         const log_path = try std.fs.path.join(alloc, &.{ out_dir, "scf.log" });
         defer alloc.free(log_path);
-        const file = try std.fs.cwd().createFile(log_path, .{ .truncate = true });
-        return .{ .file = file };
+        const file = try cwd.createFile(io, log_path, .{ .truncate = true });
+        return .{ .file = file, .io = io };
     }
 
     pub fn deinit(self: *ScfLog) void {
-        self.file.close();
+        self.file.close(self.io);
     }
 
     pub fn writeHeader(self: *ScfLog) !void {
         var buffer: [4096]u8 = undefined;
-        var writer = self.file.writer(&buffer);
+        var writer = self.file.writer(self.io, &buffer);
         const out = &writer.interface;
         try out.writeAll("iter,diff,vresid,band_energy,nonlocal_energy\n");
         try out.flush();
@@ -71,7 +73,7 @@ pub const ScfLog = struct {
         nonlocal_energy: f64,
     ) !void {
         var buffer: [4096]u8 = undefined;
-        var writer = self.file.writer(&buffer);
+        var writer = self.file.writer(self.io, &buffer);
         const out = &writer.interface;
         try out.print(
             "{d},{d:.10},{d:.10},{d:.10},{d:.10}\n",
@@ -92,7 +94,7 @@ pub const ScfLog = struct {
         psp_core: f64,
     ) !void {
         var buffer: [4096]u8 = undefined;
-        var writer = self.file.writer(&buffer);
+        var writer = self.file.writer(self.io, &buffer);
         const out = &writer.interface;
         try out.print("# converged={s} iterations={d}\n", .{ if (converged) "true" else "false", iterations });
         try out.print(
@@ -122,20 +124,18 @@ pub const ScfProfile = struct {
     local_gather_ns: u64 = 0,
 };
 
-pub fn profileStart() ?std.time.Instant {
-    return std.time.Instant.now() catch null;
+pub fn profileStart(io: std.Io) std.Io.Clock.Timestamp {
+    return std.Io.Clock.Timestamp.now(io, .awake);
 }
 
-pub fn profileAdd(accum: *u64, start: ?std.time.Instant) void {
-    if (start) |t0| {
-        const t1 = std.time.Instant.now() catch return;
-        accum.* += t1.since(t0);
-    }
+pub fn profileAdd(io: std.Io, accum: *u64, start: std.Io.Clock.Timestamp) void {
+    const ns: u64 = @intCast(start.untilNow(io).raw.nanoseconds);
+    accum.* += ns;
 }
 
-pub fn logProfile(profile: ScfProfile, kpoints: usize) !void {
+pub fn logProfile(io: std.Io, profile: ScfProfile, kpoints: usize) !void {
     var buffer: [512]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     const to_ms = 1.0 / @as(f64, @floatFromInt(std.time.ns_per_ms));
     try out.print(
@@ -182,6 +182,7 @@ pub fn mergeProfile(dest: *ScfProfile, src: ScfProfile) void {
 
 pub fn logNonlocalDiagnostics(
     alloc: std.mem.Allocator,
+    io: std.Io,
     gvecs: []plane_wave.GVector,
     species: []hamiltonian.SpeciesEntry,
     atoms: []hamiltonian.AtomData,
@@ -207,7 +208,7 @@ pub fn logNonlocalDiagnostics(
     }
 
     var buffer: [512]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     try out.print(
         "scf: nonlocal diag g_count={d} g_min={d:.6} g_max={d:.6}\n",
@@ -314,6 +315,7 @@ pub fn logNonlocalDiagnostics(
 }
 
 pub fn logLocalDiagnostics(
+    io: std.Io,
     gvecs: []plane_wave.GVector,
     species: []hamiltonian.SpeciesEntry,
     atoms: []hamiltonian.AtomData,
@@ -335,7 +337,7 @@ pub fn logLocalDiagnostics(
     if (g_min_nonzero == std.math.inf(f64)) g_min_nonzero = 0.0;
 
     var buffer: [512]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     try out.print(
         "scf: local diag g_count={d} g_min={d:.6} g_min_nz={d:.6} g_max={d:.6}\n",

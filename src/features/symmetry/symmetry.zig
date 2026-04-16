@@ -108,6 +108,7 @@ pub fn generateKmesh(
 /// Generate Monkhorst-Pack k-mesh with symmetry reduction.
 pub fn generateKmeshSymmetry(
     alloc: std.mem.Allocator,
+    io: std.Io,
     kmesh: [3]usize,
     recip: math.Mat3,
     cell: math.Mat3,
@@ -116,6 +117,7 @@ pub fn generateKmeshSymmetry(
 ) ![]KPoint {
     return kpoints_mod.generateKmeshSymmetry(
         alloc,
+        io,
         kmesh,
         .{ .x = 0.5, .y = 0.5, .z = 0.5 },
         recip,

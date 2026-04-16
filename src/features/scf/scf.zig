@@ -321,6 +321,7 @@ pub fn symmetrizeDensity(
 /// Parameters for SCF calculation.
 pub const ScfParams = struct {
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config.Config,
     species: []hamiltonian.SpeciesEntry,
     atoms: []hamiltonian.AtomData,
@@ -408,7 +409,7 @@ fn initScfCommon(params: ScfParams) !ScfCommon {
     var ionic = try potential_mod.buildIonicPotentialGrid(alloc, grid, species, atoms, ff_tables, ecutrho);
     errdefer ionic.deinit(alloc);
 
-    var log = try ScfLog.init(alloc, cfg.out_dir);
+    var log = try ScfLog.init(alloc, params.io, cfg.out_dir);
     errdefer log.deinit();
     try log.writeHeader();
 
@@ -424,6 +425,7 @@ fn initScfCommon(params: ScfParams) !ScfCommon {
     } else if (cfg.scf.symmetry)
         try kmesh_mod.generateKmeshSymmetry(
             alloc,
+            params.io,
             cfg.scf.kmesh,
             .{ .x = cfg.scf.kmesh_shift[0], .y = cfg.scf.kmesh_shift[1], .z = cfg.scf.kmesh_shift[2] },
             recip,
@@ -694,9 +696,9 @@ pub fn run(params: ScfParams) !ScfResult {
 
     while (iterations < cfg.scf.max_iter) : (iterations += 1) {
         if (!cfg.scf.quiet) {
-            try logIterStart(iterations);
+            try logIterStart(params.io, iterations);
         }
-        const t_density_start = if (cfg.scf.profile) profileStart() else null;
+        const t_density_start = if (cfg.scf.profile) profileStart(params.io) else null;
         const density_result = try computeDensity(
             alloc,
             cfg,
@@ -719,7 +721,7 @@ pub fn run(params: ScfParams) !ScfResult {
             common.paw_tabs,
             if (common.paw_rhoij) |*rij| rij else null,
         );
-        if (cfg.scf.profile) profileAdd(&prof_compute_density_ns, t_density_start);
+        if (cfg.scf.profile) profileAdd(params.io, &prof_compute_density_ns, t_density_start);
         defer alloc.free(density_result.rho);
         last_band_energy = density_result.band_energy;
         last_nonlocal_energy = density_result.nonlocal_energy;
@@ -771,14 +773,14 @@ pub fn run(params: ScfParams) !ScfResult {
         if (vxc_r) |old| alloc.free(old);
         vxc_r = null;
         const vxc_r_ptr: ?*?[]f64 = if (cfg.relax.enabled) &vxc_r else null;
-        const t_build_pot_start = if (cfg.scf.profile) profileStart() else null;
+        const t_build_pot_start = if (cfg.scf.profile) profileStart(params.io) else null;
         var potential_out = try potential_mod.buildPotentialGrid(alloc, grid, rho_for_potential, common.rho_core, cfg.scf.use_rfft, cfg.scf.xc, vxc_r_ptr, common.coulomb_r_cut, paw_ecutrho);
-        if (cfg.scf.profile) profileAdd(&prof_build_potential_ns, t_build_pot_start);
+        if (cfg.scf.profile) profileAdd(params.io, &prof_build_potential_ns, t_build_pot_start);
         var keep_potential_out = false;
         defer if (!keep_potential_out) potential_out.deinit(alloc);
 
         {
-            const t_resid_start = if (cfg.scf.profile) profileStart() else null;
+            const t_resid_start = if (cfg.scf.profile) profileStart(params.io) else null;
             const nvals = potential.values.len;
             var residual_values = try alloc.alloc(math.Complex, nvals);
             errdefer alloc.free(residual_values);
@@ -804,7 +806,7 @@ pub fn run(params: ScfParams) !ScfResult {
                 .min_l = grid.min_l,
                 .values = residual_values,
             };
-            if (cfg.scf.profile) profileAdd(&prof_residual_ns, t_resid_start);
+            if (cfg.scf.profile) profileAdd(params.io, &prof_residual_ns, t_resid_start);
         }
 
         const diff = densityDiff(rho, density_result.rho);
@@ -814,7 +816,7 @@ pub fn run(params: ScfParams) !ScfResult {
         };
         try common.log.writeIter(iterations, diff, last_potential_residual, last_band_energy, last_nonlocal_energy);
         if (!cfg.scf.quiet) {
-            try logProgress(iterations, diff, last_potential_residual, last_band_energy, last_nonlocal_energy);
+            try logProgress(params.io, iterations, diff, last_potential_residual, last_band_energy, last_nonlocal_energy);
         }
 
         if (conv_value < cfg.scf.convergence) {
@@ -826,7 +828,7 @@ pub fn run(params: ScfParams) !ScfResult {
             break;
         }
 
-        const t_mix_start = if (cfg.scf.profile) profileStart() else null;
+        const t_mix_start = if (cfg.scf.profile) profileStart(params.io) else null;
         if (cfg.scf.mixing_mode == .potential) {
             // Potential mixing: mix V_in and V_out directly (like ABINIT iscf=7)
             const n_complex = potential.values.len;
@@ -877,7 +879,7 @@ pub fn run(params: ScfParams) !ScfResult {
             potential.deinit(alloc);
             potential = try potential_mod.buildPotentialGrid(alloc, grid, rho, common.rho_core, cfg.scf.use_rfft, cfg.scf.xc, null, common.coulomb_r_cut, paw_ecutrho);
         }
-        if (cfg.scf.profile) profileAdd(&prof_mixing_ns, t_mix_start);
+        if (cfg.scf.profile) profileAdd(params.io, &prof_mixing_ns, t_mix_start);
 
         // PAW: update D_ij from the current mixed potential
         if (common.is_paw) {
@@ -1428,17 +1430,17 @@ fn computeDensity(
 
     var local_r: ?[]f64 = null;
     if (use_iterative_config) {
-        const t_lr = if (loop_profile != null) profileStart() else null;
+        const t_lr = if (loop_profile != null) profileStart(params.io) else null;
         local_r = try potential_mod.buildLocalPotentialReal(alloc, grid, ionic, potential);
-        if (loop_profile) |lp| profileAdd(lp.build_local_r_ns, t_lr);
+        if (loop_profile) |lp| profileAdd(params.io, lp.build_local_r_ns, t_lr);
     }
     defer if (local_r) |values| alloc.free(values);
 
     const nonlocal_enabled = cfg.scf.enable_nonlocal and hasNonlocal(species);
     // FFT index map is always available now (Bluestein supports arbitrary sizes)
-    const t_fm = if (loop_profile != null) profileStart() else null;
+    const t_fm = if (loop_profile != null) profileStart(params.io) else null;
     const fft_index_map = try buildFftIndexMap(alloc, grid);
-    if (loop_profile) |lp| profileAdd(lp.build_fft_map_ns, t_fm);
+    if (loop_profile) |lp| profileAdd(params.io, lp.build_fft_map_ns, t_fm);
     defer alloc.free(fft_index_map);
 
     var iter_max_iter = cfg.scf.iterative_max_iter;
@@ -1579,7 +1581,7 @@ fn computeDensity(
             );
         }
         if (cfg.scf.profile and !cfg.scf.quiet) {
-            try logProfile(profile_total, kpoints.len);
+            try logProfile(params.io, profile_total, kpoints.len);
         }
         return DensityResult{
             .rho = rho,
@@ -1699,7 +1701,7 @@ fn computeDensity(
 
     if (cfg.scf.profile) {
         if (!cfg.scf.quiet) {
-            try logProfile(profile_total, kpoints.len);
+            try logProfile(params.io, profile_total, kpoints.len);
         }
     }
     return DensityResult{
