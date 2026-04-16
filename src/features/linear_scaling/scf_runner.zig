@@ -36,7 +36,7 @@ pub const ScfRunOptions = struct {
     nonlocal_basis: local_orbital.BasisType = .s_only,
 };
 
-pub fn loadPseudos(alloc: std.mem.Allocator, specs: []const pseudo.Spec) ![]pseudo.Parsed {
+pub fn loadPseudos(alloc: std.mem.Allocator, io: std.Io, specs: []const pseudo.Spec) ![]pseudo.Parsed {
     var list: std.ArrayList(pseudo.Parsed) = .empty;
     errdefer {
         for (list.items) |*item| {
@@ -45,7 +45,7 @@ pub fn loadPseudos(alloc: std.mem.Allocator, specs: []const pseudo.Spec) ![]pseu
         list.deinit(alloc);
     }
     for (specs) |spec| {
-        const parsed = try pseudo.load(alloc, spec);
+        const parsed = try pseudo.load(alloc, io, spec);
         try list.append(alloc, parsed);
     }
     return try list.toOwnedSlice(alloc);
@@ -129,15 +129,16 @@ pub fn runScfFromAtoms(
 
 pub fn runScfFromXyz(
     alloc: std.mem.Allocator,
+    io: std.Io,
     xyz_path: []const u8,
     specs: []const pseudo.Spec,
     cell: math.Mat3,
     pbc: neighbor_list.Pbc,
     opts: ScfRunOptions,
 ) !local_orbital_scf.ScfGridResult {
-    var atom_list = try xyz.load(alloc, xyz_path);
+    var atom_list = try xyz.load(alloc, io, xyz_path);
     defer atom_list.deinit(alloc);
-    const pseudos = try loadPseudos(alloc, specs);
+    const pseudos = try loadPseudos(alloc, io, specs);
     defer deinitPseudos(alloc, pseudos);
     return runScfFromAtoms(alloc, atom_list.items, pseudos, cell, pbc, opts);
 }

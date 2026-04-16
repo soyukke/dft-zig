@@ -15,25 +15,37 @@ const pseudo = @import("../pseudopotential/pseudopotential.zig");
 const relax = @import("../relax/relax.zig");
 const xyz = @import("../structure/xyz.zig");
 
-fn logStep(msg: []const u8) !void {
+fn logStep(io: std.Io, msg: []const u8) !void {
     var buffer: [256]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     try out.print("{s}\n", .{msg});
     try out.flush();
 }
 
+fn nowNs(io: std.Io) u64 {
+    const ts = std.Io.Clock.Timestamp.now(io, .awake);
+    return @intCast(ts.raw.nanoseconds);
+}
+
+fn elapsedNs(io: std.Io, start_ns: u64) u64 {
+    const now = nowNs(io);
+    if (now <= start_ns) return 0;
+    return now - start_ns;
+}
+
 /// Run the current DFT workflow.
-pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !void {
-    const total_start = std.time.Instant.now() catch null;
+pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xyz.Atom) !void {
+    const total_start_ns = nowNs(io);
     var timing = output.Timing{};
     timing.cpu_start_us = output.Timing.getCpuTimeUs();
 
-    try std.fs.cwd().makePath(cfg.out_dir);
-    var out_dir = try std.fs.cwd().openDir(cfg.out_dir, .{});
-    defer out_dir.close();
+    const cwd = std.Io.Dir.cwd();
+    try cwd.createDirPath(io, cfg.out_dir);
+    var out_dir = try cwd.openDir(io, cfg.out_dir, .{});
+    defer out_dir.close(io);
 
-    const setup_start = std.time.Instant.now() catch null;
+    const setup_start_ns = nowNs(io);
 
     const unit_scale_ang = math.unitsScaleToAngstrom(cfg.units);
     const unit_scale_bohr = math.unitsScaleToBohr(cfg.units);
@@ -42,7 +54,7 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
     const recip = math.reciprocal(cell_bohr);
     const volume_bohr = @abs(math.Vec3.dot(cell_bohr.row(0), math.Vec3.cross(cell_bohr.row(1), cell_bohr.row(2))));
 
-    try logStep("step: generate k-path");
+    try logStep(io, "step: generate k-path");
     // Resolve path_string ("auto" or "G-X-W-K-G-L") to BandPathPoint array
     var resolved_band = cfg.band;
     var auto_path_result: ?kpath.auto_kpath.AutoKPathResult = null;
@@ -54,28 +66,24 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
     var kpoints = try kpath.generate(alloc, resolved_band, recip);
     defer kpoints.deinit(alloc);
 
-    try logStep("step: load pseudopotentials");
-    const pseudo_data = try loadPseudopotentials(alloc, cfg.pseudopotentials);
+    try logStep(io, "step: load pseudopotentials");
+    const pseudo_data = try loadPseudopotentials(alloc, io, cfg.pseudopotentials);
     defer deinitPseudopotentials(alloc, pseudo_data);
-    try logStep("step: build species/atom data");
+    try logStep(io, "step: build species/atom data");
     const species = try hamiltonian.buildSpeciesEntries(alloc, pseudo_data);
     defer hamiltonian.deinitSpeciesEntries(alloc, species);
     var atom_data = try hamiltonian.buildAtomData(alloc, atoms, unit_scale_bohr, species);
     defer alloc.free(atom_data);
 
-    if (setup_start) |t0| {
-        if (std.time.Instant.now() catch null) |t1| {
-            timing.setup_ns = t1.since(t0);
-        }
-    }
+    timing.setup_ns = elapsedNs(io, setup_start_ns);
 
     // Structure relaxation
     var relax_result: ?relax.RelaxResult = null;
     defer if (relax_result) |*result| result.deinit(alloc);
 
     if (cfg.relax.enabled) {
-        const relax_start = std.time.Instant.now() catch null;
-        try logStep("step: structure relaxation start");
+        const relax_start_ns = nowNs(io);
+        try logStep(io, "step: structure relaxation start");
         relax_result = try relax.run(alloc, cfg, species, atom_data, cell_bohr, recip, volume_bohr);
 
         // Write relaxation output files
@@ -90,12 +98,8 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
             relax_result.?.final_atoms = &[_]hamiltonian.AtomData{}; // Transfer ownership
         }
 
-        try logStep("step: structure relaxation done");
-        if (relax_start) |t0| {
-            if (std.time.Instant.now() catch null) |t1| {
-                timing.relax_ns = t1.since(t0);
-            }
-        }
+        try logStep(io, "step: structure relaxation done");
+        timing.relax_ns = elapsedNs(io, relax_start_ns);
     }
 
     var scf_result: ?scf.ScfResult = null;
@@ -106,8 +110,8 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
     const needs_reference = cfg.scf.reference_json != null or cfg.scf.compare_reference_json != null;
 
     if (cfg.scf.enabled and !(have_relax_potential and !needs_reference)) {
-        const scf_start = std.time.Instant.now() catch null;
-        try logStep("step: scf start");
+        const scf_start_ns = nowNs(io);
+        try logStep(io, "step: scf start");
         // Use caches from relax if available
         // density and kpoint_cache are borrowed (scf.run copies internally)
         // apply_caches ownership is transferred to scf.run
@@ -130,22 +134,18 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
             .initial_apply_caches = init_apply_caches,
         });
         scf_result = result;
-        try logStep("step: scf done");
-        if (scf_start) |t0| {
-            if (std.time.Instant.now() catch null) |t1| {
-                timing.scf_ns = t1.since(t0);
-            }
-        }
+        try logStep(io, "step: scf done");
+        timing.scf_ns = elapsedNs(io, scf_start_ns);
     }
 
     // Stress tensor computation
     if (cfg.scf.compute_stress) {
         if (scf_result) |*result| {
-            try logStep("step: stress tensor start");
+            try logStep(io, "step: stress tensor start");
             const stress = @import("../stress/stress.zig");
             const stress_terms = try stress.computeStressFromScf(alloc, result, cfg, species, atom_data);
             _ = stress_terms;
-            try logStep("step: stress tensor done");
+            try logStep(io, "step: stress tensor done");
         }
     }
 
@@ -153,7 +153,7 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
     if (cfg.dos.enabled) {
         if (scf_result) |*result| {
             if (result.wavefunctions) |wf_data| {
-                try logStep("step: dos start");
+                try logStep(io, "step: dos start");
                 var dos_result = try dos.computeDos(
                     alloc,
                     wf_data,
@@ -173,11 +173,11 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
                 } else {
                     try dos.writeDosCSV(out_dir, dos_result, dos_fermi);
                 }
-                try logStep("step: dos done");
+                try logStep(io, "step: dos done");
 
                 // PDOS computation
                 if (cfg.dos.pdos) {
-                    try logStep("step: pdos start");
+                    try logStep(io, "step: pdos start");
                     var pdos_result = try pdos_mod.computePdos(
                         alloc,
                         wf_data,
@@ -193,7 +193,7 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
                     );
                     defer pdos_result.deinit(alloc);
                     try pdos_mod.writePdosCSV(out_dir, pdos_result, dos_fermi);
-                    try logStep("step: pdos done");
+                    try logStep(io, "step: pdos done");
                 }
             }
         }
@@ -202,7 +202,7 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
     // Cube output
     if (cfg.output.cube) {
         if (scf_result) |*result| {
-            try logStep("step: cube output start");
+            try logStep(io, "step: cube output start");
             try cube.writeCubeFile(
                 out_dir,
                 "density.cube",
@@ -212,7 +212,7 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
                 atom_data,
                 species,
             );
-            try logStep("step: cube output done");
+            try logStep(io, "step: cube output done");
         }
     }
 
@@ -225,7 +225,7 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
             try linear_scaling.writeReferenceFromScfResult(out_dir, path, result);
         }
         if (cfg.scf.compare_reference_json) |ref_path| {
-            var reference = try linear_scaling.readReferenceJson(alloc, std.fs.cwd(), ref_path);
+            var reference = try linear_scaling.readReferenceJson(alloc, io, std.Io.Dir.cwd(), ref_path);
             defer reference.deinit(alloc);
             const report = try linear_scaling.compareReferenceToScfResult(&reference, result);
             if (cfg.scf.comparison_json) |out_path| {
@@ -234,7 +234,7 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
                 return error.MissingComparisonOutput;
             }
             if (cfg.scf.compare_tolerance_json) |tol_path| {
-                const tol_content = try std.fs.cwd().readFileAlloc(alloc, tol_path, 1024 * 1024);
+                const tol_content = try cwd.readFileAlloc(io, tol_path, alloc, .limited(1024 * 1024));
                 defer alloc.free(tol_content);
                 var parsed_tol = try std.json.parseFromSlice(linear_scaling.ScfTolerance, alloc, tol_content, .{});
                 defer parsed_tol.deinit();
@@ -253,7 +253,7 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
         if (scf_result) |*result| {
             const dfpt_mod = @import("../dfpt/dfpt.zig");
             if (cfg.dfpt.qpath_npoints > 0) {
-                try logStep("step: dfpt phonon band start");
+                try logStep(io, "step: dfpt phonon band start");
                 var band_result = if (cfg.dfpt.qgrid != null)
                     try dfpt_mod.runPhononBandIFC(
                         alloc,
@@ -281,10 +281,10 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
 
                 // Write phonon band CSV
                 {
-                    const csv_file = try out_dir.createFile("phonon_band.csv", .{});
-                    defer csv_file.close();
+                    const csv_file = try out_dir.createFile(io, "phonon_band.csv", .{});
+                    defer csv_file.close(io);
                     var csv_buf: [256]u8 = undefined;
-                    var csv_writer = csv_file.writer(&csv_buf);
+                    var csv_writer = csv_file.writer(io, &csv_buf);
                     const csv = &csv_writer.interface;
                     // Header
                     try csv.print("distance", .{});
@@ -302,16 +302,16 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
                     }
                     try csv.flush();
                 }
-                try logStep("step: dfpt phonon band done");
+                try logStep(io, "step: dfpt phonon band done");
             } else {
-                try logStep("step: dfpt phonon start");
+                try logStep(io, "step: dfpt phonon start");
                 var phonon = try dfpt_mod.runPhonon(alloc, cfg, result, species, atom_data, cell_bohr, recip, volume_bohr);
                 defer phonon.deinit(alloc);
-                try logStep("step: dfpt phonon done");
+                try logStep(io, "step: dfpt phonon done");
                 // Print frequencies
                 {
                     var buffer: [256]u8 = undefined;
-                    var writer = std.Io.File.stderr().writer(&buffer);
+                    var writer = std.Io.File.stderr().writer(io, &buffer);
                     const out = &writer.interface;
                     try out.print("phonon frequencies (cm⁻¹):\n", .{});
                     for (phonon.frequencies_cm1) |f| {
@@ -339,39 +339,31 @@ pub fn run(alloc: std.mem.Allocator, cfg: config.Config, atoms: []xyz.Atom) !voi
         break :blk null;
     };
 
-    try logStep("step: write outputs");
-    try output.writeRunInfo(out_dir, cfg, atoms, cell_ang);
-    try output.writeAtoms(out_dir, atoms, unit_scale_ang);
-    try output.writeKpoints(out_dir, kpoints);
-    try output.writePseudopotentials(out_dir, pseudo_data);
+    try logStep(io, "step: write outputs");
+    try output.writeRunInfo(io, out_dir, cfg, atoms, cell_ang);
+    try output.writeAtoms(io, out_dir, atoms, unit_scale_ang);
+    try output.writeKpoints(io, out_dir, kpoints);
+    try output.writePseudopotentials(io, out_dir, pseudo_data);
 
     if (kpoints.points.len > 0) {
-        const band_start = std.time.Instant.now() catch null;
-        try logStep("step: band energies");
+        const band_start_ns = nowNs(io);
+        try logStep(io, "step: band energies");
         const band_paw_tabs: ?[]const paw_mod.PawTab = if (scf_result) |r| r.paw_tabs else null;
         const band_paw_dij: ?[]const []const f64 = if (scf_result) |r| r.paw_dij else null;
         try band.writeBandEnergies(alloc, out_dir, cfg, kpoints, species, atom_data, cell_bohr, recip, volume_bohr, extra_potential, extra_potential_down, band_paw_tabs, band_paw_dij);
-        if (band_start) |t0| {
-            if (std.time.Instant.now() catch null) |t1| {
-                timing.band_ns = t1.since(t0);
-            }
-        }
+        timing.band_ns = elapsedNs(io, band_start_ns);
     }
 
-    if (total_start) |t0| {
-        if (std.time.Instant.now() catch null) |t1| {
-            timing.total_ns = t1.since(t0);
-        }
-    }
+    timing.total_ns = elapsedNs(io, total_start_ns);
     timing.cpu_end_us = output.Timing.getCpuTimeUs();
 
-    try output.writeStatus(out_dir, cfg, scf_result);
-    try output.writeTiming(out_dir, timing, kpoints.points.len);
-    try logStep("step: done");
+    try output.writeStatus(io, out_dir, cfg, scf_result);
+    try output.writeTiming(io, out_dir, timing, kpoints.points.len);
+    try logStep(io, "step: done");
 }
 
 /// Load pseudopotentials from config list.
-fn loadPseudopotentials(alloc: std.mem.Allocator, specs: []pseudo.Spec) ![]pseudo.Parsed {
+fn loadPseudopotentials(alloc: std.mem.Allocator, io: std.Io, specs: []pseudo.Spec) ![]pseudo.Parsed {
     if (specs.len == 0) {
         return &[_]pseudo.Parsed{};
     }
@@ -383,7 +375,7 @@ fn loadPseudopotentials(alloc: std.mem.Allocator, specs: []pseudo.Spec) ![]pseud
         list.deinit(alloc);
     }
     for (specs) |spec| {
-        try list.append(alloc, try pseudo.load(alloc, spec));
+        try list.append(alloc, try pseudo.load(alloc, io, spec));
     }
     return try list.toOwnedSlice(alloc);
 }

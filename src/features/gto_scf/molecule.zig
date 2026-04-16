@@ -245,13 +245,12 @@ fn skipEmpty(iter: *std.mem.SplitIterator(u8, .scalar)) ?[]const u8 {
 /// The `charge` parameter specifies the molecular charge (0 for neutral).
 pub fn loadXyzFile(
     alloc: std.mem.Allocator,
+    io: std.Io,
     path: []const u8,
     basis_set: BasisSet,
     charge: i32,
 ) !Molecule {
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-    const content = try file.readToEndAlloc(alloc, 1024 * 1024); // 1 MB max
+    const content = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .limited(1024 * 1024));
     defer alloc.free(content);
     return parseXyzString(alloc, content, basis_set, charge);
 }

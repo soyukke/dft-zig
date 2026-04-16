@@ -28,7 +28,6 @@ pub fn main(init: std.process.Init) !void {
     _ = args.skip(); // skip program name
     const basis_arg = args.next();
     const use_sp = if (basis_arg) |arg| std.mem.eql(u8, arg, "sp") else false;
-    _ = io; // unused for now
 
     const opts = linear_scaling.ScfRunOptions{
         .units = .angstrom,
@@ -48,6 +47,7 @@ pub fn main(init: std.process.Init) !void {
 
     var result = try linear_scaling.runScfFromXyz(
         alloc,
+        io,
         "examples/silicon.xyz",
         specs[0..],
         cell,
