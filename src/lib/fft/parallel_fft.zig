@@ -16,7 +16,7 @@ const ThreadWorkspace = struct {
     scratch: []Complex,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, nx: usize, ny: usize, nz: usize) !ThreadWorkspace {
+    pub fn init(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !ThreadWorkspace {
         var plan_x = try Plan1d.init(allocator, nx);
         errdefer plan_x.deinit();
 
@@ -99,9 +99,9 @@ const ThreadPoolState = struct {
             .task_generation = 0,
             .barrier_count = std.atomic.Value(usize).init(0),
             .num_threads = num_threads,
-            .mutex = .{},
-            .work_available = .{},
-            .work_done = .{},
+            .mutex = .init,
+            .work_available = .init,
+            .work_done = .init,
         };
     }
 };

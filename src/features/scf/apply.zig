@@ -45,7 +45,7 @@ pub const ApplyWorkspace = struct {
     fft_plan: ?fft.Fft3dPlan,
     alloc: std.mem.Allocator,
 
-    pub fn init(alloc: std.mem.Allocator, grid: Grid, n_gvecs: usize, max_m_total: usize, fft_backend: fft.FftBackend) !ApplyWorkspace {
+    pub fn init(alloc: std.mem.Allocator, io: std.Io, grid: Grid, n_gvecs: usize, max_m_total: usize, fft_backend: fft.FftBackend) !ApplyWorkspace {
         // Create new FFT plan
         const fft_plan: ?fft.Fft3dPlan = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, fft_backend);
         return initWithPlan(alloc, grid, n_gvecs, max_m_total, fft_plan);
@@ -562,7 +562,7 @@ pub fn checkHamiltonianApply(
     }
 
     var buffer: [160]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     const rel = if (max_abs > 0.0) max_diff / max_abs else 0.0;
     try out.print("scf: apply_check max_abs={d:.6} max_diff={d:.6} rel={d:.6}\n", .{ max_abs, max_diff, rel });

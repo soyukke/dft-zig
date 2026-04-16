@@ -144,7 +144,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         if (scf_result) |*result| {
             try logStep(io, "step: stress tensor start");
             const stress = @import("../stress/stress.zig");
-            const stress_terms = try stress.computeStressFromScf(alloc, result, cfg, species, atom_data);
+            const stress_terms = try stress.computeStressFromScf(alloc, io, result, cfg, species, atom_data);
             _ = stress_terms;
             try logStep(io, "step: stress tensor done");
         }
@@ -167,12 +167,12 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                 defer dos_result.deinit(alloc);
                 const dos_fermi = if (std.math.isNan(result.fermi_level)) wf_data.fermi_level else result.fermi_level;
                 if (result.wavefunctions_down) |wf_down| {
-                    try dos.writeDosCSVNamed(out_dir, dos_result, dos_fermi, "dos_up.csv");
+                    try dos.writeDosCSVNamed(io, out_dir, dos_result, dos_fermi, "dos_up.csv");
                     var dos_down = try dos.computeDos(alloc, wf_down, cfg.dos.sigma, cfg.dos.npoints, cfg.dos.emin, cfg.dos.emax, 2);
                     defer dos_down.deinit(alloc);
-                    try dos.writeDosCSVNamed(out_dir, dos_down, dos_fermi, "dos_down.csv");
+                    try dos.writeDosCSVNamed(io, out_dir, dos_down, dos_fermi, "dos_down.csv");
                 } else {
-                    try dos.writeDosCSV(out_dir, dos_result, dos_fermi);
+                    try dos.writeDosCSV(io, out_dir, dos_result, dos_fermi);
                 }
                 try logStep(io, "step: dos done");
 
@@ -193,7 +193,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                         cfg.scf.nspin,
                     );
                     defer pdos_result.deinit(alloc);
-                    try pdos_mod.writePdosCSV(out_dir, pdos_result, dos_fermi);
+                    try pdos_mod.writePdosCSV(io, out_dir, pdos_result, dos_fermi);
                     try logStep(io, "step: pdos done");
                 }
             }
@@ -258,6 +258,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                 var band_result = if (cfg.dfpt.qgrid != null)
                     try dfpt_mod.runPhononBandIFC(
                         alloc,
+                        io,
                         cfg,
                         result,
                         species,
@@ -269,6 +270,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                 else
                     try dfpt_mod.runPhononBand(
                         alloc,
+                        io,
                         cfg,
                         result,
                         species,
@@ -306,7 +308,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                 try logStep(io, "step: dfpt phonon band done");
             } else {
                 try logStep(io, "step: dfpt phonon start");
-                var phonon = try dfpt_mod.runPhonon(alloc, cfg, result, species, atom_data, cell_bohr, recip, volume_bohr);
+                var phonon = try dfpt_mod.runPhonon(alloc, io, cfg, result, species, atom_data, cell_bohr, recip, volume_bohr);
                 defer phonon.deinit(alloc);
                 try logStep(io, "step: dfpt phonon done");
                 // Print frequencies
@@ -351,7 +353,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         try logStep(io, "step: band energies");
         const band_paw_tabs: ?[]const paw_mod.PawTab = if (scf_result) |r| r.paw_tabs else null;
         const band_paw_dij: ?[]const []const f64 = if (scf_result) |r| r.paw_dij else null;
-        try band.writeBandEnergies(alloc, out_dir, cfg, kpoints, species, atom_data, cell_bohr, recip, volume_bohr, extra_potential, extra_potential_down, band_paw_tabs, band_paw_dij);
+        try band.writeBandEnergies(alloc, io, out_dir, cfg, kpoints, species, atom_data, cell_bohr, recip, volume_bohr, extra_potential, extra_potential_down, band_paw_tabs, band_paw_dij);
         timing.band_ns = elapsedNs(io, band_start_ns);
     }
 

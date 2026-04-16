@@ -54,6 +54,7 @@ pub const PhononResult = struct {
 /// Takes converged SCF results and returns phonon frequencies.
 pub fn runPhonon(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config_mod.Config,
     scf_result: *scf_mod.ScfResult,
     species: []hamiltonian.SpeciesEntry,
@@ -69,7 +70,7 @@ pub fn runPhonon(
     logDfpt("dfpt: starting phonon calculation ({d} atoms, dim={d})\n", .{ n_atoms, dim });
 
     // Prepare ground state (PW basis, eigenvalues, wavefunctions, NLCC, etc.)
-    var prepared = try dfpt.prepareGroundState(alloc, cfg, scf_result, species, atoms, volume, recip);
+    var prepared = try dfpt.prepareGroundState(alloc, io, cfg, scf_result, species, atoms, volume, recip);
     defer prepared.deinit();
     const gs = prepared.gs;
 
@@ -305,7 +306,7 @@ pub fn runPhonon(
         const electric = @import("electric.zig");
 
         const dielectric = try electric.computeDielectricAllK(
-            alloc,
+            alloc, io,
             cfg,
             &gs,
             prepared.local_r,

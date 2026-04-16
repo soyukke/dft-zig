@@ -75,9 +75,9 @@ const ThreadPoolState = struct {
             .task_generation = 0,
             .barrier_count = std.atomic.Value(usize).init(0),
             .num_threads = num_threads,
-            .mutex = .{},
-            .work_available = .{},
-            .work_done = .{},
+            .mutex = .init,
+            .work_available = .init,
+            .work_done = .init,
         };
     }
 };

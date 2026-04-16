@@ -33,10 +33,26 @@ const c = if (enable_fftw) @cImport({
 /// FFTW complex type (interleaved double[2])
 const FftwComplex = c.fftw_complex;
 
-/// Global mutex for FFTW planner thread safety.
+/// Global spinlock for FFTW planner thread safety.
 /// FFTW's planner is NOT thread-safe by default, so we must serialize
-/// all plan creation/destruction calls.
-var planner_mutex: @import("../spinlock.zig").SpinLock = .{};
+/// all plan creation/destruction calls. Inlined to avoid cross-module imports.
+const PlannerSpinLock = struct {
+    state: std.atomic.Value(bool) = .init(false),
+    pub fn lock(self: *PlannerSpinLock) void {
+        var spin: u32 = 0;
+        while (self.state.cmpxchgStrong(false, true, .acquire, .monotonic) != null) {
+            spin += 1;
+            if (spin >= 32) {
+                spin = 0;
+                std.Thread.yield() catch std.atomic.spinLoopHint();
+            } else std.atomic.spinLoopHint();
+        }
+    }
+    pub fn unlock(self: *PlannerSpinLock) void {
+        self.state.store(false, .release);
+    }
+};
+var planner_mutex: PlannerSpinLock = .{};
 
 /// FFTW 3D Plan
 pub const FftwPlan3d = struct {

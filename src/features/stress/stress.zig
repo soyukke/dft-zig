@@ -257,6 +257,7 @@ fn indexToFreq(i: usize, n: usize) i32 {
 /// FFT real-space density to G-space (reordered to grid layout).
 fn densityToReciprocal(
     alloc: std.mem.Allocator,
+    io: std.Io,
     grid: Grid,
     density: []const f64,
     fft_backend: config.FftBackend,
@@ -450,6 +451,7 @@ pub fn computeStress(
 /// Builds required form factor and radial tables internally.
 pub fn computeStressFromScf(
     alloc: std.mem.Allocator,
+    io: std.Io,
     scf_result: *const scf.ScfResult,
     cfg: config.Config,
     species: []hamiltonian.SpeciesEntry,
@@ -468,7 +470,7 @@ pub fn computeStressFromScf(
     };
 
     // FFT density to G-space
-    const rho_g = try densityToReciprocal(alloc, grid, scf_result.density, cfg.scf.fft_backend);
+    const rho_g = try densityToReciprocal(alloc, io, grid, scf_result.density, cfg.scf.fft_backend);
     defer alloc.free(rho_g);
 
     // Build form factor tables

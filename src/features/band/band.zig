@@ -14,9 +14,9 @@ const thread_pool = @import("../thread_pool.zig");
 
 const ThreadPool = thread_pool.ThreadPool;
 
-fn logStep(msg: []const u8) !void {
+fn logStep(io: std.Io, msg: []const u8) !void {
     var buffer: [256]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     try out.print("{s}\n", .{msg});
     try out.flush();
@@ -30,17 +30,17 @@ fn bandThreadCount(total: usize, cfg_threads: usize) usize {
     return @min(total, cpu_count);
 }
 
-fn logBandKpoint(idx: usize, total: usize) void {
+fn logBandKpoint(io: std.Io, idx: usize, total: usize) void {
     var buffer: [128]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     out.print("band kpoint {d}/{d}\n", .{ idx + 1, total }) catch {};
     out.flush() catch {};
 }
 
-fn logBandTiming(idx: usize, total: usize, ns: u64) void {
+fn logBandTiming(io: std.Io, idx: usize, total: usize, ns: u64) void {
     var buffer: [128]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     const ms = @as(f64, @floatFromInt(ns)) / 1e6;
     out.print("band_profile kpoint={d}/{d} ms={d:.1}\n", .{ idx + 1, total, ms }) catch {};
@@ -50,6 +50,7 @@ fn logBandTiming(idx: usize, total: usize, ns: u64) void {
 /// Write band energies for k-path.
 pub fn writeBandEnergies(
     alloc: std.mem.Allocator,
+    io: std.Io,
     dir: std.Io.Dir,
     cfg: config.Config,
     path: kpath.KPath,
@@ -65,8 +66,8 @@ pub fn writeBandEnergies(
 ) !void {
     // For nspin=2, compute bands for each spin channel separately
     if (cfg.scf.nspin == 2 and extra != null and extra_down != null) {
-        try writeBandEnergiesForSpin(alloc, dir, cfg, path, species, atoms, cell_bohr, recip, volume_bohr, extra, "band_energies_up.csv", paw_tabs, paw_dij);
-        try writeBandEnergiesForSpin(alloc, dir, cfg, path, species, atoms, cell_bohr, recip, volume_bohr, extra_down, "band_energies_down.csv", paw_tabs, paw_dij);
+        try writeBandEnergiesForSpin(alloc, io, dir, cfg, path, species, atoms, cell_bohr, recip, volume_bohr, extra, "band_energies_up.csv", paw_tabs, paw_dij);
+        try writeBandEnergiesForSpin(alloc, io, dir, cfg, path, species, atoms, cell_bohr, recip, volume_bohr, extra_down, "band_energies_down.csv", paw_tabs, paw_dij);
         return;
     }
     if (cfg.band.nbands == 0) return error.InvalidBandConfig;
@@ -98,11 +99,11 @@ pub fn writeBandEnergies(
     var band_ctx: ?scf.BandIterativeContext = null;
     if (use_iterative) {
         if (extra == null) {
-            try logStep("band: iterative solver disabled (no SCF potential)");
+            try logStep(io, "band: iterative solver disabled (no SCF potential)");
             use_iterative = false;
         } else {
             const ctx_result = scf.initBandIterativeContext(
-                alloc,
+                alloc, io,
                 cfg,
                 species,
                 atoms,
@@ -131,7 +132,7 @@ pub fn writeBandEnergies(
                 }
             } else |err| {
                 if (err == error.InvalidGrid) {
-                    try logStep("band: iterative solver disabled (grid mismatch)");
+                    try logStep(io, "band: iterative solver disabled (grid mismatch)");
                     use_iterative = false;
                 } else {
                     return err;
@@ -197,7 +198,7 @@ pub fn writeBandEnergies(
             if (use_iterative) {
                 if (band_timer) |*t| t.reset();
                 const result = scf.bandEigenvaluesIterativeExt(
-                    alloc,
+                    alloc, io,
                     cfg,
                     &band_ctx.?,
                     kp.k_cart,
@@ -225,7 +226,7 @@ pub fn writeBandEnergies(
                     eigvals_opt = values;
                 } else |err| {
                     if (err == error.InvalidGrid) {
-                        try logStep("band: iterative solver disabled (grid too small), falling back to dense");
+                        try logStep(io, "band: iterative solver disabled (grid too small), falling back to dense");
                         use_iterative = false;
                     } else {
                         return err;
@@ -498,7 +499,7 @@ pub fn writeBandEnergies(
             try logEigenvalues("band", "gamma_dense", eig_dense.values, count);
         } else {
             var buffer: [128]u8 = undefined;
-            var writer = std.Io.File.stderr().writer(&buffer);
+            var writer = std.Io.File.stderr().writer(io, &buffer);
             const out = &writer.interface;
             try out.writeAll("band: eig gamma not found\n");
             try out.flush();
@@ -510,7 +511,7 @@ pub fn writeBandEnergies(
             max_energy = @max(max_energy, value);
         }
         var buffer: [256]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(io, &buffer);
         const out = &writer.interface;
         try out.print(
             "band: eig min={d:.6} max={d:.6} nbands={d} points={d}\n",
@@ -548,6 +549,7 @@ pub fn writeBandEnergies(
 /// Write band energies for a single spin channel.
 fn writeBandEnergiesForSpin(
     alloc: std.mem.Allocator,
+    io: std.Io,
     dir: std.Io.Dir,
     cfg: config.Config,
     path: kpath.KPath,
@@ -581,7 +583,7 @@ fn writeBandEnergiesForSpin(
     var band_ctx: ?scf.BandIterativeContext = null;
     if (extra != null) {
         const ctx_result = scf.initBandIterativeContext(
-            alloc,
+            alloc, io,
             cfg,
             species,
             atoms,
@@ -658,7 +660,7 @@ fn writeBandEnergiesForSpin(
         var eigvals_opt: ?[]f64 = null;
         if (band_ctx != null) {
             const result = scf.bandEigenvaluesIterativeExt(
-                alloc,
+                alloc, io,
                 cfg,
                 &band_ctx.?,
                 kp.k_cart,
@@ -721,10 +723,10 @@ fn writeBandEnergiesForSpin(
     try out.flush();
 }
 
-fn logEigenvalues(prefix: []const u8, label: []const u8, values: []const f64, count: usize) !void {
+fn logEigenvalues(io: std.Io, prefix: []const u8, label: []const u8, values: []const f64, count: usize) !void {
     const limit = @min(count, 8);
     var buffer: [512]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     try out.print("{s}: eig {s} nbands={d}", .{ prefix, label, count });
     var i: usize = 0;

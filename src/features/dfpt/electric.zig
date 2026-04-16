@@ -39,6 +39,7 @@ pub const DielectricResult = struct {
 /// then self-consistently solving the efield Sternheimer with V^(1)_Hxc.
 pub fn computeDielectricAllK(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config_mod.Config,
     gs: *const GroundState,
     local_r: []const f64,
@@ -52,7 +53,7 @@ pub fn computeDielectricAllK(
     const total = grid.count();
     const dfpt_cfg = DfptConfig.fromConfig(cfg);
 
-    const kgs = try phonon_q.prepareFullBZKpointsFromIBZ(alloc, cfg, gs, local_r, species, atoms, cell_bohr, recip, volume, grid);
+    const kgs = try phonon_q.prepareFullBZKpointsFromIBZ(alloc, io, cfg, gs, local_r, species, atoms, cell_bohr, recip, volume, grid);
     defer {
         for (@constCast(kgs)) |*k| k.deinit(alloc);
         alloc.free(kgs);

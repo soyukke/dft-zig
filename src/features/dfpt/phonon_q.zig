@@ -77,6 +77,7 @@ pub const KPointGsData = struct {
 /// This is equivalent to ABINIT's kptopt=3 for DFPT calculations.
 pub fn prepareFullBZKpoints(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config_mod.Config,
     gs: *const GroundState,
     local_r: []const f64,
@@ -213,6 +214,7 @@ pub fn prepareFullBZKpoints(
 /// for cubic systems and reduces computation by the symmetry factor.
 pub fn prepareFullBZKpointsFromIBZ(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config_mod.Config,
     gs: *const GroundState,
     local_r: []const f64,
@@ -550,6 +552,7 @@ const IbzKData = struct {
 /// Only the k+q data (basis_kq, occ_kq, etc.) is newly allocated per q-point.
 fn buildKPointDfptDataFromGS(
     alloc: std.mem.Allocator,
+    io: std.Io,
     kgs: []const KPointGsData,
     q_cart: math.Vec3,
     q_norm: f64,
@@ -2817,6 +2820,7 @@ pub const PhononBandResult = struct {
 /// Computes phonon frequencies along a q-path for the FCC lattice.
 pub fn runPhononBand(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config_mod.Config,
     scf_result: *scf_mod.ScfResult,
     species: []hamiltonian.SpeciesEntry,
@@ -2833,7 +2837,7 @@ pub fn runPhononBand(
     logDfpt("dfpt_band: starting phonon band calculation ({d} atoms)\n", .{n_atoms});
 
     // Prepare ground state (PW basis, eigenvalues, wavefunctions, NLCC, etc.)
-    var prepared = try dfpt.prepareGroundState(alloc, cfg, scf_result, species, atoms, volume, recip);
+    var prepared = try dfpt.prepareGroundState(alloc, io, cfg, scf_result, species, atoms, volume, recip);
     defer prepared.deinit();
     const gs = prepared.gs;
 
@@ -2891,7 +2895,7 @@ pub fn runPhononBand(
     // symmetry operations that map k to its star.
     // ---------------------------------------------------------------
     const kgs_data = try prepareFullBZKpoints(
-        alloc,
+        alloc, io,
         cfg,
         &gs,
         prepared.local_r,
@@ -2929,7 +2933,7 @@ pub fn runPhononBand(
         // Build KPointDfptData from precomputed ground-state data + q-dependent k+q data
         const pert_thread_count = dfpt.perturbationThreadCount(dim, dfpt_cfg.perturbation_threads);
         const kpts = try buildKPointDfptDataFromGS(
-            alloc,
+            alloc, io,
             kgs_data,
             q_cart,
             q_norm,
@@ -3309,6 +3313,7 @@ const ifc_mod = @import("ifc.zig");
 /// 3. Interpolate D(q') at arbitrary q-path points
 pub fn runPhononBandIFC(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config_mod.Config,
     scf_result: *scf_mod.ScfResult,
     species: []hamiltonian.SpeciesEntry,
@@ -3325,7 +3330,7 @@ pub fn runPhononBandIFC(
     logDfpt("dfpt_ifc: starting IFC phonon band ({d} atoms, qgrid={d}x{d}x{d})\n", .{ n_atoms, qgrid[0], qgrid[1], qgrid[2] });
 
     // Prepare ground state
-    var prepared = try dfpt.prepareGroundState(alloc, cfg, scf_result, species, atoms, volume, recip);
+    var prepared = try dfpt.prepareGroundState(alloc, io, cfg, scf_result, species, atoms, volume, recip);
     defer prepared.deinit();
     const gs = prepared.gs;
 
@@ -3361,7 +3366,7 @@ pub fn runPhononBandIFC(
 
     // Prepare full-BZ k-point ground-state data
     const kgs_data = try prepareFullBZKpoints(
-        alloc,
+        alloc, io,
         cfg,
         &gs,
         prepared.local_r,
@@ -3416,7 +3421,7 @@ pub fn runPhononBandIFC(
         // Build k+q data for this q-point
         const pert_thread_count = dfpt.perturbationThreadCount(dim, dfpt_cfg.perturbation_threads);
         const kpts = try buildKPointDfptDataFromGS(
-            alloc,
+            alloc, io,
             kgs_data,
             q_cart,
             q_norm,

@@ -391,6 +391,7 @@ pub fn fft1dPlanned(plan: Fft1dPlan, data: []math.Complex, inverse: bool) void {
 
 test "Fft3dPlan arbitrary size" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
 
     // Test with non-power-of-2 size (24x24x24)
     var plan = try Fft3dPlan.init(allocator, io, 6, 6, 6);
@@ -435,6 +436,7 @@ test "fft3dForwardInPlace arbitrary size" {
 
 test "RealFft3dPlan roundtrip" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
 
     const nx = 8;
     const ny = 8;
@@ -468,6 +470,7 @@ test "RealFft3dPlan roundtrip" {
 
 test "RealFft3dPlan vs complex Fft3dPlan" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
 
     const nx = 8;
     const ny = 8;

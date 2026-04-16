@@ -327,7 +327,7 @@ pub fn run(
         };
 
         // Get rho_g from density (need to FFT)
-        const rho_g = try densityToReciprocal(alloc, grid, scf_result.density, cfg.scf.fft_backend);
+        const rho_g = try densityToReciprocal(alloc, io, grid, scf_result.density, cfg.scf.fft_backend);
         defer alloc.free(rho_g);
 
         const coulomb_r_cut: ?f64 = if (cfg.boundary == .isolated) coulomb_mod.cutoffRadius(current_cell) else null;
@@ -357,7 +357,7 @@ pub fn run(
         } else null;
         const paw_tabs_slice: ?[]const paw_mod.PawTab = if (scf_result.paw_tabs) |tabs| tabs else null;
         var force_terms = try forces_mod.computeForces(
-            alloc,
+            alloc, io,
             grid,
             rho_g,
             scf_result.potential.values,
@@ -434,7 +434,7 @@ pub fn run(
         var max_stress_gpa: f64 = 0.0;
         var cached_stress_total: ?stress_mod.Stress3x3 = null;
         if (cfg.relax.cell_relax) {
-            const stress_terms = try stress_mod.computeStressFromScf(alloc, &scf_result, relax_cfg, species, atoms);
+            const stress_terms = try stress_mod.computeStressFromScf(alloc, io, &scf_result, relax_cfg, species, atoms);
             // Symmetrize stress using original symmetry (even though k-points are not reduced)
             var sym_total = stress_terms.total;
             if (cfg.scf.symmetry) {
@@ -747,6 +747,7 @@ fn indexToFreq(i: usize, n: usize) i32 {
 /// for consistency with SCF calculations.
 fn densityToReciprocal(
     alloc: std.mem.Allocator,
+    io: std.Io,
     grid: forces_mod.Grid,
     density: []const f64,
     fft_backend: config_mod.FftBackend,

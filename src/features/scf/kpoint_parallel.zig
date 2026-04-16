@@ -81,6 +81,7 @@ pub const KpointCache = struct {
 };
 
 pub const KpointShared = struct {
+    io: std.Io,
     cfg: *const config.Config,
     grid: Grid,
     kpoints: []const KPoint,
@@ -123,8 +124,8 @@ pub const KpointWorker = struct {
 };
 
 fn setWorkerError(shared: *KpointShared, err: anyerror) void {
-    shared.err_mutex.lock();
-    defer shared.err_mutex.unlock();
+    shared.err_mutex.lockUncancelable(shared.io);
+    defer shared.err_mutex.unlock(shared.io);
     if (shared.err.* == null) {
         shared.err.* = err;
     }
@@ -151,9 +152,9 @@ pub fn kpointWorker(worker: *KpointWorker) void {
         if (idx >= shared.kpoints.len) break;
 
         if (!shared.cfg.scf.quiet) {
-            shared.log_mutex.lock();
-            logKpoint(idx, shared.kpoints.len) catch {};
-            shared.log_mutex.unlock();
+            shared.log_mutex.lockUncancelable(shared.io);
+            logKpoint(shared.io, idx, shared.kpoints.len) catch {};
+            shared.log_mutex.unlock(shared.io);
         }
         _ = arena.reset(.retain_capacity);
         const kalloc = arena.allocator();
@@ -164,6 +165,7 @@ pub fn kpointWorker(worker: *KpointWorker) void {
             null;
         computeKpointContribution(
             kalloc,
+            shared.io,
             shared.cfg,
             shared.grid,
             shared.kpoints[idx],
@@ -216,6 +218,7 @@ pub fn kpointThreadCount(total: usize, cfg_threads: usize) usize {
 
 /// Shared data for parallel smearing eigendata computation
 pub const SmearingShared = struct {
+    io: std.Io,
     cfg: *const config.Config,
     grid: Grid,
     kpoints: []const KPoint,
@@ -253,8 +256,8 @@ pub const SmearingWorker = struct {
 };
 
 fn setSmearingWorkerError(shared: *SmearingShared, err: anyerror) void {
-    shared.err_mutex.lock();
-    defer shared.err_mutex.unlock();
+    shared.err_mutex.lockUncancelable(shared.io);
+    defer shared.err_mutex.unlock(shared.io);
     if (shared.err.* == null) {
         shared.err.* = err;
     }
@@ -276,9 +279,9 @@ pub fn smearingWorker(worker: *SmearingWorker) void {
         if (idx >= shared.kpoints.len) break;
 
         if (!shared.cfg.scf.quiet) {
-            shared.log_mutex.lock();
-            logKpoint(idx, shared.kpoints.len) catch {};
-            shared.log_mutex.unlock();
+            shared.log_mutex.lockUncancelable(shared.io);
+            logKpoint(shared.io, idx, shared.kpoints.len) catch {};
+            shared.log_mutex.unlock(shared.io);
         }
         _ = arena.reset(.retain_capacity);
         const kalloc = arena.allocator();
@@ -291,6 +294,7 @@ pub fn smearingWorker(worker: *SmearingWorker) void {
 
         const eigen_result = computeKpointEigenData(
             kalloc,
+            shared.io,
             shared.cfg,
             shared.grid,
             shared.kpoints[idx],
@@ -416,7 +420,7 @@ pub fn computeKpointContribution(
         const req = gridRequirement(basis.gvecs);
         if (req.nx > grid.nx or req.ny > grid.ny or req.nz > grid.nz) {
             var buffer: [256]u8 = undefined;
-            var writer = std.Io.File.stderr().writer(&buffer);
+            var writer = std.Io.File.stderr().writer(io, &buffer);
             const out = &writer.interface;
             try out.print(
                 "scf: iterative grid too small (need >= {d},{d},{d}, suggest {d},{d},{d})\n",
@@ -692,6 +696,7 @@ pub const KpointEigenData = struct {
 
 pub fn computeKpointEigenData(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: *const config.Config,
     grid: Grid,
     kp: KPoint,
@@ -737,7 +742,7 @@ pub fn computeKpointEigenData(
         const req = gridRequirement(basis.gvecs);
         if (req.nx > grid.nx or req.ny > grid.ny or req.nz > grid.nz) {
             var buffer: [256]u8 = undefined;
-            var writer = std.Io.File.stderr().writer(&buffer);
+            var writer = std.Io.File.stderr().writer(io, &buffer);
             const out = &writer.interface;
             try out.print(
                 "scf: iterative grid too small (need >= {d},{d},{d}, suggest {d},{d},{d})\n",
@@ -953,6 +958,7 @@ pub fn computeKpointEigenData(
 
 pub fn accumulateKpointDensitySmearing(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: *const config.Config,
     grid: Grid,
     kp: KPoint,
@@ -971,12 +977,13 @@ pub fn accumulateKpointDensitySmearing(
     paw_rhoij: ?*paw_mod.RhoIJ,
     atoms: ?[]const hamiltonian.AtomData,
 ) !void {
-    return accumulateKpointDensitySmearingSpin(alloc, cfg, grid, kp, data, recip, volume, fft_index_map, mu, sigma, rho, band_energy, nonlocal_energy, entropy_energy, profile_ptr, 2.0, apply_cache, paw_rhoij, atoms);
+    return accumulateKpointDensitySmearingSpin(alloc, io, cfg, grid, kp, data, recip, volume, fft_index_map, mu, sigma, rho, band_energy, nonlocal_energy, entropy_energy, profile_ptr, 2.0, apply_cache, paw_rhoij, atoms);
 }
 
 /// Spin-factor parameterized version.
 pub fn accumulateKpointDensitySmearingSpin(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: *const config.Config,
     grid: Grid,
     kp: KPoint,

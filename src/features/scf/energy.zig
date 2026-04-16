@@ -40,6 +40,7 @@ pub const EnergyTerms = struct {
 /// If coulomb_r_cut is non-null, the cutoff Coulomb kernel is used for Hartree energy.
 pub fn computeEnergyTerms(
     alloc: std.mem.Allocator,
+    io: std.Io,
     grid: Grid,
     rho: []f64,
     rho_core: ?[]const f64,
@@ -140,7 +141,7 @@ pub fn computeEnergyTerms(
     const ion = if (coulomb_r_cut != null)
         try computeDirectIonIonEnergy(alloc, species, atoms) * 2.0
     else
-        try computeIonIonEnergy(alloc, grid, species, atoms, ewald_cfg, quiet) * 2.0;
+        try computeIonIonEnergy(alloc, io, grid, species, atoms, ewald_cfg, quiet) * 2.0;
     // E_psp_core = (n_elec / Ω) × Σ_atoms epsatm  (Rydberg units)
     // This is the volume-dependent correction from the G=0 local potential.
     // For isolated systems, this correction is not needed since G=0 is handled
@@ -177,6 +178,7 @@ pub fn computeEnergyTerms(
 /// If coulomb_r_cut is non-null, the cutoff Coulomb kernel is used for Hartree energy.
 pub fn computeEnergyTermsSpin(
     alloc: std.mem.Allocator,
+    io: std.Io,
     grid: Grid,
     rho_up: []const f64,
     rho_down: []const f64,
@@ -280,7 +282,7 @@ pub fn computeEnergyTermsSpin(
     const ion = if (coulomb_r_cut != null)
         try computeDirectIonIonEnergy(alloc, species, atoms) * 2.0
     else
-        try computeIonIonEnergy(alloc, grid, species, atoms, ewald_cfg, quiet) * 2.0;
+        try computeIonIonEnergy(alloc, io, grid, species, atoms, ewald_cfg, quiet) * 2.0;
     var epsatm_sum: f64 = 0.0;
     var n_elec: f64 = 0.0;
     for (atoms) |atom| {
@@ -310,6 +312,7 @@ pub fn computeEnergyTermsSpin(
 /// Compute ion-ion Ewald energy.
 fn computeIonIonEnergy(
     alloc: std.mem.Allocator,
+    io: std.Io,
     grid: Grid,
     species: []hamiltonian.SpeciesEntry,
     atoms: []hamiltonian.AtomData,
@@ -333,7 +336,7 @@ fn computeIonIonEnergy(
         .tol = ewald_cfg.tol,
         .quiet = quiet,
     };
-    return try ewald.ionIonEnergy(grid.cell, grid.recip, charges, positions, params);
+    return try ewald.ionIonEnergy(io, grid.cell, grid.recip, charges, positions, params);
 }
 
 /// Compute ion-ion energy by direct pairwise Coulomb sum (for isolated systems).

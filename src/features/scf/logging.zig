@@ -128,9 +128,11 @@ pub fn profileStart(io: std.Io) std.Io.Clock.Timestamp {
     return std.Io.Clock.Timestamp.now(io, .awake);
 }
 
-pub fn profileAdd(io: std.Io, accum: *u64, start: std.Io.Clock.Timestamp) void {
-    const ns: u64 = @intCast(start.untilNow(io).raw.nanoseconds);
-    accum.* += ns;
+pub fn profileAdd(io: std.Io, accum: *u64, start: ?std.Io.Clock.Timestamp) void {
+    if (start) |t| {
+        const ns: u64 = @intCast(t.untilNow(io).raw.nanoseconds);
+        accum.* += ns;
+    }
 }
 
 pub fn logProfile(io: std.Io, profile: ScfProfile, kpoints: usize) !void {

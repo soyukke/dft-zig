@@ -177,6 +177,7 @@ fn indexToFreq(i: usize, n: usize) i32 {
 
 fn densityToReciprocal(
     alloc: std.mem.Allocator,
+    io: std.Io,
     grid: forces.Grid,
     density: []const f64,
     fft_backend: config.FftBackend,
@@ -325,6 +326,7 @@ fn makeScfConfig(alloc: std.mem.Allocator, out_dir: []const u8, cell: math.Mat3)
 test "scf total force finite difference" {
     const testing = std.testing;
     const alloc = testing.allocator;
+    const io = std.testing.io;
 
     var element_buf: [2]u8 = .{ 'S', 'i' };
     var path_buf: [24]u8 = undefined;
@@ -403,11 +405,11 @@ test "scf total force finite difference" {
         .recip = recip,
     };
 
-    const rho_g = try densityToReciprocal(alloc, grid, scf_result.density, cfg.scf.fft_backend);
+    const rho_g = try densityToReciprocal(alloc, io, grid, scf_result.density, cfg.scf.fft_backend);
     defer alloc.free(rho_g);
 
     var force_terms = try forces.computeForces(
-        alloc,
+        alloc, io,
         grid,
         rho_g,
         scf_result.potential.values,
@@ -594,6 +596,7 @@ test "scf total force finite difference (self-consistent)" {
 
     const testing = std.testing;
     const alloc = testing.allocator;
+    const io = std.testing.io;
 
     var element_buf: [2]u8 = .{ 'S', 'i' };
     var path_buf: [24]u8 = undefined;
@@ -672,11 +675,11 @@ test "scf total force finite difference (self-consistent)" {
         .recip = recip,
     };
 
-    const rho_g = try densityToReciprocal(alloc, grid, scf_result.density, cfg.scf.fft_backend);
+    const rho_g = try densityToReciprocal(alloc, io, grid, scf_result.density, cfg.scf.fft_backend);
     defer alloc.free(rho_g);
 
     var force_terms = try forces.computeForces(
-        alloc,
+        alloc, io,
         grid,
         rho_g,
         scf_result.potential.values,
@@ -805,6 +808,7 @@ test "scf force FD FCC cell" {
 
     const testing = std.testing;
     const alloc = testing.allocator;
+    const io = std.testing.io;
 
     var element_buf: [2]u8 = .{ 'S', 'i' };
     var path_buf: [24]u8 = undefined;
@@ -877,11 +881,11 @@ test "scf force FD FCC cell" {
         .recip = recip,
     };
 
-    const rho_g = try densityToReciprocal(alloc, grid, scf_result.density, cfg.scf.fft_backend);
+    const rho_g = try densityToReciprocal(alloc, io, grid, scf_result.density, cfg.scf.fft_backend);
     defer alloc.free(rho_g);
 
     var force_terms = try forces.computeForces(
-        alloc,
+        alloc, io,
         grid,
         rho_g,
         scf_result.potential.values,

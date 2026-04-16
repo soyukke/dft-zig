@@ -251,11 +251,11 @@ pub fn computePdos(
 }
 
 /// Write PDOS to CSV file.
-pub fn writePdosCSV(dir: std.Io.Dir, result: PdosResult, fermi_level: f64) !void {
-    const file = try dir.createFile("pdos.csv", .{});
-    defer file.close();
+pub fn writePdosCSV(io: std.Io, dir: std.Io.Dir, result: PdosResult, fermi_level: f64) !void {
+    const file = try dir.createFile(io, "pdos.csv", .{});
+    defer file.close(io);
     var buf: [4096]u8 = undefined;
-    var writer = file.writer(&buf);
+    var writer = file.writer(io, &buf);
     const out = &writer.interface;
 
     const ef = if (std.math.isNan(fermi_level)) @as(f64, 0.0) else fermi_level;

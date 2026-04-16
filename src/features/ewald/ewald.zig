@@ -14,6 +14,7 @@ pub const Params = struct {
 
 /// Compute ion-ion Ewald energy for a periodic cell.
 pub fn ionIonEnergy(
+    io: std.Io,
     cell: math.Mat3,
     recip: math.Mat3,
     charges: []const f64,
@@ -47,7 +48,7 @@ pub fn ionIonEnergy(
     const quiet = if (params) |p| p.quiet else false;
     if (!quiet and @abs(qsum) > 1e-6) {
         var buffer: [128]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(io, &buffer);
         const out = &writer.interface;
         try out.print("ewald: non-neutral ionic charge {d:.6}, applying neutralizing background\n", .{qsum});
         try out.flush();
