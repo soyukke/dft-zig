@@ -1321,6 +1321,7 @@ pub fn computeKsDftGradient(
 // ============================================================================
 
 test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
+    const io = std.testing.io;
     const testing = std.testing;
     const alloc = testing.allocator;
     const sto3g = @import("../basis/sto3g.zig");
@@ -1361,6 +1362,7 @@ test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
     };
     var ks_result = try kohn_sham.runKohnShamScf(
         alloc,
+        io,
         &shells,
         &nuc_positions,
         &nuc_charges,
@@ -1416,9 +1418,9 @@ test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
         .{ .center = pos_m[1], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    var ks_p = try kohn_sham.runKohnShamScf(alloc, &shells_p, &pos_p, &nuc_charges, 2, ks_params);
+    var ks_p = try kohn_sham.runKohnShamScf(alloc, io, &shells_p, &pos_p, &nuc_charges, 2, ks_params);
     defer ks_p.deinit(alloc);
-    var ks_m = try kohn_sham.runKohnShamScf(alloc, &shells_m, &pos_m, &nuc_charges, 2, ks_params);
+    var ks_m = try kohn_sham.runKohnShamScf(alloc, io, &shells_m, &pos_m, &nuc_charges, 2, ks_params);
     defer ks_m.deinit(alloc);
 
     const num_grad_x = (ks_p.total_energy - ks_m.total_energy) / (2.0 * delta);
@@ -1438,6 +1440,7 @@ test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
 }
 
 test "KS-DFT LDA gradient H2O STO-3G vs PySCF" {
+    const io = std.testing.io;
     const testing = std.testing;
     const alloc = testing.allocator;
     const sto3g = @import("../basis/sto3g.zig");
@@ -1484,6 +1487,7 @@ test "KS-DFT LDA gradient H2O STO-3G vs PySCF" {
     };
     var ks_result = try kohn_sham.runKohnShamScf(
         alloc,
+        io,
         &shells,
         &nuc_positions,
         &nuc_charges,
@@ -1558,6 +1562,7 @@ test "KS-DFT LDA gradient H2O STO-3G vs PySCF" {
 }
 
 test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
+    const io = std.testing.io;
     const testing = std.testing;
     const alloc = testing.allocator;
     const sto3g = @import("../basis/sto3g.zig");
@@ -1598,6 +1603,7 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
     };
     var ks_result = try kohn_sham.runKohnShamScf(
         alloc,
+        io,
         &shells,
         &nuc_positions,
         &nuc_charges,
@@ -1653,9 +1659,9 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
         .{ .center = pos_m[1], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    var ks_p = try kohn_sham.runKohnShamScf(alloc, &shells_p, &pos_p, &nuc_charges, 2, ks_params);
+    var ks_p = try kohn_sham.runKohnShamScf(alloc, io, &shells_p, &pos_p, &nuc_charges, 2, ks_params);
     defer ks_p.deinit(alloc);
-    var ks_m = try kohn_sham.runKohnShamScf(alloc, &shells_m, &pos_m, &nuc_charges, 2, ks_params);
+    var ks_m = try kohn_sham.runKohnShamScf(alloc, io, &shells_m, &pos_m, &nuc_charges, 2, ks_params);
     defer ks_m.deinit(alloc);
 
     const num_grad_x = (ks_p.total_energy - ks_m.total_energy) / (2.0 * delta);
@@ -1677,6 +1683,7 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
 }
 
 test "KS-DFT B3LYP gradient H2O STO-3G vs PySCF" {
+    const io = std.testing.io;
     const testing = std.testing;
     const alloc = testing.allocator;
     const sto3g = @import("../basis/sto3g.zig");
@@ -1721,7 +1728,7 @@ test "KS-DFT B3LYP gradient H2O STO-3G vs PySCF" {
         .density_threshold = 1e-8,
     };
 
-    var ks_result = try kohn_sham.runKohnShamScf(alloc, &shells, &nuc_positions, &nuc_charges, 10, ks_params);
+    var ks_result = try kohn_sham.runKohnShamScf(alloc, io, &shells, &nuc_positions, &nuc_charges, 10, ks_params);
     defer ks_result.deinit(alloc);
     try testing.expect(ks_result.converged);
 

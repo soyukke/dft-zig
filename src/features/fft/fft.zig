@@ -436,14 +436,13 @@ test "fft3dForwardInPlace arbitrary size" {
 
 test "RealFft3dPlan roundtrip" {
     const allocator = std.testing.allocator;
-    const io = std.testing.io;
 
     const nx = 8;
     const ny = 8;
     const nz = 8;
     const real_size = nx * ny * nz;
 
-    var plan = try RealFft3dPlan.init(allocator, io, nx, ny, nz);
+    var plan = try RealFft3dPlan.init(allocator, nx, ny, nz);
     defer plan.deinit(allocator);
 
     // Original real data
@@ -478,7 +477,7 @@ test "RealFft3dPlan vs complex Fft3dPlan" {
     const real_size = nx * ny * nz;
     const nx_c = nx / 2 + 1;
 
-    var rfft_plan = try RealFft3dPlan.init(allocator, io, nx, ny, nz);
+    var rfft_plan = try RealFft3dPlan.init(allocator, nx, ny, nz);
     defer rfft_plan.deinit(allocator);
 
     var cfft_plan = try Fft3dPlan.init(allocator, io, nx, ny, nz);

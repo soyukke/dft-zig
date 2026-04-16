@@ -310,6 +310,7 @@ test "nonlocal force basic" {
 }
 
 test "nonlocal force analytical vs finite difference" {
+    const io = std.testing.io;
     const testing = std.testing;
     const alloc = testing.allocator;
 
@@ -324,7 +325,7 @@ test "nonlocal force analytical vs finite difference" {
         .format = .upf,
     };
 
-    var parsed = try pseudo.load(alloc, spec);
+    var parsed = try pseudo.load(alloc, io, spec);
     defer parsed.deinit(alloc);
 
     var parsed_items = [_]pseudo.Parsed{parsed};

@@ -929,6 +929,7 @@ pub fn gComponent(v: math.Vec3, direction: usize) f64 {
 // =========================================================================
 
 test "V_loc perturbation finite difference" {
+    const io = std.testing.io;
     const alloc = std.testing.allocator;
 
     // Simple cubic grid
@@ -966,7 +967,7 @@ test "V_loc perturbation finite difference" {
         .format = .upf,
     };
 
-    var parsed = try pseudo.load(alloc, spec);
+    var parsed = try pseudo.load(alloc, io, spec);
     defer parsed.deinit(alloc);
 
     var parsed_items = [_]pseudo.Parsed{parsed};

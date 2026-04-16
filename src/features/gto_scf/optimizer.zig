@@ -471,6 +471,7 @@ pub const KsOptParams = struct {
 /// if they need to preserve the original.
 pub fn optimizeKsDftGeometry(
     alloc: std.mem.Allocator,
+    io: std.Io,
     shells: []ContractedShell,
     nuc_positions: []Vec3,
     nuc_charges: []const f64,
@@ -532,6 +533,7 @@ pub fn optimizeKsDftGeometry(
         // Run KS-DFT SCF
         var ks_result = try kohn_sham.runKohnShamScf(
             alloc,
+        io,
             shells,
             nuc_positions,
             nuc_charges,
@@ -811,6 +813,7 @@ test "H2O STO-3G geometry optimization" {
 }
 
 test "H2 LDA STO-3G geometry optimization" {
+    const io = std.testing.io;
     const alloc = testing.allocator;
 
     // Start from a stretched geometry: 1.8 Bohr (equilibrium ~1.39 Bohr for LDA)
@@ -826,6 +829,7 @@ test "H2 LDA STO-3G geometry optimization" {
 
     var result = try optimizeKsDftGeometry(
         alloc,
+        io,
         shells,
         &positions,
         &charges,
@@ -865,6 +869,7 @@ test "H2 LDA STO-3G geometry optimization" {
 }
 
 test "H2O LDA STO-3G geometry optimization" {
+    const io = std.testing.io;
     const alloc = testing.allocator;
 
     // Start from approximate experimental geometry
@@ -887,6 +892,7 @@ test "H2O LDA STO-3G geometry optimization" {
 
     var result = try optimizeKsDftGeometry(
         alloc,
+        io,
         shells,
         &positions,
         &charges,
@@ -941,6 +947,7 @@ test "H2O LDA STO-3G geometry optimization" {
 }
 
 test "KS-DFT B3LYP geometry optimization H2 STO-3G" {
+    const io = std.testing.io;
     const alloc = testing.allocator;
     const sto3g = @import("../basis/sto3g.zig");
 
@@ -962,6 +969,7 @@ test "KS-DFT B3LYP geometry optimization H2 STO-3G" {
 
     var result = try optimizeKsDftGeometry(
         alloc,
+        io,
         shells,
         &positions,
         &charges,
@@ -1001,6 +1009,7 @@ test "KS-DFT B3LYP geometry optimization H2 STO-3G" {
 }
 
 test "KS-DFT B3LYP geometry optimization H2O STO-3G" {
+    const io = std.testing.io;
     const alloc = testing.allocator;
     const sto3g = @import("../basis/sto3g.zig");
 
@@ -1029,6 +1038,7 @@ test "KS-DFT B3LYP geometry optimization H2O STO-3G" {
 
     var result = try optimizeKsDftGeometry(
         alloc,
+        io,
         shells,
         &positions,
         &charges,

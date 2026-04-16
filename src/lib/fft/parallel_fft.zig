@@ -372,9 +372,10 @@ pub const ParallelPlan3d = struct {
 // ============== Tests ==============
 
 test "ParallelPlan3d roundtrip" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
-    var plan = try ParallelPlan3d.initWithThreads(allocator, 8, 8, 8, 4);
+    var plan = try ParallelPlan3d.initWithThreads(allocator, io, 8, 8, 8, 4);
     defer plan.deinit();
 
     var data: [512]Complex = undefined;
@@ -394,10 +395,11 @@ test "ParallelPlan3d roundtrip" {
 }
 
 test "ParallelPlan3d matches sequential" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     const Plan3d = @import("fft.zig").Plan3d;
 
-    var par_plan = try ParallelPlan3d.initWithThreads(allocator, 8, 8, 8, 4);
+    var par_plan = try ParallelPlan3d.initWithThreads(allocator, io, 8, 8, 8, 4);
     defer par_plan.deinit();
 
     var seq_plan = try Plan3d.init(allocator, 8, 8, 8);
@@ -421,9 +423,10 @@ test "ParallelPlan3d matches sequential" {
 }
 
 test "ParallelPlan3d multiple calls" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
-    var plan = try ParallelPlan3d.initWithThreads(allocator, 8, 8, 8, 4);
+    var plan = try ParallelPlan3d.initWithThreads(allocator, io, 8, 8, 8, 4);
     defer plan.deinit();
 
     var data: [512]Complex = undefined;

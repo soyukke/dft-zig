@@ -253,10 +253,11 @@ fn computeKij(
 }
 
 test "PawTab init from Si PAW UPF" {
+    const io = std.testing.io;
     const pseudo = @import("../pseudopotential/pseudopotential.zig");
     const alloc = std.testing.allocator;
 
-    var parsed = try pseudo.load(alloc, .{
+    var parsed = try pseudo.load(alloc, io, .{
         .element = "Si",
         .path = "pseudo/Si.pbe-n-kjpaw_psl.1.0.0.UPF",
         .format = .upf,

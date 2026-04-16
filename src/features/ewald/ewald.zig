@@ -483,6 +483,7 @@ pub fn ionIonStress(
 }
 
 test "ewald forces finite difference" {
+    const io = std.testing.io;
     const testing = std.testing;
     const alloc = testing.allocator;
 
@@ -522,8 +523,8 @@ test "ewald forces finite difference" {
         pos_plus[atom_idx].x += delta;
         pos_minus[atom_idx].x -= delta;
 
-        const e_plus = try ionIonEnergy(cell, recip, &charges, &pos_plus, null);
-        const e_minus = try ionIonEnergy(cell, recip, &charges, &pos_minus, null);
+        const e_plus = try ionIonEnergy(io, cell, recip, &charges, &pos_plus, null);
+        const e_minus = try ionIonEnergy(io, cell, recip, &charges, &pos_minus, null);
         const f_numeric_x = -(e_plus - e_minus) / (2.0 * delta);
 
         try testing.expectApproxEqAbs(forces[atom_idx].x, f_numeric_x, 1e-5);
@@ -534,8 +535,8 @@ test "ewald forces finite difference" {
         pos_plus[atom_idx].y += delta;
         pos_minus[atom_idx].y -= delta;
 
-        const e_plus_y = try ionIonEnergy(cell, recip, &charges, &pos_plus, null);
-        const e_minus_y = try ionIonEnergy(cell, recip, &charges, &pos_minus, null);
+        const e_plus_y = try ionIonEnergy(io, cell, recip, &charges, &pos_plus, null);
+        const e_minus_y = try ionIonEnergy(io, cell, recip, &charges, &pos_minus, null);
         const f_numeric_y = -(e_plus_y - e_minus_y) / (2.0 * delta);
 
         try testing.expectApproxEqAbs(forces[atom_idx].y, f_numeric_y, 1e-5);
@@ -546,8 +547,8 @@ test "ewald forces finite difference" {
         pos_plus[atom_idx].z += delta;
         pos_minus[atom_idx].z -= delta;
 
-        const e_plus_z = try ionIonEnergy(cell, recip, &charges, &pos_plus, null);
-        const e_minus_z = try ionIonEnergy(cell, recip, &charges, &pos_minus, null);
+        const e_plus_z = try ionIonEnergy(io, cell, recip, &charges, &pos_plus, null);
+        const e_minus_z = try ionIonEnergy(io, cell, recip, &charges, &pos_minus, null);
         const f_numeric_z = -(e_plus_z - e_minus_z) / (2.0 * delta);
 
         try testing.expectApproxEqAbs(forces[atom_idx].z, f_numeric_z, 1e-5);

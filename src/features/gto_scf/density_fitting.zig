@@ -432,6 +432,7 @@ test "DF J/K symmetry" {
 }
 
 test "DF KS-DFT H2O STO-3G LDA" {
+    const io = std.testing.io;
     const alloc = testing.allocator;
     const sto3g = @import("../basis/sto3g.zig");
     const aux_basis = @import("../basis/aux_basis.zig");
@@ -475,6 +476,7 @@ test "DF KS-DFT H2O STO-3G LDA" {
     // Run conventional KS-DFT (no DF)
     var result_conv = try kohn_sham.runKohnShamScf(
         alloc,
+        io,
         &shells,
         &nuc_positions,
         &nuc_charges,
@@ -486,6 +488,7 @@ test "DF KS-DFT H2O STO-3G LDA" {
     // Run DF KS-DFT
     var result_df = try kohn_sham.runKohnShamScf(
         alloc,
+        io,
         &shells,
         &nuc_positions,
         &nuc_charges,

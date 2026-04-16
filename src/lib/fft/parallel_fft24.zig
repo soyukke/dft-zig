@@ -317,9 +317,10 @@ pub const ParallelPlan3d24 = struct {
 // ============== Tests ==============
 
 test "ParallelPlan3d24 roundtrip" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
-    var plan = try ParallelPlan3d24.initWithThreads(allocator, 24, 24, 24, 4);
+    var plan = try ParallelPlan3d24.initWithThreads(allocator, io, 24, 24, 24, 4);
     defer plan.deinit();
 
     const total = 24 * 24 * 24;
@@ -340,13 +341,14 @@ test "ParallelPlan3d24 roundtrip" {
 }
 
 test "ParallelPlan3d24 matches parallel_fft" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     const parallel_fft = @import("parallel_fft.zig");
 
-    var plan24 = try ParallelPlan3d24.initWithThreads(allocator, 24, 24, 24, 4);
+    var plan24 = try ParallelPlan3d24.initWithThreads(allocator, io, 24, 24, 24, 4);
     defer plan24.deinit();
 
-    var plan_ref = try parallel_fft.ParallelPlan3d.initWithThreads(allocator, 24, 24, 24, 4);
+    var plan_ref = try parallel_fft.ParallelPlan3d.initWithThreads(allocator, io, 24, 24, 24, 4);
     defer plan_ref.deinit();
 
     const total = 24 * 24 * 24;

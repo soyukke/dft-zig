@@ -18,8 +18,8 @@ const scf_fd_verbose = false;
 const scf_fd_enabled = true;
 
 /// Skip test if a required file does not exist (e.g. pseudo/ files in CI).
-fn requireFile(path: []const u8) !void {
-    std.Io.Dir.cwd().access(path, .{}) catch |err| {
+fn requireFile(io: std.Io, path: []const u8) !void {
+    std.Io.Dir.cwd().access(io, path, .{}) catch |err| {
         if (err == error.FileNotFound) {
             std.debug.print("  [SKIP] file not found: {s}\n", .{path});
             return error.SkipZigTest;
@@ -106,13 +106,14 @@ test "spacegroup silicon axis swap" {
 
 // Test local pseudopotential form factor
 test "local pseudopotential V(q) for Carbon" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     // Load C.upf using pseudo.load
     var element_buf: [2]u8 = .{ 'C', 0 };
     var path_buf: [20]u8 = undefined;
     const path_slice = "pseudo/C.upf";
-    try requireFile(path_slice);
+    try requireFile(io, path_slice);
     @memcpy(path_buf[0..path_slice.len], path_slice);
 
     const spec = pseudo.Spec{
@@ -121,7 +122,7 @@ test "local pseudopotential V(q) for Carbon" {
         .format = .upf,
     };
 
-    var parsed = try pseudo.load(allocator, spec);
+    var parsed = try pseudo.load(allocator, io, spec);
     defer parsed.deinit(allocator);
 
     const upf = parsed.upf orelse return error.NoUpfData;
@@ -331,7 +332,7 @@ test "scf total force finite difference" {
     var element_buf: [2]u8 = .{ 'S', 'i' };
     var path_buf: [24]u8 = undefined;
     const path_slice = "pseudo/Si.upf";
-    try requireFile(path_slice);
+    try requireFile(io, path_slice);
     @memcpy(path_buf[0..path_slice.len], path_slice);
 
     const spec = pseudo.Spec{
@@ -340,7 +341,7 @@ test "scf total force finite difference" {
         .format = .upf,
     };
 
-    var parsed = try pseudo.load(alloc, spec);
+    var parsed = try pseudo.load(alloc, io, spec);
     defer parsed.deinit(alloc);
 
     var parsed_items = [_]pseudo.Parsed{parsed};
@@ -377,7 +378,7 @@ test "scf total force finite difference" {
     defer cfg.deinit(alloc);
 
     var atoms_base = base_atoms;
-    var scf_result = try scf.run(.{ .alloc = alloc, .cfg = cfg, .species = species, .atoms = atoms_base[0..], .recip = recip, .volume_bohr = volume });
+    var scf_result = try scf.run(.{ .alloc = alloc, .io = io, .cfg = cfg, .species = species, .atoms = atoms_base[0..], .recip = recip, .volume_bohr = volume });
     defer scf_result.deinit(alloc);
     try testing.expect(scf_result.converged);
 
@@ -458,8 +459,8 @@ test "scf total force finite difference" {
         positions_plus[0].x += delta_ewald;
         positions_minus[0].x -= delta_ewald;
         const params = ewald.Params{ .alpha = cfg.ewald.alpha, .rcut = 0.0, .gcut = 0.0, .tol = 1e-8, .quiet = true };
-        const e_plus = try ewald.ionIonEnergy(cell, recip, charges, positions_plus, params);
-        const e_minus = try ewald.ionIonEnergy(cell, recip, charges, positions_minus, params);
+        const e_plus = try ewald.ionIonEnergy(io, cell, recip, charges, positions_plus, params);
+        const e_minus = try ewald.ionIonEnergy(io, cell, recip, charges, positions_minus, params);
         break :blk -(e_plus - e_minus) / (2.0 * delta_ewald);
     };
     const ewald_fd_ry = ewald_fd * 2.0;
@@ -601,7 +602,7 @@ test "scf total force finite difference (self-consistent)" {
     var element_buf: [2]u8 = .{ 'S', 'i' };
     var path_buf: [24]u8 = undefined;
     const path_slice = "pseudo/Si.upf";
-    try requireFile(path_slice);
+    try requireFile(io, path_slice);
     @memcpy(path_buf[0..path_slice.len], path_slice);
 
     const spec = pseudo.Spec{
@@ -610,7 +611,7 @@ test "scf total force finite difference (self-consistent)" {
         .format = .upf,
     };
 
-    var parsed = try pseudo.load(alloc, spec);
+    var parsed = try pseudo.load(alloc, io, spec);
     defer parsed.deinit(alloc);
 
     var parsed_items = [_]pseudo.Parsed{parsed};
@@ -646,13 +647,14 @@ test "scf total force finite difference (self-consistent)" {
     const scf_eval = struct {
         fn run(
             alloc_local: std.mem.Allocator,
+            io_local: std.Io,
             cfg_local: config.Config,
             species_entries: []hamiltonian.SpeciesEntry,
             atoms_local: []hamiltonian.AtomData,
             recip_local: math.Mat3,
             volume_local: f64,
         ) !scf.EnergyTerms {
-            var scf_result = try scf.run(.{ .alloc = alloc_local, .cfg = cfg_local, .species = species_entries, .atoms = atoms_local, .recip = recip_local, .volume_bohr = volume_local });
+            var scf_result = try scf.run(.{ .alloc = alloc_local, .io = io_local, .cfg = cfg_local, .species = species_entries, .atoms = atoms_local, .recip = recip_local, .volume_bohr = volume_local });
             defer scf_result.deinit(alloc_local);
             try std.testing.expect(scf_result.converged);
             return scf_result.energy;
@@ -660,7 +662,7 @@ test "scf total force finite difference (self-consistent)" {
     };
 
     var atoms_base = base_atoms;
-    var scf_result = try scf.run(.{ .alloc = alloc, .cfg = cfg, .species = species, .atoms = atoms_base[0..], .recip = recip, .volume_bohr = volume });
+    var scf_result = try scf.run(.{ .alloc = alloc, .io = io, .cfg = cfg, .species = species, .atoms = atoms_base[0..], .recip = recip, .volume_bohr = volume });
     defer scf_result.deinit(alloc);
     try testing.expect(scf_result.converged);
 
@@ -760,20 +762,20 @@ test "scf total force finite difference (self-consistent)" {
         var atoms_minus = base_atoms;
         atoms_plus[0].position.x += delta;
         atoms_minus[0].position.x -= delta;
-        const e_plus = try scf_eval.run(alloc, cfg, species, atoms_plus[0..], recip, volume);
-        const e_minus = try scf_eval.run(alloc, cfg, species, atoms_minus[0..], recip, volume);
+        const e_plus = try scf_eval.run(alloc, io, cfg, species, atoms_plus[0..], recip, volume);
+        const e_minus = try scf_eval.run(alloc, io, cfg, species, atoms_minus[0..], recip, volume);
         break :blk -(e_plus.total - e_minus.total) / (2.0 * delta);
     };
 
     const e_terms_plus = blk: {
         var atoms_plus = base_atoms;
         atoms_plus[0].position.x += delta;
-        break :blk try scf_eval.run(alloc, cfg, species, atoms_plus[0..], recip, volume);
+        break :blk try scf_eval.run(alloc, io, cfg, species, atoms_plus[0..], recip, volume);
     };
     const e_terms_minus = blk: {
         var atoms_minus = base_atoms;
         atoms_minus[0].position.x -= delta;
-        break :blk try scf_eval.run(alloc, cfg, species, atoms_minus[0..], recip, volume);
+        break :blk try scf_eval.run(alloc, io, cfg, species, atoms_minus[0..], recip, volume);
     };
 
     const band_fd = -(e_terms_plus.band - e_terms_minus.band) / (2.0 * delta);
@@ -813,7 +815,7 @@ test "scf force FD FCC cell" {
     var element_buf: [2]u8 = .{ 'S', 'i' };
     var path_buf: [24]u8 = undefined;
     const path_slice = "pseudo/Si.upf";
-    try requireFile(path_slice);
+    try requireFile(io, path_slice);
     @memcpy(path_buf[0..path_slice.len], path_slice);
 
     const spec = pseudo.Spec{
@@ -822,7 +824,7 @@ test "scf force FD FCC cell" {
         .format = .upf,
     };
 
-    var parsed = try pseudo.load(alloc, spec);
+    var parsed = try pseudo.load(alloc, io, spec);
     defer parsed.deinit(alloc);
 
     var parsed_items = [_]pseudo.Parsed{parsed};
@@ -866,7 +868,7 @@ test "scf force FD FCC cell" {
     cfg.scf.solver = .iterative;
 
     var atoms_base = base_atoms;
-    var scf_result = try scf.run(.{ .alloc = alloc, .cfg = cfg, .species = species, .atoms = atoms_base[0..], .recip = recip, .volume_bohr = volume });
+    var scf_result = try scf.run(.{ .alloc = alloc, .io = io, .cfg = cfg, .species = species, .atoms = atoms_base[0..], .recip = recip, .volume_bohr = volume });
     defer scf_result.deinit(alloc);
     try testing.expect(scf_result.converged);
 
@@ -927,13 +929,14 @@ test "scf force FD FCC cell" {
     const scf_eval = struct {
         fn run_scf(
             alloc_local: std.mem.Allocator,
+            io_local: std.Io,
             cfg_local: config.Config,
             species_entries: []hamiltonian.SpeciesEntry,
             atoms_local: []hamiltonian.AtomData,
             recip_local: math.Mat3,
             volume_local: f64,
         ) !scf.EnergyTerms {
-            var scf_result_local = try scf.run(.{ .alloc = alloc_local, .cfg = cfg_local, .species = species_entries, .atoms = atoms_local, .recip = recip_local, .volume_bohr = volume_local });
+            var scf_result_local = try scf.run(.{ .alloc = alloc_local, .io = io_local, .cfg = cfg_local, .species = species_entries, .atoms = atoms_local, .recip = recip_local, .volume_bohr = volume_local });
             defer scf_result_local.deinit(alloc_local);
             try std.testing.expect(scf_result_local.converged);
             return scf_result_local.energy;
@@ -947,8 +950,8 @@ test "scf force FD FCC cell" {
         var atoms_minus = base_atoms;
         atoms_plus[0].position.x += delta;
         atoms_minus[0].position.x -= delta;
-        const e_plus = try scf_eval.run_scf(alloc, cfg, species, atoms_plus[0..], recip, volume);
-        const e_minus = try scf_eval.run_scf(alloc, cfg, species, atoms_minus[0..], recip, volume);
+        const e_plus = try scf_eval.run_scf(alloc, io, cfg, species, atoms_plus[0..], recip, volume);
+        const e_minus = try scf_eval.run_scf(alloc, io, cfg, species, atoms_minus[0..], recip, volume);
         std.debug.print("FCC E(+d)={d:.10} E(-d)={d:.10}\n", .{ e_plus.total, e_minus.total });
         std.debug.print("FCC E_local(+d)={d:.10} E_local(-d)={d:.10}\n", .{ e_plus.local_pseudo, e_minus.local_pseudo });
         std.debug.print("FCC E_nl(+d)={d:.10} E_nl(-d)={d:.10}\n", .{ e_plus.nonlocal_pseudo, e_minus.nonlocal_pseudo });
@@ -1045,6 +1048,7 @@ test "smallest G vector for large vacuum" {
 }
 
 test "ewald force finite difference" {
+    const io = std.testing.io;
     const testing = std.testing;
     const alloc = testing.allocator;
 
@@ -1077,8 +1081,8 @@ test "ewald force finite difference" {
         var positions_minus = positions;
         positions_plus[0].x += delta;
         positions_minus[0].x -= delta;
-        const e_plus = try ewald.ionIonEnergy(cell, recip, charges[0..], positions_plus[0..], real_params);
-        const e_minus = try ewald.ionIonEnergy(cell, recip, charges[0..], positions_minus[0..], real_params);
+        const e_plus = try ewald.ionIonEnergy(io, cell, recip, charges[0..], positions_plus[0..], real_params);
+        const e_minus = try ewald.ionIonEnergy(io, cell, recip, charges[0..], positions_minus[0..], real_params);
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
     try testing.expectApproxEqAbs(real_forces[0].x, fx_real_num, 1e-3);
@@ -1091,8 +1095,8 @@ test "ewald force finite difference" {
         var positions_minus = positions;
         positions_plus[0].x += delta;
         positions_minus[0].x -= delta;
-        const e_plus = try ewald.ionIonEnergy(cell, recip, charges[0..], positions_plus[0..], quiet_params);
-        const e_minus = try ewald.ionIonEnergy(cell, recip, charges[0..], positions_minus[0..], quiet_params);
+        const e_plus = try ewald.ionIonEnergy(io, cell, recip, charges[0..], positions_plus[0..], quiet_params);
+        const e_minus = try ewald.ionIonEnergy(io, cell, recip, charges[0..], positions_minus[0..], quiet_params);
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
 
@@ -1101,13 +1105,14 @@ test "ewald force finite difference" {
 
 // Test nonlocal pseudopotential projectors
 test "nonlocal projector radial integral" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     // Load C.upf
     var element_buf: [2]u8 = .{ 'C', 0 };
     var path_buf: [20]u8 = undefined;
     const path_slice = "pseudo/C.upf";
-    try requireFile(path_slice);
+    try requireFile(io, path_slice);
     @memcpy(path_buf[0..path_slice.len], path_slice);
 
     const spec = pseudo.Spec{
@@ -1116,7 +1121,7 @@ test "nonlocal projector radial integral" {
         .format = .upf,
     };
 
-    var parsed = try pseudo.load(allocator, spec);
+    var parsed = try pseudo.load(allocator, io, spec);
     defer parsed.deinit(allocator);
 
     const upf = parsed.upf orelse return error.NoUpfData;
@@ -1294,6 +1299,7 @@ test "Hamiltonian Hermiticity" {
 
 // Test Ewald ion-ion energy
 test "Ewald ion-ion energy for graphene" {
+    const io = std.testing.io;
     // Graphene cell (Bohr)
     const a = 4.6487262675;
     const c = 37.7945225; // 20 Å in Bohr
@@ -1313,7 +1319,7 @@ test "Ewald ion-ion energy for graphene" {
     };
 
     const quiet_params = ewald.Params{ .alpha = 0.0, .rcut = 0.0, .gcut = 0.0, .tol = 0.0, .quiet = true };
-    const e_ion = try ewald.ionIonEnergy(cell, recip, &charges, &positions, quiet_params);
+    const e_ion = try ewald.ionIonEnergy(io, cell, recip, &charges, &positions, quiet_params);
 
     vprint("\n=== Ewald Energy ===\n", .{});
     vprint("E_ion (Hartree) = {d:.6}\n", .{e_ion});

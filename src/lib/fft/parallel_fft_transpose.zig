@@ -444,9 +444,10 @@ pub const TransposePlan3d = struct {
 // ============== Tests ==============
 
 test "TransposePlan3d roundtrip" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
-    var plan = try TransposePlan3d.initWithThreads(allocator, 8, 8, 8, 4);
+    var plan = try TransposePlan3d.initWithThreads(allocator, io, 8, 8, 8, 4);
     defer plan.deinit();
 
     var data: [512]Complex = undefined;
@@ -466,10 +467,11 @@ test "TransposePlan3d roundtrip" {
 }
 
 test "TransposePlan3d matches sequential" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     const Plan3d = @import("fft.zig").Plan3d;
 
-    var trans_plan = try TransposePlan3d.initWithThreads(allocator, 8, 8, 8, 4);
+    var trans_plan = try TransposePlan3d.initWithThreads(allocator, io, 8, 8, 8, 4);
     defer trans_plan.deinit();
 
     var seq_plan = try Plan3d.init(allocator, 8, 8, 8);
@@ -493,11 +495,12 @@ test "TransposePlan3d matches sequential" {
 }
 
 test "TransposePlan3d non-cubic" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     const Plan3d = @import("fft.zig").Plan3d;
 
     // Test with 24x24x24 (non-power-of-2)
-    var trans_plan = try TransposePlan3d.initWithThreads(allocator, 24, 24, 24, 4);
+    var trans_plan = try TransposePlan3d.initWithThreads(allocator, io, 24, 24, 24, 4);
     defer trans_plan.deinit();
 
     var seq_plan = try Plan3d.init(allocator, 24, 24, 24);
