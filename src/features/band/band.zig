@@ -148,7 +148,7 @@ pub fn writeBandEnergies(
     var results = try alloc.alloc(f64, total_points * nbands);
     defer alloc.free(results);
 
-    var pool = try ThreadPool.init(alloc, 0);
+    var pool = try ThreadPool.init(alloc, io, 0);
     defer pool.deinit();
 
     // Build radial projector lookup tables for fast NonlocalContext construction.
@@ -652,7 +652,7 @@ fn writeBandEnergiesForSpin(
 
     var cache = scf.BandVectorCache{};
     defer cache.deinit();
-    var pool = try ThreadPool.init(alloc, 0);
+    var pool = try ThreadPool.init(alloc, io, 0);
     defer pool.deinit();
 
     for (path.points, 0..) |kp, idx| {

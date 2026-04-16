@@ -1,22 +1,18 @@
 const std = @import("std");
 
+/// File-level mutex backed by POSIX pthread_mutex.
+/// Provides blocking lock/unlock with kernel-managed waitqueues -
+/// the same semantics as the pre-0.16 `std.Thread.Mutex` when it was
+/// pthread-based. Unlike a naive spinlock, contended waiters park in
+/// the kernel and free the CPU for lock holders.
 pub const SpinLock = struct {
-    state: std.atomic.Value(bool) = .init(false),
+    m: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
 
     pub fn lock(self: *SpinLock) void {
-        var spin: u32 = 0;
-        while (self.state.cmpxchgStrong(false, true, .acquire, .monotonic) != null) {
-            spin += 1;
-            if (spin >= 32) {
-                spin = 0;
-                std.Thread.yield() catch std.atomic.spinLoopHint();
-            } else {
-                std.atomic.spinLoopHint();
-            }
-        }
+        _ = std.c.pthread_mutex_lock(&self.m);
     }
 
     pub fn unlock(self: *SpinLock) void {
-        self.state.store(false, .release);
+        _ = std.c.pthread_mutex_unlock(&self.m);
     }
 };

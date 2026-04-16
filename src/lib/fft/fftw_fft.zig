@@ -33,26 +33,21 @@ const c = if (enable_fftw) @cImport({
 /// FFTW complex type (interleaved double[2])
 const FftwComplex = c.fftw_complex;
 
-/// Global spinlock for FFTW planner thread safety.
+/// Global mutex for FFTW planner thread safety.
 /// FFTW's planner is NOT thread-safe by default, so we must serialize
-/// all plan creation/destruction calls. Inlined to avoid cross-module imports.
-const PlannerSpinLock = struct {
-    state: std.atomic.Value(bool) = .init(false),
-    pub fn lock(self: *PlannerSpinLock) void {
-        var spin: u32 = 0;
-        while (self.state.cmpxchgStrong(false, true, .acquire, .monotonic) != null) {
-            spin += 1;
-            if (spin >= 32) {
-                spin = 0;
-                std.Thread.yield() catch std.atomic.spinLoopHint();
-            } else std.atomic.spinLoopHint();
-        }
+/// all plan creation/destruction calls. Uses pthread_mutex directly to
+/// avoid cross-module imports and threading an `io` through every FFTW
+/// wrapper call site.
+const PlannerMutex = struct {
+    m: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
+    pub fn lock(self: *PlannerMutex) void {
+        _ = std.c.pthread_mutex_lock(&self.m);
     }
-    pub fn unlock(self: *PlannerSpinLock) void {
-        self.state.store(false, .release);
+    pub fn unlock(self: *PlannerMutex) void {
+        _ = std.c.pthread_mutex_unlock(&self.m);
     }
 };
-var planner_mutex: PlannerSpinLock = .{};
+var planner_mutex: PlannerMutex = .{};
 
 /// FFTW 3D Plan
 pub const FftwPlan3d = struct {
