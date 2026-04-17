@@ -34,6 +34,41 @@ fn elapsedNs(io: std.Io, start_ns: u64) u64 {
     return now - start_ns;
 }
 
+const ActiveStructure = struct {
+    atoms: []const hamiltonian.AtomData,
+    cell_bohr: math.Mat3,
+    recip: math.Mat3,
+    volume_bohr: f64,
+};
+
+fn cellVolume(cell_bohr: math.Mat3) f64 {
+    return @abs(math.Vec3.dot(cell_bohr.row(0), math.Vec3.cross(cell_bohr.row(1), cell_bohr.row(2))));
+}
+
+fn selectActiveStructure(
+    initial_atoms: []const hamiltonian.AtomData,
+    initial_cell_bohr: math.Mat3,
+    initial_recip: math.Mat3,
+    initial_volume_bohr: f64,
+    relax_result: ?*const relax.RelaxResult,
+) ActiveStructure {
+    if (relax_result) |result| {
+        const active_cell = result.final_cell orelse initial_cell_bohr;
+        return .{
+            .atoms = result.final_atoms,
+            .cell_bohr = active_cell,
+            .recip = result.final_recip orelse math.reciprocal(active_cell),
+            .volume_bohr = result.final_volume orelse cellVolume(active_cell),
+        };
+    }
+    return .{
+        .atoms = initial_atoms,
+        .cell_bohr = initial_cell_bohr,
+        .recip = initial_recip,
+        .volume_bohr = initial_volume_bohr,
+    };
+}
+
 /// Run the current DFT workflow.
 pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xyz.Atom) !void {
     const total_start_ns = nowNs(io);
@@ -47,24 +82,10 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
 
     const setup_start_ns = nowNs(io);
 
-    const unit_scale_ang = math.unitsScaleToAngstrom(cfg.units);
     const unit_scale_bohr = math.unitsScaleToBohr(cfg.units);
-    const cell_ang = cfg.cell.scale(unit_scale_ang);
     const cell_bohr = cfg.cell.scale(unit_scale_bohr);
     const recip = math.reciprocal(cell_bohr);
-    const volume_bohr = @abs(math.Vec3.dot(cell_bohr.row(0), math.Vec3.cross(cell_bohr.row(1), cell_bohr.row(2))));
-
-    try logStep(io, "step: generate k-path");
-    // Resolve path_string ("auto" or "G-X-W-K-G-L") to BandPathPoint array
-    var resolved_band = cfg.band;
-    var auto_path_result: ?kpath.auto_kpath.AutoKPathResult = null;
-    defer if (auto_path_result) |*r| r.deinit(alloc);
-    if (resolved_band.path_string) |ps| {
-        auto_path_result = try kpath.auto_kpath.resolvePathString(alloc, ps, cell_bohr);
-        resolved_band.path = auto_path_result.?.points;
-    }
-    var kpoints = try kpath.generate(alloc, resolved_band, recip);
-    defer kpoints.deinit(alloc);
+    const volume_bohr = cellVolume(cell_bohr);
 
     try logStep(io, "step: load pseudopotentials");
     const pseudo_data = try loadPseudopotentials(alloc, io, cfg.pseudopotentials);
@@ -72,7 +93,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
     try logStep(io, "step: build species/atom data");
     const species = try hamiltonian.buildSpeciesEntries(alloc, pseudo_data);
     defer hamiltonian.deinitSpeciesEntries(alloc, species);
-    var atom_data = try hamiltonian.buildAtomData(alloc, atoms, unit_scale_bohr, species);
+    const atom_data = try hamiltonian.buildAtomData(alloc, atoms, unit_scale_bohr, species);
     defer alloc.free(atom_data);
 
     timing.setup_ns = elapsedNs(io, setup_start_ns);
@@ -91,16 +112,24 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         try relax.writeOutput(alloc, io, out_dir, &relax_result.?, species, bohr_to_ang);
         try relax.writeTrajectoryXyz(io, out_dir, &relax_result.?, species, cell_bohr, bohr_to_ang);
 
-        // Update atom_data with relaxed positions
-        if (relax_result.?.converged) {
-            alloc.free(atom_data);
-            atom_data = relax_result.?.final_atoms;
-            relax_result.?.final_atoms = &[_]hamiltonian.AtomData{}; // Transfer ownership
-        }
-
         try logStep(io, "step: structure relaxation done");
         timing.relax_ns = elapsedNs(io, relax_start_ns);
     }
+
+    const active = selectActiveStructure(atom_data, cell_bohr, recip, volume_bohr, if (relax_result) |*rr| rr else null);
+    const cell_ang = active.cell_bohr.scale(math.unitsScaleToAngstrom(.bohr));
+
+    try logStep(io, "step: generate k-path");
+    // Resolve path_string ("auto" or "G-X-W-K-G-L") to BandPathPoint array
+    var resolved_band = cfg.band;
+    var auto_path_result: ?kpath.auto_kpath.AutoKPathResult = null;
+    defer if (auto_path_result) |*r| r.deinit(alloc);
+    if (resolved_band.path_string) |ps| {
+        auto_path_result = try kpath.auto_kpath.resolvePathString(alloc, ps, active.cell_bohr);
+        resolved_band.path = auto_path_result.?.points;
+    }
+    var kpoints = try kpath.generate(alloc, resolved_band, active.recip);
+    defer kpoints.deinit(alloc);
 
     var scf_result: ?scf.ScfResult = null;
     defer if (scf_result) |*result| result.deinit(alloc);
@@ -127,9 +156,9 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
             .io = io,
             .cfg = cfg,
             .species = species,
-            .atoms = atom_data,
-            .recip = recip,
-            .volume_bohr = volume_bohr,
+            .atoms = active.atoms,
+            .recip = active.recip,
+            .volume_bohr = active.volume_bohr,
             .initial_density = init_density,
             .initial_kpoint_cache = init_kpoint_cache,
             .initial_apply_caches = init_apply_caches,
@@ -144,7 +173,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         if (scf_result) |*result| {
             try logStep(io, "step: stress tensor start");
             const stress = @import("../stress/stress.zig");
-            const stress_terms = try stress.computeStressFromScf(alloc, io, result, cfg, species, atom_data);
+            const stress_terms = try stress.computeStressFromScf(alloc, io, result, cfg, species, active.atoms);
             _ = stress_terms;
             try logStep(io, "step: stress tensor done");
         }
@@ -183,9 +212,9 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                         alloc,
                         wf_data,
                         species,
-                        atom_data,
-                        recip,
-                        volume_bohr,
+                        active.atoms,
+                        active.recip,
+                        active.volume_bohr,
                         cfg.dos.sigma,
                         cfg.dos.npoints,
                         cfg.dos.emin,
@@ -210,8 +239,8 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                 "density.cube",
                 result.density,
                 .{ result.grid.nx, result.grid.ny, result.grid.nz },
-                cell_bohr,
-                atom_data,
+                active.cell_bohr,
+                active.atoms,
                 species,
             );
             try logStep(io, "step: cube output done");
@@ -263,10 +292,10 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                         cfg,
                         result,
                         species,
-                        atom_data,
-                        cell_bohr,
-                        recip,
-                        volume_bohr,
+                        active.atoms,
+                        active.cell_bohr,
+                        active.recip,
+                        active.volume_bohr,
                     )
                 else
                     try dfpt_mod.runPhononBand(
@@ -275,10 +304,10 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                         cfg,
                         result,
                         species,
-                        atom_data,
-                        cell_bohr,
-                        recip,
-                        volume_bohr,
+                        active.atoms,
+                        active.cell_bohr,
+                        active.recip,
+                        active.volume_bohr,
                         cfg.dfpt.qpath_npoints,
                     );
                 defer band_result.deinit(alloc);
@@ -309,7 +338,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                 try logStep(io, "step: dfpt phonon band done");
             } else {
                 try logStep(io, "step: dfpt phonon start");
-                var phonon = try dfpt_mod.runPhonon(alloc, io, cfg, result, species, atom_data, cell_bohr, recip, volume_bohr);
+                var phonon = try dfpt_mod.runPhonon(alloc, io, cfg, result, species, active.atoms, active.cell_bohr, active.recip, active.volume_bohr);
                 defer phonon.deinit(alloc);
                 try logStep(io, "step: dfpt phonon done");
                 // Print frequencies
@@ -345,7 +374,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
 
     try logStep(io, "step: write outputs");
     try output.writeRunInfo(io, out_dir, cfg, atoms, cell_ang);
-    try output.writeAtoms(io, out_dir, atoms, unit_scale_ang);
+    try output.writeAtomsFromAtomData(io, out_dir, active.atoms, species, math.unitsScaleToAngstrom(.bohr));
     try output.writeKpoints(io, out_dir, kpoints);
     try output.writePseudopotentials(io, out_dir, pseudo_data);
 
@@ -354,7 +383,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         try logStep(io, "step: band energies");
         const band_paw_tabs: ?[]const paw_mod.PawTab = if (scf_result) |r| r.paw_tabs else null;
         const band_paw_dij: ?[]const []const f64 = if (scf_result) |r| r.paw_dij else null;
-        try band.writeBandEnergies(alloc, io, out_dir, cfg, kpoints, species, atom_data, cell_bohr, recip, volume_bohr, extra_potential, extra_potential_down, band_paw_tabs, band_paw_dij);
+        try band.writeBandEnergies(alloc, io, out_dir, cfg, kpoints, species, active.atoms, active.cell_bohr, active.recip, active.volume_bohr, extra_potential, extra_potential_down, band_paw_tabs, band_paw_dij);
         timing.band_ns = elapsedNs(io, band_start_ns);
     }
 
@@ -391,4 +420,230 @@ fn deinitPseudopotentials(alloc: std.mem.Allocator, items: []pseudo.Parsed) void
         item.deinit(alloc);
     }
     alloc.free(items);
+}
+
+fn testOutputConfig() config.Config {
+    return .{
+        .title = @constCast("test"),
+        .xyz_path = @constCast("test.xyz"),
+        .out_dir = @constCast("out"),
+        .units = .angstrom,
+        .linalg_backend = .openblas,
+        .threads = 0,
+        .cell = math.Mat3.fromRows(
+            .{ .x = 10.0, .y = 0.0, .z = 0.0 },
+            .{ .x = 0.0, .y = 10.0, .z = 0.0 },
+            .{ .x = 0.0, .y = 0.0, .z = 10.0 },
+        ),
+        .boundary = .periodic,
+        .scf = .{
+            .enabled = true,
+            .solver = .iterative,
+            .xc = .lda_pz,
+            .smearing = .none,
+            .smear_ry = 0.0,
+            .ecut_ry = 30.0,
+            .kmesh = .{ 4, 4, 4 },
+            .kmesh_shift = .{ 0.0, 0.0, 0.0 },
+            .grid = .{ 0, 0, 0 },
+            .grid_scale = 1.0,
+            .mixing_beta = 0.3,
+            .max_iter = 50,
+            .convergence = 1e-6,
+            .convergence_metric = .density,
+            .profile = false,
+            .quiet = false,
+            .debug_nonlocal = false,
+            .debug_local = false,
+            .debug_fermi = false,
+            .enable_nonlocal = true,
+            .local_potential = .short_range,
+            .symmetry = true,
+            .time_reversal = true,
+            .kpoint_threads = 0,
+            .iterative_max_iter = 20,
+            .iterative_tol = 1e-4,
+            .iterative_max_subspace = 0,
+            .iterative_block_size = 0,
+            .iterative_init_diagonal = false,
+            .iterative_warmup_steps = 2,
+            .iterative_warmup_max_iter = 10,
+            .iterative_warmup_tol = 1e-3,
+            .iterative_reuse_vectors = true,
+            .kerker_q0 = 0.0,
+            .diemac = 12.0,
+            .dielng = 1.0,
+            .pulay_history = 8,
+            .pulay_start = 4,
+            .mixing_mode = .potential,
+            .use_rfft = false,
+            .fft_backend = .fftw,
+            .nspin = 1,
+            .spinat = null,
+            .compute_stress = false,
+            .reference_json = null,
+            .compare_reference_json = null,
+            .comparison_json = null,
+            .compare_tolerance_json = null,
+        },
+        .ewald = .{ .alpha = 0.0, .rcut = 0.0, .gcut = 0.0, .tol = 1e-8 },
+        .vdw = .{},
+        .band = .{
+            .points_per_segment = 2,
+            .nbands = 8,
+            .path = &.{},
+            .path_string = null,
+            .solver = .dense,
+            .iterative_max_iter = 40,
+            .iterative_tol = 1e-6,
+            .iterative_max_subspace = 0,
+            .iterative_block_size = 0,
+            .iterative_init_diagonal = false,
+            .kpoint_threads = 0,
+            .iterative_reuse_vectors = true,
+            .use_symmetry = false,
+            .lobpcg_parallel = false,
+        },
+        .relax = .{
+            .enabled = false,
+            .algorithm = .bfgs,
+            .max_iter = 100,
+            .force_tol = 1e-4,
+            .max_step = 0.5,
+            .output_trajectory = false,
+        },
+        .dfpt = .{
+            .enabled = false,
+            .sternheimer_tol = 1e-8,
+            .sternheimer_max_iter = 200,
+            .scf_tol = 1e-10,
+            .scf_max_iter = 50,
+            .mixing_beta = 0.3,
+            .alpha_shift = 0.01,
+            .qpath_npoints = 0,
+            .pulay_history = 8,
+            .pulay_start = 4,
+            .kpoint_threads = 0,
+            .perturbation_threads = 1,
+            .qgrid = null,
+            .qpath = &.{},
+        },
+        .dos = .{},
+        .output = .{},
+        .pseudopotentials = @constCast(&[_]pseudo.Spec{
+            .{ .element = @constCast("Si"), .path = @constCast("Si.upf"), .format = .upf },
+        }),
+    };
+}
+
+test "selectActiveStructure prefers latest relax geometry and cell" {
+    const initial_cell = math.Mat3.fromRows(
+        .{ .x = 1.0, .y = 0.0, .z = 0.0 },
+        .{ .x = 0.0, .y = 1.0, .z = 0.0 },
+        .{ .x = 0.0, .y = 0.0, .z = 1.0 },
+    );
+    const final_cell = math.Mat3.fromRows(
+        .{ .x = 2.0, .y = 0.0, .z = 0.0 },
+        .{ .x = 0.0, .y = 2.0, .z = 0.0 },
+        .{ .x = 0.0, .y = 0.0, .z = 2.0 },
+    );
+    const initial_recip = math.reciprocal(initial_cell);
+    const final_recip = math.reciprocal(final_cell);
+    var initial_atoms = [_]hamiltonian.AtomData{
+        .{ .position = .{ .x = 0.1, .y = 0.2, .z = 0.3 }, .species_index = 0 },
+    };
+    var final_atoms = [_]hamiltonian.AtomData{
+        .{ .position = .{ .x = 0.4, .y = 0.5, .z = 0.6 }, .species_index = 0 },
+    };
+    var relax_result = relax.RelaxResult{
+        .final_atoms = final_atoms[0..],
+        .final_energy = -1.0,
+        .final_forces = &[_]math.Vec3{},
+        .iterations = 2,
+        .converged = true,
+        .trajectory = null,
+        .final_cell = final_cell,
+        .final_recip = final_recip,
+        .final_volume = 8.0,
+    };
+
+    const active = selectActiveStructure(initial_atoms[0..], initial_cell, initial_recip, 1.0, &relax_result);
+
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), active.cell_bohr.m[0][0], 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, final_recip.m[0][0]), active.recip.m[0][0], 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 8.0), active.volume_bohr, 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.4), active.atoms[0].position.x, 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.5), active.atoms[0].position.y, 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.6), active.atoms[0].position.z, 1e-12);
+}
+
+test "post-relax outputs use active cell and active atoms" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const cfg = testOutputConfig();
+    var input_atoms = [_]xyz.Atom{
+        .{
+            .symbol = @constCast("Si"),
+            .position = .{ .x = 0.0, .y = 0.0, .z = 0.0 },
+        },
+    };
+    const species = [_]hamiltonian.SpeciesEntry{
+        .{
+            .symbol = "Si",
+            .upf = undefined,
+            .z_valence = 4.0,
+            .epsatm_ry = 0.0,
+            .local_mode = .short_range,
+            .local_alpha = 0.0,
+        },
+    };
+
+    const initial_cell = math.Mat3.fromRows(
+        .{ .x = 5.0, .y = 0.0, .z = 0.0 },
+        .{ .x = 0.0, .y = 5.0, .z = 0.0 },
+        .{ .x = 0.0, .y = 0.0, .z = 5.0 },
+    );
+    const final_cell = math.Mat3.fromRows(
+        .{ .x = 2.0, .y = 0.0, .z = 0.0 },
+        .{ .x = 0.0, .y = 3.0, .z = 0.0 },
+        .{ .x = 0.0, .y = 0.0, .z = 4.0 },
+    );
+    const initial_recip = math.reciprocal(initial_cell);
+    const final_recip = math.reciprocal(final_cell);
+    var initial_atom_data = [_]hamiltonian.AtomData{
+        .{ .position = .{ .x = 1.0, .y = 1.0, .z = 1.0 }, .species_index = 0 },
+    };
+    var final_atoms = [_]hamiltonian.AtomData{
+        .{ .position = .{ .x = 2.0, .y = 3.0, .z = 4.0 }, .species_index = 0 },
+    };
+    var relax_result = relax.RelaxResult{
+        .final_atoms = final_atoms[0..],
+        .final_energy = -1.0,
+        .final_forces = &[_]math.Vec3{},
+        .iterations = 3,
+        .converged = true,
+        .trajectory = null,
+        .final_cell = final_cell,
+        .final_recip = final_recip,
+        .final_volume = 24.0,
+    };
+
+    const active = selectActiveStructure(initial_atom_data[0..], initial_cell, initial_recip, 125.0, &relax_result);
+    const cell_ang = active.cell_bohr.scale(math.unitsScaleToAngstrom(.bohr));
+
+    try output.writeRunInfo(io, tmp.dir, cfg, input_atoms[0..], cell_ang);
+    try output.writeAtomsFromAtomData(io, tmp.dir, active.atoms, species[0..], math.unitsScaleToAngstrom(.bohr));
+
+    const run_info = try tmp.dir.readFileAlloc(io, "run_info.txt", alloc, .limited(1024 * 1024));
+    defer alloc.free(run_info);
+    const atoms_csv = try tmp.dir.readFileAlloc(io, "atoms.csv", alloc, .limited(1024 * 1024));
+    defer alloc.free(atoms_csv);
+
+    try std.testing.expect(std.mem.indexOf(u8, run_info, "cell_angstrom = [[1.05835442, 0.00000000, 0.00000000], [0.00000000, 1.58753163, 0.00000000], [0.00000000, 0.00000000, 2.11670884]]\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, run_info, "cell_angstrom = [[2.64588605, 0.00000000, 0.00000000], [0.00000000, 2.64588605, 0.00000000], [0.00000000, 0.00000000, 2.64588605]]\n") == null);
+    try std.testing.expect(std.mem.indexOf(u8, atoms_csv, "Si,1.05835442,1.58753163,2.11670884\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, atoms_csv, "Si,0.52917721,0.52917721,0.52917721\n") == null);
 }

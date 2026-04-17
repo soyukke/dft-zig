@@ -1,5 +1,6 @@
 const std = @import("std");
 const config = @import("../config/config.zig");
+const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const kpath = @import("../kpath/kpath.zig");
 const linalg = @import("../linalg/linalg.zig");
 const math = @import("../math/math.zig");
@@ -140,6 +141,37 @@ pub fn writeAtoms(io: std.Io, dir: std.Io.Dir, atoms: []xyz.Atom, unit_scale: f6
     try out.flush();
 }
 
+/// Write atom data to CSV in angstrom.
+pub fn writeAtomsFromAtomData(
+    io: std.Io,
+    dir: std.Io.Dir,
+    atoms: []const hamiltonian.AtomData,
+    species: []const hamiltonian.SpeciesEntry,
+    bohr_to_ang: f64,
+) !void {
+    var file = try dir.createFile(io, "atoms.csv", .{ .truncate = true });
+    defer file.close(io);
+
+    var buffer: [4096]u8 = undefined;
+    var writer = file.writer(io, &buffer);
+    const out = &writer.interface;
+
+    try out.writeAll("symbol,x,y,z\n");
+    for (atoms) |atom| {
+        const symbol = species[atom.species_index].symbol;
+        try out.print(
+            "{s},{d:.8},{d:.8},{d:.8}\n",
+            .{
+                symbol,
+                atom.position.x * bohr_to_ang,
+                atom.position.y * bohr_to_ang,
+                atom.position.z * bohr_to_ang,
+            },
+        );
+    }
+    try out.flush();
+}
+
 /// Write current feature status.
 pub fn writeStatus(io: std.Io, dir: std.Io.Dir, cfg: config.Config, scf_result: ?scf.ScfResult) !void {
     var file = try dir.createFile(io, "status.txt", .{ .truncate = true });
@@ -271,4 +303,36 @@ fn unitsName(units: math.Units) []const u8 {
         .angstrom => "angstrom",
         .bohr => "bohr",
     };
+}
+
+test "writeAtomsFromAtomData writes atom positions in angstrom" {
+    const io = std.testing.io;
+    const alloc = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const atoms = [_]hamiltonian.AtomData{
+        .{
+            .position = .{ .x = 1.0, .y = 2.0, .z = 3.0 },
+            .species_index = 0,
+        },
+    };
+    const species = [_]hamiltonian.SpeciesEntry{
+        .{
+            .symbol = "Si",
+            .upf = undefined,
+            .z_valence = 4.0,
+            .epsatm_ry = 0.0,
+            .local_mode = .short_range,
+            .local_alpha = 0.0,
+        },
+    };
+
+    try writeAtomsFromAtomData(io, tmp.dir, atoms[0..], species[0..], math.unitsScaleToAngstrom(.bohr));
+
+    const content = try tmp.dir.readFileAlloc(io, "atoms.csv", alloc, .limited(1024 * 1024));
+    defer alloc.free(content);
+
+    try std.testing.expect(std.mem.indexOf(u8, content, "symbol,x,y,z\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, content, "Si,0.52917721,1.05835442,1.58753163\n") != null);
 }
