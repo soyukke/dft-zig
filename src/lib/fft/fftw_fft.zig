@@ -21,7 +21,9 @@ const c = if (enable_fftw) @cImport({
     const fftw_plan = ?*anyopaque;
     const FFTW_FORWARD: c_int = -1;
     const FFTW_BACKWARD: c_int = 1;
+    const FFTW_MEASURE: c_uint = 0;
     const FFTW_ESTIMATE: c_uint = 64;
+    const FFTW_UNALIGNED: c_uint = 2;
 
     fn fftw_plan_dft_3d(_: c_int, _: c_int, _: c_int, _: [*c]fftw_complex, _: [*c]fftw_complex, _: c_int, _: c_uint) fftw_plan {
         return null;
@@ -85,7 +87,7 @@ pub const FftwPlan3d = struct {
             fftw_ptr,
             fftw_ptr,
             c.FFTW_FORWARD,
-            c.FFTW_MEASURE,
+            c.FFTW_MEASURE | c.FFTW_UNALIGNED,
         );
         if (forward_plan == null) {
             return error.FftwPlanFailed;
@@ -99,7 +101,7 @@ pub const FftwPlan3d = struct {
             fftw_ptr,
             fftw_ptr,
             c.FFTW_BACKWARD,
-            c.FFTW_MEASURE,
+            c.FFTW_MEASURE | c.FFTW_UNALIGNED,
         );
         if (inverse_plan == null) {
             return error.FftwPlanFailed;

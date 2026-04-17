@@ -7,35 +7,7 @@ const std = @import("std");
 const math = @import("../math/math.zig");
 const symmetry_mod = @import("../symmetry/symmetry.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
-
-/// LAPACK dsyev for real symmetric eigenvalue decomposition.
-extern fn dsyev_(
-    jobz: [*]u8,
-    uplo: [*]u8,
-    n: *c_int,
-    a: [*]f64,
-    lda: *c_int,
-    w: [*]f64,
-    work: [*]f64,
-    lwork: *c_int,
-    info: *c_int,
-) callconv(.c) void;
-
-/// LAPACK zheev for complex Hermitian eigenvalue decomposition.
-extern fn zheev_(
-    jobz: [*]u8,
-    uplo: [*]u8,
-    n: *c_int,
-    a: [*]f64, // complex double = pairs of f64
-    lda: *c_int,
-    w: [*]f64,
-    work: [*]f64, // complex work array
-    lwork: *c_int,
-    rwork: [*]f64,
-    info: *c_int,
-) callconv(.c) void;
-
-var lapack_mutex: @import("../../lib/spinlock.zig").SpinLock = .{};
+const linalg = @import("../linalg/linalg.zig");
 
 pub const ComplexPhononResult = struct {
     /// Eigenvalues ω² in Ry/(bohr²·amu)
@@ -134,70 +106,20 @@ pub fn omega2ToCm1(omega2: f64) f64 {
 /// Diagonalize a real symmetric dynamical matrix using LAPACK dsyev.
 pub fn diagonalize(alloc: std.mem.Allocator, dynmat: []const f64, dim: usize) !PhononResult {
     if (dynmat.len != dim * dim) return error.InvalidMatrixSize;
-
-    lapack_mutex.lock();
-    defer lapack_mutex.unlock();
-
-    // Copy matrix (dsyev overwrites with eigenvectors)
-    const matrix = try alloc.alloc(f64, dim * dim);
-    errdefer alloc.free(matrix);
-    @memcpy(matrix, dynmat);
-
-    const omega2 = try alloc.alloc(f64, dim);
-    errdefer alloc.free(omega2);
-
-    var nn: c_int = @intCast(dim);
-    var lda: c_int = @intCast(dim);
-    var jobz: [1]u8 = .{'V'};
-    var uplo: [1]u8 = .{'U'};
-    var info: c_int = 0;
-
-    // Workspace query
-    var lwork: c_int = -1;
-    var work_query: f64 = 0.0;
-    dsyev_(
-        jobz[0..].ptr,
-        uplo[0..].ptr,
-        &nn,
-        matrix.ptr,
-        &lda,
-        omega2.ptr,
-        @ptrCast(&work_query),
-        &lwork,
-        &info,
-    );
-    if (info != 0) return error.LapackFailure;
-
-    lwork = @intFromFloat(work_query);
-    if (lwork < 1) lwork = 1;
-    const work = try alloc.alloc(f64, @intCast(lwork));
-    defer alloc.free(work);
-
-    info = 0;
-    dsyev_(
-        jobz[0..].ptr,
-        uplo[0..].ptr,
-        &nn,
-        matrix.ptr,
-        &lda,
-        omega2.ptr,
-        work.ptr,
-        &lwork,
-        &info,
-    );
-    if (info != 0) return error.LapackFailure;
+    var eig = try linalg.realSymmetricEigenDecomp(alloc, .accelerate, dim, @constCast(dynmat));
+    errdefer eig.deinit(alloc);
 
     // Convert to cm⁻¹
     const freq = try alloc.alloc(f64, dim);
     errdefer alloc.free(freq);
     for (0..dim) |i| {
-        freq[i] = omega2ToCm1(omega2[i]);
+        freq[i] = omega2ToCm1(eig.values[i]);
     }
 
     return .{
-        .omega2 = omega2,
+        .omega2 = eig.values,
         .frequencies_cm1 = freq,
-        .eigenvectors = matrix,
+        .eigenvectors = eig.vectors,
         .dim = dim,
     };
 }
@@ -224,90 +146,23 @@ pub fn massWeightComplex(dynmat_c: []math.Complex, n_atoms: usize, masses: []con
 /// Diagonalize a complex Hermitian dynamical matrix using LAPACK zheev.
 pub fn diagonalizeComplex(alloc: std.mem.Allocator, dynmat_c: []const math.Complex, dim: usize) !ComplexPhononResult {
     if (dynmat_c.len != dim * dim) return error.InvalidMatrixSize;
-
-    lapack_mutex.lock();
-    defer lapack_mutex.unlock();
-
-    // Copy matrix (zheev overwrites with eigenvectors)
-    // zheev expects column-major complex double, which is pairs of f64
-    // Our math.Complex has .r and .i fields, stored as struct { r: f64, i: f64 }
-    // We need to convert to interleaved f64 pairs
-    const matrix_f64 = try alloc.alloc(f64, dim * dim * 2);
-    errdefer alloc.free(matrix_f64);
-    for (0..dim * dim) |i| {
-        matrix_f64[2 * i] = dynmat_c[i].r;
-        matrix_f64[2 * i + 1] = dynmat_c[i].i;
-    }
-
-    const omega2 = try alloc.alloc(f64, dim);
-    errdefer alloc.free(omega2);
-
-    var nn: c_int = @intCast(dim);
-    var lda: c_int = @intCast(dim);
-    var jobz: [1]u8 = .{'V'};
-    var uplo: [1]u8 = .{'U'};
-    var info: c_int = 0;
-
-    // rwork array for zheev
-    const rwork = try alloc.alloc(f64, @max(3 * dim - 2, 1));
-    defer alloc.free(rwork);
-
-    // Workspace query
-    var lwork: c_int = -1;
-    var work_query: [2]f64 = .{ 0.0, 0.0 }; // complex work element
-    zheev_(
-        jobz[0..].ptr,
-        uplo[0..].ptr,
-        &nn,
-        matrix_f64.ptr,
-        &lda,
-        omega2.ptr,
-        @ptrCast(&work_query),
-        &lwork,
-        rwork.ptr,
-        &info,
-    );
-    if (info != 0) return error.LapackFailure;
-
-    lwork = @intFromFloat(work_query[0]);
-    if (lwork < 1) lwork = 1;
-    const work = try alloc.alloc(f64, @as(usize, @intCast(lwork)) * 2); // complex = 2 f64 per element
-    defer alloc.free(work);
-
-    info = 0;
-    zheev_(
-        jobz[0..].ptr,
-        uplo[0..].ptr,
-        &nn,
-        matrix_f64.ptr,
-        &lda,
-        omega2.ptr,
-        work.ptr,
-        &lwork,
-        rwork.ptr,
-        &info,
-    );
-    if (info != 0) return error.LapackFailure;
-
-    // Convert eigenvectors back to Complex
-    const eigvecs = try alloc.alloc(math.Complex, dim * dim);
-    errdefer alloc.free(eigvecs);
-    for (0..dim * dim) |i| {
-        eigvecs[i] = math.complex.init(matrix_f64[2 * i], matrix_f64[2 * i + 1]);
-    }
-    alloc.free(matrix_f64);
+    const dynmat_copy = try alloc.alloc(math.Complex, dynmat_c.len);
+    defer alloc.free(dynmat_copy);
+    @memcpy(dynmat_copy, dynmat_c);
+    var eig = try linalg.hermitianEigenDecomp(alloc, .accelerate, dim, dynmat_copy);
+    errdefer eig.deinit(alloc);
 
     // Convert to cm⁻¹
     const freq = try alloc.alloc(f64, dim);
     errdefer alloc.free(freq);
     for (0..dim) |i| {
-        freq[i] = omega2ToCm1(omega2[i]);
+        freq[i] = omega2ToCm1(eig.values[i]);
     }
 
     return .{
-        .omega2 = omega2,
+        .omega2 = eig.values,
         .frequencies_cm1 = freq,
-        .eigenvectors = eigvecs,
+        .eigenvectors = eig.vectors,
         .dim = dim,
     };
 }
@@ -316,68 +171,13 @@ pub fn diagonalizeComplex(alloc: std.mem.Allocator, dynmat_c: []const math.Compl
 /// Uses zheev with jobz='N' (no eigenvectors), ~2-3x faster than full diagonalization.
 pub fn eigenvaluesComplex(alloc: std.mem.Allocator, dynmat_c: []math.Complex, dim: usize) ![]f64 {
     if (dynmat_c.len != dim * dim) return error.InvalidMatrixSize;
-
-    lapack_mutex.lock();
-    defer lapack_mutex.unlock();
-
-    // Convert to interleaved f64 pairs (zheev overwrites in-place)
-    const matrix_f64 = try alloc.alloc(f64, dim * dim * 2);
-    defer alloc.free(matrix_f64);
-    for (0..dim * dim) |i| {
-        matrix_f64[2 * i] = dynmat_c[i].r;
-        matrix_f64[2 * i + 1] = dynmat_c[i].i;
-    }
-
-    const omega2 = try alloc.alloc(f64, dim);
+    const dynmat_copy = try alloc.alloc(math.Complex, dynmat_c.len);
+    defer alloc.free(dynmat_copy);
+    @memcpy(dynmat_copy, dynmat_c);
+    const omega2 = try linalg.hermitianEigenvalues(alloc, .accelerate, dim, dynmat_copy);
     errdefer alloc.free(omega2);
 
-    var nn: c_int = @intCast(dim);
-    var lda: c_int = @intCast(dim);
-    var jobz: [1]u8 = .{'N'}; // eigenvalues only
-    var uplo: [1]u8 = .{'U'};
-    var info: c_int = 0;
-
-    const rwork = try alloc.alloc(f64, @max(3 * dim - 2, 1));
-    defer alloc.free(rwork);
-
-    // Workspace query
-    var lwork: c_int = -1;
-    var work_query: [2]f64 = .{ 0.0, 0.0 };
-    zheev_(
-        jobz[0..].ptr,
-        uplo[0..].ptr,
-        &nn,
-        matrix_f64.ptr,
-        &lda,
-        omega2.ptr,
-        @ptrCast(&work_query),
-        &lwork,
-        rwork.ptr,
-        &info,
-    );
-    if (info != 0) return error.LapackFailure;
-
-    lwork = @intFromFloat(work_query[0]);
-    if (lwork < 1) lwork = 1;
-    const work = try alloc.alloc(f64, @as(usize, @intCast(lwork)) * 2);
-    defer alloc.free(work);
-
-    info = 0;
-    zheev_(
-        jobz[0..].ptr,
-        uplo[0..].ptr,
-        &nn,
-        matrix_f64.ptr,
-        &lda,
-        omega2.ptr,
-        work.ptr,
-        &lwork,
-        rwork.ptr,
-        &info,
-    );
-    if (info != 0) return error.LapackFailure;
-
-    // Convert to cm⁻¹ in-place (reuse omega2 array)
+    // Convert to cm⁻¹ in-place (reuse eigenvalue array)
     for (0..dim) |i| {
         omega2[i] = omega2ToCm1(omega2[i]);
     }

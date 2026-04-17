@@ -4,6 +4,7 @@ const scf = @import("../scf/scf.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
+const test_support = @import("../../test_support.zig");
 
 /// Grid parameters for force calculation
 pub const Grid = struct {
@@ -102,6 +103,7 @@ test "local force finite difference" {
     const io = std.testing.io;
     const testing = std.testing;
     const alloc = testing.allocator;
+    try test_support.requireFile(io, "pseudo/Si.upf");
 
     var element_buf: [2]u8 = .{ 'S', 'i' };
     var path_buf: [24]u8 = undefined;

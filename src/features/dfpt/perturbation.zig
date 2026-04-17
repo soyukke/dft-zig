@@ -12,6 +12,7 @@ const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
 const xc = @import("../xc/xc.zig");
 const dfpt_mod = @import("dfpt.zig");
+const test_support = @import("../../test_support.zig");
 
 const Grid = scf_mod.Grid;
 const GroundState = dfpt_mod.GroundState;
@@ -931,6 +932,7 @@ pub fn gComponent(v: math.Vec3, direction: usize) f64 {
 test "V_loc perturbation finite difference" {
     const io = std.testing.io;
     const alloc = std.testing.allocator;
+    try test_support.requireFile(io, "pseudo/Si.upf");
 
     // Simple cubic grid
     const a = 10.0;

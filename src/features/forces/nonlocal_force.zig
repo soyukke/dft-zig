@@ -5,6 +5,7 @@ const plane_wave = @import("../plane_wave/basis.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
 const scf = @import("../scf/scf.zig");
+const test_support = @import("../../test_support.zig");
 
 /// Projector data for one species, used for analytical force computation.
 const ForceProjectors = struct {
@@ -313,6 +314,7 @@ test "nonlocal force analytical vs finite difference" {
     const io = std.testing.io;
     const testing = std.testing;
     const alloc = testing.allocator;
+    try test_support.requireFile(io, "pseudo/Si.upf");
 
     const element_buf: [2]u8 = .{ 'S', 'i' };
     var path_buf: [24]u8 = undefined;
