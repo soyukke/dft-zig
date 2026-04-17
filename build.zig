@@ -1,3 +1,4 @@
+const builtin = @import("builtin");
 const std = @import("std");
 
 // Although this function looks imperative, it does not perform the build
@@ -7,6 +8,10 @@ const std = @import("std");
 // build runner to parallelize the build automatically (and the cache system to
 // know when a step doesn't need to be re-run).
 pub fn build(b: *std.Build) void {
+    if (builtin.zig_version.major == 0 and builtin.zig_version.minor < 16) {
+        @compileError("dft-zig requires Zig 0.16.0 or newer.");
+    }
+
     // Standard target options allow the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -275,9 +280,72 @@ pub fn build(b: *std.Build) void {
 
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
-    const test_step = b.step("test", "Run tests");
+    const gto_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/gto_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "fftw_options", .module = fftw_options.createModule() },
+                .{ .name = "libcint_options", .module = libcint_options.createModule() },
+            },
+        }),
+        .filters = test_filters,
+    });
+    linkLinearAlgebra(gto_tests, target_os, openblas_include, openblas_lib, lapack_lib);
+
+    if (fftw_include) |inc| {
+        gto_tests.root_module.addIncludePath(.{ .cwd_relative = inc });
+    }
+    if (libcint_include) |inc| {
+        gto_tests.root_module.addIncludePath(.{ .cwd_relative = inc });
+    }
+
+    const run_gto_tests = b.addRunArtifact(gto_tests);
+
+    const gto_regression_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/gto_regression_tests.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "fftw_options", .module = fftw_options.createModule() },
+                .{ .name = "libcint_options", .module = libcint_options.createModule() },
+            },
+        }),
+        .filters = test_filters,
+    });
+    linkLinearAlgebra(gto_regression_tests, target_os, openblas_include, openblas_lib, lapack_lib);
+
+    if (fftw_include) |inc| {
+        gto_regression_tests.root_module.addIncludePath(.{ .cwd_relative = inc });
+    }
+    if (libcint_include) |inc| {
+        gto_regression_tests.root_module.addIncludePath(.{ .cwd_relative = inc });
+    }
+
+    const run_gto_regression_tests = b.addRunArtifact(gto_regression_tests);
+
+    const test_step = b.step("test", "Run fast unit tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
+
+    const test_gto_step = b.step("test-gto", "Run day-to-day GTO integration tests");
+    test_gto_step.dependOn(&run_gto_tests.step);
+
+    const test_gto_regression_step = b.step("test-gto-regression", "Run slow GTO regression tests");
+    test_gto_regression_step.dependOn(&run_gto_regression_tests.step);
+
+    const test_full_step = b.step("test-full", "Run fast unit tests plus day-to-day GTO integration tests");
+    test_full_step.dependOn(&run_mod_tests.step);
+    test_full_step.dependOn(&run_exe_tests.step);
+    test_full_step.dependOn(&run_gto_tests.step);
+
+    const test_all_zig_step = b.step("test-all-zig", "Run all Zig tests, including slow GTO regressions");
+    test_all_zig_step.dependOn(&run_mod_tests.step);
+    test_all_zig_step.dependOn(&run_exe_tests.step);
+    test_all_zig_step.dependOn(&run_gto_tests.step);
+    test_all_zig_step.dependOn(&run_gto_regression_tests.step);
 
     // Link FFTW3 to all executables that use the dft_zig module
     if (fftw_lib) |lib| {
@@ -297,6 +365,12 @@ pub fn build(b: *std.Build) void {
 
         exe_tests.root_module.addLibraryPath(fftw_lib_path);
         exe_tests.root_module.linkSystemLibrary("fftw3", .{});
+
+        gto_tests.root_module.addLibraryPath(fftw_lib_path);
+        gto_tests.root_module.linkSystemLibrary("fftw3", .{});
+
+        gto_regression_tests.root_module.addLibraryPath(fftw_lib_path);
+        gto_regression_tests.root_module.linkSystemLibrary("fftw3", .{});
     }
 
     // Link libcint to all executables that use the dft_zig module
@@ -320,6 +394,12 @@ pub fn build(b: *std.Build) void {
 
         exe_tests.root_module.addLibraryPath(libcint_lib_path);
         exe_tests.root_module.linkSystemLibrary("cint", .{});
+
+        gto_tests.root_module.addLibraryPath(libcint_lib_path);
+        gto_tests.root_module.linkSystemLibrary("cint", .{});
+
+        gto_regression_tests.root_module.addLibraryPath(libcint_lib_path);
+        gto_regression_tests.root_module.linkSystemLibrary("cint", .{});
     }
 }
 

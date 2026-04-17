@@ -83,7 +83,7 @@ Supports periodic systems (crystals) and isolated systems (molecules).
 
 ### Prerequisites
 
-- Zig 0.15+
+- Zig 0.16.0+
 - macOS (Accelerate) or Linux (OpenBLAS)
 - FFTW3 (recommended)
 

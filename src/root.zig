@@ -38,7 +38,6 @@ test {
     _ = paw;
     _ = basis;
     _ = integrals_mod;
-    _ = gto_scf;
     _ = grid;
     _ = vdw;
     _ = stress;

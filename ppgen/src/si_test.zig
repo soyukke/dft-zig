@@ -61,6 +61,7 @@ test "Si all-electron atomic SCF" {
 
 test "Si pseudopotential generation: valence only" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
 
     // All-electron orbitals: 1s² 2s² 2p⁶ 3s² 3p²
     const all_orbs = [_]pipeline.OrbitalDef{
@@ -78,7 +79,7 @@ test "Si pseudopotential generation: valence only" {
     };
 
     var buf: [2 * 1024 * 1024]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var writer = std.Io.Writer.fixed(&buf);
 
     try pipeline.generatePseudopotential(allocator, .{
         .z = 14,
@@ -87,9 +88,9 @@ test "Si pseudopotential generation: valence only" {
         .all_orbitals = &all_orbs,
         .valence_channels = &val_channels,
         .l_local = 1, // p as local, s as nonlocal
-    }, fbs.writer());
+    }, &writer);
 
-    const output = fbs.getWritten();
+    const output = writer.buffered();
     std.debug.print("\n  Si UPF size: {d} bytes\n", .{output.len});
 
     // z_valence = 4 (3s² + 3p²)
@@ -98,14 +99,15 @@ test "Si pseudopotential generation: valence only" {
 
     // Write and parse back
     const tmp_path = "/tmp/Si_ppgen_val.upf";
+    const cwd = std.Io.Dir.cwd();
     {
-        const file = try std.fs.cwd().createFile(tmp_path, .{});
-        defer file.close();
-        try file.writeAll(output);
+        const file = try cwd.createFile(io, tmp_path, .{});
+        defer file.close(io);
+        try file.writeStreamingAll(io, output);
     }
-    defer std.fs.cwd().deleteFile(tmp_path) catch {};
+    defer cwd.deleteFile(io, tmp_path) catch {};
 
-    var parsed = try pseudo_parser.load(allocator, .{
+    var parsed = try pseudo_parser.load(allocator, io, .{
         .element = "Si",
         .path = tmp_path,
         .format = .upf,

@@ -10,21 +10,18 @@ pub const pipeline = @import("pipeline.zig");
 pub const si_test = @import("si_test.zig");
 pub const integration_test = @import("integration_test.zig");
 
-pub fn main() !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
-
-    if (args.len < 2) {
+    var args_iter = try init.minimal.args.iterateAllocator(allocator);
+    defer args_iter.deinit();
+    _ = args_iter.next();
+    const output_path = args_iter.next() orelse {
         std.debug.print("Usage: ppgen <output.upf>\n", .{});
         std.debug.print("  Generates Si LDA norm-conserving pseudopotential.\n", .{});
         return;
-    }
-
-    const output_path = args[1];
+    };
 
     // Si: Z=14, [Ne] 3s² 3p²
     const all_orbs = [_]pipeline.OrbitalDef{
@@ -42,7 +39,7 @@ pub fn main() !void {
 
     // Generate into memory buffer, then write to file
     var buf: [2 * 1024 * 1024]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var writer = std.Io.Writer.fixed(&buf);
 
     try pipeline.generatePseudopotential(allocator, .{
         .z = 14,
@@ -51,12 +48,13 @@ pub fn main() !void {
         .all_orbitals = &all_orbs,
         .valence_channels = &val_channels,
         .l_local = 1,
-    }, fbs.writer());
+    }, &writer);
 
-    const output = fbs.getWritten();
-    const file = try std.fs.cwd().createFile(output_path, .{});
-    defer file.close();
-    try file.writeAll(output);
+    const output = writer.buffered();
+    const cwd = std.Io.Dir.cwd();
+    const file = try cwd.createFile(io, output_path, .{});
+    defer file.close(io);
+    try file.writeStreamingAll(io, output);
 
     std.debug.print("Written: {s}\n", .{output_path});
 }

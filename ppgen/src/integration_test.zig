@@ -10,6 +10,7 @@ const pipeline = @import("pipeline.zig");
 
 test "integration: generate Si UPF and write to file" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
 
     // Si: Z=14, [Ne] 3s² 3p²
     const all_orbs = [_]pipeline.OrbitalDef{
@@ -26,7 +27,7 @@ test "integration: generate Si UPF and write to file" {
     };
 
     var buf: [2 * 1024 * 1024]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var writer = std.Io.Writer.fixed(&buf);
 
     try pipeline.generatePseudopotential(allocator, .{
         .z = 14,
@@ -35,21 +36,22 @@ test "integration: generate Si UPF and write to file" {
         .all_orbitals = &all_orbs,
         .valence_channels = &val_channels,
         .l_local = 1, // p as local, s as nonlocal
-    }, fbs.writer());
+    }, &writer);
 
-    const output = fbs.getWritten();
+    const output = writer.buffered();
 
     // Write to project pseudo directory for DFT-Zig to use
     const upf_path = "/tmp/Si_ppgen.upf";
+    const cwd = std.Io.Dir.cwd();
     {
-        const file = try std.fs.cwd().createFile(upf_path, .{});
-        defer file.close();
-        try file.writeAll(output);
+        const file = try cwd.createFile(io, upf_path, .{});
+        defer file.close(io);
+        try file.writeStreamingAll(io, output);
     }
-    defer std.fs.cwd().deleteFile(upf_path) catch {};
+    defer cwd.deleteFile(io, upf_path) catch {};
 
     // Verify it parses
-    var parsed = try pseudo_parser.load(allocator, .{
+    var parsed = try pseudo_parser.load(allocator, io, .{
         .element = "Si",
         .path = upf_path,
         .format = .upf,

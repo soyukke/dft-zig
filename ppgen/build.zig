@@ -1,6 +1,11 @@
+const builtin = @import("builtin");
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
+    if (builtin.zig_version.major == 0 and builtin.zig_version.minor < 16) {
+        @compileError("ppgen requires Zig 0.16.0 or newer.");
+    }
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const target_os = target.result.os.tag;
@@ -34,6 +39,8 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     // test step
+    const test_filter = b.option([]const u8, "test-filter", "Filter ppgen tests by name");
+    const test_filters: []const []const u8 = if (test_filter) |f| &.{f} else &.{};
     const tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
@@ -43,6 +50,7 @@ pub fn build(b: *std.Build) void {
                 .{ .name = "dft_zig", .module = dft_zig_dep.module("dft_zig") },
             },
         }),
+        .filters = test_filters,
     });
     linkLinearAlgebra(tests, target_os);
     const run_tests = b.addRunArtifact(tests);
@@ -52,10 +60,10 @@ pub fn build(b: *std.Build) void {
 
 fn linkLinearAlgebra(c: *std.Build.Step.Compile, os: std.Target.Os.Tag) void {
     if (os == .macos) {
-        c.linkFramework("Accelerate");
+        c.root_module.linkFramework("Accelerate", .{});
     } else {
-        c.linkSystemLibrary("lapack");
-        c.linkSystemLibrary("blas");
+        c.root_module.linkSystemLibrary("lapack", .{});
+        c.root_module.linkSystemLibrary("blas", .{});
     }
-    c.linkLibC();
+    c.root_module.link_libc = true;
 }

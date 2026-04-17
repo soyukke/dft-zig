@@ -324,7 +324,7 @@ pub fn computeForces(
     }
 
     // Force timing profile (unbuffered write)
-    {
+    if (!quiet) {
         const ewald_ms = @as(f64, @floatFromInt(t0.durationTo(after_ewald).raw.nanoseconds)) / 1_000_000.0;
         const local_ms = @as(f64, @floatFromInt(after_ewald.durationTo(after_local).raw.nanoseconds)) / 1_000_000.0;
         const nl_ms = @as(f64, @floatFromInt(after_local.durationTo(after_nonlocal).raw.nanoseconds)) / 1_000_000.0;
