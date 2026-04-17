@@ -41,6 +41,153 @@ pub const PhononResult = struct {
     }
 };
 
+fn complexAbs2(z: math.Complex) f64 {
+    return z.r * z.r + z.i * z.i;
+}
+
+fn normalizeReal2(v0: f64, v1: f64) [2]f64 {
+    const norm = std.math.sqrt(v0 * v0 + v1 * v1);
+    if (norm < 1e-14) return .{ 1.0, 0.0 };
+    return .{ v0 / norm, v1 / norm };
+}
+
+fn normalizeComplex2(v0: math.Complex, v1: math.Complex) [2]math.Complex {
+    const norm = std.math.sqrt(complexAbs2(v0) + complexAbs2(v1));
+    if (norm < 1e-14) return .{ math.complex.init(1.0, 0.0), math.complex.init(0.0, 0.0) };
+    return .{
+        math.complex.scale(v0, 1.0 / norm),
+        math.complex.scale(v1, 1.0 / norm),
+    };
+}
+
+fn diagonalizeRealSymmetricSmall(alloc: std.mem.Allocator, dynmat: []const f64, dim: usize) !PhononResult {
+    if (dim == 0) {
+        return .{
+            .omega2 = try alloc.alloc(f64, 0),
+            .frequencies_cm1 = try alloc.alloc(f64, 0),
+            .eigenvectors = try alloc.alloc(f64, 0),
+            .dim = 0,
+        };
+    }
+    if (dim == 1) {
+        const omega2 = try alloc.alloc(f64, 1);
+        errdefer alloc.free(omega2);
+        omega2[0] = dynmat[0];
+        const freq = try alloc.alloc(f64, 1);
+        errdefer alloc.free(freq);
+        freq[0] = omega2ToCm1(omega2[0]);
+        const eigenvectors = try alloc.alloc(f64, 1);
+        errdefer alloc.free(eigenvectors);
+        eigenvectors[0] = 1.0;
+        return .{ .omega2 = omega2, .frequencies_cm1 = freq, .eigenvectors = eigenvectors, .dim = 1 };
+    }
+
+    const a = dynmat[0];
+    const b = dynmat[1];
+    const d = dynmat[3];
+    const trace = a + d;
+    const gap = std.math.sqrt((a - d) * (a - d) + 4.0 * b * b);
+    const lambda0 = 0.5 * (trace - gap);
+    const lambda1 = 0.5 * (trace + gap);
+
+    const omega2 = try alloc.alloc(f64, 2);
+    errdefer alloc.free(omega2);
+    omega2[0] = lambda0;
+    omega2[1] = lambda1;
+
+    const freq = try alloc.alloc(f64, 2);
+    errdefer alloc.free(freq);
+    freq[0] = omega2ToCm1(lambda0);
+    freq[1] = omega2ToCm1(lambda1);
+
+    const eigenvectors = try alloc.alloc(f64, 4);
+    errdefer alloc.free(eigenvectors);
+
+    const v0 = if (@abs(b) > 1e-14)
+        normalizeReal2(b, lambda0 - a)
+    else if (a <= d)
+        [2]f64{ 1.0, 0.0 }
+    else
+        [2]f64{ 0.0, 1.0 };
+    const v1 = if (@abs(b) > 1e-14)
+        normalizeReal2(b, lambda1 - a)
+    else if (a <= d)
+        [2]f64{ 0.0, 1.0 }
+    else
+        [2]f64{ 1.0, 0.0 };
+
+    eigenvectors[0] = v0[0];
+    eigenvectors[1] = v0[1];
+    eigenvectors[2] = v1[0];
+    eigenvectors[3] = v1[1];
+
+    return .{ .omega2 = omega2, .frequencies_cm1 = freq, .eigenvectors = eigenvectors, .dim = 2 };
+}
+
+fn diagonalizeComplexHermitianSmall(alloc: std.mem.Allocator, dynmat_c: []const math.Complex, dim: usize) !ComplexPhononResult {
+    if (dim == 0) {
+        return .{
+            .omega2 = try alloc.alloc(f64, 0),
+            .frequencies_cm1 = try alloc.alloc(f64, 0),
+            .eigenvectors = try alloc.alloc(math.Complex, 0),
+            .dim = 0,
+        };
+    }
+    if (dim == 1) {
+        const omega2 = try alloc.alloc(f64, 1);
+        errdefer alloc.free(omega2);
+        omega2[0] = dynmat_c[0].r;
+        const freq = try alloc.alloc(f64, 1);
+        errdefer alloc.free(freq);
+        freq[0] = omega2ToCm1(omega2[0]);
+        const eigenvectors = try alloc.alloc(math.Complex, 1);
+        errdefer alloc.free(eigenvectors);
+        eigenvectors[0] = math.complex.init(1.0, 0.0);
+        return .{ .omega2 = omega2, .frequencies_cm1 = freq, .eigenvectors = eigenvectors, .dim = 1 };
+    }
+
+    const a = dynmat_c[0].r;
+    const b = dynmat_c[1];
+    const d = dynmat_c[3].r;
+    const trace = a + d;
+    const gap = std.math.sqrt((a - d) * (a - d) + 4.0 * complexAbs2(b));
+    const lambda0 = 0.5 * (trace - gap);
+    const lambda1 = 0.5 * (trace + gap);
+
+    const omega2 = try alloc.alloc(f64, 2);
+    errdefer alloc.free(omega2);
+    omega2[0] = lambda0;
+    omega2[1] = lambda1;
+
+    const freq = try alloc.alloc(f64, 2);
+    errdefer alloc.free(freq);
+    freq[0] = omega2ToCm1(lambda0);
+    freq[1] = omega2ToCm1(lambda1);
+
+    const eigenvectors = try alloc.alloc(math.Complex, 4);
+    errdefer alloc.free(eigenvectors);
+
+    const v0 = if (complexAbs2(b) > 1e-28)
+        normalizeComplex2(b, math.complex.init(lambda0 - a, 0.0))
+    else if (a <= d)
+        [2]math.Complex{ math.complex.init(1.0, 0.0), math.complex.init(0.0, 0.0) }
+    else
+        [2]math.Complex{ math.complex.init(0.0, 0.0), math.complex.init(1.0, 0.0) };
+    const v1 = if (complexAbs2(b) > 1e-28)
+        normalizeComplex2(b, math.complex.init(lambda1 - a, 0.0))
+    else if (a <= d)
+        [2]math.Complex{ math.complex.init(0.0, 0.0), math.complex.init(1.0, 0.0) }
+    else
+        [2]math.Complex{ math.complex.init(1.0, 0.0), math.complex.init(0.0, 0.0) };
+
+    eigenvectors[0] = v0[0];
+    eigenvectors[1] = v0[1];
+    eigenvectors[2] = v1[0];
+    eigenvectors[3] = v1[1];
+
+    return .{ .omega2 = omega2, .frequencies_cm1 = freq, .eigenvectors = eigenvectors, .dim = 2 };
+}
+
 /// Apply acoustic sum rule at Γ-point.
 /// For each atom I and directions α,β:
 ///   D_{Iα,Iβ} = -Σ_{J≠I} D_{Iα,Jβ}
@@ -106,6 +253,7 @@ pub fn omega2ToCm1(omega2: f64) f64 {
 /// Diagonalize a real symmetric dynamical matrix using LAPACK dsyev.
 pub fn diagonalize(alloc: std.mem.Allocator, dynmat: []const f64, dim: usize) !PhononResult {
     if (dynmat.len != dim * dim) return error.InvalidMatrixSize;
+    if (dim <= 2) return diagonalizeRealSymmetricSmall(alloc, dynmat, dim);
     var eig = try linalg.realSymmetricEigenDecomp(alloc, .accelerate, dim, @constCast(dynmat));
     errdefer eig.deinit(alloc);
 
@@ -146,6 +294,7 @@ pub fn massWeightComplex(dynmat_c: []math.Complex, n_atoms: usize, masses: []con
 /// Diagonalize a complex Hermitian dynamical matrix using LAPACK zheev.
 pub fn diagonalizeComplex(alloc: std.mem.Allocator, dynmat_c: []const math.Complex, dim: usize) !ComplexPhononResult {
     if (dynmat_c.len != dim * dim) return error.InvalidMatrixSize;
+    if (dim <= 2) return diagonalizeComplexHermitianSmall(alloc, dynmat_c, dim);
     const dynmat_copy = try alloc.alloc(math.Complex, dynmat_c.len);
     defer alloc.free(dynmat_copy);
     @memcpy(dynmat_copy, dynmat_c);
@@ -171,6 +320,12 @@ pub fn diagonalizeComplex(alloc: std.mem.Allocator, dynmat_c: []const math.Compl
 /// Uses zheev with jobz='N' (no eigenvectors), ~2-3x faster than full diagonalization.
 pub fn eigenvaluesComplex(alloc: std.mem.Allocator, dynmat_c: []math.Complex, dim: usize) ![]f64 {
     if (dynmat_c.len != dim * dim) return error.InvalidMatrixSize;
+    if (dim <= 2) {
+        const result = try diagonalizeComplexHermitianSmall(alloc, dynmat_c, dim);
+        defer alloc.free(result.omega2);
+        defer alloc.free(result.eigenvectors);
+        return result.frequencies_cm1;
+    }
     const dynmat_copy = try alloc.alloc(math.Complex, dynmat_c.len);
     defer alloc.free(dynmat_copy);
     @memcpy(dynmat_copy, dynmat_c);
