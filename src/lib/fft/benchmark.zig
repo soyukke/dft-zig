@@ -487,7 +487,7 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 

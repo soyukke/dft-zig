@@ -7,7 +7,8 @@ const d3_params = @import("../vdw/d3_params.zig");
 /// Density is in electrons/Bohr³ (converted from Ry units).
 /// Grid ordering: x-outer, y-middle, z-inner (Fortran convention).
 pub fn writeCubeFile(
-    dir: std.fs.Dir,
+    io: std.Io,
+    dir: std.Io.Dir,
     filename: []const u8,
     density: []const f64,
     grid: [3]usize,
@@ -15,10 +16,10 @@ pub fn writeCubeFile(
     atoms: []const hamiltonian.AtomData,
     species: []const hamiltonian.SpeciesEntry,
 ) !void {
-    const file = try dir.createFile(filename, .{});
-    defer file.close();
+    const file = try dir.createFile(io, filename, .{});
+    defer file.close(io);
     var buf: [512]u8 = undefined;
-    var writer = file.writer(&buf);
+    var writer = file.writer(io, &buf);
     const out = &writer.interface;
 
     const nx = grid[0];

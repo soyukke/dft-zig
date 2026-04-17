@@ -60,12 +60,12 @@ pub const Fft3dPlan = struct {
     };
 
     /// Initialize with default Zig backend
-    pub fn init(alloc: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
-        return initWithBackend(alloc, nx, ny, nz, .zig);
+    pub fn init(alloc: std.mem.Allocator, io: std.Io, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
+        return initWithBackend(alloc, io, nx, ny, nz, .zig);
     }
 
     /// Initialize with specified backend
-    pub fn initWithBackend(alloc: std.mem.Allocator, nx: usize, ny: usize, nz: usize, backend: FftBackend) !Fft3dPlan {
+    pub fn initWithBackend(alloc: std.mem.Allocator, io: std.Io, nx: usize, ny: usize, nz: usize, backend: FftBackend) !Fft3dPlan {
         switch (backend) {
             .zig => {
                 const plan = try fft_lib.Plan3d.init(alloc, nx, ny, nz);
@@ -79,7 +79,7 @@ pub const Fft3dPlan = struct {
                 };
             },
             .zig_parallel => {
-                const plan = try parallel_fft.ParallelPlan3d.init(alloc, nx, ny, nz);
+                const plan = try parallel_fft.ParallelPlan3d.init(alloc, io, nx, ny, nz);
                 return .{
                     .nx = nx,
                     .ny = ny,
@@ -90,7 +90,7 @@ pub const Fft3dPlan = struct {
                 };
             },
             .zig_transpose => {
-                const plan = try parallel_fft_transpose.TransposePlan3d.init(alloc, nx, ny, nz);
+                const plan = try parallel_fft_transpose.TransposePlan3d.init(alloc, io, nx, ny, nz);
                 return .{
                     .nx = nx,
                     .ny = ny,
@@ -103,7 +103,7 @@ pub const Fft3dPlan = struct {
             .zig_comptime24 => {
                 // Only supports 24×24×24, fall back to zig_parallel for other sizes
                 if (nx != 24 or ny != 24 or nz != 24) {
-                    const plan = try parallel_fft.ParallelPlan3d.init(alloc, nx, ny, nz);
+                    const plan = try parallel_fft.ParallelPlan3d.init(alloc, io, nx, ny, nz);
                     return .{
                         .nx = nx,
                         .ny = ny,
@@ -113,7 +113,7 @@ pub const Fft3dPlan = struct {
                         .allocator = alloc,
                     };
                 }
-                const plan = try parallel_fft24.ParallelPlan3d24.init(alloc, nx, ny, nz);
+                const plan = try parallel_fft24.ParallelPlan3d24.init(alloc, io, nx, ny, nz);
                 return .{
                     .nx = nx,
                     .ny = ny,
@@ -391,9 +391,10 @@ pub fn fft1dPlanned(plan: Fft1dPlan, data: []math.Complex, inverse: bool) void {
 
 test "Fft3dPlan arbitrary size" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
 
     // Test with non-power-of-2 size (24x24x24)
-    var plan = try Fft3dPlan.init(allocator, 6, 6, 6);
+    var plan = try Fft3dPlan.init(allocator, io, 6, 6, 6);
     defer plan.deinit(allocator);
 
     var data: [216]math.Complex = undefined;
@@ -468,6 +469,7 @@ test "RealFft3dPlan roundtrip" {
 
 test "RealFft3dPlan vs complex Fft3dPlan" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
 
     const nx = 8;
     const ny = 8;
@@ -478,7 +480,7 @@ test "RealFft3dPlan vs complex Fft3dPlan" {
     var rfft_plan = try RealFft3dPlan.init(allocator, nx, ny, nz);
     defer rfft_plan.deinit(allocator);
 
-    var cfft_plan = try Fft3dPlan.init(allocator, nx, ny, nz);
+    var cfft_plan = try Fft3dPlan.init(allocator, io, nx, ny, nz);
     defer cfft_plan.deinit(allocator);
 
     // Test input

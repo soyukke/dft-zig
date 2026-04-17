@@ -24,7 +24,7 @@ const BenchResult = struct {
     throughput_mpts: f64,
 };
 
-fn benchmarkPlan3d(allocator: std.mem.Allocator, grid: usize, iterations: usize) !BenchResult {
+fn benchmarkPlan3d(allocator: std.mem.Allocator, io: std.Io, grid: usize, iterations: usize) !BenchResult {
     const n = grid * grid * grid;
     const data = try allocator.alloc(Complex, n);
     defer allocator.free(data);
@@ -45,12 +45,12 @@ fn benchmarkPlan3d(allocator: std.mem.Allocator, grid: usize, iterations: usize)
     }
 
     // Benchmark
-    var timer = try std.time.Timer.start();
+    const t_start = std.Io.Clock.Timestamp.now(io, .awake);
     for (0..iterations) |_| {
         @memcpy(data_copy, data);
         plan.forward(data_copy);
     }
-    const elapsed_ns = timer.read();
+    const elapsed_ns: u64 = @intCast(t_start.untilNow(io).raw.nanoseconds);
     const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
     const time_per_iter = elapsed_ms / @as(f64, @floatFromInt(iterations));
     const throughput = @as(f64, @floatFromInt(n)) / time_per_iter / 1000.0;
@@ -62,7 +62,7 @@ fn benchmarkPlan3d(allocator: std.mem.Allocator, grid: usize, iterations: usize)
     };
 }
 
-fn benchmarkParallel(allocator: std.mem.Allocator, grid: usize, iterations: usize) !BenchResult {
+fn benchmarkParallel(allocator: std.mem.Allocator, io: std.Io, grid: usize, iterations: usize) !BenchResult {
     const n = grid * grid * grid;
     const data = try allocator.alloc(Complex, n);
     defer allocator.free(data);
@@ -73,7 +73,7 @@ fn benchmarkParallel(allocator: std.mem.Allocator, grid: usize, iterations: usiz
         c.* = Complex.init(@floatFromInt(i % 17), @floatFromInt(i % 13));
     }
 
-    var plan = try fft_lib.parallel_fft.ParallelPlan3d.init(allocator, grid, grid, grid);
+    var plan = try fft_lib.parallel_fft.ParallelPlan3d.init(allocator, io, grid, grid, grid);
     defer plan.deinit();
 
     // Warmup
@@ -83,12 +83,12 @@ fn benchmarkParallel(allocator: std.mem.Allocator, grid: usize, iterations: usiz
     }
 
     // Benchmark
-    var timer = try std.time.Timer.start();
+    const t_start = std.Io.Clock.Timestamp.now(io, .awake);
     for (0..iterations) |_| {
         @memcpy(data_copy, data);
         plan.forward(data_copy);
     }
-    const elapsed_ns = timer.read();
+    const elapsed_ns: u64 = @intCast(t_start.untilNow(io).raw.nanoseconds);
     const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
     const time_per_iter = elapsed_ms / @as(f64, @floatFromInt(iterations));
     const throughput = @as(f64, @floatFromInt(n)) / time_per_iter / 1000.0;
@@ -100,7 +100,7 @@ fn benchmarkParallel(allocator: std.mem.Allocator, grid: usize, iterations: usiz
     };
 }
 
-fn benchmarkTranspose(allocator: std.mem.Allocator, grid: usize, iterations: usize) !BenchResult {
+fn benchmarkTranspose(allocator: std.mem.Allocator, io: std.Io, grid: usize, iterations: usize) !BenchResult {
     const n = grid * grid * grid;
     const data = try allocator.alloc(Complex, n);
     defer allocator.free(data);
@@ -111,7 +111,7 @@ fn benchmarkTranspose(allocator: std.mem.Allocator, grid: usize, iterations: usi
         c.* = Complex.init(@floatFromInt(i % 17), @floatFromInt(i % 13));
     }
 
-    var plan = try fft_lib.parallel_fft_transpose.TransposePlan3d.init(allocator, grid, grid, grid);
+    var plan = try fft_lib.parallel_fft_transpose.TransposePlan3d.init(allocator, io, grid, grid, grid);
     defer plan.deinit();
 
     // Warmup
@@ -121,12 +121,12 @@ fn benchmarkTranspose(allocator: std.mem.Allocator, grid: usize, iterations: usi
     }
 
     // Benchmark
-    var timer = try std.time.Timer.start();
+    const t_start = std.Io.Clock.Timestamp.now(io, .awake);
     for (0..iterations) |_| {
         @memcpy(data_copy, data);
         plan.forward(data_copy);
     }
-    const elapsed_ns = timer.read();
+    const elapsed_ns: u64 = @intCast(t_start.untilNow(io).raw.nanoseconds);
     const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
     const time_per_iter = elapsed_ms / @as(f64, @floatFromInt(iterations));
     const throughput = @as(f64, @floatFromInt(n)) / time_per_iter / 1000.0;
@@ -138,7 +138,7 @@ fn benchmarkTranspose(allocator: std.mem.Allocator, grid: usize, iterations: usi
     };
 }
 
-fn benchmarkComptime24(allocator: std.mem.Allocator, iterations: usize) !BenchResult {
+fn benchmarkComptime24(allocator: std.mem.Allocator, io: std.Io, iterations: usize) !BenchResult {
     const grid: usize = 24;
     const n = grid * grid * grid;
     const data = try allocator.alloc(Complex, n);
@@ -150,7 +150,7 @@ fn benchmarkComptime24(allocator: std.mem.Allocator, iterations: usize) !BenchRe
         c.* = Complex.init(@floatFromInt(i % 17), @floatFromInt(i % 13));
     }
 
-    var plan = try fft_lib.parallel_fft24.ParallelPlan3d24.init(allocator, grid, grid, grid);
+    var plan = try fft_lib.parallel_fft24.ParallelPlan3d24.init(allocator, io, grid, grid, grid);
     defer plan.deinit();
 
     // Warmup
@@ -160,12 +160,12 @@ fn benchmarkComptime24(allocator: std.mem.Allocator, iterations: usize) !BenchRe
     }
 
     // Benchmark
-    var timer = try std.time.Timer.start();
+    const t_start = std.Io.Clock.Timestamp.now(io, .awake);
     for (0..iterations) |_| {
         @memcpy(data_copy, data);
         plan.forward(data_copy);
     }
-    const elapsed_ns = timer.read();
+    const elapsed_ns: u64 = @intCast(t_start.untilNow(io).raw.nanoseconds);
     const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
     const time_per_iter = elapsed_ms / @as(f64, @floatFromInt(iterations));
     const throughput = @as(f64, @floatFromInt(n)) / time_per_iter / 1000.0;
@@ -177,7 +177,7 @@ fn benchmarkComptime24(allocator: std.mem.Allocator, iterations: usize) !BenchRe
     };
 }
 
-fn benchmarkVdsp(allocator: std.mem.Allocator, grid: usize, iterations: usize) !BenchResult {
+fn benchmarkVdsp(allocator: std.mem.Allocator, io: std.Io, grid: usize, iterations: usize) !BenchResult {
     const n = grid * grid * grid;
     const data = try allocator.alloc(Complex, n);
     defer allocator.free(data);
@@ -198,12 +198,12 @@ fn benchmarkVdsp(allocator: std.mem.Allocator, grid: usize, iterations: usize) !
     }
 
     // Benchmark
-    var timer = try std.time.Timer.start();
+    const t_start = std.Io.Clock.Timestamp.now(io, .awake);
     for (0..iterations) |_| {
         @memcpy(data_copy, data);
         plan.forward(data_copy);
     }
-    const elapsed_ns = timer.read();
+    const elapsed_ns: u64 = @intCast(t_start.untilNow(io).raw.nanoseconds);
     const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
     const time_per_iter = elapsed_ms / @as(f64, @floatFromInt(iterations));
     const throughput = @as(f64, @floatFromInt(n)) / time_per_iter / 1000.0;
@@ -215,7 +215,7 @@ fn benchmarkVdsp(allocator: std.mem.Allocator, grid: usize, iterations: usize) !
     };
 }
 
-fn benchmarkRfft3d(allocator: std.mem.Allocator, grid: usize, iterations: usize) !BenchResult {
+fn benchmarkRfft3d(allocator: std.mem.Allocator, io: std.Io, grid: usize, iterations: usize) !BenchResult {
     const n = grid * grid * grid;
     const nx_complex = grid / 2 + 1;
     const complex_size = nx_complex * grid * grid;
@@ -238,11 +238,11 @@ fn benchmarkRfft3d(allocator: std.mem.Allocator, grid: usize, iterations: usize)
     }
 
     // Benchmark
-    var timer = try std.time.Timer.start();
+    const t_start = std.Io.Clock.Timestamp.now(io, .awake);
     for (0..iterations) |_| {
         plan.forward(real_data, complex_data);
     }
-    const elapsed_ns = timer.read();
+    const elapsed_ns: u64 = @intCast(t_start.untilNow(io).raw.nanoseconds);
     const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
     const time_per_iter = elapsed_ms / @as(f64, @floatFromInt(iterations));
     const throughput = @as(f64, @floatFromInt(n)) / time_per_iter / 1000.0;
@@ -289,10 +289,9 @@ const ResultList = struct {
     }
 };
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
+    const io = init.io;
 
     std.debug.print("=" ** 60 ++ "\n", .{});
     std.debug.print("Comprehensive 3D FFT Backend Benchmark\n", .{});
@@ -305,12 +304,12 @@ pub fn main() !void {
         const iters: usize = 200;
         var results = ResultList{};
 
-        results.append(try benchmarkPlan3d(allocator, grid, iters));
-        results.append(try benchmarkParallel(allocator, grid, iters));
-        results.append(try benchmarkTranspose(allocator, grid, iters));
-        results.append(try benchmarkComptime24(allocator, iters));
+        results.append(try benchmarkPlan3d(allocator, io, grid, iters));
+        results.append(try benchmarkParallel(allocator, io, grid, iters));
+        results.append(try benchmarkTranspose(allocator, io, grid, iters));
+        results.append(try benchmarkComptime24(allocator, io, iters));
         if (grid % 2 == 0) {
-            results.append(try benchmarkRfft3d(allocator, grid, iters));
+            results.append(try benchmarkRfft3d(allocator, io, grid, iters));
         }
 
         printResults(grid, results.slice());
@@ -322,14 +321,14 @@ pub fn main() !void {
         const iters: usize = 200;
         var results = ResultList{};
 
-        results.append(try benchmarkPlan3d(allocator, grid, iters));
-        results.append(try benchmarkParallel(allocator, grid, iters));
-        results.append(try benchmarkTranspose(allocator, grid, iters));
+        results.append(try benchmarkPlan3d(allocator, io, grid, iters));
+        results.append(try benchmarkParallel(allocator, io, grid, iters));
+        results.append(try benchmarkTranspose(allocator, io, grid, iters));
         if (comptime builtin.os.tag == .macos) {
-            results.append(try benchmarkVdsp(allocator, grid, iters));
+            results.append(try benchmarkVdsp(allocator, io, grid, iters));
         }
         if (grid % 2 == 0) {
-            results.append(try benchmarkRfft3d(allocator, grid, iters));
+            results.append(try benchmarkRfft3d(allocator, io, grid, iters));
         }
 
         printResults(grid, results.slice());
@@ -341,11 +340,11 @@ pub fn main() !void {
         const iters: usize = 50;
         var results = ResultList{};
 
-        results.append(try benchmarkPlan3d(allocator, grid, iters));
-        results.append(try benchmarkParallel(allocator, grid, iters));
-        results.append(try benchmarkTranspose(allocator, grid, iters));
+        results.append(try benchmarkPlan3d(allocator, io, grid, iters));
+        results.append(try benchmarkParallel(allocator, io, grid, iters));
+        results.append(try benchmarkTranspose(allocator, io, grid, iters));
         if (grid % 2 == 0) {
-            results.append(try benchmarkRfft3d(allocator, grid, iters));
+            results.append(try benchmarkRfft3d(allocator, io, grid, iters));
         }
 
         printResults(grid, results.slice());
@@ -357,14 +356,14 @@ pub fn main() !void {
         const iters: usize = 50;
         var results = ResultList{};
 
-        results.append(try benchmarkPlan3d(allocator, grid, iters));
-        results.append(try benchmarkParallel(allocator, grid, iters));
-        results.append(try benchmarkTranspose(allocator, grid, iters));
+        results.append(try benchmarkPlan3d(allocator, io, grid, iters));
+        results.append(try benchmarkParallel(allocator, io, grid, iters));
+        results.append(try benchmarkTranspose(allocator, io, grid, iters));
         if (comptime builtin.os.tag == .macos) {
-            results.append(try benchmarkVdsp(allocator, grid, iters));
+            results.append(try benchmarkVdsp(allocator, io, grid, iters));
         }
         if (grid % 2 == 0) {
-            results.append(try benchmarkRfft3d(allocator, grid, iters));
+            results.append(try benchmarkRfft3d(allocator, io, grid, iters));
         }
 
         printResults(grid, results.slice());
@@ -376,11 +375,11 @@ pub fn main() !void {
         const iters: usize = 10;
         var results = ResultList{};
 
-        results.append(try benchmarkPlan3d(allocator, grid, iters));
-        results.append(try benchmarkParallel(allocator, grid, iters));
-        results.append(try benchmarkTranspose(allocator, grid, iters));
+        results.append(try benchmarkPlan3d(allocator, io, grid, iters));
+        results.append(try benchmarkParallel(allocator, io, grid, iters));
+        results.append(try benchmarkTranspose(allocator, io, grid, iters));
         if (grid % 2 == 0) {
-            results.append(try benchmarkRfft3d(allocator, grid, iters));
+            results.append(try benchmarkRfft3d(allocator, io, grid, iters));
         }
 
         printResults(grid, results.slice());
@@ -392,14 +391,14 @@ pub fn main() !void {
         const iters: usize = 10;
         var results = ResultList{};
 
-        results.append(try benchmarkPlan3d(allocator, grid, iters));
-        results.append(try benchmarkParallel(allocator, grid, iters));
-        results.append(try benchmarkTranspose(allocator, grid, iters));
+        results.append(try benchmarkPlan3d(allocator, io, grid, iters));
+        results.append(try benchmarkParallel(allocator, io, grid, iters));
+        results.append(try benchmarkTranspose(allocator, io, grid, iters));
         if (comptime builtin.os.tag == .macos) {
-            results.append(try benchmarkVdsp(allocator, grid, iters));
+            results.append(try benchmarkVdsp(allocator, io, grid, iters));
         }
         if (grid % 2 == 0) {
-            results.append(try benchmarkRfft3d(allocator, grid, iters));
+            results.append(try benchmarkRfft3d(allocator, io, grid, iters));
         }
 
         printResults(grid, results.slice());

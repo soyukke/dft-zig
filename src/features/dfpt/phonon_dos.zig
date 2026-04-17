@@ -121,11 +121,11 @@ pub fn computePhononDos(
 }
 
 /// Write phonon DOS to CSV file.
-pub fn writePhononDosCsv(dir: std.fs.Dir, result: PhononDosResult) !void {
-    const file = try dir.createFile("phonon_dos.csv", .{});
-    defer file.close();
+pub fn writePhononDosCsv(io: std.Io, dir: std.Io.Dir, result: PhononDosResult) !void {
+    const file = try dir.createFile(io, "phonon_dos.csv", .{});
+    defer file.close(io);
     var buf: [256]u8 = undefined;
-    var writer = file.writer(&buf);
+    var writer = file.writer(io, &buf);
     const out = &writer.interface;
 
     try out.print("frequency_cm-1,dos\n", .{});

@@ -23,16 +23,17 @@ pub const ScfReferenceData = struct {
 
 /// Write SCF reference data to JSON file
 pub fn writeReferenceJson(
+    io: std.Io,
     alloc: std.mem.Allocator,
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     path: []const u8,
     result: *const local_orbital_scf.ScfGridResult,
 ) !void {
     const diag = try sparse.diagonalValues(alloc, result.density);
     defer alloc.free(diag);
 
-    var file = try dir.createFile(path, .{ .truncate = true });
-    defer file.close();
+    var file = try dir.createFile(io, path, .{ .truncate = true });
+    defer file.close(io);
 
     const payload = ScfReferenceData{
         .energy = .{
@@ -48,7 +49,7 @@ pub fn writeReferenceJson(
     };
 
     var buffer: [8192]u8 = undefined;
-    var writer = file.writer(&buffer);
+    var writer = file.writer(io, &buffer);
     const out = &writer.interface;
     try std.json.Stringify.value(payload, .{ .whitespace = .indent_2 }, out);
     try out.writeAll("\n");
@@ -57,11 +58,12 @@ pub fn writeReferenceJson(
 
 /// Read SCF reference data from JSON file
 pub fn readReferenceJson(
+    io: std.Io,
     alloc: std.mem.Allocator,
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     path: []const u8,
 ) !ScfReferenceOwned {
-    const content = try dir.readFileAlloc(alloc, path, 64 * 1024 * 1024);
+    const content = try dir.readFileAlloc(io, path, alloc, .limited(64 * 1024 * 1024));
     defer alloc.free(content);
     var parsed = try std.json.parseFromSlice(ScfReferenceData, alloc, content, .{});
     defer parsed.deinit();
@@ -135,6 +137,7 @@ pub fn compareResults(
 
 test "round-trip JSON" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
 
     const triplets = [_]sparse.Triplet{
         .{ .row = 0, .col = 0, .value = 1.0 },
@@ -165,9 +168,9 @@ test "round-trip JSON" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    try writeReferenceJson(alloc, tmp_dir.dir, "test.json", &result);
+    try writeReferenceJson(io, alloc, tmp_dir.dir, "test.json", &result);
 
-    var ref = try readReferenceJson(alloc, tmp_dir.dir, "test.json");
+    var ref = try readReferenceJson(io, alloc, tmp_dir.dir, "test.json");
     defer ref.deinit(alloc);
 
     try std.testing.expectApproxEqAbs(@as(f64, -10.5), ref.energy.total, 1e-10);

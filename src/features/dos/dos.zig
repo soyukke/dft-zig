@@ -78,15 +78,15 @@ pub fn computeDos(
 
 /// Write DOS to CSV file.
 /// If fermi_level is NaN (e.g., insulator without smearing), shifted energies use 0.
-pub fn writeDosCSV(dir: std.fs.Dir, result: DosResult, fermi_level: f64) !void {
-    return writeDosCSVNamed(dir, result, fermi_level, "dos.csv");
+pub fn writeDosCSV(io: std.Io, dir: std.Io.Dir, result: DosResult, fermi_level: f64) !void {
+    return writeDosCSVNamed(io, dir, result, fermi_level, "dos.csv");
 }
 
-pub fn writeDosCSVNamed(dir: std.fs.Dir, result: DosResult, fermi_level: f64, filename: []const u8) !void {
-    const file = try dir.createFile(filename, .{});
-    defer file.close();
+pub fn writeDosCSVNamed(io: std.Io, dir: std.Io.Dir, result: DosResult, fermi_level: f64, filename: []const u8) !void {
+    const file = try dir.createFile(io, filename, .{});
+    defer file.close(io);
     var buf: [256]u8 = undefined;
-    var writer = file.writer(&buf);
+    var writer = file.writer(io, &buf);
     const out = &writer.interface;
 
     const ef = if (std.math.isNan(fermi_level)) @as(f64, 0.0) else fermi_level;

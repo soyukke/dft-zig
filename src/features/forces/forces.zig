@@ -58,6 +58,7 @@ pub const Grid = local_force.Grid;
 /// for the ion-ion contribution (isolated/molecular systems).
 pub fn computeForces(
     alloc: std.mem.Allocator,
+    io: std.Io,
     grid: Grid,
     rho_g: []const math.Complex,
     potential_g: ?[]const math.Complex,
@@ -99,7 +100,7 @@ pub fn computeForces(
         positions[i] = atom.position;
     }
 
-    const force_timer_start = std.time.Instant.now() catch null;
+    const t0 = std.Io.Clock.Timestamp.now(io, .awake);
 
     // Ion-ion forces: Ewald for periodic, direct Coulomb for isolated
     // Both return forces in Hartree/Bohr, multiply by 2 for Ry/Bohr
@@ -128,7 +129,7 @@ pub fn computeForces(
         }
     }
 
-    const after_ewald = std.time.Instant.now() catch null;
+    const after_ewald = std.Io.Clock.Timestamp.now(io, .awake);
 
     // Local pseudopotential forces
     const local_forces = try local_force.localPseudoForces(
@@ -142,7 +143,7 @@ pub fn computeForces(
         ff_tables,
     );
 
-    const after_local = std.time.Instant.now() catch null;
+    const after_local = std.Io.Clock.Timestamp.now(io, .awake);
 
     // Build per-species S_ij arrays for PAW overlap correction in nonlocal force
     var paw_sij_list: ?[]const []const f64 = null;
@@ -194,7 +195,7 @@ pub fn computeForces(
         }
     }
 
-    const after_nonlocal = std.time.Instant.now() catch null;
+    const after_nonlocal = std.Io.Clock.Timestamp.now(io, .awake);
 
     var resid_forces: ?[]math.Vec3 = null;
     if (vresid_g) |vresid| {
@@ -279,7 +280,7 @@ pub fn computeForces(
         );
     }
 
-    const after_nlcc = std.time.Instant.now() catch null;
+    const after_nlcc = std.Io.Clock.Timestamp.now(io, .awake);
 
     // D3 dispersion forces
     var disp_forces: ?[]math.Vec3 = null;
@@ -323,17 +324,17 @@ pub fn computeForces(
     }
 
     // Force timing profile (unbuffered write)
-    {
-        if (force_timer_start) |t0| {
-            const ewald_ms = if (after_ewald) |t1| @as(f64, @floatFromInt(t1.since(t0))) / 1_000_000.0 else 0.0;
-            const local_ms = if (after_local) |t1| @as(f64, @floatFromInt(t1.since(after_ewald orelse t0))) / 1_000_000.0 else 0.0;
-            const nl_ms = if (after_nonlocal) |t1| @as(f64, @floatFromInt(t1.since(after_local orelse t0))) / 1_000_000.0 else 0.0;
-            const nlcc_ms = if (after_nlcc) |t1| @as(f64, @floatFromInt(t1.since(after_nonlocal orelse t0))) / 1_000_000.0 else 0.0;
-            const total_ms = if (after_nlcc) |t1| @as(f64, @floatFromInt(t1.since(t0))) / 1_000_000.0 else 0.0;
-            var buf: [256]u8 = undefined;
-            const msg = std.fmt.bufPrint(&buf, "force_profile ewald_ms={d:.1} local_ms={d:.1} nonlocal_ms={d:.1} nlcc_ms={d:.1} total_ms={d:.1}\n", .{ ewald_ms, local_ms, nl_ms, nlcc_ms, total_ms }) catch "";
-            std.fs.File.stderr().writeAll(msg) catch {};
-        }
+    if (!quiet) {
+        const ewald_ms = @as(f64, @floatFromInt(t0.durationTo(after_ewald).raw.nanoseconds)) / 1_000_000.0;
+        const local_ms = @as(f64, @floatFromInt(after_ewald.durationTo(after_local).raw.nanoseconds)) / 1_000_000.0;
+        const nl_ms = @as(f64, @floatFromInt(after_local.durationTo(after_nonlocal).raw.nanoseconds)) / 1_000_000.0;
+        const nlcc_ms = @as(f64, @floatFromInt(after_nonlocal.durationTo(after_nlcc).raw.nanoseconds)) / 1_000_000.0;
+        const total_ms = @as(f64, @floatFromInt(t0.durationTo(after_nlcc).raw.nanoseconds)) / 1_000_000.0;
+        var buf: [256]u8 = undefined;
+        var writer = std.Io.File.stderr().writer(io, &buf);
+        const out = &writer.interface;
+        out.print("force_profile ewald_ms={d:.1} local_ms={d:.1} nonlocal_ms={d:.1} nlcc_ms={d:.1} total_ms={d:.1}\n", .{ ewald_ms, local_ms, nl_ms, nlcc_ms, total_ms }) catch {};
+        out.flush() catch {};
     }
 
     // Total forces
@@ -360,7 +361,7 @@ pub fn computeForces(
     // Debug output for force components
     if (!quiet) {
         var buffer: [1024]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(io, &buffer);
         const out = &writer.interface;
         out.print("\n=== Force Components (Ry/Bohr) ===\n", .{}) catch {};
         for (0..n_atoms) |i| {

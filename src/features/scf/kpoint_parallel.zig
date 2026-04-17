@@ -81,6 +81,7 @@ pub const KpointCache = struct {
 };
 
 pub const KpointShared = struct {
+    io: std.Io,
     cfg: *const config.Config,
     grid: Grid,
     kpoints: []const KPoint,
@@ -113,8 +114,8 @@ pub const KpointShared = struct {
     next_index: *std.atomic.Value(usize),
     stop: *std.atomic.Value(u8),
     err: *?anyerror,
-    err_mutex: *std.Thread.Mutex,
-    log_mutex: *std.Thread.Mutex,
+    err_mutex: *std.Io.Mutex,
+    log_mutex: *std.Io.Mutex,
 };
 
 pub const KpointWorker = struct {
@@ -123,8 +124,8 @@ pub const KpointWorker = struct {
 };
 
 fn setWorkerError(shared: *KpointShared, err: anyerror) void {
-    shared.err_mutex.lock();
-    defer shared.err_mutex.unlock();
+    shared.err_mutex.lockUncancelable(shared.io);
+    defer shared.err_mutex.unlock(shared.io);
     if (shared.err.* == null) {
         shared.err.* = err;
     }
@@ -151,9 +152,9 @@ pub fn kpointWorker(worker: *KpointWorker) void {
         if (idx >= shared.kpoints.len) break;
 
         if (!shared.cfg.scf.quiet) {
-            shared.log_mutex.lock();
-            logKpoint(idx, shared.kpoints.len) catch {};
-            shared.log_mutex.unlock();
+            shared.log_mutex.lockUncancelable(shared.io);
+            logKpoint(shared.io, idx, shared.kpoints.len) catch {};
+            shared.log_mutex.unlock(shared.io);
         }
         _ = arena.reset(.retain_capacity);
         const kalloc = arena.allocator();
@@ -164,6 +165,7 @@ pub fn kpointWorker(worker: *KpointWorker) void {
             null;
         computeKpointContribution(
             kalloc,
+            shared.io,
             shared.cfg,
             shared.grid,
             shared.kpoints[idx],
@@ -216,6 +218,7 @@ pub fn kpointThreadCount(total: usize, cfg_threads: usize) usize {
 
 /// Shared data for parallel smearing eigendata computation
 pub const SmearingShared = struct {
+    io: std.Io,
     cfg: *const config.Config,
     grid: Grid,
     kpoints: []const KPoint,
@@ -243,8 +246,8 @@ pub const SmearingShared = struct {
     next_index: *std.atomic.Value(usize),
     stop: *std.atomic.Value(u8),
     err: *?anyerror,
-    err_mutex: *std.Thread.Mutex,
-    log_mutex: *std.Thread.Mutex,
+    err_mutex: *std.Io.Mutex,
+    log_mutex: *std.Io.Mutex,
 };
 
 pub const SmearingWorker = struct {
@@ -253,8 +256,8 @@ pub const SmearingWorker = struct {
 };
 
 fn setSmearingWorkerError(shared: *SmearingShared, err: anyerror) void {
-    shared.err_mutex.lock();
-    defer shared.err_mutex.unlock();
+    shared.err_mutex.lockUncancelable(shared.io);
+    defer shared.err_mutex.unlock(shared.io);
     if (shared.err.* == null) {
         shared.err.* = err;
     }
@@ -276,9 +279,9 @@ pub fn smearingWorker(worker: *SmearingWorker) void {
         if (idx >= shared.kpoints.len) break;
 
         if (!shared.cfg.scf.quiet) {
-            shared.log_mutex.lock();
-            logKpoint(idx, shared.kpoints.len) catch {};
-            shared.log_mutex.unlock();
+            shared.log_mutex.lockUncancelable(shared.io);
+            logKpoint(shared.io, idx, shared.kpoints.len) catch {};
+            shared.log_mutex.unlock(shared.io);
         }
         _ = arena.reset(.retain_capacity);
         const kalloc = arena.allocator();
@@ -291,6 +294,7 @@ pub fn smearingWorker(worker: *SmearingWorker) void {
 
         const eigen_result = computeKpointEigenData(
             kalloc,
+            shared.io,
             shared.cfg,
             shared.grid,
             shared.kpoints[idx],
@@ -365,6 +369,7 @@ pub fn smearingWorker(worker: *SmearingWorker) void {
 
 pub fn computeKpointContribution(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: *const config.Config,
     grid: Grid,
     kp: KPoint,
@@ -394,9 +399,9 @@ pub fn computeKpointContribution(
     paw_tabs: ?[]const paw_mod.PawTab,
     paw_rhoij: ?*paw_mod.RhoIJ,
 ) !void {
-    const basis_start = if (profile_ptr != null) profileStart() else null;
+    const basis_start = if (profile_ptr != null) profileStart(io) else null;
     var basis = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, kp.k_cart);
-    if (profile_ptr) |p| profileAdd(&p.basis_ns, basis_start);
+    if (profile_ptr) |p| profileAdd(io, &p.basis_ns, basis_start);
     defer basis.deinit(alloc);
 
     const nbands_full = @min(@max(cfg.band.nbands, nocc), basis.gvecs.len);
@@ -415,7 +420,7 @@ pub fn computeKpointContribution(
         const req = gridRequirement(basis.gvecs);
         if (req.nx > grid.nx or req.ny > grid.ny or req.nz > grid.nz) {
             var buffer: [256]u8 = undefined;
-            var writer = std.fs.File.stderr().writer(&buffer);
+            var writer = std.Io.File.stderr().writer(io, &buffer);
             const out = &writer.interface;
             try out.print(
                 "scf: iterative grid too small (need >= {d},{d},{d}, suggest {d},{d},{d})\n",
@@ -433,14 +438,14 @@ pub fn computeKpointContribution(
     const nbands = nbands_full;
 
     const vnl = if (!use_iterative and nonlocal_enabled) blk: {
-        const vnl_start = if (profile_ptr != null) profileStart() else null;
+        const vnl_start = if (profile_ptr != null) profileStart(io) else null;
         const mat = try hamiltonian.buildNonlocalMatrix(alloc, basis.gvecs, species, atoms, inv_volume);
-        if (profile_ptr) |p| profileAdd(&p.vnl_build_ns, vnl_start);
+        if (profile_ptr) |p| profileAdd(io, &p.vnl_build_ns, vnl_start);
         break :blk mat;
     } else null;
     defer if (vnl) |mat| alloc.free(mat);
 
-    const eig_start = if (profile_ptr != null) profileStart() else null;
+    const eig_start = if (profile_ptr != null) profileStart(io) else null;
     var init_vectors: ?[]const math.Complex = null;
     var init_cols: usize = 0;
     if (use_iterative and reuse_vectors and cache.vectors.len > 0 and cache.n == basis.gvecs.len and cache.nbands == nbands) {
@@ -477,6 +482,7 @@ pub fn computeKpointContribution(
             if (shared_fft_plan) |plan| {
                 break :blk2 try ApplyContext.initWithCache(
                     alloc,
+                io,
                     grid,
                     basis.gvecs,
                     local_values,
@@ -493,6 +499,7 @@ pub fn computeKpointContribution(
             } else {
                 break :blk2 try ApplyContext.initWithCache(
                     alloc,
+                io,
                     grid,
                     basis.gvecs,
                     local_values,
@@ -503,13 +510,14 @@ pub fn computeKpointContribution(
                     inv_volume,
                     profile_ptr,
                     fft_index_map,
-                    try fft.Fft3dPlan.initWithBackend(alloc, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend),
+                    try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend),
                     true, // new plan, we own it
                 );
             }
         } else if (shared_fft_plan) |plan|
             try ApplyContext.initWithFftPlan(
                 alloc,
+                io,
                 grid,
                 basis.gvecs,
                 local_values,
@@ -525,6 +533,7 @@ pub fn computeKpointContribution(
         else
             try ApplyContext.init(
                 alloc,
+                io,
                 grid,
                 basis.gvecs,
                 local_values,
@@ -561,24 +570,24 @@ pub fn computeKpointContribution(
         else
             try iterative.hermitianEigenDecompIterative(alloc, cfg.linalg_backend, op, diag, nbands, opts);
     } else if (has_qij) blk: {
-        const h_start = if (profile_ptr != null) profileStart() else null;
+        const h_start = if (profile_ptr != null) profileStart(io) else null;
         const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, potential);
-        if (profile_ptr) |p| profileAdd(&p.h_build_ns, h_start);
+        if (profile_ptr) |p| profileAdd(io, &p.h_build_ns, h_start);
         defer alloc.free(h);
-        const s_start = if (profile_ptr != null) profileStart() else null;
+        const s_start = if (profile_ptr != null) profileStart(io) else null;
         const s = try hamiltonian.buildOverlapMatrix(alloc, basis.gvecs, species, atoms, inv_volume);
-        if (profile_ptr) |p| profileAdd(&p.s_build_ns, s_start);
+        if (profile_ptr) |p| profileAdd(io, &p.s_build_ns, s_start);
         defer alloc.free(s);
         break :blk try linalg.hermitianGenEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h, s);
     } else blk: {
-        const h_start = if (profile_ptr != null) profileStart() else null;
+        const h_start = if (profile_ptr != null) profileStart(io) else null;
         const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, potential);
-        if (profile_ptr) |p| profileAdd(&p.h_build_ns, h_start);
+        if (profile_ptr) |p| profileAdd(io, &p.h_build_ns, h_start);
         defer alloc.free(h);
         break :blk try linalg.hermitianEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h);
     };
     defer eig.deinit(alloc);
-    if (profile_ptr) |p| profileAdd(&p.eig_ns, eig_start);
+    if (profile_ptr) |p| profileAdd(io, &p.eig_ns, eig_start);
 
     // FFT now supports arbitrary sizes via Bluestein's algorithm
     const use_fft_density = true;
@@ -586,7 +595,7 @@ pub fn computeKpointContribution(
     const total = grid.count();
     const density_recip: ?[]math.Complex = try alloc.alloc(math.Complex, total);
     const density_real: ?[]math.Complex = try alloc.alloc(math.Complex, total);
-    var density_plan: ?fft.Fft3dPlan = try fft.Fft3dPlan.initWithBackend(alloc, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
+    var density_plan: ?fft.Fft3dPlan = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
     defer if (density_plan) |*plan| plan.deinit(alloc);
     defer if (density_map) |*map| map.deinit(alloc);
     defer if (density_recip) |buf| alloc.free(buf);
@@ -613,7 +622,7 @@ pub fn computeKpointContribution(
                 nonlocal_energy.* += kp.weight * occ * spin_factor * e_nl;
             }
         }
-        const density_start = if (profile_ptr != null) profileStart() else null;
+        const density_start = if (profile_ptr != null) profileStart(io) else null;
         if (use_fft_density) {
             const coeffs = eig.vectors[band * basis.gvecs.len .. (band + 1) * basis.gvecs.len];
             try accumulateBandDensityFft(
@@ -640,7 +649,7 @@ pub fn computeKpointContribution(
                 rho,
             );
         }
-        if (profile_ptr) |p| profileAdd(&p.density_ns, density_start);
+        if (profile_ptr) |p| profileAdd(io, &p.density_ns, density_start);
 
         // PAW: accumulate rhoij for this band
         if (paw_rhoij) |rij| {
@@ -687,6 +696,7 @@ pub const KpointEigenData = struct {
 
 pub fn computeKpointEigenData(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: *const config.Config,
     grid: Grid,
     kp: KPoint,
@@ -711,9 +721,9 @@ pub fn computeKpointEigenData(
     radial_tables: ?[]const nonlocal.RadialTableSet,
     paw_tabs: ?[]const paw_mod.PawTab,
 ) !KpointEigenData {
-    const basis_start = if (profile_ptr != null) profileStart() else null;
+    const basis_start = if (profile_ptr != null) profileStart(io) else null;
     var basis = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, kp.k_cart);
-    if (profile_ptr) |p| profileAdd(&p.basis_ns, basis_start);
+    if (profile_ptr) |p| profileAdd(io, &p.basis_ns, basis_start);
     defer basis.deinit(alloc);
 
     const nbands_full = @min(@max(cfg.band.nbands, nocc), basis.gvecs.len);
@@ -732,7 +742,7 @@ pub fn computeKpointEigenData(
         const req = gridRequirement(basis.gvecs);
         if (req.nx > grid.nx or req.ny > grid.ny or req.nz > grid.nz) {
             var buffer: [256]u8 = undefined;
-            var writer = std.fs.File.stderr().writer(&buffer);
+            var writer = std.Io.File.stderr().writer(io, &buffer);
             const out = &writer.interface;
             try out.print(
                 "scf: iterative grid too small (need >= {d},{d},{d}, suggest {d},{d},{d})\n",
@@ -749,14 +759,14 @@ pub fn computeKpointEigenData(
     const nbands = nbands_full;
 
     const vnl = if (!use_iterative and nonlocal_enabled) blk: {
-        const vnl_start = if (profile_ptr != null) profileStart() else null;
+        const vnl_start = if (profile_ptr != null) profileStart(io) else null;
         const mat = try hamiltonian.buildNonlocalMatrix(alloc, basis.gvecs, species, atoms, inv_volume);
-        if (profile_ptr) |p| profileAdd(&p.vnl_build_ns, vnl_start);
+        if (profile_ptr) |p| profileAdd(io, &p.vnl_build_ns, vnl_start);
         break :blk mat;
     } else null;
     defer if (vnl) |mat| alloc.free(mat);
 
-    const eig_start = if (profile_ptr != null) profileStart() else null;
+    const eig_start = if (profile_ptr != null) profileStart(io) else null;
     var init_vectors: ?[]const math.Complex = null;
     var init_cols: usize = 0;
     if (use_iterative and reuse_vectors and cache.vectors.len > 0 and cache.n == basis.gvecs.len and cache.nbands >= nbands) {
@@ -792,6 +802,7 @@ pub fn computeKpointEigenData(
             if (shared_fft_plan) |plan| {
                 break :blk2 try ApplyContext.initWithCache(
                     alloc,
+                io,
                     grid,
                     basis.gvecs,
                     local_values,
@@ -808,6 +819,7 @@ pub fn computeKpointEigenData(
             } else {
                 break :blk2 try ApplyContext.initWithCache(
                     alloc,
+                io,
                     grid,
                     basis.gvecs,
                     local_values,
@@ -818,13 +830,14 @@ pub fn computeKpointEigenData(
                     inv_volume,
                     profile_ptr,
                     fft_index_map,
-                    try fft.Fft3dPlan.initWithBackend(alloc, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend),
+                    try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend),
                     true,
                 );
             }
         } else if (shared_fft_plan) |plan|
             try ApplyContext.initWithFftPlan(
                 alloc,
+                io,
                 grid,
                 basis.gvecs,
                 local_values,
@@ -840,6 +853,7 @@ pub fn computeKpointEigenData(
         else
             try ApplyContext.init(
                 alloc,
+                io,
                 grid,
                 basis.gvecs,
                 local_values,
@@ -876,24 +890,24 @@ pub fn computeKpointEigenData(
         else
             try iterative.hermitianEigenDecompIterative(alloc, cfg.linalg_backend, op, diag, nbands, opts);
     } else if (has_qij) blk: {
-        const h_start = if (profile_ptr != null) profileStart() else null;
+        const h_start = if (profile_ptr != null) profileStart(io) else null;
         const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, potential);
-        if (profile_ptr) |p| profileAdd(&p.h_build_ns, h_start);
+        if (profile_ptr) |p| profileAdd(io, &p.h_build_ns, h_start);
         defer alloc.free(h);
-        const s_start = if (profile_ptr != null) profileStart() else null;
+        const s_start = if (profile_ptr != null) profileStart(io) else null;
         const s = try hamiltonian.buildOverlapMatrix(alloc, basis.gvecs, species, atoms, inv_volume);
-        if (profile_ptr) |p| profileAdd(&p.s_build_ns, s_start);
+        if (profile_ptr) |p| profileAdd(io, &p.s_build_ns, s_start);
         defer alloc.free(s);
         break :blk try linalg.hermitianGenEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h, s);
     } else blk: {
-        const h_start = if (profile_ptr != null) profileStart() else null;
+        const h_start = if (profile_ptr != null) profileStart(io) else null;
         const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, potential);
-        if (profile_ptr) |p| profileAdd(&p.h_build_ns, h_start);
+        if (profile_ptr) |p| profileAdd(io, &p.h_build_ns, h_start);
         defer alloc.free(h);
         break :blk try linalg.hermitianEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h);
     };
     defer eig.deinit(alloc);
-    if (profile_ptr) |p| profileAdd(&p.eig_ns, eig_start);
+    if (profile_ptr) |p| profileAdd(io, &p.eig_ns, eig_start);
 
     const values = try alloc.alloc(f64, nbands);
     errdefer alloc.free(values);
@@ -944,6 +958,7 @@ pub fn computeKpointEigenData(
 
 pub fn accumulateKpointDensitySmearing(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: *const config.Config,
     grid: Grid,
     kp: KPoint,
@@ -962,12 +977,13 @@ pub fn accumulateKpointDensitySmearing(
     paw_rhoij: ?*paw_mod.RhoIJ,
     atoms: ?[]const hamiltonian.AtomData,
 ) !void {
-    return accumulateKpointDensitySmearingSpin(alloc, cfg, grid, kp, data, recip, volume, fft_index_map, mu, sigma, rho, band_energy, nonlocal_energy, entropy_energy, profile_ptr, 2.0, apply_cache, paw_rhoij, atoms);
+    return accumulateKpointDensitySmearingSpin(alloc, io, cfg, grid, kp, data, recip, volume, fft_index_map, mu, sigma, rho, band_energy, nonlocal_energy, entropy_energy, profile_ptr, 2.0, apply_cache, paw_rhoij, atoms);
 }
 
 /// Spin-factor parameterized version.
 pub fn accumulateKpointDensitySmearingSpin(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: *const config.Config,
     grid: Grid,
     kp: KPoint,
@@ -999,7 +1015,7 @@ pub fn accumulateKpointDensitySmearingSpin(
     const total = grid.count();
     const density_recip: ?[]math.Complex = try alloc.alloc(math.Complex, total);
     const density_real: ?[]math.Complex = try alloc.alloc(math.Complex, total);
-    var density_plan: ?fft.Fft3dPlan = try fft.Fft3dPlan.initWithBackend(alloc, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
+    var density_plan: ?fft.Fft3dPlan = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
     defer if (density_plan) |*plan| plan.deinit(alloc);
     defer if (density_map) |*map| map.deinit(alloc);
     defer if (density_recip) |buf| alloc.free(buf);
@@ -1019,7 +1035,7 @@ pub fn accumulateKpointDensitySmearingSpin(
         if (data.nonlocal) |entries| {
             nonlocal_energy.* += weight * entries[band];
         }
-        const density_start = if (profile_ptr != null) profileStart() else null;
+        const density_start = if (profile_ptr != null) profileStart(io) else null;
         if (use_fft_density) {
             const coeffs = data.vectors[band * basis.gvecs.len .. (band + 1) * basis.gvecs.len];
             try accumulateBandDensityFft(
@@ -1046,7 +1062,7 @@ pub fn accumulateKpointDensitySmearingSpin(
                 rho,
             );
         }
-        if (profile_ptr) |p| profileAdd(&p.density_ns, density_start);
+        if (profile_ptr) |p| profileAdd(io, &p.density_ns, density_start);
 
         // PAW: accumulate rhoij for this band
         if (paw_rhoij) |rij| {

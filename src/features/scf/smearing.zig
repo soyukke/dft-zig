@@ -49,10 +49,10 @@ fn isGammaKpoint(kp: KPoint) bool {
     return math.Vec3.norm(kp.k_cart) < 1e-8;
 }
 
-fn logEigenvalues(prefix: []const u8, label: []const u8, values: []const f64, count: usize) !void {
+fn logEigenvalues(io: std.Io, prefix: []const u8, label: []const u8, values: []const f64, count: usize) !void {
     const limit = @min(count, 8);
     var buffer: [512]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     try out.print("{s}: eig {s} nbands={d}", .{ prefix, label, count });
     var i: usize = 0;
@@ -68,6 +68,7 @@ fn logEigenvalues(prefix: []const u8, label: []const u8, values: []const f64, co
 
 pub fn computeDensitySmearing(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: *const config.Config,
     grid: Grid,
     kpoints: []KPoint,
@@ -124,7 +125,7 @@ pub fn computeDensitySmearing(
             const mean_local = sum / @as(f64, @floatFromInt(values.len));
             const pot_g0 = potential.valueAt(0, 0, 0);
             var buffer: [256]u8 = undefined;
-            var writer = std.fs.File.stderr().writer(&buffer);
+            var writer = std.Io.File.stderr().writer(io, &buffer);
             const out = &writer.interface;
             try out.print(
                 "scf: local_r mean={d:.6} pot_g0={d:.6}\n",
@@ -138,20 +139,20 @@ pub fn computeDensitySmearing(
 
     if (thread_count <= 1) {
         // Pre-create shared FFT plan for single-threaded mode
-        var shared_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
+        var shared_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
         defer shared_fft_plan.deinit(alloc);
 
         // Sequential path for single thread
         for (kpoints, 0..) |kp, kidx| {
             if (!cfg.scf.quiet) {
-                try logKpoint(kidx, kpoints.len);
+                try logKpoint(io, kidx, kpoints.len);
             }
             const ac_ptr: ?*apply.KpointApplyCache = if (apply_caches) |acs|
                 (if (kidx < acs.len) &acs[kidx] else null)
             else
                 null;
             eigen_data[kidx] = try computeKpointEigenData(
-                alloc,
+                alloc, io,
                 cfg,
                 grid,
                 kp,
@@ -198,16 +199,17 @@ pub fn computeDensitySmearing(
             alloc.free(fft_plans);
         }
         for (fft_plans) |*plan| {
-            plan.* = try fft.Fft3dPlan.initWithBackend(alloc, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
+            plan.* = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
         }
 
         var next_index = std.atomic.Value(usize).init(0);
         var stop = std.atomic.Value(u8).init(0);
         var worker_error: ?anyerror = null;
-        var err_mutex = std.Thread.Mutex{};
-        var log_mutex = std.Thread.Mutex{};
+        var err_mutex = std.Io.Mutex.init;
+        var log_mutex = std.Io.Mutex.init;
 
         var shared = SmearingShared{
+            .io = io,
             .cfg = cfg,
             .grid = grid,
             .kpoints = kpoints,
@@ -271,7 +273,7 @@ pub fn computeDensitySmearing(
         var gamma_logged = false;
         for (eigen_data[0..filled]) |entry| {
             if (isGammaKpoint(entry.kpoint)) {
-                try logEigenvalues("scf", "gamma", entry.values, entry.nbands);
+                try logEigenvalues(io, "scf", "gamma", entry.values, entry.nbands);
                 gamma_logged = true;
                 break;
             }
@@ -285,7 +287,7 @@ pub fn computeDensitySmearing(
                 .weight = 0.0,
             };
             const gamma_data = try computeKpointEigenData(
-                alloc,
+                alloc, io,
                 cfg,
                 grid,
                 gamma_kp,
@@ -314,7 +316,7 @@ pub fn computeDensitySmearing(
                 var gamma_deinit = gamma_data;
                 gamma_deinit.deinit(alloc);
             }
-            try logEigenvalues("scf", "gamma*", gamma_data.values, gamma_data.nbands);
+            try logEigenvalues(io, "scf", "gamma*", gamma_data.values, gamma_data.nbands);
         }
         if (!debug_gamma_dense_logged) {
             debug_gamma_dense_logged = true;
@@ -331,7 +333,7 @@ pub fn computeDensitySmearing(
             var eig = try linalg.hermitianEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h);
             defer eig.deinit(alloc);
             const count = @min(cfg.band.nbands, eig.values.len);
-            try logEigenvalues("scf", "gamma_dense", eig.values, count);
+            try logEigenvalues(io, "scf", "gamma_dense", eig.values, count);
         }
     }
 
@@ -357,7 +359,7 @@ pub fn computeDensitySmearing(
     if (cfg.scf.debug_fermi) {
         const outside = mu < min_energy or mu > max_energy;
         var buffer: [256]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(io, &buffer);
         const out = &writer.interface;
         try out.print(
             "scf: fermi diag min={d:.6} max={d:.6} mu={d:.6} outside={s} nelec={d:.6} nbands={d}-{d} smear={s} sigma={d:.6}\n",
@@ -381,7 +383,7 @@ pub fn computeDensitySmearing(
         else
             null;
         try accumulateKpointDensitySmearing(
-            alloc,
+            alloc, io,
             cfg,
             grid,
             entry.kpoint,
@@ -403,7 +405,7 @@ pub fn computeDensitySmearing(
     }
 
     if (cfg.scf.profile and !cfg.scf.quiet) {
-        try logProfile(profile_total, kpoints.len);
+        try logProfile(io, profile_total, kpoints.len);
     }
 
     // Use correct allocator based on whether parallel path was used

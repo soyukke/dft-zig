@@ -14,6 +14,7 @@ pub const Params = struct {
 
 /// Compute ion-ion Ewald energy for a periodic cell.
 pub fn ionIonEnergy(
+    io: std.Io,
     cell: math.Mat3,
     recip: math.Mat3,
     charges: []const f64,
@@ -47,7 +48,7 @@ pub fn ionIonEnergy(
     const quiet = if (params) |p| p.quiet else false;
     if (!quiet and @abs(qsum) > 1e-6) {
         var buffer: [128]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(io, &buffer);
         const out = &writer.interface;
         try out.print("ewald: non-neutral ionic charge {d:.6}, applying neutralizing background\n", .{qsum});
         try out.flush();
@@ -482,6 +483,7 @@ pub fn ionIonStress(
 }
 
 test "ewald forces finite difference" {
+    const io = std.testing.io;
     const testing = std.testing;
     const alloc = testing.allocator;
 
@@ -521,8 +523,8 @@ test "ewald forces finite difference" {
         pos_plus[atom_idx].x += delta;
         pos_minus[atom_idx].x -= delta;
 
-        const e_plus = try ionIonEnergy(cell, recip, &charges, &pos_plus, null);
-        const e_minus = try ionIonEnergy(cell, recip, &charges, &pos_minus, null);
+        const e_plus = try ionIonEnergy(io, cell, recip, &charges, &pos_plus, null);
+        const e_minus = try ionIonEnergy(io, cell, recip, &charges, &pos_minus, null);
         const f_numeric_x = -(e_plus - e_minus) / (2.0 * delta);
 
         try testing.expectApproxEqAbs(forces[atom_idx].x, f_numeric_x, 1e-5);
@@ -533,8 +535,8 @@ test "ewald forces finite difference" {
         pos_plus[atom_idx].y += delta;
         pos_minus[atom_idx].y -= delta;
 
-        const e_plus_y = try ionIonEnergy(cell, recip, &charges, &pos_plus, null);
-        const e_minus_y = try ionIonEnergy(cell, recip, &charges, &pos_minus, null);
+        const e_plus_y = try ionIonEnergy(io, cell, recip, &charges, &pos_plus, null);
+        const e_minus_y = try ionIonEnergy(io, cell, recip, &charges, &pos_minus, null);
         const f_numeric_y = -(e_plus_y - e_minus_y) / (2.0 * delta);
 
         try testing.expectApproxEqAbs(forces[atom_idx].y, f_numeric_y, 1e-5);
@@ -545,8 +547,8 @@ test "ewald forces finite difference" {
         pos_plus[atom_idx].z += delta;
         pos_minus[atom_idx].z -= delta;
 
-        const e_plus_z = try ionIonEnergy(cell, recip, &charges, &pos_plus, null);
-        const e_minus_z = try ionIonEnergy(cell, recip, &charges, &pos_minus, null);
+        const e_plus_z = try ionIonEnergy(io, cell, recip, &charges, &pos_plus, null);
+        const e_minus_z = try ionIonEnergy(io, cell, recip, &charges, &pos_minus, null);
         const f_numeric_z = -(e_plus_z - e_minus_z) / (2.0 * delta);
 
         try testing.expectApproxEqAbs(forces[atom_idx].z, f_numeric_z, 1e-5);

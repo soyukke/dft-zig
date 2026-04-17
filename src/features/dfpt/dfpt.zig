@@ -222,6 +222,7 @@ pub const PerturbationResult = struct {
 /// This extracts the common ground-state setup shared by `runPhonon` and `runPhononBand`.
 pub fn prepareGroundState(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config_mod.Config,
     scf_result: *scf_mod.ScfResult,
     species: []hamiltonian.SpeciesEntry,
@@ -259,6 +260,7 @@ pub fn prepareGroundState(
     errdefer alloc.destroy(apply_ctx_ptr);
     apply_ctx_ptr.* = try scf_mod.ApplyContext.initWithWorkspaces(
         alloc,
+                io,
         grid,
         @constCast(gvecs),
         local_r,

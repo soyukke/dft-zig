@@ -24,14 +24,50 @@ build:
     fi
     zig build -Doptimize=ReleaseFast -Dfftw-include="$FFTW_INCLUDE" -Dfftw-lib="$FFTW_LIB"
 
-# Run all tests (unit tests + regression tests)
+# Run the default test suite (fast unit tests + regression tests)
 test: test-unit test-regression
 
-# Run unit tests
+# Run fast unit tests
 test-unit:
     zig build test
 
-# Run unit tests with FFTW3
+# Run fast unit tests plus the day-to-day GTO integration suite
+test-unit-full:
+    zig build test-full
+
+# Run all Zig tests, including the slower GTO regression suite
+test-unit-all:
+    zig build test-all-zig
+
+# Run the day-to-day GTO integration suite only
+test-gto:
+    zig build test-gto
+
+# Run the slower GTO regression suite only
+test-gto-regression:
+    zig build test-gto-regression
+
+# Run fast unit tests in ReleaseFast mode
+test-unit-release-fast:
+    zig build test -Doptimize=ReleaseFast
+
+# Run the slower GTO integration suite in ReleaseFast mode
+test-gto-release-fast:
+    zig build test-gto -Doptimize=ReleaseFast
+
+# Run the slower GTO regression suite in ReleaseFast mode
+test-gto-regression-release-fast:
+    zig build test-gto-regression -Doptimize=ReleaseFast
+
+# Run the day-to-day full Zig test suite in ReleaseFast mode
+test-unit-full-release-fast:
+    zig build test-full -Doptimize=ReleaseFast
+
+# Run all Zig tests in ReleaseFast mode
+test-unit-all-release-fast:
+    zig build test-all-zig -Doptimize=ReleaseFast
+
+# Run fast unit tests with FFTW3
 test-unit-fftw:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -45,6 +81,15 @@ test-unit-fftw:
 # Run all regression tests (silicon + graphene + gaas + cu + fe + k-parallel + lobpcg-parallel + eos + dfpt + molecule + paw)
 test-regression: test-silicon test-graphene test-gaas test-cu test-fe test-aluminum test-aluminum-11e test-silicon-kparallel test-lobpcg-parallel test-eos test-dfpt test-molecule test-paw
     @echo "All regression tests passed!"
+
+# Run the full project suite (all Zig tests + regression tests)
+test-full: test-unit-all test-regression
+
+# Run the default suite with ReleaseFast binaries
+test-release-fast: test-unit-release-fast test-regression
+
+# Run the full project suite with ReleaseFast binaries
+test-full-release-fast: test-unit-all-release-fast test-regression
 
 # Run silicon regression test (uses saved ABINIT baseline)
 test-silicon: build

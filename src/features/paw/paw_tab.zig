@@ -1,4 +1,5 @@
 const std = @import("std");
+const test_support = @import("../../test_support.zig");
 const paw_data = @import("../pseudopotential/paw_data.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const PawData = paw_data.PawData;
@@ -253,10 +254,12 @@ fn computeKij(
 }
 
 test "PawTab init from Si PAW UPF" {
+    const io = std.testing.io;
     const pseudo = @import("../pseudopotential/pseudopotential.zig");
     const alloc = std.testing.allocator;
+    try test_support.requireFile(io, "pseudo/Si.pbe-n-kjpaw_psl.1.0.0.UPF");
 
-    var parsed = try pseudo.load(alloc, .{
+    var parsed = try pseudo.load(alloc, io, .{
         .element = "Si",
         .path = "pseudo/Si.pbe-n-kjpaw_psl.1.0.0.UPF",
         .format = .upf,

@@ -16,3 +16,4 @@ jobs:
       - run: nix develop --command zig build test
         env:
           OPENBLAS_NUM_THREADS: 1
+          OPENBLAS_CORETYPE: GENERIC

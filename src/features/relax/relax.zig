@@ -67,6 +67,7 @@ pub const RelaxStep = struct {
 /// Run structure relaxation.
 pub fn run(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config_mod.Config,
     species: []hamiltonian.SpeciesEntry,
     initial_atoms: []hamiltonian.AtomData,
@@ -81,7 +82,7 @@ pub fn run(
     // k-point reductions and energy discontinuities that break backtracking.
     var relax_cfg = cfg;
     if (cfg.scf.symmetry) {
-        try logWarn("scf.symmetry is enabled, but will be disabled during relaxation " ++
+        try logWarn(io, "scf.symmetry is enabled, but will be disabled during relaxation " ++
             "to ensure consistent k-point sets across iterations. " ++
             "Set scf.symmetry = false to suppress this warning.");
     }
@@ -225,16 +226,17 @@ pub fn run(
 
     for (0..cfg.relax.max_iter) |iter| {
         iterations = iter + 1;
-        const relax_step_start = std.time.Instant.now() catch null;
+        const relax_step_start = std.Io.Clock.Timestamp.now(io, .awake);
         const relax_step_cpu_start = output.Timing.getCpuTimeUs();
 
         // Log iteration start
-        try logRelaxIter(iter, null, null);
+        try logRelaxIter(io, iter, null, null);
 
         // Run SCF calculation (with density + wavefunction + nonlocal warmstart)
-        const scf_start = std.time.Instant.now() catch null;
+        const scf_start = std.Io.Clock.Timestamp.now(io, .awake);
         var scf_result = try scf.run(.{
             .alloc = alloc,
+            .io = io,
             .cfg = relax_cfg,
             .species = species,
             .atoms = atoms,
@@ -246,7 +248,7 @@ pub fn run(
             .ff_tables = ff_tables,
         });
         defer scf_result.deinit(alloc);
-        const scf_end = std.time.Instant.now() catch null;
+        const scf_end = std.Io.Clock.Timestamp.now(io, .awake);
 
         // Save converged density for warmstarting next SCF iteration
         {
@@ -278,7 +280,7 @@ pub fn run(
         // Disabled for vc-relax: cell changes invalidate caches causing energy jumps
         if (!cfg.relax.cell_relax and final_energy > prev_energy and saved_positions != null and saved_displacement != null) {
             backtrack_count += 1;
-            try logBacktrack(backtrack_count, final_energy, prev_energy);
+            try logBacktrack(io, backtrack_count, final_energy, prev_energy);
 
             if (backtrack_count > max_backtrack) {
                 // Give up backtracking, reset Hessian and continue with current position
@@ -325,7 +327,7 @@ pub fn run(
         };
 
         // Get rho_g from density (need to FFT)
-        const rho_g = try densityToReciprocal(alloc, grid, scf_result.density, cfg.scf.fft_backend);
+        const rho_g = try densityToReciprocal(alloc, io, grid, scf_result.density, cfg.scf.fft_backend);
         defer alloc.free(rho_g);
 
         const coulomb_r_cut: ?f64 = if (cfg.boundary == .isolated) coulomb_mod.cutoffRadius(current_cell) else null;
@@ -343,7 +345,7 @@ pub fn run(
             break :blk vxc_avg.?;
         } else scf_result.vxc_r;
 
-        const force_start = std.time.Instant.now() catch null;
+        const force_start = std.Io.Clock.Timestamp.now(io, .awake);
         // Build PAW S_ij per-species array for nonlocal force
         const paw_dij_slice: ?[]const []const f64 = if (scf_result.paw_dij) |dij| blk: {
             const s = @as([]const []const f64, dij);
@@ -355,7 +357,7 @@ pub fn run(
         } else null;
         const paw_tabs_slice: ?[]const paw_mod.PawTab = if (scf_result.paw_tabs) |tabs| tabs else null;
         var force_terms = try forces_mod.computeForces(
-            alloc,
+            alloc, io,
             grid,
             rho_g,
             scf_result.potential.values,
@@ -382,7 +384,7 @@ pub fn run(
             scf_result.wavefunctions_down,
         );
         defer force_terms.deinit(alloc);
-        const force_end = std.time.Instant.now() catch null;
+        const force_end = std.Io.Clock.Timestamp.now(io, .awake);
 
         // Remove average force (eliminate net translational force)
         // In periodic systems, forces should satisfy Newton's third law (sum = 0)
@@ -413,21 +415,18 @@ pub fn run(
 
         // Check convergence
         const max_force = forces_mod.maxForce(force_terms.total);
-        try logRelaxIter(iter, final_energy, max_force);
+        try logRelaxIter(io, iter, final_energy, max_force);
 
         // Relax step timing profile (unbuffered write to avoid buffer corruption)
         {
-            const step_end = std.time.Instant.now() catch null;
             const step_cpu_end = output.Timing.getCpuTimeUs();
-            if (relax_step_start) |t0| {
-                const scf_ms = if (scf_start) |s0| if (scf_end) |s1| @as(f64, @floatFromInt(s1.since(s0))) / 1_000_000.0 else 0.0 else 0.0;
-                const force_ms = if (force_start) |f0| if (force_end) |f1| @as(f64, @floatFromInt(f1.since(f0))) / 1_000_000.0 else 0.0 else 0.0;
-                const step_ms = if (step_end) |s1| @as(f64, @floatFromInt(s1.since(t0))) / 1_000_000.0 else 0.0;
-                const cpu_ms = @as(f64, @floatFromInt(step_cpu_end - relax_step_cpu_start)) / 1_000.0;
-                var tbuf: [512]u8 = undefined;
-                const msg = std.fmt.bufPrint(&tbuf, "relax_step_profile iter={d} scf_iters={d} scf_ms={d:.1} force_ms={d:.1} wall_ms={d:.1} cpu_ms={d:.1}\n", .{ iter, scf_result.iterations, scf_ms, force_ms, step_ms, cpu_ms }) catch "";
-                std.fs.File.stderr().writeAll(msg) catch {};
-            }
+            const scf_ms = @as(f64, @floatFromInt(@as(u64, @intCast(scf_start.durationTo(scf_end).raw.nanoseconds)))) / 1_000_000.0;
+            const force_ms = @as(f64, @floatFromInt(@as(u64, @intCast(force_start.durationTo(force_end).raw.nanoseconds)))) / 1_000_000.0;
+            const step_ms = @as(f64, @floatFromInt(@as(u64, @intCast(relax_step_start.untilNow(io).raw.nanoseconds)))) / 1_000_000.0;
+            const cpu_ms = @as(f64, @floatFromInt(step_cpu_end - relax_step_cpu_start)) / 1_000.0;
+            var tbuf: [512]u8 = undefined;
+            const msg = std.fmt.bufPrint(&tbuf, "relax_step_profile iter={d} scf_iters={d} scf_ms={d:.1} force_ms={d:.1} wall_ms={d:.1} cpu_ms={d:.1}\n", .{ iter, scf_result.iterations, scf_ms, force_ms, step_ms, cpu_ms }) catch "";
+            std.Io.File.stderr().writeStreamingAll(io, msg) catch {};
         }
 
         // vc-relax: compute stress and check stress convergence
@@ -435,7 +434,7 @@ pub fn run(
         var max_stress_gpa: f64 = 0.0;
         var cached_stress_total: ?stress_mod.Stress3x3 = null;
         if (cfg.relax.cell_relax) {
-            const stress_terms = try stress_mod.computeStressFromScf(alloc, &scf_result, relax_cfg, species, atoms);
+            const stress_terms = try stress_mod.computeStressFromScf(alloc, io, &scf_result, relax_cfg, species, atoms);
             // Symmetrize stress using original symmetry (even though k-points are not reduced)
             var sym_total = stress_terms.total;
             if (cfg.scf.symmetry) {
@@ -464,7 +463,7 @@ pub fn run(
             stress_converged = max_stress_gpa < cfg.relax.stress_tol;
 
             const p = -(sigma[0][0] + sigma[1][1] + sigma[2][2]) / 3.0;
-            try logVcRelaxIter(iter, p * ry_bohr3_to_gpa, max_stress_gpa, current_volume);
+            try logVcRelaxIter(io, iter, p * ry_bohr3_to_gpa, max_stress_gpa, current_volume);
         }
 
         if (max_force < cfg.relax.force_tol and stress_converged) {
@@ -480,7 +479,7 @@ pub fn run(
                 .min_l = 0,
                 .values = &[_]math.Complex{},
             };
-            try logRelaxConverged(iter, final_energy, max_force);
+            try logRelaxConverged(io, iter, final_energy, max_force);
             break;
         }
 
@@ -595,7 +594,7 @@ pub fn run(
     }
 
     if (!converged) {
-        try logRelaxNotConverged(iterations, final_energy, forces_mod.maxForce(final_forces));
+        try logRelaxNotConverged(io, iterations, final_energy, forces_mod.maxForce(final_forces));
     }
 
     // Build result
@@ -748,6 +747,7 @@ fn indexToFreq(i: usize, n: usize) i32 {
 /// for consistency with SCF calculations.
 fn densityToReciprocal(
     alloc: std.mem.Allocator,
+    io: std.Io,
     grid: forces_mod.Grid,
     density: []const f64,
     fft_backend: config_mod.FftBackend,
@@ -769,7 +769,7 @@ fn densityToReciprocal(
     }
 
     // 3D FFT in place using the specified backend
-    var plan = try fft.Fft3dPlan.initWithBackend(alloc, nx, ny, nz, fft_backend);
+    var plan = try fft.Fft3dPlan.initWithBackend(alloc, io, nx, ny, nz, fft_backend);
     defer plan.deinit(alloc);
     plan.forward(data);
 
@@ -800,17 +800,17 @@ fn densityToReciprocal(
     return out;
 }
 
-fn logWarn(msg: []const u8) !void {
+fn logWarn(io: std.Io, msg: []const u8) !void {
     var buffer: [512]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     try out.print("WARNING: {s}\n", .{msg});
     try out.flush();
 }
 
-fn logRelaxIter(iter: usize, energy: ?f64, max_force: ?f64) !void {
+fn logRelaxIter(io: std.Io, iter: usize, energy: ?f64, max_force: ?f64) !void {
     var buffer: [256]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     if (energy != null and max_force != null) {
         try out.print("relax iter={d} energy={d:.8} max_force={d:.6}\n", .{ iter + 1, energy.?, max_force.? });
@@ -820,34 +820,34 @@ fn logRelaxIter(iter: usize, energy: ?f64, max_force: ?f64) !void {
     try out.flush();
 }
 
-fn logRelaxConverged(iter: usize, energy: f64, max_force: f64) !void {
+fn logRelaxConverged(io: std.Io, iter: usize, energy: f64, max_force: f64) !void {
     var buffer: [256]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     try out.print("relax CONVERGED after {d} iterations, energy={d:.8} Ry, max_force={d:.6} Ry/Bohr\n", .{ iter + 1, energy, max_force });
     try out.flush();
 }
 
-fn logBacktrack(count: usize, new_energy: f64, prev_energy_val: f64) !void {
+fn logBacktrack(io: std.Io, count: usize, new_energy: f64, prev_energy_val: f64) !void {
     var buffer: [256]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     const scale = std.math.pow(f64, 0.5, @as(f64, @floatFromInt(count)));
     try out.print("relax BACKTRACK #{d}: E={d:.8} > E_prev={d:.8} (dE={d:.6}), scale={d:.4}\n", .{ count, new_energy, prev_energy_val, new_energy - prev_energy_val, scale });
     try out.flush();
 }
 
-fn logVcRelaxIter(iter: usize, pressure_gpa: f64, max_stress_gpa: f64, volume: f64) !void {
+fn logVcRelaxIter(io: std.Io, iter: usize, pressure_gpa: f64, max_stress_gpa: f64, volume: f64) !void {
     var buffer: [256]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     try out.print("vc-relax iter={d} P={d:.2} GPa  max_stress={d:.4} GPa  vol={d:.4} Bohr³\n", .{ iter, pressure_gpa, max_stress_gpa, volume });
     try out.flush();
 }
 
-fn logRelaxNotConverged(iter: usize, energy: f64, max_force: f64) !void {
+fn logRelaxNotConverged(io: std.Io, iter: usize, energy: f64, max_force: f64) !void {
     var buffer: [256]u8 = undefined;
-    var writer = std.fs.File.stderr().writer(&buffer);
+    var writer = std.Io.File.stderr().writer(io, &buffer);
     const out = &writer.interface;
     try out.print("relax NOT CONVERGED after {d} iterations, energy={d:.8} Ry, max_force={d:.6} Ry/Bohr\n", .{ iter, energy, max_force });
     try out.flush();
@@ -856,17 +856,18 @@ fn logRelaxNotConverged(iter: usize, energy: f64, max_force: f64) !void {
 /// Write relaxation results to output files.
 pub fn writeOutput(
     alloc: std.mem.Allocator,
-    dir: std.fs.Dir,
+    io: std.Io,
+    dir: std.Io.Dir,
     result: *const RelaxResult,
     species: []const hamiltonian.SpeciesEntry,
     unit_scale_ang: f64,
 ) !void {
     // Write relax_status.txt
     {
-        var file = try dir.createFile("relax_status.txt", .{ .truncate = true });
-        defer file.close();
+        var file = try dir.createFile(io, "relax_status.txt", .{ .truncate = true });
+        defer file.close(io);
         var buffer: [4096]u8 = undefined;
-        var writer = file.writer(&buffer);
+        var writer = file.writer(io, &buffer);
         const out = &writer.interface;
 
         try out.print("converged = {s}\n", .{if (result.converged) "true" else "false"});
@@ -885,10 +886,10 @@ pub fn writeOutput(
 
     // Write relax_final.xyz - final structure in XYZ format
     {
-        var file = try dir.createFile("relax_final.xyz", .{ .truncate = true });
-        defer file.close();
+        var file = try dir.createFile(io, "relax_final.xyz", .{ .truncate = true });
+        defer file.close(io);
         var buffer: [8192]u8 = undefined;
-        var writer = file.writer(&buffer);
+        var writer = file.writer(io, &buffer);
         const out = &writer.interface;
 
         try out.print("{d}\n", .{result.final_atoms.len});
@@ -907,10 +908,10 @@ pub fn writeOutput(
 
     // Write relax_forces.csv - final forces
     if (result.final_forces.len > 0) {
-        var file = try dir.createFile("relax_forces.csv", .{ .truncate = true });
-        defer file.close();
+        var file = try dir.createFile(io, "relax_forces.csv", .{ .truncate = true });
+        defer file.close(io);
         var buffer: [8192]u8 = undefined;
-        var writer = file.writer(&buffer);
+        var writer = file.writer(io, &buffer);
         const out = &writer.interface;
 
         try out.writeAll("atom,symbol,fx_ry_bohr,fy_ry_bohr,fz_ry_bohr,f_mag_ry_bohr\n");
@@ -925,10 +926,10 @@ pub fn writeOutput(
 
     // Write relax_trajectory.csv if trajectory is available
     if (result.trajectory) |traj| {
-        var file = try dir.createFile("relax_trajectory.csv", .{ .truncate = true });
-        defer file.close();
+        var file = try dir.createFile(io, "relax_trajectory.csv", .{ .truncate = true });
+        defer file.close(io);
         var buffer: [8192]u8 = undefined;
-        var writer = file.writer(&buffer);
+        var writer = file.writer(io, &buffer);
         const out = &writer.interface;
 
         try out.writeAll("iter,energy_ry,max_force_ry_bohr\n");
@@ -945,7 +946,8 @@ pub fn writeOutput(
 /// Write trajectory in extended XYZ format for visualization.
 /// Compatible with ASE, OVITO, and other tools.
 pub fn writeTrajectoryXyz(
-    dir: std.fs.Dir,
+    io: std.Io,
+    dir: std.Io.Dir,
     result: *const RelaxResult,
     species: []const hamiltonian.SpeciesEntry,
     cell: math.Mat3,
@@ -955,10 +957,10 @@ pub fn writeTrajectoryXyz(
     const traj = result.trajectory.?;
     if (traj.len == 0) return;
 
-    var file = try dir.createFile("relax_trajectory.xyz", .{ .truncate = true });
-    defer file.close();
+    var file = try dir.createFile(io, "relax_trajectory.xyz", .{ .truncate = true });
+    defer file.close(io);
     var buffer: [16384]u8 = undefined;
-    var writer = file.writer(&buffer);
+    var writer = file.writer(io, &buffer);
     const out = &writer.interface;
 
     // Cell in Angstrom

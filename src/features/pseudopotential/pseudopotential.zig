@@ -1,4 +1,5 @@
 const std = @import("std");
+const test_support = @import("../../test_support.zig");
 pub const paw_data = @import("paw_data.zig");
 pub const PawData = paw_data.PawData;
 
@@ -122,8 +123,8 @@ pub fn formatName(format: Format) []const u8 {
 }
 
 /// Load and parse a pseudopotential file.
-pub fn load(alloc: std.mem.Allocator, spec: Spec) !Parsed {
-    const content = try std.fs.cwd().readFileAlloc(alloc, spec.path, 8 * 1024 * 1024);
+pub fn load(alloc: std.mem.Allocator, io: std.Io, spec: Spec) !Parsed {
+    const content = try std.Io.Dir.cwd().readFileAlloc(io, spec.path, alloc, .limited(8 * 1024 * 1024));
     defer alloc.free(content);
 
     var header = Header{
@@ -651,8 +652,10 @@ fn parseUsize(value: []const u8) !usize {
 }
 
 test "parse NC UPF has no PAW data" {
+    const io = std.testing.io;
     const alloc = std.testing.allocator;
-    var parsed = try load(alloc, .{
+    try test_support.requireFile(io, "pseudo/Si_ONCV_PBE-1.2.upf");
+    var parsed = try load(alloc, io, .{
         .element = "Si",
         .path = "pseudo/Si_ONCV_PBE-1.2.upf",
         .format = .upf,
@@ -664,8 +667,10 @@ test "parse NC UPF has no PAW data" {
 }
 
 test "parse PAW UPF" {
+    const io = std.testing.io;
     const alloc = std.testing.allocator;
-    var parsed = try load(alloc, .{
+    try test_support.requireFile(io, "pseudo/Si.pbe-n-kjpaw_psl.1.0.0.UPF");
+    var parsed = try load(alloc, io, .{
         .element = "Si",
         .path = "pseudo/Si.pbe-n-kjpaw_psl.1.0.0.UPF",
         .format = .upf,
@@ -743,8 +748,10 @@ test "parse PAW UPF" {
 }
 
 test "parse NC UPF with no atomic wavefunctions" {
+    const io = std.testing.io;
     const alloc = std.testing.allocator;
-    var parsed = try load(alloc, .{
+    try test_support.requireFile(io, "pseudo/Si_ONCV_PBE-1.2.upf");
+    var parsed = try load(alloc, io, .{
         .element = "Si",
         .path = "pseudo/Si_ONCV_PBE-1.2.upf",
         .format = .upf,

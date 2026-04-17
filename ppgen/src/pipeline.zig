@@ -238,8 +238,9 @@ test "end-to-end: H atom s+p UPF round-trip" {
         .{ .n = 1, .l = 0, .occupation = 1.0, .rc = 1.5 },
     };
 
+    const io = std.testing.io;
     var buf: [1024 * 1024]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
+    var writer = std.Io.Writer.fixed(&buf);
 
     try generatePseudopotential(allocator, .{
         .z = 1,
@@ -248,23 +249,24 @@ test "end-to-end: H atom s+p UPF round-trip" {
         .all_orbitals = &all_orbs,
         .valence_channels = &val_channels,
         .l_local = 0,
-    }, fbs.writer());
+    }, &writer);
 
-    const output = fbs.getWritten();
+    const output = writer.buffered();
     try std.testing.expect(output.len > 100);
     try std.testing.expect(std.mem.indexOf(u8, output, "element=\"H\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "z_valence=\"1.0\"") != null);
 
     // Write and parse back
     const tmp_path = "/tmp/ppgen_h_test.upf";
+    const cwd = std.Io.Dir.cwd();
     {
-        const file = try std.fs.cwd().createFile(tmp_path, .{});
-        defer file.close();
-        try file.writeAll(output);
+        const file = try cwd.createFile(io, tmp_path, .{});
+        defer file.close(io);
+        try file.writeStreamingAll(io, output);
     }
-    defer std.fs.cwd().deleteFile(tmp_path) catch {};
+    defer cwd.deleteFile(io, tmp_path) catch {};
 
-    var parsed = try pseudo_parser.load(allocator, .{
+    var parsed = try pseudo_parser.load(allocator, io, .{
         .element = "H",
         .path = tmp_path,
         .format = .upf,

@@ -54,6 +54,7 @@ pub const PhononResult = struct {
 /// Takes converged SCF results and returns phonon frequencies.
 pub fn runPhonon(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config_mod.Config,
     scf_result: *scf_mod.ScfResult,
     species: []hamiltonian.SpeciesEntry,
@@ -69,7 +70,7 @@ pub fn runPhonon(
     logDfpt("dfpt: starting phonon calculation ({d} atoms, dim={d})\n", .{ n_atoms, dim });
 
     // Prepare ground state (PW basis, eigenvalues, wavefunctions, NLCC, etc.)
-    var prepared = try dfpt.prepareGroundState(alloc, cfg, scf_result, species, atoms, volume, recip);
+    var prepared = try dfpt.prepareGroundState(alloc, io, cfg, scf_result, species, atoms, volume, recip);
     defer prepared.deinit();
     const gs = prepared.gs;
 
@@ -206,11 +207,12 @@ pub fn runPhonon(
         var next_index = std.atomic.Value(usize).init(0);
         var stop = std.atomic.Value(u8).init(0);
         var worker_err: ?anyerror = null;
-        var err_mutex = std.Thread.Mutex{};
-        var log_mutex = std.Thread.Mutex{};
+        var err_mutex = std.Io.Mutex.init;
+        var log_mutex = std.Io.Mutex.init;
 
         var shared = GammaPertShared{
             .alloc = alloc,
+            .io = io,
             .gs = &gs,
             .dfpt_cfg = &dfpt_cfg,
             .pert_results = pert_results,
@@ -305,7 +307,7 @@ pub fn runPhonon(
         const electric = @import("electric.zig");
 
         const dielectric = try electric.computeDielectricAllK(
-            alloc,
+            alloc, io,
             cfg,
             &gs,
             prepared.local_r,
@@ -325,10 +327,10 @@ pub fn runPhonon(
         }
 
         // Write results
-        var out_dir = std.fs.cwd().openDir(cfg.out_dir, .{}) catch null;
-        defer if (out_dir) |*d| d.close();
+        var out_dir = std.Io.Dir.cwd().openDir(io, cfg.out_dir, .{}) catch null;
+        defer if (out_dir) |*d| d.close(io);
         if (out_dir) |od| {
-            electric.writeElectricResults(od, dielectric) catch |err| {
+            electric.writeElectricResults(io, od, dielectric) catch |err| {
                 logDfpt("dfpt: warning: failed to write electric.dat: {}\n", .{err});
             };
         }
@@ -1160,6 +1162,7 @@ fn runDiagnostics(
 
 const GammaPertShared = struct {
     alloc: std.mem.Allocator,
+    io: std.Io,
     gs: *const GroundState,
     dfpt_cfg: *const DfptConfig,
     pert_results: []PerturbationResult,
@@ -1171,8 +1174,8 @@ const GammaPertShared = struct {
     next_index: *std.atomic.Value(usize),
     stop: *std.atomic.Value(u8),
     err: *?anyerror,
-    err_mutex: *std.Thread.Mutex,
-    log_mutex: *std.Thread.Mutex,
+    err_mutex: *std.Io.Mutex,
+    log_mutex: *std.Io.Mutex,
 };
 
 const GammaPertWorker = struct {
@@ -1181,8 +1184,8 @@ const GammaPertWorker = struct {
 };
 
 fn setGammaPertError(shared: *GammaPertShared, e: anyerror) void {
-    shared.err_mutex.lock();
-    defer shared.err_mutex.unlock();
+    shared.err_mutex.lockUncancelable(shared.io);
+    defer shared.err_mutex.unlock(shared.io);
     if (shared.err.* == null) {
         shared.err.* = e;
     }
@@ -1205,8 +1208,8 @@ fn gammaPertWorkerFn(worker: *GammaPertWorker) void {
         const dir_names = [_][]const u8{ "x", "y", "z" };
 
         {
-            shared.log_mutex.lock();
-            defer shared.log_mutex.unlock();
+            shared.log_mutex.lockUncancelable(shared.io);
+            defer shared.log_mutex.unlock(shared.io);
             logDfpt("dfpt: [thread {d}] solving perturbation atom={d} dir={s} ({d}/{d})\n", .{ worker.thread_index, ia, dir_names[dir], work_idx + 1, shared.dim });
         }
 

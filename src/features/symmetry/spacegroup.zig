@@ -316,14 +316,14 @@ fn fracClose(a: math.Vec3, b: math.Vec3, tol: f64) bool {
 }
 
 fn copyTrimmed(alloc: std.mem.Allocator, input: []const u8) ![]u8 {
-    const trimmed = std.mem.trimRight(u8, input, " ");
+    const trimmed = std.mem.trimEnd(u8, input, " ");
     const out = try alloc.alloc(u8, trimmed.len);
     @memcpy(out, trimmed);
     return out;
 }
 
 fn copyHallSymbol(alloc: std.mem.Allocator, input: []const u8) ![]u8 {
-    const trimmed = std.mem.trimRight(u8, input, " ");
+    const trimmed = std.mem.trimEnd(u8, input, " ");
     const out = try alloc.alloc(u8, trimmed.len);
     @memcpy(out, trimmed);
     for (out) |*c| {

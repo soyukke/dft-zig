@@ -9,6 +9,7 @@
 //! eigenvalue problems.
 
 const std = @import("std");
+
 const math = @import("../../math/math.zig");
 const linalg = @import("../linalg.zig");
 const common = @import("common.zig");
@@ -261,42 +262,20 @@ fn applyOperatorParallel(
         return;
     }
 
-    const Context = struct {
+    const Ctx = struct {
         op: Operator,
         v: []const math.Complex,
         w: []math.Complex,
-        err: ?anyerror = null,
-        err_mutex: std.Thread.Mutex = .{},
-
-        fn run(self: *@This(), col: usize) void {
-            const v_col = common.columnConst(self.v, self.op.n, col);
-            const w_col = common.column(self.w, self.op.n, col);
-            self.op.apply(self.op.ctx, v_col, w_col) catch |e| {
-                self.err_mutex.lock();
-                defer self.err_mutex.unlock();
-                if (self.err == null) self.err = e;
-            };
-        }
     };
+    const ctx = Ctx{ .op = op, .v = v, .w = w };
 
-    var ctx = Context{ .op = op, .v = v, .w = w };
-
-    var wg = std.Thread.WaitGroup{};
-    for (0..count) |col| {
-        wg.start();
-        pool.inner.spawn(struct {
-            fn task(c: *Context, wg_ptr: *std.Thread.WaitGroup, idx: usize) void {
-                defer wg_ptr.finish();
-                c.run(idx);
-            }
-        }.task, .{ &ctx, &wg, col }) catch {
-            wg.finish();
-            continue;
-        };
-    }
-    wg.wait();
-
-    if (ctx.err) |e| return e;
+    try pool.parallelForWithError(count, ctx, struct {
+        fn run(c: Ctx, col: usize) anyerror!void {
+            const v_col = common.columnConst(c.v, c.op.n, col);
+            const w_col = common.column(c.w, c.op.n, col);
+            try c.op.apply(c.op.ctx, v_col, w_col);
+        }
+    }.run);
 }
 
 /// Apply S operator to columns [0, count) in parallel
@@ -317,44 +296,22 @@ fn applySParallel(
         return;
     }
 
-    const Context = struct {
+    const Ctx = struct {
         apply_fn: *const fn (ctx: *anyopaque, x: []const math.Complex, y: []math.Complex) anyerror!void,
         ctx_ptr: *anyopaque,
         n: usize,
         v: []const math.Complex,
         sv: []math.Complex,
-        err: ?anyerror = null,
-        err_mutex: std.Thread.Mutex = .{},
-
-        fn run(self: *@This(), col: usize) void {
-            const v_col = common.columnConst(self.v, self.n, col);
-            const sv_col = common.column(self.sv, self.n, col);
-            self.apply_fn(self.ctx_ptr, v_col, sv_col) catch |e| {
-                self.err_mutex.lock();
-                defer self.err_mutex.unlock();
-                if (self.err == null) self.err = e;
-            };
-        }
     };
+    const ctx = Ctx{ .apply_fn = apply_s_fn, .ctx_ptr = op.ctx, .n = op.n, .v = v, .sv = sv };
 
-    var ctx = Context{ .apply_fn = apply_s_fn, .ctx_ptr = op.ctx, .n = op.n, .v = v, .sv = sv };
-
-    var wg = std.Thread.WaitGroup{};
-    for (0..count) |col| {
-        wg.start();
-        pool.inner.spawn(struct {
-            fn task(c: *Context, wg_ptr: *std.Thread.WaitGroup, idx: usize) void {
-                defer wg_ptr.finish();
-                c.run(idx);
-            }
-        }.task, .{ &ctx, &wg, col }) catch {
-            wg.finish();
-            continue;
-        };
-    }
-    wg.wait();
-
-    if (ctx.err) |e| return e;
+    try pool.parallelForWithError(count, ctx, struct {
+        fn run(c: Ctx, col: usize) anyerror!void {
+            const v_col = common.columnConst(c.v, c.n, col);
+            const sv_col = common.column(c.sv, c.n, col);
+            try c.apply_fn(c.ctx_ptr, v_col, sv_col);
+        }
+    }.run);
 }
 
 /// Build projected matrix T[i,j] = <v[i]|w[j]> in parallel
@@ -373,40 +330,26 @@ fn buildProjectedParallel(
     }
 
     // Parallelize over columns j
-    const Context = struct {
+    const Ctx = struct {
         n: usize,
         m: usize,
         v: []const math.Complex,
         w: []const math.Complex,
         out: []math.Complex,
+    };
+    const ctx = Ctx{ .n = n, .m = m, .v = v, .w = w, .out = out };
 
-        fn run(self: *@This(), j: usize) void {
+    pool.parallelFor(m, ctx, struct {
+        fn run(c: Ctx, j: usize) void {
             for (0..j + 1) |i| {
-                const val = common.innerProduct(self.n, common.columnConst(self.v, self.n, i), common.columnConst(self.w, self.n, j));
-                self.out[i + j * self.m] = val;
+                const val = common.innerProduct(c.n, common.columnConst(c.v, c.n, i), common.columnConst(c.w, c.n, j));
+                c.out[i + j * c.m] = val;
                 if (i != j) {
-                    self.out[j + i * self.m] = math.complex.conj(val);
+                    c.out[j + i * c.m] = math.complex.conj(val);
                 }
             }
         }
-    };
-
-    var ctx = Context{ .n = n, .m = m, .v = v, .w = w, .out = out };
-
-    var wg = std.Thread.WaitGroup{};
-    for (0..m) |j| {
-        wg.start();
-        pool.inner.spawn(struct {
-            fn task(c: *Context, wg_ptr: *std.Thread.WaitGroup, idx: usize) void {
-                defer wg_ptr.finish();
-                c.run(idx);
-            }
-        }.task, .{ &ctx, &wg, j }) catch {
-            wg.finish();
-            continue;
-        };
-    }
-    wg.wait();
+    }.run);
 }
 
 /// Apply operator to columns [start, start+count) in parallel
@@ -429,44 +372,22 @@ fn applyOperatorParallelRange(
         return;
     }
 
-    const Context = struct {
+    const Ctx = struct {
         op: Operator,
         v: []const math.Complex,
         w: []math.Complex,
         start: usize,
-        err: ?anyerror = null,
-        err_mutex: std.Thread.Mutex = .{},
-
-        fn run(self: *@This(), i: usize) void {
-            const col = self.start + i;
-            const v_col = common.columnConst(self.v, self.op.n, col);
-            const w_col = common.column(self.w, self.op.n, col);
-            self.op.apply(self.op.ctx, v_col, w_col) catch |e| {
-                self.err_mutex.lock();
-                defer self.err_mutex.unlock();
-                if (self.err == null) self.err = e;
-            };
-        }
     };
+    const ctx = Ctx{ .op = op, .v = v, .w = w, .start = start };
 
-    var ctx = Context{ .op = op, .v = v, .w = w, .start = start };
-
-    var wg = std.Thread.WaitGroup{};
-    for (0..count) |i| {
-        wg.start();
-        pool.inner.spawn(struct {
-            fn task(c: *Context, wg_ptr: *std.Thread.WaitGroup, idx: usize) void {
-                defer wg_ptr.finish();
-                c.run(idx);
-            }
-        }.task, .{ &ctx, &wg, i }) catch {
-            wg.finish();
-            continue;
-        };
-    }
-    wg.wait();
-
-    if (ctx.err) |e| return e;
+    try pool.parallelForWithError(count, ctx, struct {
+        fn run(c: Ctx, i: usize) anyerror!void {
+            const col = c.start + i;
+            const v_col = common.columnConst(c.v, c.op.n, col);
+            const w_col = common.column(c.w, c.op.n, col);
+            try c.op.apply(c.op.ctx, v_col, w_col);
+        }
+    }.run);
 }
 
 /// Apply S operator to columns [start, start+count) in parallel
@@ -489,44 +410,22 @@ fn applySParallelRange(
         return;
     }
 
-    const Context = struct {
+    const Ctx = struct {
         apply_fn: *const fn (ctx: *anyopaque, x: []const math.Complex, y: []math.Complex) anyerror!void,
         ctx_ptr: *anyopaque,
         n: usize,
         v: []const math.Complex,
         sv: []math.Complex,
         start: usize,
-        err: ?anyerror = null,
-        err_mutex: std.Thread.Mutex = .{},
-
-        fn run(self: *@This(), i: usize) void {
-            const col = self.start + i;
-            const v_col = common.columnConst(self.v, self.n, col);
-            const sv_col = common.column(self.sv, self.n, col);
-            self.apply_fn(self.ctx_ptr, v_col, sv_col) catch |e| {
-                self.err_mutex.lock();
-                defer self.err_mutex.unlock();
-                if (self.err == null) self.err = e;
-            };
-        }
     };
+    const ctx = Ctx{ .apply_fn = apply_s_fn, .ctx_ptr = op.ctx, .n = op.n, .v = v, .sv = sv, .start = start };
 
-    var ctx = Context{ .apply_fn = apply_s_fn, .ctx_ptr = op.ctx, .n = op.n, .v = v, .sv = sv, .start = start };
-
-    var wg = std.Thread.WaitGroup{};
-    for (0..count) |i| {
-        wg.start();
-        pool.inner.spawn(struct {
-            fn task(c: *Context, wg_ptr: *std.Thread.WaitGroup, idx: usize) void {
-                defer wg_ptr.finish();
-                c.run(idx);
-            }
-        }.task, .{ &ctx, &wg, i }) catch {
-            wg.finish();
-            continue;
-        };
-    }
-    wg.wait();
-
-    if (ctx.err) |e| return e;
+    try pool.parallelForWithError(count, ctx, struct {
+        fn run(c: Ctx, i: usize) anyerror!void {
+            const col = c.start + i;
+            const v_col = common.columnConst(c.v, c.n, col);
+            const sv_col = common.column(c.sv, c.n, col);
+            try c.apply_fn(c.ctx_ptr, v_col, sv_col);
+        }
+    }.run);
 }

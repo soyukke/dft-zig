@@ -21,10 +21,9 @@ const Vec3 = math_mod.Vec3;
 const KsParams = kohn_sham.KsParams;
 const b631g2dfp = basis_mod.basis631g_2dfp;
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const alloc = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const alloc = init.gpa;
+    const io = init.io;
 
     std.debug.print("\n", .{});
     std.debug.print("========================================================================\n", .{});
@@ -69,7 +68,7 @@ pub fn main() !void {
 
     // Step 1: Run KS-DFT SCF
     std.debug.print("\n  [Step 1] Running KS-DFT SCF...\n", .{});
-    var ks_result = try kohn_sham.runKohnShamScf(alloc, shells, &nuc_positions, &nuc_charges, n_electrons, .{
+    var ks_result = try kohn_sham.runKohnShamScf(alloc, io, shells, &nuc_positions, &nuc_charges, n_electrons, .{
         .xc_functional = .b3lyp,
         .n_radial = 50,
         .n_angular = 302,
@@ -112,7 +111,7 @@ pub fn main() !void {
     // Step 3: Compute analytical gradient
     std.debug.print("\n  [Step 3] Computing analytical gradient...\n", .{});
     const n_occ = n_electrons / 2;
-    var timer = try std.time.Timer.start();
+    const timer_start = std.Io.Clock.Timestamp.now(io, .awake);
     var grad_result = try gradient_mod.computeKsDftGradient(
         alloc,
         shells,
@@ -126,7 +125,7 @@ pub fn main() !void {
         .b3lyp,
     );
     defer grad_result.deinit(alloc);
-    const grad_time = @as(f64, @floatFromInt(timer.read())) / 1e9;
+    const grad_time = @as(f64, @floatFromInt(timer_start.untilNow(io).raw.nanoseconds)) / 1e9;
     std.debug.print("  Gradient time:    {d:.3} s\n", .{grad_time});
 
     // Step 4: Compare with PySCF reference
@@ -168,7 +167,7 @@ pub fn main() !void {
     var pos_plus = nuc_positions;
     pos_plus[0].z += h;
     const shells_plus = buildShellsForGeometry(alloc, &pos_plus, &nuc_charges);
-    var result_plus = try kohn_sham.runKohnShamScf(alloc, shells_plus, &pos_plus, &nuc_charges, n_electrons, .{
+    var result_plus = try kohn_sham.runKohnShamScf(alloc, io, shells_plus, &pos_plus, &nuc_charges, n_electrons, .{
         .xc_functional = .b3lyp,
         .n_radial = 50,
         .n_angular = 302,
@@ -184,7 +183,7 @@ pub fn main() !void {
     var pos_minus = nuc_positions;
     pos_minus[0].z -= h;
     const shells_minus = buildShellsForGeometry(alloc, &pos_minus, &nuc_charges);
-    var result_minus = try kohn_sham.runKohnShamScf(alloc, shells_minus, &pos_minus, &nuc_charges, n_electrons, .{
+    var result_minus = try kohn_sham.runKohnShamScf(alloc, io, shells_minus, &pos_minus, &nuc_charges, n_electrons, .{
         .xc_functional = .b3lyp,
         .n_radial = 50,
         .n_angular = 302,

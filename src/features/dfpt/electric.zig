@@ -39,6 +39,7 @@ pub const DielectricResult = struct {
 /// then self-consistently solving the efield Sternheimer with V^(1)_Hxc.
 pub fn computeDielectricAllK(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config_mod.Config,
     gs: *const GroundState,
     local_r: []const f64,
@@ -52,7 +53,7 @@ pub fn computeDielectricAllK(
     const total = grid.count();
     const dfpt_cfg = DfptConfig.fromConfig(cfg);
 
-    const kgs = try phonon_q.prepareFullBZKpointsFromIBZ(alloc, cfg, gs, local_r, species, atoms, cell_bohr, recip, volume, grid);
+    const kgs = try phonon_q.prepareFullBZKpointsFromIBZ(alloc, io, cfg, gs, local_r, species, atoms, cell_bohr, recip, volume, grid);
     defer {
         for (@constCast(kgs)) |*k| k.deinit(alloc);
         alloc.free(kgs);
@@ -770,13 +771,14 @@ fn applyDij(sp: scf_mod.NonlocalSpecies, input: []const math.Complex, output: []
 }
 
 pub fn writeElectricResults(
-    dir: std.fs.Dir,
+    io: std.Io,
+    dir: std.Io.Dir,
     dielectric: DielectricResult,
 ) !void {
-    const file = try dir.createFile("electric.dat", .{});
-    defer file.close();
+    const file = try dir.createFile(io, "electric.dat", .{});
+    defer file.close(io);
     var buf: [1024]u8 = undefined;
-    var writer = file.writer(&buf);
+    var writer = file.writer(io, &buf);
     const out = &writer.interface;
 
     try out.print("# Dielectric tensor epsilon_inf\n", .{});

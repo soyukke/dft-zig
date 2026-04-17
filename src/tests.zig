@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const math = @import("features/math/math.zig");
 const hamiltonian = @import("features/hamiltonian/hamiltonian.zig");
 const spacegroup = @import("features/symmetry/spacegroup.zig");
@@ -8,18 +7,14 @@ const form_factor = @import("features/pseudopotential/form_factor.zig");
 const nonlocal = @import("features/pseudopotential/nonlocal.zig");
 const plane_wave = @import("features/plane_wave/basis.zig");
 const ewald = @import("features/ewald/ewald.zig");
-const config = @import("features/config/config.zig");
 const scf = @import("features/scf/scf.zig");
 const forces = @import("features/forces/forces.zig");
-const fft = @import("features/fft/fft.zig");
 
 const verbose_tests = false;
-const scf_fd_verbose = false;
-const scf_fd_enabled = true;
 
 /// Skip test if a required file does not exist (e.g. pseudo/ files in CI).
-fn requireFile(path: []const u8) !void {
-    std.fs.cwd().access(path, .{}) catch |err| {
+fn requireFile(io: std.Io, path: []const u8) !void {
+    std.Io.Dir.cwd().access(io, path, .{}) catch |err| {
         if (err == error.FileNotFound) {
             std.debug.print("  [SKIP] file not found: {s}\n", .{path});
             return error.SkipZigTest;
@@ -32,8 +27,10 @@ fn vprint(comptime fmt: []const u8, args: anytype) void {
     if (verbose_tests) std.debug.print(fmt, args);
 }
 
-fn scfPrint(comptime fmt: []const u8, args: anytype) void {
-    if (scf_fd_verbose) std.debug.print(fmt, args);
+fn expectVecApproxEqAbs(expected: math.Vec3, actual: math.Vec3, tol: f64) !void {
+    try std.testing.expectApproxEqAbs(expected.x, actual.x, tol);
+    try std.testing.expectApproxEqAbs(expected.y, actual.y, tol);
+    try std.testing.expectApproxEqAbs(expected.z, actual.z, tol);
 }
 
 test "spacegroup silicon conventional" {
@@ -106,13 +103,14 @@ test "spacegroup silicon axis swap" {
 
 // Test local pseudopotential form factor
 test "local pseudopotential V(q) for Carbon" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     // Load C.upf using pseudo.load
     var element_buf: [2]u8 = .{ 'C', 0 };
     var path_buf: [20]u8 = undefined;
     const path_slice = "pseudo/C.upf";
-    try requireFile(path_slice);
+    try requireFile(io, path_slice);
     @memcpy(path_buf[0..path_slice.len], path_slice);
 
     const spec = pseudo.Spec{
@@ -121,7 +119,7 @@ test "local pseudopotential V(q) for Carbon" {
         .format = .upf,
     };
 
-    var parsed = try pseudo.load(allocator, spec);
+    var parsed = try pseudo.load(allocator, io, spec);
     defer parsed.deinit(allocator);
 
     const upf = parsed.upf orelse return error.NoUpfData;
@@ -170,790 +168,221 @@ test "local pseudopotential V(q) for Carbon" {
     vprint("V_Ewald(0.166) = {d:.2} Ry\n", .{vq_ewald_small});
 }
 
-fn indexToFreq(i: usize, n: usize) i32 {
-    const half = (n - 1) / 2;
-    return if (i <= half) @as(i32, @intCast(i)) else @as(i32, @intCast(i)) - @as(i32, @intCast(n));
-}
+test "compute forces assembles component forces" {
+    const io = std.testing.io;
+    const testing = std.testing;
+    const alloc = testing.allocator;
 
-fn densityToReciprocal(
-    alloc: std.mem.Allocator,
-    grid: forces.Grid,
-    density: []const f64,
-    fft_backend: config.FftBackend,
-) ![]math.Complex {
-    const nx = grid.nx;
-    const ny = grid.ny;
-    const nz = grid.nz;
-    const total = nx * ny * nz;
+    var element_buf: [2]u8 = .{ 'S', 'i' };
+    var path_buf: [24]u8 = undefined;
+    const path_slice = "pseudo/Si.upf";
+    try requireFile(io, path_slice);
+    @memcpy(path_buf[0..path_slice.len], path_slice);
 
-    if (density.len != total) return error.InvalidDensitySize;
+    const spec = pseudo.Spec{
+        .element = element_buf[0..2],
+        .path = path_buf[0..path_slice.len],
+        .format = .upf,
+    };
 
-    var data = try alloc.alloc(math.Complex, total);
-    defer alloc.free(data);
-    for (density, 0..) |d, i| {
-        data[i] = math.complex.init(d, 0.0);
-    }
+    var parsed = try pseudo.load(alloc, io, spec);
+    defer parsed.deinit(alloc);
 
-    var plan = try fft.Fft3dPlan.initWithBackend(alloc, nx, ny, nz, fft_backend);
-    defer plan.deinit(alloc);
-    plan.forward(data);
-
-    const scale = 1.0 / @as(f64, @floatFromInt(total));
-    var out = try alloc.alloc(math.Complex, total);
-
-    var idx: usize = 0;
-    var z: usize = 0;
-    while (z < nz) : (z += 1) {
-        var y: usize = 0;
-        while (y < ny) : (y += 1) {
-            var x: usize = 0;
-            while (x < nx) : (x += 1) {
-                const fh = indexToFreq(x, nx);
-                const fk = indexToFreq(y, ny);
-                const fl = indexToFreq(z, nz);
-                const th = @as(usize, @intCast(fh - grid.min_h));
-                const tk = @as(usize, @intCast(fk - grid.min_k));
-                const tl = @as(usize, @intCast(fl - grid.min_l));
-                const out_idx = th + nx * (tk + ny * tl);
-                out[out_idx] = math.complex.scale(data[idx], scale);
-                idx += 1;
-            }
+    var parsed_items = [_]pseudo.Parsed{parsed};
+    const species = try hamiltonian.buildSpeciesEntries(alloc, parsed_items[0..]);
+    defer {
+        for (species) |*entry| {
+            entry.deinit();
         }
+        alloc.free(species);
     }
 
-    return out;
-}
+    const a = 8.0;
+    const cell = math.Mat3{ .m = .{
+        .{ a, 0.0, 0.0 },
+        .{ 0.0, a, 0.0 },
+        .{ 0.0, 0.0, a },
+    } };
+    const recip = math.Mat3{ .m = .{
+        .{ 2.0 * std.math.pi / a, 0.0, 0.0 },
+        .{ 0.0, 2.0 * std.math.pi / a, 0.0 },
+        .{ 0.0, 0.0, 2.0 * std.math.pi / a },
+    } };
+    const volume = a * a * a;
 
-fn makeScfConfig(alloc: std.mem.Allocator, out_dir: []const u8, cell: math.Mat3) !config.Config {
-    const title = try alloc.dupe(u8, "scf_force_fd");
-    errdefer alloc.free(title);
-    const xyz_path = try alloc.dupe(u8, "unused.xyz");
-    errdefer alloc.free(xyz_path);
-    const out_dir_owned = try alloc.dupe(u8, out_dir);
-    errdefer alloc.free(out_dir_owned);
+    const grid = forces.Grid{
+        .nx = 4,
+        .ny = 4,
+        .nz = 4,
+        .min_h = -1,
+        .min_k = -1,
+        .min_l = -1,
+        .cell = cell,
+        .recip = recip,
+    };
+    const atoms = [_]hamiltonian.AtomData{
+        .{ .position = math.Vec3{ .x = 0.3, .y = 0.4, .z = 0.2 }, .species_index = 0 },
+        .{ .position = math.Vec3{ .x = 0.6, .y = 0.2, .z = 0.5 }, .species_index = 0 },
+    };
 
-    const empty_band_path = try alloc.alloc(config.BandPathPoint, 0);
-    errdefer alloc.free(empty_band_path);
-    const empty_pseudos = try alloc.alloc(pseudo.Spec, 0);
-    errdefer alloc.free(empty_pseudos);
+    const total = grid.nx * grid.ny * grid.nz;
+    var rho_g = try alloc.alloc(math.Complex, total);
+    defer alloc.free(rho_g);
+    @memset(rho_g, math.complex.init(0.0, 0.0));
 
-    const scf_cfg = config.ScfConfig{
-        .enabled = true,
-        .solver = .dense,
-        .xc = .lda_pz,
-        .smearing = .none,
-        .smear_ry = 0.0,
-        .ecut_ry = 10.0,
-        .kmesh = .{ 1, 1, 1 },
-        .kmesh_shift = .{ 0.0, 0.0, 0.0 },
-        .grid = .{ 0, 0, 0 },
-        .grid_scale = 1.0,
-        .mixing_beta = 0.3,
-        .max_iter = 80,
-        .convergence = 1e-8,
-        .convergence_metric = .density,
-        .profile = false,
+    const idx = struct {
+        fn of(grid_local: forces.Grid, gh: i32, gk: i32, gl: i32) usize {
+            const h = @as(usize, @intCast(gh - grid_local.min_h));
+            const k = @as(usize, @intCast(gk - grid_local.min_k));
+            const l = @as(usize, @intCast(gl - grid_local.min_l));
+            return h + grid_local.nx * (k + grid_local.ny * l);
+        }
+    };
+
+    const rho_x = math.complex.init(0.01, 0.02);
+    const rho_y = math.complex.init(0.015, -0.005);
+    const rho_z = math.complex.init(-0.007, 0.011);
+    rho_g[idx.of(grid, 1, 0, 0)] = rho_x;
+    rho_g[idx.of(grid, -1, 0, 0)] = math.complex.conj(rho_x);
+    rho_g[idx.of(grid, 0, 1, 0)] = rho_y;
+    rho_g[idx.of(grid, 0, -1, 0)] = math.complex.conj(rho_y);
+    rho_g[idx.of(grid, 0, 0, 1)] = rho_z;
+    rho_g[idx.of(grid, 0, 0, -1)] = math.complex.conj(rho_z);
+
+    const k_cart = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
+    const ecut_ry = 6.0;
+    var basis = try plane_wave.generate(alloc, recip, ecut_ry, k_cart);
+    defer basis.deinit(alloc);
+    try testing.expect(basis.gvecs.len > 0);
+
+    const eigenvalues = try alloc.alloc(f64, 1);
+    defer alloc.free(eigenvalues);
+    eigenvalues[0] = 0.0;
+
+    const occupations = try alloc.alloc(f64, 1);
+    defer alloc.free(occupations);
+    occupations[0] = 1.0;
+
+    const coefficients = try alloc.alloc(math.Complex, basis.gvecs.len);
+    defer alloc.free(coefficients);
+    for (coefficients, 0..) |*c_val, i| {
+        const re = 0.05 * @as(f64, @floatFromInt(i + 1));
+        const im = -0.03 * @as(f64, @floatFromInt(i + 2));
+        c_val.* = math.complex.init(re, im);
+    }
+
+    const kpoints = try alloc.alloc(scf.KpointWavefunction, 1);
+    defer alloc.free(kpoints);
+    kpoints[0] = .{
+        .k_frac = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 },
+        .k_cart = k_cart,
+        .weight = 1.0,
+        .basis_len = basis.gvecs.len,
+        .nbands = 1,
+        .eigenvalues = eigenvalues,
+        .coefficients = coefficients,
+        .occupations = occupations,
+    };
+
+    const wavefunctions = scf.WavefunctionData{
+        .kpoints = kpoints,
+        .ecut_ry = ecut_ry,
+        .fermi_level = 0.0,
+    };
+
+    var force_terms = try forces.computeForces(
+        alloc,
+        io,
+        grid,
+        rho_g,
+        null,
+        null,
+        species,
+        atoms[0..],
+        cell,
+        recip,
+        volume,
+        0.0,
+        wavefunctions,
+        null,
+        true,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        .{},
+        null,
+        null,
+        null,
+        null,
+    );
+    defer force_terms.deinit(alloc);
+
+    const local_forces = try forces.local_force.localPseudoForces(
+        alloc,
+        grid,
+        rho_g,
+        species,
+        atoms[0..],
+        volume,
+        0.0,
+        null,
+    );
+    defer alloc.free(local_forces);
+
+    const nonlocal_forces = try forces.nonlocal_force.nonlocalForces(
+        alloc,
+        wavefunctions,
+        species,
+        atoms[0..],
+        recip,
+        volume,
+        null,
+        null,
+        null,
+        2.0,
+    );
+    defer alloc.free(nonlocal_forces);
+
+    const charges = [_]f64{
+        species[atoms[0].species_index].z_valence,
+        species[atoms[1].species_index].z_valence,
+    };
+    const positions = [_]math.Vec3{
+        atoms[0].position,
+        atoms[1].position,
+    };
+    const ewald_params = ewald.Params{
+        .alpha = 0.0,
+        .rcut = 0.0,
+        .gcut = 0.0,
+        .tol = 1e-8,
         .quiet = true,
-        .debug_nonlocal = false,
-        .debug_local = false,
-        .debug_fermi = false,
-        .enable_nonlocal = true,
-        .local_potential = .short_range,
-        .symmetry = false,
-        .time_reversal = false,
-        .kpoint_threads = 1,
-        .iterative_max_iter = 20,
-        .iterative_tol = 1e-4,
-        .iterative_max_subspace = 0,
-        .iterative_block_size = 0,
-        .iterative_init_diagonal = false,
-        .iterative_warmup_steps = 1,
-        .iterative_warmup_max_iter = 8,
-        .iterative_warmup_tol = 1e-3,
-        .iterative_reuse_vectors = true,
-        .kerker_q0 = 0.0,
-        .diemac = 1.0,
-        .dielng = 1.0,
-        .pulay_history = 6,
-        .pulay_start = 0,
-        .mixing_mode = .potential,
-        .use_rfft = false,
-        .fft_backend = .zig,
-        .compute_stress = false,
-        .nspin = 1,
-        .spinat = null,
-        .reference_json = null,
-        .compare_reference_json = null,
-        .comparison_json = null,
-        .compare_tolerance_json = null,
     };
+    const ewald_forces_ha = try ewald.ionIonForces(alloc, cell, recip, charges[0..], positions[0..], ewald_params);
+    defer alloc.free(ewald_forces_ha);
 
-    return config.Config{
-        .title = title,
-        .xyz_path = xyz_path,
-        .out_dir = out_dir_owned,
-        .units = .bohr,
-        .linalg_backend = if (builtin.os.tag == .macos) .accelerate else .openblas,
-        .threads = 1,
-        .cell = cell,
-        .scf = scf_cfg,
-        .ewald = .{ .alpha = 0.0, .rcut = 0.0, .gcut = 0.0, .tol = 1e-8 },
-        .relax = .{ .enabled = true, .algorithm = .bfgs, .max_iter = 0, .force_tol = 1e-6, .max_step = 0.1, .output_trajectory = false },
-        .dos = .{},
-        .output = .{},
-        .dfpt = .{ .enabled = false, .sternheimer_tol = 1e-8, .sternheimer_max_iter = 200, .scf_tol = 1e-10, .scf_max_iter = 50, .mixing_beta = 0.3, .alpha_shift = 0.01, .qpath_npoints = 0, .pulay_history = 8, .pulay_start = 4, .kpoint_threads = 0, .perturbation_threads = 1, .qgrid = null, .qpath = &.{} },
-        .band = .{
-            .points_per_segment = 10,
-            .nbands = 4,
-            .path = empty_band_path,
-            .solver = .dense,
-            .iterative_max_iter = 20,
-            .iterative_tol = 1e-4,
-            .iterative_max_subspace = 0,
-            .iterative_block_size = 0,
-            .iterative_init_diagonal = false,
-            .kpoint_threads = 1,
-            .iterative_reuse_vectors = true,
-            .use_symmetry = false,
-            .lobpcg_parallel = false,
-        },
-        .vdw = .{},
-        .pseudopotentials = empty_pseudos,
-    };
-}
+    try testing.expect(force_terms.nonlocal != null);
+    try testing.expect(force_terms.residual == null);
+    try testing.expect(force_terms.nlcc == null);
+    try testing.expect(force_terms.dispersion == null);
+    try testing.expect(force_terms.paw_dhat == null);
 
-test "scf total force finite difference" {
-    const testing = std.testing;
-    const alloc = testing.allocator;
-
-    var element_buf: [2]u8 = .{ 'S', 'i' };
-    var path_buf: [24]u8 = undefined;
-    const path_slice = "pseudo/Si.upf";
-    try requireFile(path_slice);
-    @memcpy(path_buf[0..path_slice.len], path_slice);
-
-    const spec = pseudo.Spec{
-        .element = element_buf[0..2],
-        .path = path_buf[0..path_slice.len],
-        .format = .upf,
-    };
-
-    var parsed = try pseudo.load(alloc, spec);
-    defer parsed.deinit(alloc);
-
-    var parsed_items = [_]pseudo.Parsed{parsed};
-    const species = try hamiltonian.buildSpeciesEntries(alloc, parsed_items[0..]);
-    defer {
-        for (species) |*entry| {
-            entry.deinit();
-        }
-        alloc.free(species);
-    }
-    if (species.len > 0) {
-        scfPrint("UPF qij size={d} nlcc size={d}\n", .{ species[0].upf.qij.len, species[0].upf.nlcc.len });
-    }
-
-    const a = 8.0;
-    const cell = math.Mat3{ .m = .{
-        .{ a, 0.0, 0.0 },
-        .{ 0.0, a, 0.0 },
-        .{ 0.0, 0.0, a },
-    } };
-    const recip = math.Mat3{ .m = .{
-        .{ 2.0 * std.math.pi / a, 0.0, 0.0 },
-        .{ 0.0, 2.0 * std.math.pi / a, 0.0 },
-        .{ 0.0, 0.0, 2.0 * std.math.pi / a },
-    } };
-    const volume = a * a * a;
-
-    const base_atoms = [_]hamiltonian.AtomData{
-        .{ .position = math.Vec3{ .x = 0.3, .y = 0.4, .z = 0.2 }, .species_index = 0 },
-        .{ .position = math.Vec3{ .x = 0.6, .y = 0.2, .z = 0.5 }, .species_index = 0 },
-    };
-
-    var cfg = try makeScfConfig(alloc, "zig-cache/tmp/scf_force_fd", cell);
-    defer cfg.deinit(alloc);
-
-    var atoms_base = base_atoms;
-    var scf_result = try scf.run(.{ .alloc = alloc, .cfg = cfg, .species = species, .atoms = atoms_base[0..], .recip = recip, .volume_bohr = volume });
-    defer scf_result.deinit(alloc);
-    try testing.expect(scf_result.converged);
-
-    if (scf_result.vresid) |vresid| {
-        var sum_sq: f64 = 0.0;
-        var max_abs: f64 = 0.0;
-        for (vresid.values) |v| {
-            const mag2 = v.r * v.r + v.i * v.i;
-            sum_sq += mag2;
-            const mag = std.math.sqrt(mag2);
-            if (mag > max_abs) max_abs = mag;
-        }
-        const rms = std.math.sqrt(sum_sq / @as(f64, @floatFromInt(vresid.values.len)));
-        scfPrint("SCF vresid rms={e:.6} max={e:.6}\n", .{ rms, max_abs });
-    }
-
-    const grid = forces.Grid{
-        .nx = scf_result.potential.nx,
-        .ny = scf_result.potential.ny,
-        .nz = scf_result.potential.nz,
-        .min_h = scf_result.potential.min_h,
-        .min_k = scf_result.potential.min_k,
-        .min_l = scf_result.potential.min_l,
-        .cell = cell,
-        .recip = recip,
-    };
-
-    const rho_g = try densityToReciprocal(alloc, grid, scf_result.density, cfg.scf.fft_backend);
-    defer alloc.free(rho_g);
-
-    var force_terms = try forces.computeForces(
-        alloc,
-        grid,
-        rho_g,
-        scf_result.potential.values,
-        null,
-        species,
-        atoms_base[0..],
-        cell,
-        recip,
-        volume,
-        cfg.ewald.alpha,
-        scf_result.wavefunctions,
-        if (scf_result.vresid) |vresid| vresid.values else null,
-        true,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        .{},
-        null,
-        null,
-        null,
-        null,
-    );
-    defer force_terms.deinit(alloc);
-
-    const local_force_base = force_terms.local[0];
-
-    const ewald_fd = blk: {
-        const delta_ewald = 1e-4;
-        var charges = try alloc.alloc(f64, atoms_base.len);
-        defer alloc.free(charges);
-        var positions = try alloc.alloc(math.Vec3, atoms_base.len);
-        defer alloc.free(positions);
-        for (atoms_base, 0..) |atom, i| {
-            charges[i] = species[atom.species_index].z_valence;
-            positions[i] = atom.position;
-        }
-        var positions_plus = try alloc.alloc(math.Vec3, positions.len);
-        defer alloc.free(positions_plus);
-        var positions_minus = try alloc.alloc(math.Vec3, positions.len);
-        defer alloc.free(positions_minus);
-        @memcpy(positions_plus, positions);
-        @memcpy(positions_minus, positions);
-        positions_plus[0].x += delta_ewald;
-        positions_minus[0].x -= delta_ewald;
-        const params = ewald.Params{ .alpha = cfg.ewald.alpha, .rcut = 0.0, .gcut = 0.0, .tol = 1e-8, .quiet = true };
-        const e_plus = try ewald.ionIonEnergy(cell, recip, charges, positions_plus, params);
-        const e_minus = try ewald.ionIonEnergy(cell, recip, charges, positions_minus, params);
-        break :blk -(e_plus - e_minus) / (2.0 * delta_ewald);
-    };
-    const ewald_fd_ry = ewald_fd * 2.0;
-
-    const localEnergyFixed = struct {
-        fn eval(
-            grid_local: forces.Grid,
-            rho_g_local: []const math.Complex,
-            species_entries: []hamiltonian.SpeciesEntry,
-            atoms_local: []hamiltonian.AtomData,
-            volume_local: f64,
-        ) !f64 {
-            const inv_volume = 1.0 / volume_local;
-            const b1 = grid_local.recip.row(0);
-            const b2 = grid_local.recip.row(1);
-            const b3 = grid_local.recip.row(2);
-            var sum: f64 = 0.0;
-            var idx: usize = 0;
-            var l: usize = 0;
-            while (l < grid_local.nz) : (l += 1) {
-                var k: usize = 0;
-                while (k < grid_local.ny) : (k += 1) {
-                    var h: usize = 0;
-                    while (h < grid_local.nx) : (h += 1) {
-                        const gh = grid_local.min_h + @as(i32, @intCast(h));
-                        const gk = grid_local.min_k + @as(i32, @intCast(k));
-                        const gl = grid_local.min_l + @as(i32, @intCast(l));
-                        const gvec = math.Vec3.add(
-                            math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                            math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
-                        );
-                        const vloc = try hamiltonian.ionicLocalPotential(gvec, species_entries, atoms_local, inv_volume);
-                        const rho = rho_g_local[idx];
-                        sum += rho.r * vloc.r + rho.i * vloc.i;
-                        idx += 1;
-                    }
-                }
-            }
-            return sum * volume_local;
-        }
-    };
-
-    const local_fd_fixed = blk: {
-        const delta_local = 1e-4;
-        var atoms_plus = base_atoms;
-        var atoms_minus = base_atoms;
-        atoms_plus[0].position.x += delta_local;
-        atoms_minus[0].position.x -= delta_local;
-        const e_plus = try localEnergyFixed.eval(grid, rho_g, species, atoms_plus[0..], volume);
-        const e_minus = try localEnergyFixed.eval(grid, rho_g, species, atoms_minus[0..], volume);
-        break :blk -(e_plus - e_minus) / (2.0 * delta_local);
-    };
-
-    scfPrint("Local FD (fixed rho): {d:.6} | Force Local: {d:.6}\n", .{ local_fd_fixed, local_force_base.x });
-
-    const nonlocalEnergy = struct {
-        fn bandEnergy(n: usize, vnl: []math.Complex, vectors: []math.Complex, band: usize) f64 {
-            var sum = math.complex.init(0.0, 0.0);
-            var i: usize = 0;
-            while (i < n) : (i += 1) {
-                const ci = vectors[i + band * n];
-                var tmp = math.complex.init(0.0, 0.0);
-                var j: usize = 0;
-                while (j < n) : (j += 1) {
-                    const cj = vectors[j + band * n];
-                    const hij = vnl[i + j * n];
-                    tmp = math.complex.add(tmp, math.complex.mul(hij, cj));
-                }
-                sum = math.complex.add(sum, math.complex.mul(math.complex.conj(ci), tmp));
-            }
-            return sum.r;
-        }
-
-        fn eval(
-            alloc_local: std.mem.Allocator,
-            wf: scf.WavefunctionData,
-            species_entries: []hamiltonian.SpeciesEntry,
-            atoms_local: []hamiltonian.AtomData,
-            recip_local: math.Mat3,
-            volume_local: f64,
-        ) !f64 {
-            const inv_volume = 1.0 / volume_local;
-            const spin_factor = 2.0;
-            var total: f64 = 0.0;
-
-            for (wf.kpoints) |kp_wf| {
-                var basis = try plane_wave.generate(alloc_local, recip_local, wf.ecut_ry, kp_wf.k_cart);
-                defer basis.deinit(alloc_local);
-                if (basis.gvecs.len != kp_wf.basis_len) continue;
-                const vnl = try hamiltonian.buildNonlocalMatrix(alloc_local, basis.gvecs, species_entries, atoms_local, inv_volume);
-                defer alloc_local.free(vnl);
-
-                var band: usize = 0;
-                while (band < kp_wf.nbands) : (band += 1) {
-                    const occ = kp_wf.occupations[band];
-                    if (occ <= 0.0) continue;
-                    const e_nl = bandEnergy(basis.gvecs.len, vnl, kp_wf.coefficients, band);
-                    total += kp_wf.weight * occ * spin_factor * e_nl;
-                }
-            }
-
-            return total;
-        }
-    };
-
-    var nl_fx_fixed: ?f64 = null;
-    if (scf_result.wavefunctions) |wf| {
-        const nl_force = force_terms.nonlocal orelse return error.MissingNonlocalForces;
-        const delta_nl = 1e-5;
-        const nl_fx_num = blk: {
-            var atoms_plus = atoms_base;
-            var atoms_minus = atoms_base;
-            atoms_plus[0].position.x += delta_nl;
-            atoms_minus[0].position.x -= delta_nl;
-            const e_plus = try nonlocalEnergy.eval(alloc, wf, species, atoms_plus[0..], recip, volume);
-            const e_minus = try nonlocalEnergy.eval(alloc, wf, species, atoms_minus[0..], recip, volume);
-            break :blk -(e_plus - e_minus) / (2.0 * delta_nl);
-        };
-        scfPrint("Nonlocal FD (fixed wf): {d:.6} | Force Nonlocal: {d:.6}\n", .{ nl_fx_num, nl_force[0].x });
-        try testing.expectApproxEqAbs(nl_force[0].x, nl_fx_num, 5e-3);
-        nl_fx_fixed = nl_fx_num;
-    }
-
-    if (nl_fx_fixed) |nl_fixed| {
-        const fixed_total = ewald_fd_ry + local_fd_fixed + nl_fixed;
-        const fixed_force = force_terms.ewald[0].x + local_force_base.x + (force_terms.nonlocal orelse return error.MissingNonlocalForces)[0].x;
-        scfPrint("Fixed FD total: {d:.6} | Fixed Force total: {d:.6}\n", .{ fixed_total, fixed_force });
-        try testing.expectApproxEqAbs(fixed_force, fixed_total, 5e-3);
-    }
-}
-
-test "scf total force finite difference (self-consistent)" {
-    if (!scf_fd_enabled) return;
-
-    const testing = std.testing;
-    const alloc = testing.allocator;
-
-    var element_buf: [2]u8 = .{ 'S', 'i' };
-    var path_buf: [24]u8 = undefined;
-    const path_slice = "pseudo/Si.upf";
-    try requireFile(path_slice);
-    @memcpy(path_buf[0..path_slice.len], path_slice);
-
-    const spec = pseudo.Spec{
-        .element = element_buf[0..2],
-        .path = path_buf[0..path_slice.len],
-        .format = .upf,
-    };
-
-    var parsed = try pseudo.load(alloc, spec);
-    defer parsed.deinit(alloc);
-
-    var parsed_items = [_]pseudo.Parsed{parsed};
-    const species = try hamiltonian.buildSpeciesEntries(alloc, parsed_items[0..]);
-    defer {
-        for (species) |*entry| {
-            entry.deinit();
-        }
-        alloc.free(species);
-    }
-
-    const a = 8.0;
-    const cell = math.Mat3{ .m = .{
-        .{ a, 0.0, 0.0 },
-        .{ 0.0, a, 0.0 },
-        .{ 0.0, 0.0, a },
-    } };
-    const recip = math.Mat3{ .m = .{
-        .{ 2.0 * std.math.pi / a, 0.0, 0.0 },
-        .{ 0.0, 2.0 * std.math.pi / a, 0.0 },
-        .{ 0.0, 0.0, 2.0 * std.math.pi / a },
-    } };
-    const volume = a * a * a;
-
-    const base_atoms = [_]hamiltonian.AtomData{
-        .{ .position = math.Vec3{ .x = 0.3, .y = 0.4, .z = 0.2 }, .species_index = 0 },
-        .{ .position = math.Vec3{ .x = 0.6, .y = 0.2, .z = 0.5 }, .species_index = 0 },
-    };
-
-    var cfg = try makeScfConfig(alloc, "zig-cache/tmp/scf_force_fd", cell);
-    defer cfg.deinit(alloc);
-
-    const scf_eval = struct {
-        fn run(
-            alloc_local: std.mem.Allocator,
-            cfg_local: config.Config,
-            species_entries: []hamiltonian.SpeciesEntry,
-            atoms_local: []hamiltonian.AtomData,
-            recip_local: math.Mat3,
-            volume_local: f64,
-        ) !scf.EnergyTerms {
-            var scf_result = try scf.run(.{ .alloc = alloc_local, .cfg = cfg_local, .species = species_entries, .atoms = atoms_local, .recip = recip_local, .volume_bohr = volume_local });
-            defer scf_result.deinit(alloc_local);
-            try std.testing.expect(scf_result.converged);
-            return scf_result.energy;
-        }
-    };
-
-    var atoms_base = base_atoms;
-    var scf_result = try scf.run(.{ .alloc = alloc, .cfg = cfg, .species = species, .atoms = atoms_base[0..], .recip = recip, .volume_bohr = volume });
-    defer scf_result.deinit(alloc);
-    try testing.expect(scf_result.converged);
-
-    const grid = forces.Grid{
-        .nx = scf_result.potential.nx,
-        .ny = scf_result.potential.ny,
-        .nz = scf_result.potential.nz,
-        .min_h = scf_result.potential.min_h,
-        .min_k = scf_result.potential.min_k,
-        .min_l = scf_result.potential.min_l,
-        .cell = cell,
-        .recip = recip,
-    };
-
-    const rho_g = try densityToReciprocal(alloc, grid, scf_result.density, cfg.scf.fft_backend);
-    defer alloc.free(rho_g);
-
-    var force_terms = try forces.computeForces(
-        alloc,
-        grid,
-        rho_g,
-        scf_result.potential.values,
-        null,
-        species,
-        atoms_base[0..],
-        cell,
-        recip,
-        volume,
-        cfg.ewald.alpha,
-        scf_result.wavefunctions,
-        if (scf_result.vresid) |vresid| vresid.values else null,
-        true,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        .{},
-        null,
-        null,
-        null,
-        null,
-    );
-    defer force_terms.deinit(alloc);
-
-    const base_force = force_terms.total[0];
-
-    if (scf_result.wavefunctions) |wf| {
-        var e_kin: f64 = 0.0;
-        var norm_min: f64 = std.math.inf(f64);
-        var norm_max: f64 = 0.0;
-        const spin_factor = 2.0;
-        for (wf.kpoints) |kp| {
-            var basis = try plane_wave.generate(alloc, recip, wf.ecut_ry, kp.k_cart);
-            defer basis.deinit(alloc);
-            if (basis.gvecs.len != kp.basis_len) continue;
-            var band: usize = 0;
-            while (band < kp.nbands) : (band += 1) {
-                const occ = kp.occupations[band];
-                if (occ <= 0.0) continue;
-                const coeffs = kp.coefficients[band * kp.basis_len .. (band + 1) * kp.basis_len];
-                var sum: f64 = 0.0;
-                var norm: f64 = 0.0;
-                for (coeffs, 0..) |c, i| {
-                    const mag2 = c.r * c.r + c.i * c.i;
-                    norm += mag2;
-                    sum += mag2 * basis.gvecs[i].kinetic;
-                }
-                norm_min = @min(norm_min, norm);
-                norm_max = @max(norm_max, norm);
-                e_kin += kp.weight * occ * spin_factor * sum;
-            }
-        }
-        scfPrint("SCF coeff norm min={d:.6} max={d:.6}\n", .{ norm_min, norm_max });
-        const e_loc = scf_result.energy.local_pseudo;
-        const e_nl = scf_result.energy.nonlocal_pseudo;
-        const e_h = scf_result.energy.hartree;
-        const e_xc = scf_result.energy.xc;
-        const e_vxc_rho = scf_result.energy.vxc_rho;
-        const e_ion = scf_result.energy.ion_ion;
-        const total_parts = e_kin + e_loc + e_nl + e_h + e_xc + e_ion;
-        const band_expected = e_kin + e_loc + e_nl + 2.0 * e_h + e_vxc_rho;
-        scfPrint(
-            "SCF energy parts: Ekin={d:.6} Eloc={d:.6} Enl={d:.6} Eh={d:.6} Exc={d:.6} Vxc·rho={d:.6} Eion={d:.6}\n",
-            .{ e_kin, e_loc, e_nl, e_h, e_xc, e_vxc_rho, e_ion },
+    const nl_terms = force_terms.nonlocal.?;
+    for (atoms, 0..) |_, i| {
+        const expected_ewald = math.Vec3.scale(ewald_forces_ha[i], 2.0);
+        const expected_total = math.Vec3.add(
+            math.Vec3.add(expected_ewald, local_forces[i]),
+            nonlocal_forces[i],
         );
-        scfPrint(
-            "SCF energy totals: SumParts={d:.6} Band={d:.6} BandExpected={d:.6} Total={d:.6}\n",
-            .{ total_parts, scf_result.energy.band, band_expected, scf_result.energy.total },
-        );
+
+        try expectVecApproxEqAbs(expected_ewald, force_terms.ewald[i], 1e-10);
+        try expectVecApproxEqAbs(local_forces[i], force_terms.local[i], 1e-10);
+        try expectVecApproxEqAbs(nonlocal_forces[i], nl_terms[i], 1e-10);
+        try expectVecApproxEqAbs(expected_total, force_terms.total[i], 1e-10);
     }
-
-    const delta = 5e-4;
-    const fx_num = blk: {
-        var atoms_plus = base_atoms;
-        var atoms_minus = base_atoms;
-        atoms_plus[0].position.x += delta;
-        atoms_minus[0].position.x -= delta;
-        const e_plus = try scf_eval.run(alloc, cfg, species, atoms_plus[0..], recip, volume);
-        const e_minus = try scf_eval.run(alloc, cfg, species, atoms_minus[0..], recip, volume);
-        break :blk -(e_plus.total - e_minus.total) / (2.0 * delta);
-    };
-
-    const e_terms_plus = blk: {
-        var atoms_plus = base_atoms;
-        atoms_plus[0].position.x += delta;
-        break :blk try scf_eval.run(alloc, cfg, species, atoms_plus[0..], recip, volume);
-    };
-    const e_terms_minus = blk: {
-        var atoms_minus = base_atoms;
-        atoms_minus[0].position.x -= delta;
-        break :blk try scf_eval.run(alloc, cfg, species, atoms_minus[0..], recip, volume);
-    };
-
-    const band_fd = -(e_terms_plus.band - e_terms_minus.band) / (2.0 * delta);
-    const hartree_fd = -(e_terms_plus.hartree - e_terms_minus.hartree) / (2.0 * delta);
-    const xc_fd = -(e_terms_plus.xc - e_terms_minus.xc) / (2.0 * delta);
-    const vxc_rho_fd = -(e_terms_plus.vxc_rho - e_terms_minus.vxc_rho) / (2.0 * delta);
-    const double_count_fd = -(e_terms_plus.double_counting - e_terms_minus.double_counting) / (2.0 * delta);
-
-    const ewald_fd_scf = -(e_terms_plus.ion_ion - e_terms_minus.ion_ion) / (2.0 * delta);
-    const local_fd_scf = -(e_terms_plus.local_pseudo - e_terms_minus.local_pseudo) / (2.0 * delta);
-    const nonlocal_fd_scf = -(e_terms_plus.nonlocal_pseudo - e_terms_minus.nonlocal_pseudo) / (2.0 * delta);
-    const hf_fd = ewald_fd_scf + local_fd_scf + nonlocal_fd_scf;
-    scfPrint(
-        "SCF HF FD: Ewald={d:.6} Local={d:.6} Nonlocal={d:.6} Sum={d:.6}\n",
-        .{ ewald_fd_scf, local_fd_scf, nonlocal_fd_scf, hf_fd },
-    );
-    scfPrint(
-        "SCF Total FD terms: Band={d:.6} Hartree={d:.6} XC={d:.6} Vxc·rho={d:.6} DoubleCount={d:.6}\n",
-        .{ band_fd, hartree_fd, xc_fd, vxc_rho_fd, double_count_fd },
-    );
-
-    const hf_force = force_terms.ewald[0].x + force_terms.local[0].x + (force_terms.nonlocal orelse return error.MissingNonlocalForces)[0].x;
-    const resid_force = if (force_terms.residual) |resid| resid[0].x else 0.0;
-    scfPrint("SCF Force: HF={d:.6} Resid={d:.6} Total={d:.6}\n", .{ hf_force, resid_force, base_force.x });
-
-    scfPrint("SCF total force: {d:.6} | SCF FD: {d:.6}\n", .{ base_force.x, fx_num });
-    try testing.expectApproxEqAbs(base_force.x, fx_num, 5e-3);
-}
-
-test "scf force FD FCC cell" {
-    if (!scf_fd_enabled) return;
-
-    const testing = std.testing;
-    const alloc = testing.allocator;
-
-    var element_buf: [2]u8 = .{ 'S', 'i' };
-    var path_buf: [24]u8 = undefined;
-    const path_slice = "pseudo/Si.upf";
-    try requireFile(path_slice);
-    @memcpy(path_buf[0..path_slice.len], path_slice);
-
-    const spec = pseudo.Spec{
-        .element = element_buf[0..2],
-        .path = path_buf[0..path_slice.len],
-        .format = .upf,
-    };
-
-    var parsed = try pseudo.load(alloc, spec);
-    defer parsed.deinit(alloc);
-
-    var parsed_items = [_]pseudo.Parsed{parsed};
-    const species = try hamiltonian.buildSpeciesEntries(alloc, parsed_items[0..]);
-    defer {
-        for (species) |*entry| {
-            entry.deinit();
-        }
-        alloc.free(species);
-    }
-
-    // FCC cell for silicon (Bohr units)
-    // a = 5.431 Å = 10.2631 Bohr
-    const a_bohr = 10.2631;
-    const half_a = a_bohr / 2.0;
-    const cell = math.Mat3{ .m = .{
-        .{ 0.0, half_a, half_a },
-        .{ half_a, 0.0, half_a },
-        .{ half_a, half_a, 0.0 },
-    } };
-
-    // Compute reciprocal lattice and volume
-    const recip = math.reciprocal(cell);
-    const a1 = cell.row(0);
-    const a2 = cell.row(1);
-    const a3 = cell.row(2);
-    const volume = @abs(math.Vec3.dot(a1, math.Vec3.cross(a2, a3)));
-
-    // Displaced atom positions (Bohr)
-    const base_atoms = [_]hamiltonian.AtomData{
-        .{ .position = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 }, .species_index = 0 },
-        .{ .position = math.Vec3{ .x = 2.66, .y = 2.47, .z = 2.62 }, .species_index = 0 },
-    };
-
-    var cfg = try makeScfConfig(alloc, "zig-cache/tmp/scf_force_fcc", cell);
-    defer cfg.deinit(alloc);
-    // Override for FCC test
-    cfg.scf.kmesh = .{ 2, 2, 2 };
-    cfg.scf.convergence = 1e-8;
-    cfg.scf.max_iter = 200;
-    cfg.scf.solver = .iterative;
-
-    var atoms_base = base_atoms;
-    var scf_result = try scf.run(.{ .alloc = alloc, .cfg = cfg, .species = species, .atoms = atoms_base[0..], .recip = recip, .volume_bohr = volume });
-    defer scf_result.deinit(alloc);
-    try testing.expect(scf_result.converged);
-
-    const grid = forces.Grid{
-        .nx = scf_result.potential.nx,
-        .ny = scf_result.potential.ny,
-        .nz = scf_result.potential.nz,
-        .min_h = scf_result.potential.min_h,
-        .min_k = scf_result.potential.min_k,
-        .min_l = scf_result.potential.min_l,
-        .cell = cell,
-        .recip = recip,
-    };
-
-    const rho_g = try densityToReciprocal(alloc, grid, scf_result.density, cfg.scf.fft_backend);
-    defer alloc.free(rho_g);
-
-    var force_terms = try forces.computeForces(
-        alloc,
-        grid,
-        rho_g,
-        scf_result.potential.values,
-        null,
-        species,
-        atoms_base[0..],
-        cell,
-        recip,
-        volume,
-        cfg.ewald.alpha,
-        scf_result.wavefunctions,
-        if (scf_result.vresid) |vresid| vresid.values else null,
-        true,
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-        .{},
-        null,
-        null,
-        null,
-        null,
-    );
-    defer force_terms.deinit(alloc);
-
-    const base_force = force_terms.total[0];
-    scfPrint("FCC analytical force atom 0: ({d:.6},{d:.6},{d:.6})\n", .{ base_force.x, base_force.y, base_force.z });
-    scfPrint("FCC ewald: ({d:.6},{d:.6},{d:.6})\n", .{ force_terms.ewald[0].x, force_terms.ewald[0].y, force_terms.ewald[0].z });
-    scfPrint("FCC local: ({d:.6},{d:.6},{d:.6})\n", .{ force_terms.local[0].x, force_terms.local[0].y, force_terms.local[0].z });
-    if (force_terms.nonlocal) |nl| {
-        scfPrint("FCC nonlocal: ({d:.6},{d:.6},{d:.6})\n", .{ nl[0].x, nl[0].y, nl[0].z });
-    }
-    if (force_terms.nlcc) |nlcc| {
-        scfPrint("FCC nlcc: ({d:.6},{d:.6},{d:.6})\n", .{ nlcc[0].x, nlcc[0].y, nlcc[0].z });
-    }
-
-    const scf_eval = struct {
-        fn run_scf(
-            alloc_local: std.mem.Allocator,
-            cfg_local: config.Config,
-            species_entries: []hamiltonian.SpeciesEntry,
-            atoms_local: []hamiltonian.AtomData,
-            recip_local: math.Mat3,
-            volume_local: f64,
-        ) !scf.EnergyTerms {
-            var scf_result_local = try scf.run(.{ .alloc = alloc_local, .cfg = cfg_local, .species = species_entries, .atoms = atoms_local, .recip = recip_local, .volume_bohr = volume_local });
-            defer scf_result_local.deinit(alloc_local);
-            try std.testing.expect(scf_result_local.converged);
-            return scf_result_local.energy;
-        }
-    };
-
-    const delta = 5e-4;
-    // FD in x direction for atom 0
-    const fx_num = blk: {
-        var atoms_plus = base_atoms;
-        var atoms_minus = base_atoms;
-        atoms_plus[0].position.x += delta;
-        atoms_minus[0].position.x -= delta;
-        const e_plus = try scf_eval.run_scf(alloc, cfg, species, atoms_plus[0..], recip, volume);
-        const e_minus = try scf_eval.run_scf(alloc, cfg, species, atoms_minus[0..], recip, volume);
-        std.debug.print("FCC E(+d)={d:.10} E(-d)={d:.10}\n", .{ e_plus.total, e_minus.total });
-        std.debug.print("FCC E_local(+d)={d:.10} E_local(-d)={d:.10}\n", .{ e_plus.local_pseudo, e_minus.local_pseudo });
-        std.debug.print("FCC E_nl(+d)={d:.10} E_nl(-d)={d:.10}\n", .{ e_plus.nonlocal_pseudo, e_minus.nonlocal_pseudo });
-        std.debug.print("FCC E_ion(+d)={d:.10} E_ion(-d)={d:.10}\n", .{ e_plus.ion_ion, e_minus.ion_ion });
-        break :blk -(e_plus.total - e_minus.total) / (2.0 * delta);
-    };
-
-    std.debug.print("FCC total force x: analytical={d:.6} FD={d:.6} diff={d:.6}\n", .{ base_force.x, fx_num, base_force.x - fx_num });
-    try testing.expectApproxEqAbs(base_force.x, fx_num, 1e-2);
 }
 
 // Test kinetic energy calculation
@@ -1041,6 +470,7 @@ test "smallest G vector for large vacuum" {
 }
 
 test "ewald force finite difference" {
+    const io = std.testing.io;
     const testing = std.testing;
     const alloc = testing.allocator;
 
@@ -1073,8 +503,8 @@ test "ewald force finite difference" {
         var positions_minus = positions;
         positions_plus[0].x += delta;
         positions_minus[0].x -= delta;
-        const e_plus = try ewald.ionIonEnergy(cell, recip, charges[0..], positions_plus[0..], real_params);
-        const e_minus = try ewald.ionIonEnergy(cell, recip, charges[0..], positions_minus[0..], real_params);
+        const e_plus = try ewald.ionIonEnergy(io, cell, recip, charges[0..], positions_plus[0..], real_params);
+        const e_minus = try ewald.ionIonEnergy(io, cell, recip, charges[0..], positions_minus[0..], real_params);
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
     try testing.expectApproxEqAbs(real_forces[0].x, fx_real_num, 1e-3);
@@ -1087,8 +517,8 @@ test "ewald force finite difference" {
         var positions_minus = positions;
         positions_plus[0].x += delta;
         positions_minus[0].x -= delta;
-        const e_plus = try ewald.ionIonEnergy(cell, recip, charges[0..], positions_plus[0..], quiet_params);
-        const e_minus = try ewald.ionIonEnergy(cell, recip, charges[0..], positions_minus[0..], quiet_params);
+        const e_plus = try ewald.ionIonEnergy(io, cell, recip, charges[0..], positions_plus[0..], quiet_params);
+        const e_minus = try ewald.ionIonEnergy(io, cell, recip, charges[0..], positions_minus[0..], quiet_params);
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
 
@@ -1097,13 +527,14 @@ test "ewald force finite difference" {
 
 // Test nonlocal pseudopotential projectors
 test "nonlocal projector radial integral" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
     // Load C.upf
     var element_buf: [2]u8 = .{ 'C', 0 };
     var path_buf: [20]u8 = undefined;
     const path_slice = "pseudo/C.upf";
-    try requireFile(path_slice);
+    try requireFile(io, path_slice);
     @memcpy(path_buf[0..path_slice.len], path_slice);
 
     const spec = pseudo.Spec{
@@ -1112,7 +543,7 @@ test "nonlocal projector radial integral" {
         .format = .upf,
     };
 
-    var parsed = try pseudo.load(allocator, spec);
+    var parsed = try pseudo.load(allocator, io, spec);
     defer parsed.deinit(allocator);
 
     const upf = parsed.upf orelse return error.NoUpfData;
@@ -1290,6 +721,7 @@ test "Hamiltonian Hermiticity" {
 
 // Test Ewald ion-ion energy
 test "Ewald ion-ion energy for graphene" {
+    const io = std.testing.io;
     // Graphene cell (Bohr)
     const a = 4.6487262675;
     const c = 37.7945225; // 20 Å in Bohr
@@ -1309,7 +741,7 @@ test "Ewald ion-ion energy for graphene" {
     };
 
     const quiet_params = ewald.Params{ .alpha = 0.0, .rcut = 0.0, .gcut = 0.0, .tol = 0.0, .quiet = true };
-    const e_ion = try ewald.ionIonEnergy(cell, recip, &charges, &positions, quiet_params);
+    const e_ion = try ewald.ionIonEnergy(io, cell, recip, &charges, &positions, quiet_params);
 
     vprint("\n=== Ewald Energy ===\n", .{});
     vprint("E_ion (Hartree) = {d:.6}\n", .{e_ion});

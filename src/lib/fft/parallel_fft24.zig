@@ -47,12 +47,14 @@ const ThreadPoolState = struct {
     task_generation: usize,
     barrier_count: std.atomic.Value(usize),
     num_threads: usize,
-    mutex: std.Thread.Mutex,
-    work_available: std.Thread.Condition,
-    work_done: std.Thread.Condition,
+    io: std.Io,
+    mutex: std.Io.Mutex,
+    work_available: std.Io.Condition,
+    work_done: std.Io.Condition,
 
-    fn init(nx: usize, ny: usize, nz: usize, num_threads: usize) ThreadPoolState {
+    fn init(nx: usize, ny: usize, nz: usize, num_threads: usize, io: std.Io) ThreadPoolState {
         return .{
+            .io = io,
             .task = .none,
             .data = null,
             .inverse = false,
@@ -64,9 +66,9 @@ const ThreadPoolState = struct {
             .task_generation = 0,
             .barrier_count = std.atomic.Value(usize).init(0),
             .num_threads = num_threads,
-            .mutex = .{},
-            .work_available = .{},
-            .work_done = .{},
+            .mutex = .init,
+            .work_available = .init,
+            .work_done = .init,
         };
     }
 };
@@ -82,11 +84,11 @@ pub const ParallelPlan3d24 = struct {
     state: *ThreadPoolState,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !ParallelPlan3d24 {
-        return initWithThreads(allocator, nx, ny, nz, 0);
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, nx: usize, ny: usize, nz: usize) !ParallelPlan3d24 {
+        return initWithThreads(allocator, io, nx, ny, nz, 0);
     }
 
-    pub fn initWithThreads(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, num_threads_hint: usize) !ParallelPlan3d24 {
+    pub fn initWithThreads(allocator: std.mem.Allocator, io: std.Io, nx: usize, ny: usize, nz: usize, num_threads_hint: usize) !ParallelPlan3d24 {
         if (nx == 0 or ny == 0 or nz == 0) return error.InvalidSize;
         // Only support 24×24×24 grids
         if (nx != 24 or ny != 24 or nz != 24) return error.UnsupportedSize;
@@ -112,18 +114,18 @@ pub const ParallelPlan3d24 = struct {
 
         const state = try allocator.create(ThreadPoolState);
         errdefer allocator.destroy(state);
-        state.* = ThreadPoolState.init(nx, ny, nz, num_threads);
+        state.* = ThreadPoolState.init(nx, ny, nz, num_threads, io);
 
         const threads = try allocator.alloc(std.Thread, num_threads);
         errdefer allocator.free(threads);
 
         var spawned: usize = 0;
         errdefer {
-            state.mutex.lock();
+            state.mutex.lockUncancelable(state.io);
             state.task_generation += 1;
             state.task = .shutdown;
-            state.work_available.broadcast();
-            state.mutex.unlock();
+            state.work_available.broadcast(state.io);
+            state.mutex.unlock(state.io);
             for (0..spawned) |i| {
                 threads[i].join();
             }
@@ -147,11 +149,11 @@ pub const ParallelPlan3d24 = struct {
     }
 
     pub fn deinit(self: *ParallelPlan3d24) void {
-        self.state.mutex.lock();
+        self.state.mutex.lockUncancelable(self.state.io);
         self.state.task_generation += 1;
         self.state.task = .shutdown;
-        self.state.work_available.broadcast();
-        self.state.mutex.unlock();
+        self.state.work_available.broadcast(self.state.io);
+        self.state.mutex.unlock(self.state.io);
 
         for (self.threads) |t| {
             t.join();
@@ -191,7 +193,7 @@ pub const ParallelPlan3d24 = struct {
     }
 
     fn dispatchTask(self: *ParallelPlan3d24, task: TaskType, data: []Complex, inv: bool, total_work: usize) void {
-        self.state.mutex.lock();
+        self.state.mutex.lockUncancelable(self.state.io);
 
         self.state.task_generation += 1;
         self.state.task = task;
@@ -201,36 +203,36 @@ pub const ParallelPlan3d24 = struct {
         self.state.next_work_item.store(0, .seq_cst);
         self.state.barrier_count.store(0, .seq_cst);
 
-        self.state.work_available.broadcast();
-        self.state.mutex.unlock();
+        self.state.work_available.broadcast(self.state.io);
+        self.state.mutex.unlock(self.state.io);
 
-        self.state.mutex.lock();
+        self.state.mutex.lockUncancelable(self.state.io);
         while (self.state.barrier_count.load(.seq_cst) < self.num_threads) {
-            self.state.work_done.wait(&self.state.mutex);
+            self.state.work_done.waitUncancelable(self.state.io, &self.state.mutex);
         }
 
         self.state.task = .none;
-        self.state.mutex.unlock();
+        self.state.mutex.unlock(self.state.io);
     }
 
     fn workerThread(state: *ThreadPoolState, ws: *ThreadWorkspace) void {
         var last_generation: usize = 0;
 
         while (true) {
-            state.mutex.lock();
+            state.mutex.lockUncancelable(state.io);
             while (state.task == .none or state.task_generation == last_generation) {
                 if (state.task == .shutdown) {
-                    state.mutex.unlock();
+                    state.mutex.unlock(state.io);
                     return;
                 }
-                state.work_available.wait(&state.mutex);
+                state.work_available.waitUncancelable(state.io, &state.mutex);
             }
 
             const task = state.task;
             const data = state.data;
             const inv = state.inverse;
             last_generation = state.task_generation;
-            state.mutex.unlock();
+            state.mutex.unlock(state.io);
 
             if (task == .shutdown) {
                 return;
@@ -252,9 +254,9 @@ pub const ParallelPlan3d24 = struct {
 
             const count = state.barrier_count.fetchAdd(1, .seq_cst) + 1;
             if (count == state.num_threads) {
-                state.mutex.lock();
-                state.work_done.signal();
-                state.mutex.unlock();
+                state.mutex.lockUncancelable(state.io);
+                state.work_done.signal(state.io);
+                state.mutex.unlock(state.io);
             }
         }
     }
@@ -315,9 +317,10 @@ pub const ParallelPlan3d24 = struct {
 // ============== Tests ==============
 
 test "ParallelPlan3d24 roundtrip" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
 
-    var plan = try ParallelPlan3d24.initWithThreads(allocator, 24, 24, 24, 4);
+    var plan = try ParallelPlan3d24.initWithThreads(allocator, io, 24, 24, 24, 4);
     defer plan.deinit();
 
     const total = 24 * 24 * 24;
@@ -338,13 +341,14 @@ test "ParallelPlan3d24 roundtrip" {
 }
 
 test "ParallelPlan3d24 matches parallel_fft" {
+    const io = std.testing.io;
     const allocator = std.testing.allocator;
     const parallel_fft = @import("parallel_fft.zig");
 
-    var plan24 = try ParallelPlan3d24.initWithThreads(allocator, 24, 24, 24, 4);
+    var plan24 = try ParallelPlan3d24.initWithThreads(allocator, io, 24, 24, 24, 4);
     defer plan24.deinit();
 
-    var plan_ref = try parallel_fft.ParallelPlan3d.initWithThreads(allocator, 24, 24, 24, 4);
+    var plan_ref = try parallel_fft.ParallelPlan3d.initWithThreads(allocator, io, 24, 24, 24, 4);
     defer plan_ref.deinit();
 
     const total = 24 * 24 * 24;

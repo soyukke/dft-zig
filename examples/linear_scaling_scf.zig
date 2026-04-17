@@ -2,10 +2,9 @@ const std = @import("std");
 
 const dft_zig = @import("dft_zig");
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const alloc = gpa.allocator();
+pub fn main(init: std.process.Init) !void {
+    const alloc = init.gpa;
+    const io = init.io;
 
     const linear_scaling = dft_zig.linear_scaling;
     const math = dft_zig.math;
@@ -24,7 +23,8 @@ pub fn main() !void {
     const pbc = linear_scaling.Pbc{ .x = true, .y = true, .z = true };
 
     // Parse command line args for basis type
-    var args = std.process.args();
+    var args = try init.minimal.args.iterateAllocator(alloc);
+    defer args.deinit();
     _ = args.skip(); // skip program name
     const basis_arg = args.next();
     const use_sp = if (basis_arg) |arg| std.mem.eql(u8, arg, "sp") else false;
@@ -47,6 +47,7 @@ pub fn main() !void {
 
     var result = try linear_scaling.runScfFromXyz(
         alloc,
+        io,
         "examples/silicon.xyz",
         specs[0..],
         cell,

@@ -80,6 +80,7 @@ pub const BandVectorCache = struct {
 
 pub fn initBandIterativeContext(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config.Config,
     species: []hamiltonian.SpeciesEntry,
     atoms: []hamiltonian.AtomData,
@@ -106,7 +107,7 @@ pub fn initBandIterativeContext(
         const ionic_g0 = ionic.valueAt(0, 0, 0);
         const extra_g0 = extra.valueAt(0, 0, 0);
         var buffer: [256]u8 = undefined;
-        var writer = std.fs.File.stderr().writer(&buffer);
+        var writer = std.Io.File.stderr().writer(io, &buffer);
         const out = &writer.interface;
         try out.print(
             "band: local_r mean={d:.6} ionic_g0={d:.6} extra_g0={d:.6}\n",
@@ -136,6 +137,7 @@ pub const BandEigenOptions = struct {
 
 pub fn bandEigenvaluesIterative(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config.Config,
     ctx: *const BandIterativeContext,
     k_cart: math.Vec3,
@@ -146,7 +148,7 @@ pub fn bandEigenvaluesIterative(
     reuse_vectors: bool,
     cache: ?*BandVectorCache,
 ) ![]f64 {
-    return bandEigenvaluesIterativeExt(alloc, cfg, ctx, k_cart, species, atoms, recip, nbands, cache, .{
+    return bandEigenvaluesIterativeExt(alloc, io, cfg, ctx, k_cart, species, atoms, recip, nbands, cache, .{
         .reuse_vectors = reuse_vectors,
         .pool = null,
     });
@@ -155,6 +157,7 @@ pub fn bandEigenvaluesIterative(
 /// Extended band eigenvalue calculation with optional thread pool for parallel LOBPCG
 pub fn bandEigenvaluesIterativeExt(
     alloc: std.mem.Allocator,
+    io: std.Io,
     cfg: config.Config,
     ctx: *const BandIterativeContext,
     k_cart: math.Vec3,
@@ -247,10 +250,11 @@ pub fn bandEigenvaluesIterativeExt(
         if (ctx.fft_index_map) |idx_map| {
             try map.buildFftIndices(alloc, idx_map);
         }
-        const fft_plan = if (opts.shared_fft_plan) |plan| plan else try fft.Fft3dPlan.initWithBackend(alloc, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz, cfg.scf.fft_backend);
+        const fft_plan = if (opts.shared_fft_plan) |plan| plan else try fft.Fft3dPlan.initWithBackend(alloc, io, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz, cfg.scf.fft_backend);
         const owns_plan = opts.shared_fft_plan == null;
         var actx = try ApplyContext.initWithCache(
             alloc,
+            io,
             ctx.grid,
             basis.gvecs,
             ctx.local_r,
@@ -271,6 +275,7 @@ pub fn bandEigenvaluesIterativeExt(
     } else if (opts.shared_fft_plan != null and num_workspaces <= 1)
         try ApplyContext.initWithFftPlan(
             alloc,
+            io,
             ctx.grid,
             basis.gvecs,
             ctx.local_r,
@@ -286,6 +291,7 @@ pub fn bandEigenvaluesIterativeExt(
     else
         try ApplyContext.initWithWorkspaces(
             alloc,
+            io,
             ctx.grid,
             basis.gvecs,
             ctx.local_r,

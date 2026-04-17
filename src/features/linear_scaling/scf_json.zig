@@ -31,12 +31,13 @@ pub const ScfComparisonJson = struct {
 };
 
 pub fn writeReferenceJson(
-    dir: std.fs.Dir,
+    io: std.Io,
+    dir: std.Io.Dir,
     path: []const u8,
     snapshot: scf_harness.ScfSnapshot,
 ) !void {
-    var file = try dir.createFile(path, .{ .truncate = true });
-    defer file.close();
+    var file = try dir.createFile(io, path, .{ .truncate = true });
+    defer file.close(io);
 
     const payload = ScfReferenceJson{
         .schema_version = 1,
@@ -44,7 +45,7 @@ pub fn writeReferenceJson(
         .density = snapshot.density,
     };
     var buffer: [4096]u8 = undefined;
-    var writer = file.writer(&buffer);
+    var writer = file.writer(io, &buffer);
     const out = &writer.interface;
     try std.json.Stringify.value(payload, .{ .whitespace = .indent_2 }, out);
     try out.writeAll("\n");
@@ -52,20 +53,22 @@ pub fn writeReferenceJson(
 }
 
 pub fn writeReferenceFromScfResult(
-    dir: std.fs.Dir,
+    io: std.Io,
+    dir: std.Io.Dir,
     path: []const u8,
     result: *const scf.ScfResult,
 ) !void {
     const snapshot = scf_harness.snapshotFromScfResult(result);
-    try writeReferenceJson(dir, path, snapshot);
+    try writeReferenceJson(io, dir, path, snapshot);
 }
 
 pub fn readReferenceJson(
+    io: std.Io,
     alloc: std.mem.Allocator,
-    dir: std.fs.Dir,
+    dir: std.Io.Dir,
     path: []const u8,
 ) !ScfReferenceOwned {
-    const content = try dir.readFileAlloc(alloc, path, 64 * 1024 * 1024);
+    const content = try dir.readFileAlloc(io, path, alloc, .limited(64 * 1024 * 1024));
     defer alloc.free(content);
     var parsed = try std.json.parseFromSlice(ScfReferenceJson, alloc, content, .{});
     defer parsed.deinit();
@@ -93,12 +96,13 @@ pub fn compareReferenceToScfResult(
 }
 
 pub fn writeComparisonJson(
-    dir: std.fs.Dir,
+    io: std.Io,
+    dir: std.Io.Dir,
     path: []const u8,
     report: scf_harness.ScfComparisonReport,
 ) !void {
-    var file = try dir.createFile(path, .{ .truncate = true });
-    defer file.close();
+    var file = try dir.createFile(io, path, .{ .truncate = true });
+    defer file.close(io);
 
     const payload = ScfComparisonJson{
         .schema_version = 1,
@@ -106,7 +110,7 @@ pub fn writeComparisonJson(
         .energy_terms = report.energy_terms,
     };
     var buffer: [4096]u8 = undefined;
-    var writer = file.writer(&buffer);
+    var writer = file.writer(io, &buffer);
     const out = &writer.interface;
     try std.json.Stringify.value(payload, .{ .whitespace = .indent_2 }, out);
     try out.writeAll("\n");
@@ -114,18 +118,20 @@ pub fn writeComparisonJson(
 }
 
 pub fn writeComparisonFromScfResults(
-    dir: std.fs.Dir,
+    io: std.Io,
+    dir: std.Io.Dir,
     path: []const u8,
     reference_result: *const scf.ScfResult,
     candidate_result: *const scf.ScfResult,
 ) !scf_harness.ScfComparisonReport {
     const report = try scf_harness.compareScfResults(reference_result, candidate_result);
-    try writeComparisonJson(dir, path, report);
+    try writeComparisonJson(io, dir, path, report);
     return report;
 }
 
 test "scf reference json round trip" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -143,9 +149,9 @@ test "scf reference json round trip" {
         .nonlocal_pseudo = 9.0,
     };
     const snapshot = scf_harness.ScfSnapshot{ .energy_terms = terms, .density = density[0..] };
-    try writeReferenceJson(tmp.dir, "ref.json", snapshot);
+    try writeReferenceJson(io, tmp.dir, "ref.json", snapshot);
 
-    var loaded = try readReferenceJson(alloc, tmp.dir, "ref.json");
+    var loaded = try readReferenceJson(io, alloc, tmp.dir, "ref.json");
     defer loaded.deinit(alloc);
     try std.testing.expectEqual(@as(usize, density.len), loaded.density.len);
     try std.testing.expectApproxEqAbs(@as(f64, -10.0), loaded.energy_terms.total, 1e-12);
@@ -154,6 +160,7 @@ test "scf reference json round trip" {
 
 test "scf comparison json parses" {
     const alloc = std.testing.allocator;
+    const io = std.testing.io;
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -175,9 +182,9 @@ test "scf comparison json parses" {
             .nonlocal_pseudo = .{ .abs = 1.0, .rel = 0.10 },
         },
     };
-    try writeComparisonJson(tmp.dir, "compare.json", report);
+    try writeComparisonJson(io, tmp.dir, "compare.json", report);
 
-    const content = try tmp.dir.readFileAlloc(alloc, "compare.json", 1024 * 1024);
+    const content = try tmp.dir.readFileAlloc(io, "compare.json", alloc, .limited(1024 * 1024));
     defer alloc.free(content);
     var parsed = try std.json.parseFromSlice(ScfComparisonJson, alloc, content, .{});
     defer parsed.deinit();

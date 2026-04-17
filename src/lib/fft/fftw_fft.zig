@@ -21,7 +21,9 @@ const c = if (enable_fftw) @cImport({
     const fftw_plan = ?*anyopaque;
     const FFTW_FORWARD: c_int = -1;
     const FFTW_BACKWARD: c_int = 1;
+    const FFTW_MEASURE: c_uint = 0;
     const FFTW_ESTIMATE: c_uint = 64;
+    const FFTW_UNALIGNED: c_uint = 2;
 
     fn fftw_plan_dft_3d(_: c_int, _: c_int, _: c_int, _: [*c]fftw_complex, _: [*c]fftw_complex, _: c_int, _: c_uint) fftw_plan {
         return null;
@@ -35,8 +37,19 @@ const FftwComplex = c.fftw_complex;
 
 /// Global mutex for FFTW planner thread safety.
 /// FFTW's planner is NOT thread-safe by default, so we must serialize
-/// all plan creation/destruction calls.
-var planner_mutex: std.Thread.Mutex = .{};
+/// all plan creation/destruction calls. Uses pthread_mutex directly to
+/// avoid cross-module imports and threading an `io` through every FFTW
+/// wrapper call site.
+const PlannerMutex = struct {
+    m: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
+    pub fn lock(self: *PlannerMutex) void {
+        _ = std.c.pthread_mutex_lock(&self.m);
+    }
+    pub fn unlock(self: *PlannerMutex) void {
+        _ = std.c.pthread_mutex_unlock(&self.m);
+    }
+};
+var planner_mutex: PlannerMutex = .{};
 
 /// FFTW 3D Plan
 pub const FftwPlan3d = struct {
@@ -74,7 +87,7 @@ pub const FftwPlan3d = struct {
             fftw_ptr,
             fftw_ptr,
             c.FFTW_FORWARD,
-            c.FFTW_MEASURE,
+            c.FFTW_MEASURE | c.FFTW_UNALIGNED,
         );
         if (forward_plan == null) {
             return error.FftwPlanFailed;
@@ -88,7 +101,7 @@ pub const FftwPlan3d = struct {
             fftw_ptr,
             fftw_ptr,
             c.FFTW_BACKWARD,
-            c.FFTW_MEASURE,
+            c.FFTW_MEASURE | c.FFTW_UNALIGNED,
         );
         if (inverse_plan == null) {
             return error.FftwPlanFailed;

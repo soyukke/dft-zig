@@ -38,12 +38,12 @@ pub const Timing = struct {
 };
 
 /// Write input summary for reproducibility.
-pub fn writeRunInfo(dir: std.fs.Dir, cfg: config.Config, atoms: []xyz.Atom, cell_ang: math.Mat3) !void {
-    var file = try dir.createFile("run_info.txt", .{ .truncate = true });
-    defer file.close();
+pub fn writeRunInfo(io: std.Io, dir: std.Io.Dir, cfg: config.Config, atoms: []xyz.Atom, cell_ang: math.Mat3) !void {
+    var file = try dir.createFile(io, "run_info.txt", .{ .truncate = true });
+    defer file.close(io);
 
     var buffer: [4096]u8 = undefined;
-    var writer = file.writer(&buffer);
+    var writer = file.writer(io, &buffer);
     const out = &writer.interface;
 
     try out.print("title = {s}\n", .{cfg.title});
@@ -102,12 +102,12 @@ pub fn writeRunInfo(dir: std.fs.Dir, cfg: config.Config, atoms: []xyz.Atom, cell
 }
 
 /// Write k-point path CSV.
-pub fn writeKpoints(dir: std.fs.Dir, path: kpath.KPath) !void {
-    var file = try dir.createFile("band_kpoints.csv", .{ .truncate = true });
-    defer file.close();
+pub fn writeKpoints(io: std.Io, dir: std.Io.Dir, path: kpath.KPath) !void {
+    var file = try dir.createFile(io, "band_kpoints.csv", .{ .truncate = true });
+    defer file.close(io);
 
     var buffer: [4096]u8 = undefined;
-    var writer = file.writer(&buffer);
+    var writer = file.writer(io, &buffer);
     const out = &writer.interface;
 
     try out.writeAll("index,label,kx,ky,kz,kx_frac,ky_frac,kz_frac,dist\n");
@@ -121,12 +121,12 @@ pub fn writeKpoints(dir: std.fs.Dir, path: kpath.KPath) !void {
 }
 
 /// Write atoms to CSV in angstrom.
-pub fn writeAtoms(dir: std.fs.Dir, atoms: []xyz.Atom, unit_scale: f64) !void {
-    var file = try dir.createFile("atoms.csv", .{ .truncate = true });
-    defer file.close();
+pub fn writeAtoms(io: std.Io, dir: std.Io.Dir, atoms: []xyz.Atom, unit_scale: f64) !void {
+    var file = try dir.createFile(io, "atoms.csv", .{ .truncate = true });
+    defer file.close(io);
 
     var buffer: [4096]u8 = undefined;
-    var writer = file.writer(&buffer);
+    var writer = file.writer(io, &buffer);
     const out = &writer.interface;
 
     try out.writeAll("symbol,x,y,z\n");
@@ -141,12 +141,12 @@ pub fn writeAtoms(dir: std.fs.Dir, atoms: []xyz.Atom, unit_scale: f64) !void {
 }
 
 /// Write current feature status.
-pub fn writeStatus(dir: std.fs.Dir, cfg: config.Config, scf_result: ?scf.ScfResult) !void {
-    var file = try dir.createFile("status.txt", .{ .truncate = true });
-    defer file.close();
+pub fn writeStatus(io: std.Io, dir: std.Io.Dir, cfg: config.Config, scf_result: ?scf.ScfResult) !void {
+    var file = try dir.createFile(io, "status.txt", .{ .truncate = true });
+    defer file.close(io);
 
     var buffer: [4096]u8 = undefined;
-    var writer = file.writer(&buffer);
+    var writer = file.writer(io, &buffer);
     const out = &writer.interface;
 
     if (scf_result) |result| {
@@ -198,12 +198,12 @@ pub fn writeStatus(dir: std.fs.Dir, cfg: config.Config, scf_result: ?scf.ScfResu
 }
 
 /// Write parsed pseudopotential metadata.
-pub fn writePseudopotentials(dir: std.fs.Dir, items: []pseudo.Parsed) !void {
-    var file = try dir.createFile("pseudopotentials.csv", .{ .truncate = true });
-    defer file.close();
+pub fn writePseudopotentials(io: std.Io, dir: std.Io.Dir, items: []pseudo.Parsed) !void {
+    var file = try dir.createFile(io, "pseudopotentials.csv", .{ .truncate = true });
+    defer file.close(io);
 
     var buffer: [4096]u8 = undefined;
-    var writer = file.writer(&buffer);
+    var writer = file.writer(io, &buffer);
     const out = &writer.interface;
 
     try out.writeAll("element,format,path,header_element,z_valence,l_max,mesh_size,r_size,rab_size,vlocal_size,beta_count,dij_size,qij_size,nlcc_size\n");
@@ -243,12 +243,12 @@ pub fn writePseudopotentials(dir: std.fs.Dir, items: []pseudo.Parsed) !void {
 }
 
 /// Write timing information.
-pub fn writeTiming(dir: std.fs.Dir, timing: Timing, band_kpoints: usize) !void {
-    var file = try dir.createFile("timing.txt", .{ .truncate = true });
-    defer file.close();
+pub fn writeTiming(io: std.Io, dir: std.Io.Dir, timing: Timing, band_kpoints: usize) !void {
+    var file = try dir.createFile(io, "timing.txt", .{ .truncate = true });
+    defer file.close(io);
 
     var buffer: [4096]u8 = undefined;
-    var writer = file.writer(&buffer);
+    var writer = file.writer(io, &buffer);
     const out = &writer.interface;
 
     try out.print("setup_sec = {d:.3}\n", .{Timing.toSeconds(timing.setup_ns)});

@@ -1,46 +1,40 @@
-//! Thread pool for parallel computation
+//! Thread pool abstraction for parallel computation.
 //!
-//! Provides a reusable thread pool that can be passed through
-//! the computation pipeline (SCF -> LOBPCG -> op.apply).
+//! Wraps `std.Io.Group` which already provides a shared worker pool
+//! inside the `std.Io` runtime (e.g. `std.Io.Threaded` maintains a
+//! reusable worker pool spawned lazily up to `async_limit`).
+//!
+//! This keeps API compatibility with the previous `std.Thread.Pool`-based
+//! implementation while delegating scheduling to the stdlib.
 
 const std = @import("std");
 
-/// Thread pool wrapper with convenient parallel execution methods
+/// Thread pool wrapper carrying an `io` reference. Scheduling is handled
+/// by the underlying `std.Io.Group` implementation so worker threads are
+/// reused across `parallelFor` calls, matching pre-0.16 performance.
 pub const ThreadPool = struct {
-    inner: *std.Thread.Pool,
-    num_threads: usize,
+    io: std.Io,
     allocator: std.mem.Allocator,
+    num_threads: usize,
 
-    /// Initialize thread pool with specified number of threads
-    /// If num_threads is 0, uses CPU count
-    pub fn init(allocator: std.mem.Allocator, num_threads: usize) !ThreadPool {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io, num_threads: usize) !ThreadPool {
         const actual_threads = if (num_threads == 0)
             std.Thread.getCpuCount() catch 4
         else
             num_threads;
-
-        const pool = try allocator.create(std.Thread.Pool);
-        errdefer allocator.destroy(pool);
-
-        try pool.init(.{
-            .allocator = allocator,
-            .n_jobs = @intCast(actual_threads),
-        });
-
         return .{
-            .inner = pool,
-            .num_threads = actual_threads,
+            .io = io,
             .allocator = allocator,
+            .num_threads = actual_threads,
         };
     }
 
     pub fn deinit(self: *ThreadPool) void {
-        self.inner.deinit();
-        self.allocator.destroy(self.inner);
+        _ = self;
     }
 
-    /// Execute a function for each index in range [0, count) in parallel
-    /// The function receives the index as parameter
+    /// Execute `func(context, idx)` for each idx in [0, count) in parallel.
+    /// Blocks until all tasks complete.
     pub fn parallelFor(
         self: *ThreadPool,
         count: usize,
@@ -51,35 +45,20 @@ pub const ThreadPool = struct {
 
         const Context = @TypeOf(context);
         const Wrapper = struct {
-            ctx: Context,
-            func_ptr: *const fn (Context, usize) void,
-
-            fn run(wrapper: *@This(), idx: usize) void {
-                wrapper.func_ptr(wrapper.ctx, idx);
+            fn task(ctx: Context, idx: usize) std.Io.Cancelable!void {
+                func(ctx, idx);
             }
         };
 
-        var wrapper = Wrapper{ .ctx = context, .func_ptr = func };
-
-        // Use WaitGroup to wait for all tasks
-        var wg = std.Thread.WaitGroup{};
+        var group: std.Io.Group = .init;
         for (0..count) |i| {
-            wg.start();
-            self.inner.spawn(struct {
-                fn task(w: *Wrapper, wg_ptr: *std.Thread.WaitGroup, idx: usize) void {
-                    defer wg_ptr.finish();
-                    w.run(idx);
-                }
-            }.task, .{ &wrapper, &wg, i }) catch {
-                wg.finish();
-                continue;
-            };
+            group.async(self.io, Wrapper.task, .{ context, i });
         }
-        wg.wait();
+        group.await(self.io) catch {};
     }
 
-    /// Execute a function for each index, allowing errors
-    /// Returns first error encountered or success
+    /// Execute `func(context, idx)` for each idx in [0, count) in parallel,
+    /// collecting the first error encountered. Blocks until all tasks finish.
     pub fn parallelForWithError(
         self: *ThreadPool,
         count: usize,
@@ -89,61 +68,45 @@ pub const ThreadPool = struct {
         if (count == 0) return;
 
         const Context = @TypeOf(context);
-        const Wrapper = struct {
+        const Shared = struct {
             ctx: Context,
-            err: ?anyerror = null,
-            err_mutex: std.Thread.Mutex = .{},
+            err_flag: std.atomic.Value(bool) = .init(false),
+            err: anyerror = error.Unexpected,
+        };
+        var shared = Shared{ .ctx = context };
 
-            fn run(wrapper: *@This(), idx: usize) void {
-                func(wrapper.ctx, idx) catch |e| {
-                    wrapper.err_mutex.lock();
-                    defer wrapper.err_mutex.unlock();
-                    if (wrapper.err == null) {
-                        wrapper.err = e;
-                    }
+        const Wrapper = struct {
+            fn task(s: *Shared, idx: usize) std.Io.Cancelable!void {
+                func(s.ctx, idx) catch |e| {
+                    if (!s.err_flag.swap(true, .acq_rel)) s.err = e;
                 };
             }
         };
 
-        var wrapper = Wrapper{ .ctx = context };
-
-        var wg = std.Thread.WaitGroup{};
+        var group: std.Io.Group = .init;
         for (0..count) |i| {
-            wg.start();
-            self.inner.spawn(struct {
-                fn task(w: *Wrapper, wg_ptr: *std.Thread.WaitGroup, idx: usize) void {
-                    defer wg_ptr.finish();
-                    w.run(idx);
-                }
-            }.task, .{ &wrapper, &wg, i }) catch {
-                wg.finish();
-                continue;
-            };
+            group.async(self.io, Wrapper.task, .{ &shared, i });
         }
-        wg.wait();
+        group.await(self.io) catch {};
 
-        if (wrapper.err) |e| return e;
+        if (shared.err_flag.load(.acquire)) return shared.err;
     }
 };
 
-/// Optional thread pool reference
-/// Allows passing thread pool as optional parameter
+/// Optional thread pool reference.
 pub const OptionalPool = ?*ThreadPool;
-
-// ============== Tests ==============
 
 test "ThreadPool basic" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
 
-    var pool = try ThreadPool.init(allocator, 2);
+    var pool = try ThreadPool.init(allocator, io, 2);
     defer pool.deinit();
 
     var results: [10]usize = undefined;
     @memset(&results, 0);
 
-    const Ctx = struct {
-        results: *[10]usize,
-    };
+    const Ctx = struct { results: *[10]usize };
 
     pool.parallelFor(10, Ctx{ .results = &results }, struct {
         fn run(ctx: Ctx, idx: usize) void {
@@ -151,7 +114,5 @@ test "ThreadPool basic" {
         }
     }.run);
 
-    for (0..10) |i| {
-        try std.testing.expectEqual(results[i], i * 2);
-    }
+    for (0..10) |i| try std.testing.expectEqual(results[i], i * 2);
 }

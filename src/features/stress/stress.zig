@@ -257,6 +257,7 @@ fn indexToFreq(i: usize, n: usize) i32 {
 /// FFT real-space density to G-space (reordered to grid layout).
 fn densityToReciprocal(
     alloc: std.mem.Allocator,
+    io: std.Io,
     grid: Grid,
     density: []const f64,
     fft_backend: config.FftBackend,
@@ -275,7 +276,7 @@ fn densityToReciprocal(
         data[i] = math.complex.init(d, 0.0);
     }
 
-    var plan = try fft.Fft3dPlan.initWithBackend(alloc, nx, ny, nz, fft_backend);
+    var plan = try fft.Fft3dPlan.initWithBackend(alloc, io, nx, ny, nz, fft_backend);
     defer plan.deinit(alloc);
     plan.forward(data);
 
@@ -450,6 +451,7 @@ pub fn computeStress(
 /// Builds required form factor and radial tables internally.
 pub fn computeStressFromScf(
     alloc: std.mem.Allocator,
+    io: std.Io,
     scf_result: *const scf.ScfResult,
     cfg: config.Config,
     species: []hamiltonian.SpeciesEntry,
@@ -468,7 +470,7 @@ pub fn computeStressFromScf(
     };
 
     // FFT density to G-space
-    const rho_g = try densityToReciprocal(alloc, grid, scf_result.density, cfg.scf.fft_backend);
+    const rho_g = try densityToReciprocal(alloc, io, grid, scf_result.density, cfg.scf.fft_backend);
     defer alloc.free(rho_g);
 
     // Build form factor tables
@@ -579,6 +581,7 @@ pub fn computeStressFromScf(
 }
 
 test "ewald stress finite difference" {
+    const io = std.testing.io;
     const testing = std.testing;
 
     const a = 10.2;
@@ -597,7 +600,7 @@ test "ewald stress finite difference" {
 
     const params = ewald.Params{ .alpha = 0.0, .rcut = 0.0, .gcut = 0.0, .tol = 1e-10, .quiet = true };
 
-    const e0 = try ewald.ionIonEnergy(cell, recip_lat, &charges, &positions, params);
+    const e0 = try ewald.ionIonEnergy(io, cell, recip_lat, &charges, &positions, params);
     const sigma = try ewald.ionIonStress(cell, recip_lat, &charges, &positions, params);
 
     const frac = [_]math.Vec3{
@@ -638,8 +641,8 @@ test "ewald stress finite difference" {
                 };
             }
 
-            const e_p = try ewald.ionIonEnergy(cell_p, recip_p, &charges, &pos_p, params);
-            const e_m = try ewald.ionIonEnergy(cell_m, recip_m, &charges, &pos_m, params);
+            const e_p = try ewald.ionIonEnergy(io, cell_p, recip_p, &charges, &pos_p, params);
+            const e_m = try ewald.ionIonEnergy(io, cell_m, recip_m, &charges, &pos_m, params);
 
             const fd_factor: f64 = if (al == be) 1.0 else 2.0;
             const sigma_fd = (e_p - e_m) / (2.0 * delta * fd_factor) / vol0;
