@@ -1,9 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const fft_sizing = @import("../../lib/fft/sizing.zig");
 const linalg = @import("../linalg/linalg.zig");
 const math = @import("../math/math.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
-const scf_util = @import("../scf/util.zig");
 const xc = @import("../xc/xc.zig");
 
 pub const BandPathPoint = struct {
@@ -108,11 +109,7 @@ pub const ConvergenceMetric = enum {
     potential,
 };
 
-pub const LocalPotentialMode = enum {
-    tail,
-    ewald,
-    short_range,
-};
+pub const LocalPotentialMode = local_potential.LocalPotentialMode;
 
 pub const BoundaryCondition = enum {
     periodic, // Standard periodic boundary conditions (crystals)
@@ -209,11 +206,7 @@ pub fn convergenceMetricName(metric: ConvergenceMetric) []const u8 {
 }
 
 pub fn localPotentialModeName(mode: LocalPotentialMode) []const u8 {
-    return switch (mode) {
-        .tail => "tail",
-        .ewald => "ewald",
-        .short_range => "short_range",
-    };
+    return local_potential.name(mode);
 }
 
 pub const EwaldConfig = struct {
@@ -588,9 +581,9 @@ pub const Config = struct {
             const raw1 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / math.Vec3.norm(recip.row(0))))) * 2 + 1;
             const raw2 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / math.Vec3.norm(recip.row(1))))) * 2 + 1;
             const raw3 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / math.Vec3.norm(recip.row(2))))) * 2 + 1;
-            const rec1 = scf_util.nextFftSize(@max(raw1, 3));
-            const rec2 = scf_util.nextFftSize(@max(raw2, 3));
-            const rec3 = scf_util.nextFftSize(@max(raw3, 3));
+            const rec1 = fft_sizing.nextFftSize(@max(raw1, 3));
+            const rec2 = fft_sizing.nextFftSize(@max(raw2, 3));
+            const rec3 = fft_sizing.nextFftSize(@max(raw3, 3));
             if (self.scf.grid[0] < raw1 or self.scf.grid[1] < raw2 or self.scf.grid[2] < raw3) {
                 try addIssue(alloc, &issues, .warning, "scf", "grid",
                     try std.fmt.allocPrint(alloc, "grid [{},{},{}] is smaller than recommended [{},{},{}] for ecut_ry={d:.1}; use grid = [{},{},{}] or set grid = [0,0,0] for auto", .{

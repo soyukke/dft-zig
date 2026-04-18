@@ -7,6 +7,7 @@ const d3_params = @import("../vdw/d3_params.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const ewald = @import("../ewald/ewald.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
 const scf = @import("../scf/scf.zig");
@@ -69,6 +70,7 @@ pub fn computeForces(
     recip: math.Mat3,
     volume: f64,
     alpha: f64,
+    local_cfg: local_potential.LocalPotentialConfig,
     wavefunctions: ?scf.WavefunctionData,
     vresid_g: ?[]const math.Complex,
     quiet: bool,
@@ -139,7 +141,7 @@ pub fn computeForces(
         species,
         atoms,
         volume,
-        alpha,
+        local_cfg,
         ff_tables,
     );
 

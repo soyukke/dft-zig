@@ -16,6 +16,7 @@ const logging = @import("logging.zig");
 const math = @import("../math/math.zig");
 const mixing = @import("mixing.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal_mod = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
 const paw_scf = @import("paw_scf.zig");
@@ -324,7 +325,7 @@ pub const ScfParams = struct {
     io: std.Io,
     cfg: config.Config,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume_bohr: f64,
     initial_density: ?[]const f64 = null,
@@ -338,11 +339,12 @@ pub const ScfCommon = struct {
     alloc: std.mem.Allocator,
     cfg: config.Config,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume_bohr: f64,
     grid: Grid,
     total_electrons: f64,
+    local_cfg: local_potential.LocalPotentialConfig,
     ionic: hamiltonian.PotentialGrid,
     log: ScfLog,
     kpoints: []KPoint,
@@ -397,8 +399,7 @@ fn initScfCommon(params: ScfParams) !ScfCommon {
     // Compute cutoff radius for isolated systems
     const coulomb_r_cut: ?f64 = if (cfg.boundary == .isolated) coulomb_mod.cutoffRadius(grid.cell) else null;
 
-    const local_alpha = localPotentialAlpha(cfg);
-    hamiltonian.configureLocalPotential(species, cfg.scf.local_potential, local_alpha);
+    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, grid.cell);
 
     // Compute ecutrho spherical cutoff early so it can be applied to V_local(G)
     const is_paw = hasPaw(species);
@@ -407,7 +408,7 @@ fn initScfCommon(params: ScfParams) !ScfCommon {
         break :blk cfg.scf.ecut_ry * gs_val * gs_val;
     } else null;
 
-    var ionic = try potential_mod.buildIonicPotentialGrid(alloc, grid, species, atoms, ff_tables, ecutrho);
+    var ionic = try potential_mod.buildIonicPotentialGrid(alloc, grid, species, atoms, local_cfg, ff_tables, ecutrho);
     errdefer ionic.deinit(alloc);
 
     var log = try ScfLog.init(alloc, io, cfg.out_dir);
@@ -575,6 +576,7 @@ fn initScfCommon(params: ScfParams) !ScfCommon {
         .volume_bohr = volume_bohr,
         .grid = grid,
         .total_electrons = total_electrons,
+        .local_cfg = local_cfg,
         .ionic = ionic,
         .log = log,
         .kpoints = kpoints,
@@ -944,6 +946,7 @@ pub fn run(params: ScfParams) !ScfResult {
         last_entropy_energy,
         species,
         atoms,
+        common.local_cfg,
         cfg.ewald,
         cfg.scf.use_rfft,
         cfg.scf.xc,
@@ -1243,7 +1246,7 @@ pub fn computeFinalWavefunctionsWithSpinFactor(
     kpoints: []KPoint,
     ionic: hamiltonian.PotentialGrid,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,
     potential: hamiltonian.PotentialGrid,
@@ -1255,6 +1258,7 @@ pub fn computeFinalWavefunctionsWithSpinFactor(
 ) !WavefunctionResult {
     const nelec = totalElectrons(species, atoms);
     const nocc = @as(usize, @intFromFloat(std.math.ceil(nelec / 2.0)));
+    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, grid.cell);
     const is_paw_wf = hasPaw(species);
     const has_qij = hasQij(species) and !is_paw_wf;
     // auto: let kpoints.zig decide based on basis size (iterative for large, dense for small)
@@ -1317,6 +1321,7 @@ pub fn computeFinalWavefunctionsWithSpinFactor(
             atoms,
             recip,
             volume,
+            local_cfg,
             potential,
             local_r,
             nocc,
@@ -1401,7 +1406,7 @@ fn computeDensity(
     kpoints: []KPoint,
     ionic: hamiltonian.PotentialGrid,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,
     potential: hamiltonian.PotentialGrid,
@@ -1450,6 +1455,7 @@ fn computeDensity(
 
     var iter_max_iter = cfg.scf.iterative_max_iter;
     var iter_tol = cfg.scf.iterative_tol;
+    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, grid.cell);
     if (cfg.scf.iterative_warmup_steps > 0 and scf_iter < cfg.scf.iterative_warmup_steps) {
         iter_max_iter = cfg.scf.iterative_warmup_max_iter;
         iter_tol = cfg.scf.iterative_warmup_tol;
@@ -1491,7 +1497,7 @@ fn computeDensity(
         defer basis.deinit(alloc);
         const inv_volume = 1.0 / volume;
         if (cfg.scf.debug_local) {
-            try logLocalDiagnostics(io, basis.gvecs, species, atoms);
+            try logLocalDiagnostics(io, basis.gvecs, species, atoms, local_cfg);
         }
         if (cfg.scf.debug_nonlocal) {
             try logNonlocalDiagnostics(alloc, io, basis.gvecs, species, atoms, inv_volume);
@@ -1564,6 +1570,7 @@ fn computeDensity(
                 atoms,
                 recip,
                 volume,
+                local_cfg,
                 potential,
                 local_r,
                 nocc,
@@ -1648,6 +1655,7 @@ fn computeDensity(
         .atoms = atoms,
         .recip = recip,
         .volume = volume,
+        .local_cfg = local_cfg,
         .potential = potential,
         .local_r = local_r,
         .nocc = nocc,
@@ -1728,17 +1736,6 @@ pub const hasNonlocal = util.hasNonlocal;
 pub const hasQij = util.hasQij;
 pub const hasPaw = util.hasPaw;
 pub const totalElectrons = util.totalElectrons;
-
-fn localPotentialAlpha(cfg: config.Config) f64 {
-    if (cfg.scf.local_potential != .ewald) return 0.0;
-    if (cfg.ewald.alpha > 0.0) return cfg.ewald.alpha;
-    const cell_bohr = cfg.cell.scale(math.unitsScaleToBohr(cfg.units));
-    const lmin = @min(
-        @min(math.Vec3.norm(cell_bohr.row(0)), math.Vec3.norm(cell_bohr.row(1))),
-        math.Vec3.norm(cell_bohr.row(2)),
-    );
-    return 5.0 / lmin;
-}
 
 test {
     _ = @import("band_solver.zig");

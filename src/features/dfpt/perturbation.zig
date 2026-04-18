@@ -7,6 +7,7 @@ const math = @import("../math/math.zig");
 const scf_mod = @import("../scf/scf.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
@@ -34,6 +35,7 @@ pub fn buildLocalPerturbation(
     atom: hamiltonian.AtomData,
     species: []hamiltonian.SpeciesEntry,
     direction: usize,
+    local_cfg: local_potential.LocalPotentialConfig,
     ff_tables: ?[]const form_factor.LocalFormFactorTable,
 ) ![]math.Complex {
     const total = grid.count();
@@ -56,7 +58,7 @@ pub fn buildLocalPerturbation(
         const v_loc = if (ff_tables) |tables|
             tables[atom.species_index].eval(g_norm)
         else
-            hamiltonian.localFormFactor(&species[atom.species_index], g_norm);
+            hamiltonian.localFormFactor(&species[atom.species_index], g_norm, local_cfg);
 
         // exp(-iG·τ_I)
         const phase = math.complex.expi(-math.Vec3.dot(g.gvec, atom.position));
@@ -781,6 +783,7 @@ pub fn buildLocalPerturbationQ(
     species: []hamiltonian.SpeciesEntry,
     direction: usize,
     q_cart: math.Vec3,
+    local_cfg: local_potential.LocalPotentialConfig,
     ff_tables: ?[]const form_factor.LocalFormFactorTable,
 ) ![]math.Complex {
     const total = grid.count();
@@ -809,7 +812,7 @@ pub fn buildLocalPerturbationQ(
         const v_loc = if (ff_tables) |tables|
             tables[atom.species_index].eval(gpq_norm)
         else
-            hamiltonian.localFormFactor(&species[atom.species_index], gpq_norm);
+            hamiltonian.localFormFactor(&species[atom.species_index], gpq_norm, local_cfg);
 
         // exp(-i(G+q)·τ_I)
         const phase = math.complex.expi(-math.Vec3.dot(gpq, atom.position));
@@ -985,7 +988,8 @@ test "V_loc perturbation finite difference" {
     const atom = hamiltonian.AtomData{ .position = atom_pos, .species_index = 0 };
 
     // Build perturbation for x-direction
-    const vloc1 = try buildLocalPerturbation(alloc, grid, atom, species, 0, null);
+    const local_cfg = local_potential.LocalPotentialConfig.init(.short_range, 0.0);
+    const vloc1 = try buildLocalPerturbation(alloc, grid, atom, species, 0, local_cfg, null);
     defer alloc.free(vloc1);
 
     // Finite difference: (V_loc(τ+δ) - V_loc(τ-δ)) / (2δ)
@@ -1007,8 +1011,8 @@ test "V_loc perturbation finite difference" {
     while (it2.next()) |g| {
         if (g.gh == 0 and g.gk == 0 and g.gl == 0) continue;
 
-        const vp = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms_plus[0..], inv_vol);
-        const vm = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms_minus[0..], inv_vol);
+        const vp = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms_plus[0..], inv_vol, local_cfg);
+        const vm = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms_minus[0..], inv_vol, local_cfg);
 
         const fd_r = (vp.r - vm.r) / (2.0 * delta);
         const fd_i = (vp.i - vm.i) / (2.0 * delta);

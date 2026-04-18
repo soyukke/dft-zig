@@ -24,7 +24,7 @@ pub fn buildCoreDensity(
     alloc: std.mem.Allocator,
     grid: Grid,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
 ) ![]f64 {
     const total = grid.count();
     const rho_core = try alloc.alloc(f64, total);

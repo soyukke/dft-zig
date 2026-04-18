@@ -4,6 +4,7 @@ const config = @import("../config/config.zig");
 const ewald = @import("../ewald/ewald.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const scf = @import("../scf/scf.zig");
@@ -318,6 +319,7 @@ pub fn computeStress(
     wavefunctions: ?scf.WavefunctionData,
     energy: anytype,
     xc_func: xc_mod.Functional,
+    local_cfg: local_potential.LocalPotentialConfig,
     ff_tables: ?[]const form_factor.LocalFormFactorTable,
     rho_core_tables: ?[]const form_factor.RadialFormFactorTable,
     radial_tables: ?[]nonlocal.RadialTableSet,
@@ -387,7 +389,7 @@ pub fn computeStress(
         break :blk try scf.realToReciprocal(alloc, fft_obj, aug, false);
     } else null;
     defer if (rho_g_for_loc) |g| alloc.free(g);
-    const sigma_local = local_stress.localStress(grid, rho_g_for_loc orelse rho_g, species, atoms, ff_tables, inv_volume, ecutrho);
+    const sigma_local = local_stress.localStress(grid, rho_g_for_loc orelse rho_g, species, atoms, local_cfg, ff_tables, inv_volume, ecutrho);
 
     // Nonlocal stress
     var sigma_nonlocal = try nonlocal_stress.nonlocalStress(alloc, wavefunctions, species, atoms, grid.recip, volume, radial_tables, paw_dij, paw_dij_m, paw_tabs, sf);
@@ -475,17 +477,10 @@ pub fn computeStressFromScf(
 
     // Build form factor tables
     const ff_q_max = 2.0 * @sqrt(cfg.scf.ecut_ry) + 1.0;
-    const ew_alpha = if (cfg.ewald.alpha > 0.0) cfg.ewald.alpha else blk: {
-        const cell_mat = scf_result.grid.cell;
-        const lmin = @min(
-            @min(math.Vec3.norm(cell_mat.row(0)), math.Vec3.norm(cell_mat.row(1))),
-            math.Vec3.norm(cell_mat.row(2)),
-        );
-        break :blk 5.0 / lmin;
-    };
+    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, scf_result.grid.cell);
     var ff_tables_buf = try alloc.alloc(form_factor.LocalFormFactorTable, species.len);
     for (species, 0..) |entry, si| {
-        ff_tables_buf[si] = try form_factor.LocalFormFactorTable.init(alloc, entry.upf.*, entry.z_valence, cfg.scf.local_potential, ew_alpha, ff_q_max);
+        ff_tables_buf[si] = try form_factor.LocalFormFactorTable.init(alloc, entry.upf.*, entry.z_valence, local_cfg, ff_q_max);
     }
     defer {
         for (ff_tables_buf) |*t| t.deinit(alloc);
@@ -542,7 +537,7 @@ pub fn computeStressFromScf(
     var stress_terms = try computeStress(
         alloc, grid, rho_g, scf_result.density, scf_result.rho_core,
         species, atoms, cfg.ewald, scf_result.wavefunctions,
-        scf_result.energy, cfg.scf.xc, ff_tables_buf, rho_core_tables_buf,
+        scf_result.energy, cfg.scf.xc, local_cfg, ff_tables_buf, rho_core_tables_buf,
         radial_tables_buf, if (rho_aug_buf) |buf| buf else null,
         cfg.scf.quiet, scf_result.paw_dij, scf_result.paw_dij_m,
         scf_result.paw_rhoij, scf_result.paw_tabs, pot_vals, ecutrho,

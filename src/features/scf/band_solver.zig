@@ -7,9 +7,11 @@ const grid_mod = @import("pw_grid.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const iterative = @import("../linalg/iterative.zig");
 const math = @import("../math/math.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal_mod = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
+const grid_requirements = @import("../plane_wave/grid_requirements.zig");
 const potential_mod = @import("potential.zig");
 const pw_grid_map = @import("pw_grid_map.zig");
 const thread_pool = @import("../thread_pool.zig");
@@ -21,7 +23,7 @@ const PwGridMap = pw_grid_map.PwGridMap;
 const ThreadPool = thread_pool.ThreadPool;
 
 const gridFromConfig = grid_mod.gridFromConfig;
-const gridRequirement = util.gridRequirement;
+const gridRequirement = grid_requirements.gridRequirement;
 const hasNonlocal = util.hasNonlocal;
 const buildFftIndexMap = fft_grid.buildFftIndexMap;
 const applyHamiltonian = apply.applyHamiltonian;
@@ -83,18 +85,19 @@ pub fn initBandIterativeContext(
     io: std.Io,
     cfg: config.Config,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,
     extra: hamiltonian.PotentialGrid,
 ) !BandIterativeContext {
     const grid = gridFromConfig(cfg, recip, volume);
+    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, grid.cell);
     if (extra.nx != grid.nx or extra.ny != grid.ny or extra.nz != grid.nz or
         extra.min_h != grid.min_h or extra.min_k != grid.min_k or extra.min_l != grid.min_l)
     {
         return error.InvalidGrid;
     }
-    var ionic = try potential_mod.buildIonicPotentialGrid(alloc, grid, species, atoms, null, null);
+    var ionic = try potential_mod.buildIonicPotentialGrid(alloc, grid, species, atoms, local_cfg, null, null);
     defer ionic.deinit(alloc);
     const local_r = try potential_mod.buildLocalPotentialReal(alloc, grid, ionic, extra);
 
@@ -142,7 +145,7 @@ pub fn bandEigenvaluesIterative(
     ctx: *const BandIterativeContext,
     k_cart: math.Vec3,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     nbands: usize,
     reuse_vectors: bool,
@@ -162,7 +165,7 @@ pub fn bandEigenvaluesIterativeExt(
     ctx: *const BandIterativeContext,
     k_cart: math.Vec3,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     nbands: usize,
     cache: ?*BandVectorCache,

@@ -4,12 +4,13 @@ const config_mod = @import("../config/config.zig");
 const coulomb_mod = @import("../coulomb/coulomb.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const paw_mod = @import("../paw/paw.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
+const timing_mod = @import("../runtime/timing.zig");
 const scf = @import("../scf/scf.zig");
 const forces_mod = @import("../forces/forces.zig");
 pub const optimizer = @import("optimizer.zig");
 
 const stress_mod = @import("../stress/stress.zig");
-const output = @import("../dft/output.zig");
 
 /// Result of structure relaxation.
 pub const RelaxResult = struct {
@@ -189,7 +190,7 @@ pub fn run(
 
     // Build local form factor lookup tables (position-independent, reused across steps)
     const form_factor_mod = @import("../pseudopotential/form_factor.zig");
-    const local_alpha = if (cfg.ewald.alpha > 0.0) cfg.ewald.alpha else computeDefaultAlpha(cell);
+    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, cell);
     const ff_q_max = @sqrt(2.0 * cfg.scf.ecut_ry) * 3.0;
     var ff_tables_buf = try alloc.alloc(form_factor_mod.LocalFormFactorTable, species.len);
     for (species, 0..) |entry, si| {
@@ -197,8 +198,7 @@ pub fn run(
             alloc,
             entry.upf.*,
             entry.z_valence,
-            cfg.scf.local_potential,
-            local_alpha,
+            local_cfg,
             ff_q_max,
         );
     }
@@ -227,7 +227,7 @@ pub fn run(
     for (0..cfg.relax.max_iter) |iter| {
         iterations = iter + 1;
         const relax_step_start = std.Io.Clock.Timestamp.now(io, .awake);
-        const relax_step_cpu_start = output.Timing.getCpuTimeUs();
+        const relax_step_cpu_start = timing_mod.Timing.getCpuTimeUs();
 
         // Log iteration start
         try logRelaxIter(io, iter, null, null);
@@ -368,6 +368,7 @@ pub fn run(
             current_recip,
             current_volume,
             alpha,
+            local_cfg,
             scf_result.wavefunctions,
             if (scf_result.vresid) |vresid| vresid.values else null,
             cfg.scf.quiet,
@@ -419,7 +420,7 @@ pub fn run(
 
         // Relax step timing profile (unbuffered write to avoid buffer corruption)
         {
-            const step_cpu_end = output.Timing.getCpuTimeUs();
+            const step_cpu_end = timing_mod.Timing.getCpuTimeUs();
             const scf_ms = @as(f64, @floatFromInt(@as(u64, @intCast(scf_start.durationTo(scf_end).raw.nanoseconds)))) / 1_000_000.0;
             const force_ms = @as(f64, @floatFromInt(@as(u64, @intCast(force_start.durationTo(force_end).raw.nanoseconds)))) / 1_000_000.0;
             const step_ms = @as(f64, @floatFromInt(@as(u64, @intCast(relax_step_start.untilNow(io).raw.nanoseconds)))) / 1_000_000.0;

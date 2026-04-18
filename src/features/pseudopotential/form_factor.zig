@@ -1,7 +1,7 @@
 const std = @import("std");
 const nonlocal = @import("nonlocal.zig");
+const local_potential = @import("local_potential.zig");
 const pseudo = @import("pseudopotential.zig");
-const config = @import("../config/config.zig");
 
 const ctrapWeight = @import("../math/math.zig").radial.ctrapWeight;
 
@@ -18,8 +18,7 @@ pub const LocalFormFactorTable = struct {
         alloc: std.mem.Allocator,
         upf: pseudo.UpfData,
         z_valence: f64,
-        mode: config.LocalPotentialMode,
-        alpha: f64,
+        local_cfg: local_potential.LocalPotentialConfig,
         q_max: f64,
     ) !LocalFormFactorTable {
         const n = N_POINTS;
@@ -27,9 +26,9 @@ pub const LocalFormFactorTable = struct {
         const values = try alloc.alloc(f64, n);
         for (0..n) |i| {
             const q = @as(f64, @floatFromInt(i)) * dq;
-            values[i] = switch (mode) {
+            values[i] = switch (local_cfg.mode) {
                 .tail => localVqWithTail(upf, z_valence, q),
-                .ewald => localVqEwald(upf, z_valence, q, alpha),
+                .ewald => localVqEwald(upf, z_valence, q, local_cfg.alpha),
                 .short_range => localVqShortRange(upf, z_valence, q),
             };
         }

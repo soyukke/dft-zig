@@ -3,6 +3,7 @@ const math = @import("../math/math.zig");
 const scf = @import("../scf/scf.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
 const test_support = @import("../../test_support.zig");
 
@@ -33,7 +34,7 @@ pub fn localPseudoForces(
     species: []hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     _: f64, // volume (unused, kept for API compatibility)
-    _: f64, // alpha (only needed for Ewald method)
+    local_cfg: local_potential.LocalPotentialConfig,
     ff_tables: ?[]const form_factor.LocalFormFactorTable,
 ) ![]math.Vec3 {
     const n_atoms = atoms.len;
@@ -77,7 +78,7 @@ pub fn localPseudoForces(
             const v_loc = if (ff_tables) |tables|
                 tables[atom.species_index].eval(g_norm)
             else
-                hamiltonian.localFormFactor(&species[atom.species_index], g_norm);
+                hamiltonian.localFormFactor(&species[atom.species_index], g_norm, local_cfg);
 
             // Phase: G·R
             const phase = math.Vec3.dot(g.gvec, atom.position);
@@ -178,11 +179,18 @@ test "local force finite difference" {
     rho_g[idx.of(grid, 0, 1, 0)] = rho_y;
     rho_g[idx.of(grid, 0, -1, 0)] = math.complex.conj(rho_y);
 
-    const forces = try localPseudoForces(alloc, grid, rho_g, species, atoms[0..], volume, 0.0, null);
+    const local_cfg = local_potential.LocalPotentialConfig.init(.short_range, 0.0);
+    const forces = try localPseudoForces(alloc, grid, rho_g, species, atoms[0..], volume, local_cfg, null);
     defer alloc.free(forces);
 
     const energyForPos = struct {
-        fn eval(g: Grid, rho: []const math.Complex, species_entries: []const hamiltonian.SpeciesEntry, pos: math.Vec3) f64 {
+        fn eval(
+            g: Grid,
+            rho: []const math.Complex,
+            species_entries: []const hamiltonian.SpeciesEntry,
+            pos: math.Vec3,
+            cfg: local_potential.LocalPotentialConfig,
+        ) f64 {
             const b1 = g.recip.row(0);
             const b2 = g.recip.row(1);
             const b3 = g.recip.row(2);
@@ -211,7 +219,7 @@ test "local force finite difference" {
                         const g_norm = math.Vec3.norm(gvec);
                         const rho_val = rho[idx_local];
                         const sp = &species_entries[0];
-                        const v_loc = hamiltonian.localFormFactor(sp, g_norm);
+                        const v_loc = hamiltonian.localFormFactor(sp, g_norm, cfg);
                         const phase = math.Vec3.dot(gvec, pos);
                         const cos_phase = std.math.cos(phase);
                         const sin_phase = std.math.sin(phase);
@@ -228,22 +236,22 @@ test "local force finite difference" {
     const fx_num = blk: {
         const pos_plus = math.Vec3{ .x = atom_pos.x + delta, .y = atom_pos.y, .z = atom_pos.z };
         const pos_minus = math.Vec3{ .x = atom_pos.x - delta, .y = atom_pos.y, .z = atom_pos.z };
-        const e_plus = energyForPos.eval(grid, rho_g, species, pos_plus);
-        const e_minus = energyForPos.eval(grid, rho_g, species, pos_minus);
+        const e_plus = energyForPos.eval(grid, rho_g, species, pos_plus, local_cfg);
+        const e_minus = energyForPos.eval(grid, rho_g, species, pos_minus, local_cfg);
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
     const fy_num = blk: {
         const pos_plus = math.Vec3{ .x = atom_pos.x, .y = atom_pos.y + delta, .z = atom_pos.z };
         const pos_minus = math.Vec3{ .x = atom_pos.x, .y = atom_pos.y - delta, .z = atom_pos.z };
-        const e_plus = energyForPos.eval(grid, rho_g, species, pos_plus);
-        const e_minus = energyForPos.eval(grid, rho_g, species, pos_minus);
+        const e_plus = energyForPos.eval(grid, rho_g, species, pos_plus, local_cfg);
+        const e_minus = energyForPos.eval(grid, rho_g, species, pos_minus, local_cfg);
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
     const fz_num = blk: {
         const pos_plus = math.Vec3{ .x = atom_pos.x, .y = atom_pos.y, .z = atom_pos.z + delta };
         const pos_minus = math.Vec3{ .x = atom_pos.x, .y = atom_pos.y, .z = atom_pos.z - delta };
-        const e_plus = energyForPos.eval(grid, rho_g, species, pos_plus);
-        const e_minus = energyForPos.eval(grid, rho_g, species, pos_minus);
+        const e_plus = energyForPos.eval(grid, rho_g, species, pos_plus, local_cfg);
+        const e_minus = energyForPos.eval(grid, rho_g, species, pos_minus, local_cfg);
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
 

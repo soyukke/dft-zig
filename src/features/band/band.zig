@@ -5,6 +5,7 @@ const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const kpath = @import("../kpath/kpath.zig");
 const linalg = @import("../linalg/linalg.zig");
 const math = @import("../math/math.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
@@ -55,7 +56,7 @@ pub fn writeBandEnergies(
     cfg: config.Config,
     path: kpath.KPath,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     cell_bohr: math.Mat3,
     recip: math.Mat3,
     volume_bohr: f64,
@@ -73,15 +74,7 @@ pub fn writeBandEnergies(
     if (cfg.band.nbands == 0) return error.InvalidBandConfig;
     if (species.len == 0) return error.MissingPseudopotential;
 
-    const local_alpha = if (cfg.scf.local_potential == .ewald) blk: {
-        if (cfg.ewald.alpha > 0.0) break :blk cfg.ewald.alpha;
-        const lmin = @min(
-            @min(math.Vec3.norm(cell_bohr.row(0)), math.Vec3.norm(cell_bohr.row(1))),
-            math.Vec3.norm(cell_bohr.row(2)),
-        );
-        break :blk 5.0 / lmin;
-    } else 0.0;
-    hamiltonian.configureLocalPotential(species, cfg.scf.local_potential, local_alpha);
+    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, cell_bohr);
 
     const min_npw = try minPlaneWaves(alloc, cfg.scf.ecut_ry, path, recip);
     if (min_npw == 0) return error.NoPlaneWaves;
@@ -237,7 +230,7 @@ pub fn writeBandEnergies(
 
                 const inv_volume = 1.0 / volume_bohr;
                 const extra_grid = if (extra) |ptr| ptr.* else null;
-                const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, extra_grid);
+                const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, extra_grid);
                 defer alloc.free(h);
 
                 if (hasQij(species)) {
@@ -266,9 +259,10 @@ pub fn writeBandEnergies(
             cfg: *const config.Config,
             points: []const kpath.KPoint,
             species: []hamiltonian.SpeciesEntry,
-            atoms: []hamiltonian.AtomData,
+            atoms: []const hamiltonian.AtomData,
             recip: math.Mat3,
             volume: f64,
+            local_cfg: local_potential.LocalPotentialConfig,
             extra: ?hamiltonian.PotentialGrid,
             nbands: usize,
             use_iterative: bool,
@@ -366,7 +360,7 @@ pub fn writeBandEnergies(
                             break;
                         };
                         const inv_volume = 1.0 / shared.volume;
-                        const h = hamiltonian.buildHamiltonian(kalloc, basis.gvecs, shared.species, shared.atoms, inv_volume, shared.extra) catch |err| {
+                        const h = hamiltonian.buildHamiltonian(kalloc, basis.gvecs, shared.species, shared.atoms, inv_volume, shared.local_cfg, shared.extra) catch |err| {
                             basis.deinit(kalloc);
                             setBandError(shared, err);
                             shared.stop.store(1, .release);
@@ -441,6 +435,7 @@ pub fn writeBandEnergies(
             .atoms = atoms,
             .recip = recip,
             .volume = volume_bohr,
+            .local_cfg = local_cfg,
             .extra = if (extra) |ptr| ptr.* else null,
             .nbands = nbands,
             .use_iterative = use_iterative,
@@ -491,7 +486,7 @@ pub fn writeBandEnergies(
             defer basis.deinit(alloc);
             const inv_volume = 1.0 / volume_bohr;
             const extra_grid = if (extra) |ptr| ptr.* else null;
-            const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, extra_grid);
+            const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, extra_grid);
             defer alloc.free(h);
             var eig_dense = try linalg.hermitianEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h);
             defer eig_dense.deinit(alloc);
@@ -554,7 +549,7 @@ fn writeBandEnergiesForSpin(
     cfg: config.Config,
     path: kpath.KPath,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     cell_bohr: math.Mat3,
     recip: math.Mat3,
     volume_bohr: f64,
@@ -566,15 +561,7 @@ fn writeBandEnergiesForSpin(
     if (cfg.band.nbands == 0) return error.InvalidBandConfig;
     if (species.len == 0) return error.MissingPseudopotential;
 
-    const local_alpha = if (cfg.scf.local_potential == .ewald) blk: {
-        if (cfg.ewald.alpha > 0.0) break :blk cfg.ewald.alpha;
-        const lmin = @min(
-            @min(math.Vec3.norm(cell_bohr.row(0)), math.Vec3.norm(cell_bohr.row(1))),
-            math.Vec3.norm(cell_bohr.row(2)),
-        );
-        break :blk 5.0 / lmin;
-    } else 0.0;
-    hamiltonian.configureLocalPotential(species, cfg.scf.local_potential, local_alpha);
+    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, cell_bohr);
 
     const min_npw = try minPlaneWaves(alloc, cfg.scf.ecut_ry, path, recip);
     if (min_npw == 0) return error.NoPlaneWaves;
@@ -687,7 +674,7 @@ fn writeBandEnergiesForSpin(
             defer basis.deinit(alloc);
             const inv_volume = 1.0 / volume_bohr;
             const extra_grid = if (extra) |ptr| ptr.* else null;
-            const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, extra_grid);
+            const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, extra_grid);
             defer alloc.free(h);
             eigvals_opt = try linalg.hermitianEigenvalues(alloc, cfg.linalg_backend, basis.gvecs.len, h);
         }
@@ -766,7 +753,7 @@ fn buildAndSolveGeneralized(
     backend: linalg.Backend,
     gvecs: []plane_wave.GVector,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     inv_volume: f64,
     h: []math.Complex,
 ) ![]f64 {

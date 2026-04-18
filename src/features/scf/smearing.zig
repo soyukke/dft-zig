@@ -8,6 +8,7 @@ const kpoints_mod = @import("kpoint_parallel.zig");
 const linalg = @import("../linalg/linalg.zig");
 const logging = @import("logging.zig");
 const math = @import("../math/math.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal_mod = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
@@ -73,7 +74,7 @@ pub fn computeDensitySmearing(
     grid: Grid,
     kpoints: []KPoint,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,
     potential: hamiltonian.PotentialGrid,
@@ -93,6 +94,7 @@ pub fn computeDensitySmearing(
     paw_rhoij: ?*paw_mod.RhoIJ,
 ) !DensityResult {
     const ngrid = grid.count();
+    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, grid.cell);
     const rho = try alloc.alloc(f64, ngrid);
     errdefer alloc.free(rho);
     @memset(rho, 0.0);
@@ -160,6 +162,7 @@ pub fn computeDensitySmearing(
                 atoms,
                 recip,
                 volume,
+                local_cfg,
                 potential,
                 local_r,
                 nocc,
@@ -217,6 +220,7 @@ pub fn computeDensitySmearing(
             .atoms = atoms,
             .recip = recip,
             .volume = volume,
+            .local_cfg = local_cfg,
             .potential = potential,
             .local_r = local_r,
             .nocc = nocc,
@@ -295,6 +299,7 @@ pub fn computeDensitySmearing(
                 atoms,
                 recip,
                 volume,
+                local_cfg,
                 potential,
                 local_r,
                 nocc,
@@ -328,7 +333,7 @@ pub fn computeDensitySmearing(
             var basis = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, gamma_kp.k_cart);
             defer basis.deinit(alloc);
             const inv_volume = 1.0 / volume;
-            const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, potential);
+            const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, potential);
             defer alloc.free(h);
             var eig = try linalg.hermitianEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h);
             defer eig.deinit(alloc);

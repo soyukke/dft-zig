@@ -26,6 +26,7 @@ const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const scf_mod = @import("../scf/scf.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const config_mod = @import("../config/config.zig");
 const iterative = @import("../linalg/iterative.zig");
 const linalg = @import("../linalg/linalg.zig");
@@ -67,6 +68,8 @@ pub const GroundState = struct {
     species: []hamiltonian.SpeciesEntry,
     /// Atom data
     atoms: []const hamiltonian.AtomData,
+    /// Local pseudopotential selection for this run
+    local_cfg: local_potential.LocalPotentialConfig,
     /// Form factor tables
     ff_tables: ?[]const form_factor.LocalFormFactorTable,
     /// Apply context for H₀ application
@@ -231,6 +234,7 @@ pub fn prepareGroundState(
     recip: math.Mat3,
 ) !PreparedGroundState {
     const grid = scf_result.grid;
+    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, grid.cell);
 
     // Compute number of occupied bands
     const nelec = totalElectrons(species, atoms);
@@ -246,7 +250,7 @@ pub fn prepareGroundState(
     logDfpt("dfpt: nelec={d:.1} n_occ={d} n_pw={d}\n", .{ nelec, n_occ, n_pw });
 
     // Build ionic potential grid
-    var ionic = try scf_mod.buildIonicPotentialGrid(alloc, grid, species, @constCast(atoms), null, null);
+    var ionic = try scf_mod.buildIonicPotentialGrid(alloc, grid, species, @constCast(atoms), local_cfg, null, null);
     errdefer ionic.deinit(alloc);
 
     // Build local_r = IFFT(ionic + SCF potential)
@@ -380,6 +384,7 @@ pub fn prepareGroundState(
         .grid = grid,
         .species = species,
         .atoms = atoms,
+        .local_cfg = local_cfg,
         .ff_tables = null,
         .apply_ctx = apply_ctx_ptr,
         .rho_core = rho_core,

@@ -4,6 +4,7 @@ const hamiltonian = @import("features/hamiltonian/hamiltonian.zig");
 const spacegroup = @import("features/symmetry/spacegroup.zig");
 const pseudo = @import("features/pseudopotential/pseudopotential.zig");
 const form_factor = @import("features/pseudopotential/form_factor.zig");
+const local_potential = @import("features/pseudopotential/local_potential.zig");
 const nonlocal = @import("features/pseudopotential/nonlocal.zig");
 const plane_wave = @import("features/plane_wave/basis.zig");
 const ewald = @import("features/ewald/ewald.zig");
@@ -303,6 +304,7 @@ test "compute forces assembles component forces" {
         recip,
         volume,
         0.0,
+        local_potential.LocalPotentialConfig.init(.short_range, 0.0),
         wavefunctions,
         null,
         true,
@@ -327,7 +329,7 @@ test "compute forces assembles component forces" {
         species,
         atoms[0..],
         volume,
-        0.0,
+        local_potential.LocalPotentialConfig.init(.short_range, 0.0),
         null,
     );
     defer alloc.free(local_forces);

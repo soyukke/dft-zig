@@ -1150,6 +1150,7 @@ pub fn solvePerturbationQ(
         gs.species,
         direction,
         q_cart,
+        gs.local_cfg,
         gs.ff_tables,
     );
     defer alloc.free(vloc1_g);
@@ -1691,6 +1692,7 @@ pub fn solvePerturbationQMultiK(
         species,
         direction,
         q_cart,
+        gs.local_cfg,
         ff_tables,
     );
     defer alloc.free(vloc1_g);
@@ -2221,7 +2223,7 @@ fn buildQDynmat(
     }
 
     // Self-energy contribution (local V_loc^(2)) — q-independent
-    const self_dyn_real = try dynmat_contrib.computeSelfEnergyDynmat(alloc, grid, gs.species, gs.atoms, rho0_g, gs.ff_tables);
+    const self_dyn_real = try dynmat_contrib.computeSelfEnergyDynmat(alloc, grid, gs.species, gs.atoms, rho0_g, gs.local_cfg, gs.ff_tables);
     defer alloc.free(self_dyn_real);
     logDfpt("dfptQ_dyn: D_self(0x,0x)={e:.6} D_self(0x,1x)={e:.6}\n", .{ self_dyn_real[0], self_dyn_real[3] });
     for (0..dim * dim) |i| {
@@ -2536,7 +2538,7 @@ fn buildQDynmatMultiK(
     }
 
     // Self-energy (local V_loc^(2))
-    const self_dyn_real = try dynmat_contrib.computeSelfEnergyDynmat(alloc, grid, species, atoms, rho0_g, ff_tables);
+    const self_dyn_real = try dynmat_contrib.computeSelfEnergyDynmat(alloc, grid, species, atoms, rho0_g, gs.local_cfg, ff_tables);
     defer alloc.free(self_dyn_real);
     logDfpt("dfptQ_mk_dyn: D_self(0x,0x)={e:.6}\n", .{self_dyn_real[0]});
     for (0..dim * dim) |i| {
@@ -2983,6 +2985,7 @@ pub fn runPhononBand(
                         species,
                         dir,
                         q_cart,
+                        gs.local_cfg,
                         gs.ff_tables,
                     );
                     vloc1_count_local = pidx + 1;
@@ -3065,6 +3068,7 @@ pub fn runPhononBand(
                         species,
                         dir,
                         q_cart,
+                        gs.local_cfg,
                         gs.ff_tables,
                     );
                     rho1_core_gs[pidx] = try perturbation.buildCorePerturbationQ(
@@ -3474,6 +3478,7 @@ pub fn runPhononBandIFC(
                         species,
                         dir,
                         q_cart,
+                        gs.local_cfg,
                         gs.ff_tables,
                     );
                     vloc1_count_local = pidx + 1;
@@ -3542,6 +3547,7 @@ pub fn runPhononBandIFC(
                         species,
                         dir,
                         q_cart,
+                        gs.local_cfg,
                         gs.ff_tables,
                     );
                     rho1_core_gs[pidx] = try perturbation.buildCorePerturbationQ(

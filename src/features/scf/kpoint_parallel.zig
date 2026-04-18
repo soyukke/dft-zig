@@ -1,11 +1,14 @@
 const std = @import("std");
 const config = @import("../config/config.zig");
 const fft = @import("../fft/fft.zig");
+const fft_sizing = @import("../../lib/fft/sizing.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const iterative = @import("../linalg/iterative.zig");
 const linalg = @import("../linalg/linalg.zig");
 const math = @import("../math/math.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
+const grid_requirements = @import("../plane_wave/grid_requirements.zig");
 const symmetry = @import("../symmetry/symmetry.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
@@ -32,8 +35,8 @@ const logKpoint = logging.logKpoint;
 const profileStart = logging.profileStart;
 const profileAdd = logging.profileAdd;
 const PwGridMap = pw_grid_map.PwGridMap;
-const gridRequirement = util.gridRequirement;
-const nextFftSize = util.nextFftSize;
+const gridRequirement = grid_requirements.gridRequirement;
+const nextFftSize = fft_sizing.nextFftSize;
 const fftReciprocalToComplexInPlace = fft_grid.fftReciprocalToComplexInPlace;
 const fftReciprocalToComplexInPlaceMapped = fft_grid.fftReciprocalToComplexInPlaceMapped;
 const fftComplexToReciprocalInPlace = fft_grid.fftComplexToReciprocalInPlace;
@@ -87,9 +90,10 @@ pub const KpointShared = struct {
     kpoints: []const KPoint,
     ionic: hamiltonian.PotentialGrid,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,
+    local_cfg: local_potential.LocalPotentialConfig,
     potential: hamiltonian.PotentialGrid,
     local_r: ?[]f64,
     nocc: usize,
@@ -173,6 +177,7 @@ pub fn kpointWorker(worker: *KpointWorker) void {
             shared.atoms,
             shared.recip,
             shared.volume,
+            shared.local_cfg,
             shared.potential,
             shared.local_r,
             shared.nocc,
@@ -223,9 +228,10 @@ pub const SmearingShared = struct {
     grid: Grid,
     kpoints: []const KPoint,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,
+    local_cfg: local_potential.LocalPotentialConfig,
     potential: hamiltonian.PotentialGrid,
     local_r: ?[]f64,
     nocc: usize,
@@ -302,6 +308,7 @@ pub fn smearingWorker(worker: *SmearingWorker) void {
             shared.atoms,
             shared.recip,
             shared.volume,
+            shared.local_cfg,
             shared.potential,
             shared.local_r,
             shared.nocc,
@@ -374,9 +381,10 @@ pub fn computeKpointContribution(
     grid: Grid,
     kp: KPoint,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,
+    local_cfg: local_potential.LocalPotentialConfig,
     potential: hamiltonian.PotentialGrid,
     local_r: ?[]f64,
     nocc: usize,
@@ -571,7 +579,7 @@ pub fn computeKpointContribution(
             try iterative.hermitianEigenDecompIterative(alloc, cfg.linalg_backend, op, diag, nbands, opts);
     } else if (has_qij) blk: {
         const h_start = if (profile_ptr != null) profileStart(io) else null;
-        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, potential);
+        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, potential);
         if (profile_ptr) |p| profileAdd(io, &p.h_build_ns, h_start);
         defer alloc.free(h);
         const s_start = if (profile_ptr != null) profileStart(io) else null;
@@ -581,7 +589,7 @@ pub fn computeKpointContribution(
         break :blk try linalg.hermitianGenEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h, s);
     } else blk: {
         const h_start = if (profile_ptr != null) profileStart(io) else null;
-        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, potential);
+        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, potential);
         if (profile_ptr) |p| profileAdd(io, &p.h_build_ns, h_start);
         defer alloc.free(h);
         break :blk try linalg.hermitianEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h);
@@ -701,9 +709,10 @@ pub fn computeKpointEigenData(
     grid: Grid,
     kp: KPoint,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,
+    local_cfg: local_potential.LocalPotentialConfig,
     potential: hamiltonian.PotentialGrid,
     local_r: ?[]f64,
     nocc: usize,
@@ -891,7 +900,7 @@ pub fn computeKpointEigenData(
             try iterative.hermitianEigenDecompIterative(alloc, cfg.linalg_backend, op, diag, nbands, opts);
     } else if (has_qij) blk: {
         const h_start = if (profile_ptr != null) profileStart(io) else null;
-        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, potential);
+        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, potential);
         if (profile_ptr) |p| profileAdd(io, &p.h_build_ns, h_start);
         defer alloc.free(h);
         const s_start = if (profile_ptr != null) profileStart(io) else null;
@@ -901,7 +910,7 @@ pub fn computeKpointEigenData(
         break :blk try linalg.hermitianGenEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h, s);
     } else blk: {
         const h_start = if (profile_ptr != null) profileStart(io) else null;
-        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, potential);
+        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, potential);
         if (profile_ptr) |p| profileAdd(io, &p.h_build_ns, h_start);
         defer alloc.free(h);
         break :blk try linalg.hermitianEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h);

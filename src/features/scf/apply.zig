@@ -6,6 +6,7 @@ const grid_mod = @import("pw_grid.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const logging = @import("logging.zig");
 const math = @import("../math/math.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal_context = @import("nonlocal_context.zig");
 const paw_mod = @import("../paw/paw.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
@@ -505,7 +506,7 @@ pub fn checkHamiltonianApply(
     grid: Grid,
     gvecs: []plane_wave.GVector,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     inv_volume: f64,
     potential: hamiltonian.PotentialGrid,
     local_r: []const f64,
@@ -545,7 +546,8 @@ pub fn checkHamiltonianApply(
 
     try applyHamiltonian(&ctx, x, y_apply);
 
-    const h = try hamiltonian.buildHamiltonian(alloc, gvecs, species, atoms, inv_volume, potential);
+    const local_cfg = local_potential.LocalPotentialConfig.init(.short_range, 0.0);
+    const h = try hamiltonian.buildHamiltonian(alloc, gvecs, species, atoms, inv_volume, local_cfg, potential);
     defer alloc.free(h);
     applyDenseMatrix(n, h, x, y_dense);
 

@@ -121,6 +121,7 @@ pub fn runPhonon(
                     gs.atoms[ia],
                     gs.species,
                     dir,
+                    gs.local_cfg,
                     gs.ff_tables,
                 );
                 vloc1_count = idx + 1;
@@ -191,6 +192,7 @@ pub fn runPhonon(
                     gs.atoms[ia],
                     gs.species,
                     dir,
+                    gs.local_cfg,
                     gs.ff_tables,
                 );
                 rho1_core_gs[idx] = try perturbation.buildCorePerturbation(
@@ -364,6 +366,7 @@ pub fn solvePerturbation(
         gs.atoms[atom_index],
         gs.species,
         direction,
+        gs.local_cfg,
         gs.ff_tables,
     );
     defer alloc.free(vloc1_g);
@@ -881,7 +884,7 @@ fn buildGammaDynmat(
 
     // Self-energy (non-variational) contribution: ∫ V^(2) × ρ^(0) dr
     // (full matrix, no symmetry reduction needed — cheap analytic computation)
-    const self_dyn = try dynmat_contrib.computeSelfEnergyDynmat(alloc, grid, gs.species, gs.atoms, rho0_g, gs.ff_tables);
+    const self_dyn = try dynmat_contrib.computeSelfEnergyDynmat(alloc, grid, gs.species, gs.atoms, rho0_g, gs.local_cfg, gs.ff_tables);
     defer alloc.free(self_dyn);
     logDfpt("dfpt: self-energy D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n", .{ self_dyn[0], self_dyn[3] });
     for (0..dim * dim) |i| {

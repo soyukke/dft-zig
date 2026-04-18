@@ -5,6 +5,7 @@ const grid_mod = @import("pw_grid.zig");
 const gvec_iter = @import("gvec_iter.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const math = @import("../math/math.zig");
 const xc_fields_mod = @import("xc_fields.zig");
 const xc = @import("../xc/xc.zig");
@@ -198,7 +199,8 @@ pub fn buildIonicPotentialGrid(
     alloc: std.mem.Allocator,
     grid: Grid,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
+    local_cfg: local_potential.LocalPotentialConfig,
     ff_tables: ?[]const form_factor.LocalFormFactorTable,
     ecutrho: ?f64,
 ) !hamiltonian.PotentialGrid {
@@ -213,7 +215,7 @@ pub fn buildIonicPotentialGrid(
                 continue;
             }
         }
-        values[g.idx] = try hamiltonian.ionicLocalPotentialWithTable(g.gvec, species, atoms, inv_volume, ff_tables);
+        values[g.idx] = try hamiltonian.ionicLocalPotentialWithTable(g.gvec, species, atoms, inv_volume, local_cfg, ff_tables);
     }
     return hamiltonian.PotentialGrid{
         .nx = grid.nx,

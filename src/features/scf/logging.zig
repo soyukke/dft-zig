@@ -2,6 +2,7 @@ const std = @import("std");
 const config = @import("../config/config.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const math = @import("../math/math.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 
@@ -187,7 +188,7 @@ pub fn logNonlocalDiagnostics(
     io: std.Io,
     gvecs: []plane_wave.GVector,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     inv_volume: f64,
 ) !void {
     const g_count = gvecs.len;
@@ -320,7 +321,8 @@ pub fn logLocalDiagnostics(
     io: std.Io,
     gvecs: []plane_wave.GVector,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
+    local_cfg: local_potential.LocalPotentialConfig,
 ) !void {
     const g_count = gvecs.len;
     if (g_count == 0) return;
@@ -364,7 +366,7 @@ pub fn logLocalDiagnostics(
         for (gvecs) |g| {
             const gmag = math.Vec3.norm(g.kpg);
             if (gmag < 1e-12) continue;
-            const vq = hamiltonian.localFormFactor(entry, gmag);
+            const vq = hamiltonian.localFormFactor(entry, gmag, local_cfg);
             if (vq < min_val) min_val = vq;
             if (vq > max_val) max_val = vq;
             if (vq < 0.0) neg_count += 1;
@@ -381,15 +383,15 @@ pub fn logLocalDiagnostics(
             max_val = 0.0;
         }
 
-        const vq0 = hamiltonian.localFormFactor(entry, 0.0);
-        const vq_min = hamiltonian.localFormFactor(entry, g_min_nonzero);
-        const vq_max = hamiltonian.localFormFactor(entry, g_max);
+        const vq0 = hamiltonian.localFormFactor(entry, 0.0, local_cfg);
+        const vq_min = hamiltonian.localFormFactor(entry, g_min_nonzero, local_cfg);
+        const vq_max = hamiltonian.localFormFactor(entry, g_max, local_cfg);
         try out.print(
             "scf: local diag species={s} mode={s} alpha={d:.6} atoms={d} min={d:.6} max={d:.6} mean={d:.6} mean_abs={d:.6} neg={d}/{d}\n",
             .{
                 entry.symbol,
-                config.localPotentialModeName(entry.local_mode),
-                entry.local_alpha,
+                config.localPotentialModeName(local_cfg.mode),
+                local_cfg.alpha,
                 atom_count,
                 min_val,
                 max_val,

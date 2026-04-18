@@ -1,9 +1,9 @@
 const std = @import("std");
 const config = @import("../config/config.zig");
+const fft_sizing = @import("../../lib/fft/sizing.zig");
 const math = @import("../math/math.zig");
-const util = @import("util.zig");
 
-const nextFftSize = util.nextFftSize;
+const nextFftSize = fft_sizing.nextFftSize;
 
 /// FFT grid metadata used in SCF.
 pub const Grid = struct {

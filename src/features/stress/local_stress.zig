@@ -2,6 +2,7 @@ const std = @import("std");
 const math = @import("../math/math.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const scf = @import("../scf/scf.zig");
 const stress_util = @import("stress.zig");
 
@@ -15,6 +16,7 @@ pub fn localStress(
     rho_g: []const math.Complex,
     species: []hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
+    local_cfg: local_potential.LocalPotentialConfig,
     ff_tables: ?[]const form_factor.LocalFormFactorTable,
     inv_volume: f64,
     ecutrho: f64,
@@ -46,15 +48,15 @@ pub fn localStress(
             const v_loc = if (ff_tables) |tables|
                 tables[atom.species_index].eval(g_norm)
             else
-                hamiltonian.localFormFactor(&species[atom.species_index], g_norm);
+                hamiltonian.localFormFactor(&species[atom.species_index], g_norm, local_cfg);
 
             const dv_loc = if (ff_tables) |tables|
                 tables[atom.species_index].evalDeriv(g_norm)
             else blk: {
                 // Numerical derivative
                 const dq: f64 = 0.01;
-                const vp = hamiltonian.localFormFactor(&species[atom.species_index], g_norm + dq);
-                const vm = hamiltonian.localFormFactor(&species[atom.species_index], g_norm - dq);
+                const vp = hamiltonian.localFormFactor(&species[atom.species_index], g_norm + dq, local_cfg);
+                const vm = hamiltonian.localFormFactor(&species[atom.species_index], g_norm - dq, local_cfg);
                 break :blk (vp - vm) / (2.0 * dq);
             };
 

@@ -596,8 +596,6 @@ test "post-relax outputs use active cell and active atoms" {
             .upf = undefined,
             .z_valence = 4.0,
             .epsatm_ry = 0.0,
-            .local_mode = .short_range,
-            .local_alpha = 0.0,
         },
     };
 

@@ -7,6 +7,7 @@ const grid_mod = @import("pw_grid.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const math = @import("../math/math.zig");
 const gvec_iter = @import("gvec_iter.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const d3 = @import("../vdw/d3.zig");
 const d3_params = @import("../vdw/d3_params.zig");
 const xc_fields_mod = @import("xc_fields.zig");
@@ -48,7 +49,8 @@ pub fn computeEnergyTerms(
     nonlocal_energy: f64,
     entropy_energy: f64,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
+    local_cfg: local_potential.LocalPotentialConfig,
     ewald_cfg: config.EwaldConfig,
     use_rfft: bool,
     xc_func: xc.Functional,
@@ -107,7 +109,7 @@ pub fn computeEnergyTerms(
             // Periodic system: skip G=0
             if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
                 // e_local always uses pseudo density
-                const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume);
+                const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume, local_cfg);
                 e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
                 continue;
             }
@@ -117,7 +119,7 @@ pub fn computeEnergyTerms(
             }
         }
         // e_local always uses pseudo density
-        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume);
+        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume, local_cfg);
         e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
     }
     e_local *= grid.volume;
@@ -187,7 +189,8 @@ pub fn computeEnergyTermsSpin(
     nonlocal_energy: f64,
     entropy_energy: f64,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
+    local_cfg: local_potential.LocalPotentialConfig,
     ewald_cfg: config.EwaldConfig,
     use_rfft: bool,
     xc_func: xc.Functional,
@@ -255,7 +258,7 @@ pub fn computeEnergyTermsSpin(
             eh += 0.5 * kernel * rho2 * grid.volume;
         } else {
             if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
-                const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume);
+                const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume, local_cfg);
                 e_local += rho_loc.r * vloc.r + rho_loc.i * vloc.i;
                 continue;
             }
@@ -263,7 +266,7 @@ pub fn computeEnergyTermsSpin(
                 eh += 0.5 * 8.0 * std.math.pi * rho2 / g.g2 * grid.volume;
             }
         }
-        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume);
+        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume, local_cfg);
         e_local += rho_loc.r * vloc.r + rho_loc.i * vloc.i;
     }
     e_local *= grid.volume;
@@ -315,7 +318,7 @@ fn computeIonIonEnergy(
     io: std.Io,
     grid: Grid,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     ewald_cfg: config.EwaldConfig,
     quiet: bool,
 ) !f64 {
@@ -344,7 +347,7 @@ fn computeIonIonEnergy(
 fn computeDirectIonIonEnergy(
     alloc: std.mem.Allocator,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
 ) !f64 {
     const count = atoms.len;
     if (count == 0) return 0.0;
@@ -386,7 +389,7 @@ pub fn bandNonlocalEnergy(
 fn computeDispersionEnergy(
     alloc: std.mem.Allocator,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     cell: math.Mat3,
     vdw_cfg: config.VdwConfig,
 ) !f64 {
