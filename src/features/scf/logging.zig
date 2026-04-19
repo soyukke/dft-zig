@@ -5,6 +5,7 @@ const math = @import("../math/math.zig");
 const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
+const runtime_logging = @import("../runtime/logging.zig");
 
 pub const ScfLoopProfile = struct {
     build_local_r_ns: *u64,
@@ -12,32 +13,24 @@ pub const ScfLoopProfile = struct {
 };
 
 pub fn logProgress(io: std.Io, iter: usize, diff: f64, vresid: f64, band_energy: f64, nonlocal_energy: f64) !void {
-    var buffer: [512]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
-    try out.print(
+    const logger = runtime_logging.stderr(io, .info);
+    try logger.print(
+        .info,
         "scf iter={d} diff={d:.6} vresid={d:.6} band={d:.6} nonlocal={d:.6}\n",
         .{ iter, diff, vresid, band_energy, nonlocal_energy },
     );
-    try out.flush();
 }
 
 pub fn logIterStart(io: std.Io, iter: usize) !void {
-    var buffer: [128]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
-    try out.print("scf iter={d} start\n", .{iter});
-    try out.flush();
+    const logger = runtime_logging.stderr(io, .info);
+    try logger.print(.info, "scf iter={d} start\n", .{iter});
 }
 
 pub fn logKpoint(io: std.Io, index: usize, total: usize) !void {
     if (total == 0) return;
     if (index % 10 != 0 and index + 1 != total) return;
-    var buffer: [128]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
-    try out.print("scf kpoint {d}/{d}\n", .{ index + 1, total });
-    try out.flush();
+    const logger = runtime_logging.stderr(io, .info);
+    try logger.print(.info, "scf kpoint {d}/{d}\n", .{ index + 1, total });
 }
 
 pub const ScfLog = struct {
@@ -137,11 +130,10 @@ pub fn profileAdd(io: std.Io, accum: *u64, start: ?std.Io.Clock.Timestamp) void 
 }
 
 pub fn logProfile(io: std.Io, profile: ScfProfile, kpoints: usize) !void {
-    var buffer: [512]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
+    const logger = runtime_logging.stderr(io, .info);
     const to_ms = 1.0 / @as(f64, @floatFromInt(std.time.ns_per_ms));
-    try out.print(
+    try logger.print(
+        .info,
         "profile kpoints={d} basis_ms={d:.3} eig_ms={d:.3} h_ms={d:.3} vnl_ms={d:.3} s_ms={d:.3} apply_ms={d:.3} density_ms={d:.3} local_ms={d:.3} nonlocal_ms={d:.3} apply_calls={d} scatter_ms={d:.3} ifft_ms={d:.3} vmul_ms={d:.3} fft_ms={d:.3} gather_ms={d:.3}\n",
         .{
             kpoints,
@@ -162,7 +154,6 @@ pub fn logProfile(io: std.Io, profile: ScfProfile, kpoints: usize) !void {
             @as(f64, @floatFromInt(profile.local_gather_ns)) * to_ms,
         },
     );
-    try out.flush();
 }
 
 pub fn mergeProfile(dest: *ScfProfile, src: ScfProfile) void {

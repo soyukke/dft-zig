@@ -29,6 +29,8 @@ const DfptConfig = dfpt.DfptConfig;
 const IonicData = dfpt.IonicData;
 const PerturbationResult = dfpt.PerturbationResult;
 const logDfpt = dfpt.logDfpt;
+const logDfptInfo = dfpt.logDfptInfo;
+const logDfptWarn = dfpt.logDfptWarn;
 
 const Grid = scf_mod.Grid;
 
@@ -67,7 +69,7 @@ pub fn runPhonon(
     const dim = 3 * n_atoms;
     const grid = scf_result.grid;
 
-    logDfpt("dfpt: starting phonon calculation ({d} atoms, dim={d})\n", .{ n_atoms, dim });
+    logDfptInfo("dfpt: starting phonon calculation ({d} atoms, dim={d})\n", .{ n_atoms, dim });
 
     // Prepare ground state (PW basis, eigenvalues, wavefunctions, NLCC, etc.)
     var prepared = try dfpt.prepareGroundState(alloc, io, cfg, scf_result, species, atoms, volume, recip);
@@ -91,7 +93,7 @@ pub fn runPhonon(
     const q_zero = math.Vec3{ .x = 0, .y = 0, .z = 0 };
     var irr_info = try dynmat_mod.findIrreducibleAtoms(alloc, symops, sym_data.indsym, n_atoms, q_zero);
     defer irr_info.deinit(alloc);
-    logDfpt("dfpt: {d} symops, {d}/{d} irreducible atoms\n", .{ symops.len, irr_info.n_irr_atoms, n_atoms });
+    logDfptInfo("dfpt: {d} symops, {d}/{d} irreducible atoms\n", .{ symops.len, irr_info.n_irr_atoms, n_atoms });
 
     // Solve perturbations for each atom and direction
     // Store V_loc^(1)(G), ρ^(1)(G), and ρ^(1)_core(G) for dynmat construction
@@ -157,7 +159,7 @@ pub fn runPhonon(
     } else {
         // Parallel path — solve only irreducible perturbations concurrently
         const n_irr_perts = irr_info.n_irr_atoms * 3;
-        logDfpt("dfpt: using {d} threads for {d} perturbations ({d} irreducible)\n", .{ pert_thread_count, dim, n_irr_perts });
+        logDfptInfo("dfpt: using {d} threads for {d} perturbations ({d} irreducible)\n", .{ pert_thread_count, dim, n_irr_perts });
 
         // Build irr_pert_indices: list of perturbation indices to solve
         const irr_pert_indices = try alloc.alloc(usize, n_irr_perts);
@@ -256,7 +258,7 @@ pub fn runPhonon(
     if (irr_info.n_irr_atoms == n_atoms) {
         try runDiagnostics(alloc, gs, pert_results, vloc1_gs, n_atoms);
     } else {
-        logDfpt("dfpt: skipping diagnostics (symmetry-reduced: {d}/{d} irreducible atoms)\n", .{ irr_info.n_irr_atoms, n_atoms });
+        logDfptInfo("dfpt: skipping diagnostics (symmetry-reduced: {d}/{d} irreducible atoms)\n", .{ irr_info.n_irr_atoms, n_atoms });
     }
 
     // Build ionic data and rho0_g for dynmat construction
@@ -290,7 +292,7 @@ pub fn runPhonon(
     // Apply acoustic sum rule
     dynmat_mod.applyASR(dyn, n_atoms);
 
-    logDfpt("dfpt: ASR applied\n", .{});
+    logDfptInfo("dfpt: ASR applied\n", .{});
 
     // Mass-weight the dynamical matrix
     dynmat_mod.massWeight(dyn, n_atoms, ionic.masses);
@@ -298,18 +300,19 @@ pub fn runPhonon(
     // Diagonalize
     const result = try dynmat_mod.diagonalize(alloc, dyn, dim);
 
-    logDfpt("dfpt: phonon frequencies (cm⁻¹):\n", .{});
+    logDfptInfo("dfpt: phonon frequencies (cm⁻¹):\n", .{});
     for (result.frequencies_cm1) |f| {
-        logDfpt("dfpt:   {d:.2}\n", .{f});
+        logDfptInfo("dfpt:   {d:.2}\n", .{f});
     }
 
     // Electric field response: dielectric tensor
     if (cfg.dfpt.compute_dielectric) {
-        logDfpt("dfpt: computing dielectric tensor (ddk at all k-points)\n", .{});
+        logDfptInfo("dfpt: computing dielectric tensor (ddk at all k-points)\n", .{});
         const electric = @import("electric.zig");
 
         const dielectric = try electric.computeDielectricAllK(
-            alloc, io,
+            alloc,
+            io,
             cfg,
             &gs,
             prepared.local_r,
@@ -319,9 +322,9 @@ pub fn runPhonon(
             recip,
             volume,
         );
-        logDfpt("dfpt: dielectric tensor ε∞:\n", .{});
+        logDfptInfo("dfpt: dielectric tensor ε∞:\n", .{});
         for (0..3) |i| {
-            logDfpt("  {d:.6} {d:.6} {d:.6}\n", .{
+            logDfptInfo("  {d:.6} {d:.6} {d:.6}\n", .{
                 dielectric.epsilon[i][0],
                 dielectric.epsilon[i][1],
                 dielectric.epsilon[i][2],
@@ -333,7 +336,7 @@ pub fn runPhonon(
         defer if (out_dir) |*d| d.close(io);
         if (out_dir) |od| {
             electric.writeElectricResults(io, od, dielectric) catch |err| {
-                logDfpt("dfpt: warning: failed to write electric.dat: {}\n", .{err});
+                logDfptWarn("dfpt: warning: failed to write electric.dat: {}\n", .{err});
             };
         }
     }

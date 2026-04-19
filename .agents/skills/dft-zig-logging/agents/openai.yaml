@@ -1,0 +1,4 @@
+interface:
+  display_name: "DFT Zig Logging"
+  short_description: "DFT Zig logging policy and cleanup workflow"
+  default_prompt: "Use $dft-zig-logging to align runtime logs, levels, and sinks in this repo."

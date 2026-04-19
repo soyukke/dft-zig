@@ -9,6 +9,7 @@ const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
+const runtime_logging = @import("../runtime/logging.zig");
 const scf = @import("../scf/scf.zig");
 const symmetry = @import("../symmetry/symmetry.zig");
 const thread_pool = @import("../thread_pool.zig");
@@ -16,11 +17,8 @@ const thread_pool = @import("../thread_pool.zig");
 const ThreadPool = thread_pool.ThreadPool;
 
 fn logStep(io: std.Io, msg: []const u8) !void {
-    var buffer: [256]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
-    try out.print("{s}\n", .{msg});
-    try out.flush();
+    const logger = runtime_logging.stderr(io, .info);
+    try logger.print(.info, "{s}\n", .{msg});
 }
 
 fn bandThreadCount(total: usize, cfg_threads: usize) usize {
@@ -32,20 +30,14 @@ fn bandThreadCount(total: usize, cfg_threads: usize) usize {
 }
 
 fn logBandKpoint(io: std.Io, idx: usize, total: usize) void {
-    var buffer: [128]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
-    out.print("band kpoint {d}/{d}\n", .{ idx + 1, total }) catch {};
-    out.flush() catch {};
+    const logger = runtime_logging.stderr(io, .info);
+    logger.print(.info, "band kpoint {d}/{d}\n", .{ idx + 1, total }) catch {};
 }
 
 fn logBandTiming(io: std.Io, idx: usize, total: usize, ns: u64) void {
-    var buffer: [128]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
     const ms = @as(f64, @floatFromInt(ns)) / 1e6;
-    out.print("band_profile kpoint={d}/{d} ms={d:.1}\n", .{ idx + 1, total, ms }) catch {};
-    out.flush() catch {};
+    const logger = runtime_logging.stderr(io, .info);
+    logger.print(.info, "band_profile kpoint={d}/{d} ms={d:.1}\n", .{ idx + 1, total, ms }) catch {};
 }
 
 /// Write band energies for k-path.
@@ -96,7 +88,8 @@ pub fn writeBandEnergies(
             use_iterative = false;
         } else {
             const ctx_result = scf.initBandIterativeContext(
-                alloc, io,
+                alloc,
+                io,
                 cfg,
                 species,
                 atoms,
@@ -190,7 +183,8 @@ pub fn writeBandEnergies(
             const band_start_ts = std.Io.Clock.Timestamp.now(io, .awake);
             if (use_iterative) {
                 const result = scf.bandEigenvaluesIterativeExt(
-                    alloc, io,
+                    alloc,
+                    io,
                     cfg,
                     &band_ctx.?,
                     kp.k_cart,
@@ -570,7 +564,8 @@ fn writeBandEnergiesForSpin(
     var band_ctx: ?scf.BandIterativeContext = null;
     if (extra != null) {
         const ctx_result = scf.initBandIterativeContext(
-            alloc, io,
+            alloc,
+            io,
             cfg,
             species,
             atoms,
@@ -647,7 +642,8 @@ fn writeBandEnergiesForSpin(
         var eigvals_opt: ?[]f64 = null;
         if (band_ctx != null) {
             const result = scf.bandEigenvaluesIterativeExt(
-                alloc, io,
+                alloc,
+                io,
                 cfg,
                 &band_ctx.?,
                 kp.k_cart,

@@ -6,6 +6,7 @@ const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const paw_mod = @import("../paw/paw.zig");
 const local_potential = @import("../pseudopotential/local_potential.zig");
 const timing_mod = @import("../runtime/timing.zig");
+const runtime_logging = @import("../runtime/logging.zig");
 const scf = @import("../scf/scf.zig");
 const forces_mod = @import("../forces/forces.zig");
 pub const optimizer = @import("optimizer.zig");
@@ -357,7 +358,8 @@ pub fn run(
         } else null;
         const paw_tabs_slice: ?[]const paw_mod.PawTab = if (scf_result.paw_tabs) |tabs| tabs else null;
         var force_terms = try forces_mod.computeForces(
-            alloc, io,
+            alloc,
+            io,
             grid,
             rho_g,
             scf_result.potential.values,
@@ -802,56 +804,38 @@ fn densityToReciprocal(
 }
 
 fn logWarn(io: std.Io, msg: []const u8) !void {
-    var buffer: [512]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
-    try out.print("WARNING: {s}\n", .{msg});
-    try out.flush();
+    const logger = runtime_logging.stderr(io, .warn);
+    try logger.print(.warn, "WARNING: {s}\n", .{msg});
 }
 
 fn logRelaxIter(io: std.Io, iter: usize, energy: ?f64, max_force: ?f64) !void {
-    var buffer: [256]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
+    const logger = runtime_logging.stderr(io, .info);
     if (energy != null and max_force != null) {
-        try out.print("relax iter={d} energy={d:.8} max_force={d:.6}\n", .{ iter + 1, energy.?, max_force.? });
+        try logger.print(.info, "relax iter={d} energy={d:.8} max_force={d:.6}\n", .{ iter + 1, energy.?, max_force.? });
     } else {
-        try out.print("relax iter={d} starting...\n", .{iter + 1});
+        try logger.print(.info, "relax iter={d} starting...\n", .{iter + 1});
     }
-    try out.flush();
 }
 
 fn logRelaxConverged(io: std.Io, iter: usize, energy: f64, max_force: f64) !void {
-    var buffer: [256]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
-    try out.print("relax CONVERGED after {d} iterations, energy={d:.8} Ry, max_force={d:.6} Ry/Bohr\n", .{ iter + 1, energy, max_force });
-    try out.flush();
+    const logger = runtime_logging.stderr(io, .info);
+    try logger.print(.info, "relax CONVERGED after {d} iterations, energy={d:.8} Ry, max_force={d:.6} Ry/Bohr\n", .{ iter + 1, energy, max_force });
 }
 
 fn logBacktrack(io: std.Io, count: usize, new_energy: f64, prev_energy_val: f64) !void {
-    var buffer: [256]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
     const scale = std.math.pow(f64, 0.5, @as(f64, @floatFromInt(count)));
-    try out.print("relax BACKTRACK #{d}: E={d:.8} > E_prev={d:.8} (dE={d:.6}), scale={d:.4}\n", .{ count, new_energy, prev_energy_val, new_energy - prev_energy_val, scale });
-    try out.flush();
+    const logger = runtime_logging.stderr(io, .info);
+    try logger.print(.info, "relax BACKTRACK #{d}: E={d:.8} > E_prev={d:.8} (dE={d:.6}), scale={d:.4}\n", .{ count, new_energy, prev_energy_val, new_energy - prev_energy_val, scale });
 }
 
 fn logVcRelaxIter(io: std.Io, iter: usize, pressure_gpa: f64, max_stress_gpa: f64, volume: f64) !void {
-    var buffer: [256]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
-    try out.print("vc-relax iter={d} P={d:.2} GPa  max_stress={d:.4} GPa  vol={d:.4} Bohr³\n", .{ iter, pressure_gpa, max_stress_gpa, volume });
-    try out.flush();
+    const logger = runtime_logging.stderr(io, .info);
+    try logger.print(.info, "vc-relax iter={d} P={d:.2} GPa  max_stress={d:.4} GPa  vol={d:.4} Bohr³\n", .{ iter, pressure_gpa, max_stress_gpa, volume });
 }
 
 fn logRelaxNotConverged(io: std.Io, iter: usize, energy: f64, max_force: f64) !void {
-    var buffer: [256]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
-    try out.print("relax NOT CONVERGED after {d} iterations, energy={d:.8} Ry, max_force={d:.6} Ry/Bohr\n", .{ iter, energy, max_force });
-    try out.flush();
+    const logger = runtime_logging.stderr(io, .info);
+    try logger.print(.info, "relax NOT CONVERGED after {d} iterations, energy={d:.8} Ry, max_force={d:.6} Ry/Bohr\n", .{ iter, energy, max_force });
 }
 
 /// Write relaxation results to output files.
