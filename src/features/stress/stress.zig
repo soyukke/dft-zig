@@ -7,6 +7,7 @@ const form_factor = @import("../pseudopotential/form_factor.zig");
 const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
+const runtime_logging = @import("../runtime/logging.zig");
 const scf = @import("../scf/scf.zig");
 const xc_mod = @import("../xc/xc.zig");
 const paw_mod = @import("../paw/paw_tab.zig");
@@ -154,7 +155,7 @@ fn dYlm_dq_numerical(l: i32, m: i32, qx: f64, qy: f64, qz: f64, q_mag: f64, inv_
 fn printStress(name: []const u8, sigma: Stress3x3, _: f64) void {
     const ry_to_gpa = 14710.507; // 1 Ry/Bohr³ = 14710.507 GPa
     const pressure = -(sigma[0][0] + sigma[1][1] + sigma[2][2]) / 3.0 * ry_to_gpa;
-    std.debug.print("Stress {s:12} (GPa): {d:10.4} {d:10.4} {d:10.4} / {d:10.4} {d:10.4} {d:10.4} / {d:10.4} {d:10.4} {d:10.4}  P={d:.2}\n", .{
+    runtime_logging.debugPrint(.info, .info, "Stress {s:12} (GPa): {d:10.4} {d:10.4} {d:10.4} / {d:10.4} {d:10.4} {d:10.4} / {d:10.4} {d:10.4} {d:10.4}  P={d:.2}\n", .{
         name,
         sigma[0][0] * ry_to_gpa,
         sigma[0][1] * ry_to_gpa,
@@ -366,9 +367,15 @@ pub fn computeStress(
     // Hartree stress: use augmented density ρ̃+n̂ for PAW
     const rho_g_for_eh = if (rho_aug) |aug| blk: {
         const fft_obj = scf.Grid{
-            .nx = grid.nx, .ny = grid.ny, .nz = grid.nz,
-            .min_h = grid.min_h, .min_k = grid.min_k, .min_l = grid.min_l,
-            .cell = grid.cell, .recip = grid.recip, .volume = volume,
+            .nx = grid.nx,
+            .ny = grid.ny,
+            .nz = grid.nz,
+            .min_h = grid.min_h,
+            .min_k = grid.min_k,
+            .min_l = grid.min_l,
+            .cell = grid.cell,
+            .recip = grid.recip,
+            .volume = volume,
         };
         break :blk try scf.realToReciprocal(alloc, fft_obj, aug, false);
     } else null;
@@ -382,9 +389,15 @@ pub fn computeStress(
     // Local pseudopotential stress
     const rho_g_for_loc = if (rho_aug) |aug| blk: {
         const fft_obj = scf.Grid{
-            .nx = grid.nx, .ny = grid.ny, .nz = grid.nz,
-            .min_h = grid.min_h, .min_k = grid.min_k, .min_l = grid.min_l,
-            .cell = grid.cell, .recip = grid.recip, .volume = volume,
+            .nx = grid.nx,
+            .ny = grid.ny,
+            .nz = grid.nz,
+            .min_h = grid.min_h,
+            .min_k = grid.min_k,
+            .min_l = grid.min_l,
+            .cell = grid.cell,
+            .recip = grid.recip,
+            .volume = volume,
         };
         break :blk try scf.realToReciprocal(alloc, fft_obj, aug, false);
     } else null;
@@ -535,12 +548,29 @@ pub fn computeStressFromScf(
     const pot_vals: ?[]const math.Complex = if (pot_vals_buf) |buf| buf else null;
 
     var stress_terms = try computeStress(
-        alloc, grid, rho_g, scf_result.density, scf_result.rho_core,
-        species, atoms, cfg.ewald, scf_result.wavefunctions,
-        scf_result.energy, cfg.scf.xc, local_cfg, ff_tables_buf, rho_core_tables_buf,
-        radial_tables_buf, if (rho_aug_buf) |buf| buf else null,
-        cfg.scf.quiet, scf_result.paw_dij, scf_result.paw_dij_m,
-        scf_result.paw_rhoij, scf_result.paw_tabs, pot_vals, ecutrho,
+        alloc,
+        grid,
+        rho_g,
+        scf_result.density,
+        scf_result.rho_core,
+        species,
+        atoms,
+        cfg.ewald,
+        scf_result.wavefunctions,
+        scf_result.energy,
+        cfg.scf.xc,
+        local_cfg,
+        ff_tables_buf,
+        rho_core_tables_buf,
+        radial_tables_buf,
+        if (rho_aug_buf) |buf| buf else null,
+        cfg.scf.quiet,
+        scf_result.paw_dij,
+        scf_result.paw_dij_m,
+        scf_result.paw_rhoij,
+        scf_result.paw_tabs,
+        pot_vals,
+        ecutrho,
         scf_result.wavefunctions_down,
     );
 

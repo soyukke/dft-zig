@@ -2,7 +2,9 @@
 //!
 //! Provides atomic masses (AMU) looked up by element symbol.
 
+const builtin = @import("builtin");
 const std = @import("std");
+const runtime_logging = @import("../runtime/logging.zig");
 
 /// Look up atomic mass in AMU from element symbol.
 pub fn atomicMass(symbol: []const u8) f64 {
@@ -81,7 +83,9 @@ pub fn atomicMass(symbol: []const u8) f64 {
         }
     }
     // Fallback: return a reasonable default and log warning
-    std.debug.print("dfpt: WARNING: unknown element '{s}', using mass=1.0 AMU\n", .{symbol});
+    if (!builtin.is_test) {
+        runtime_logging.debugPrint(.warn, .warn, "dfpt: WARNING: unknown element '{s}', using mass=1.0 AMU\n", .{symbol});
+    }
     return 1.0;
 }
 
