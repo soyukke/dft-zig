@@ -2,10 +2,21 @@ const std = @import("std");
 const math = @import("../math/math.zig");
 const symmetry = @import("../symmetry/symmetry.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
+const runtime_logging = @import("../runtime/logging.zig");
 const mesh = @import("mesh.zig");
 const reduction = @import("reduction.zig");
 
 pub const KPoint = symmetry.KPoint;
+
+fn logKpointInfo(io: std.Io, comptime fmt: []const u8, args: anytype) !void {
+    const logger = runtime_logging.stderr(io, .info);
+    try logger.print(.info, fmt, args);
+}
+
+fn logKpointWarn(io: std.Io, msg: []const u8) !void {
+    const logger = runtime_logging.stderr(io, .warn);
+    try logger.print(.warn, "{s}\n", .{msg});
+}
 
 pub fn generateKmesh(
     alloc: std.mem.Allocator,
@@ -38,18 +49,10 @@ pub fn generateKmeshSymmetry(
     if (filtered_ops.len == 0) return full;
 
     if (filtered_ops.len != ops.len) {
-        var buffer: [128]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(io, &buffer);
-        const out = &writer.interface;
-        try out.print("scf: kmesh-compatible symmetry ops {d}/{d}\n", .{ filtered_ops.len, ops.len });
-        try out.flush();
+        try logKpointInfo(io, "scf: kmesh-compatible symmetry ops {d}/{d}\n", .{ filtered_ops.len, ops.len });
     }
 
-    var ops_buffer: [128]u8 = undefined;
-    var ops_writer = std.Io.File.stderr().writer(io, &ops_buffer);
-    const ops_out = &ops_writer.interface;
-    try ops_out.print("scf: symmetry ops {d}\n", .{ops.len});
-    try ops_out.flush();
+    try logKpointInfo(io, "scf: symmetry ops {d}\n", .{ops.len});
 
     const reduced = try reduction.reduceKmesh(alloc, kmesh, shift, filtered_ops, recip, time_reversal);
     const verified = try reduction.verifyKmeshReduction(
@@ -63,21 +66,13 @@ pub fn generateKmeshSymmetry(
         1e-6,
     );
     if (!verified) {
-        var buffer: [192]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(io, &buffer);
-        const out = &writer.interface;
-        try out.writeAll("scf: kpoint reduction failed verification; using full mesh\n");
-        try out.flush();
+        try logKpointWarn(io, "scf: kpoint reduction failed verification; using full mesh");
         alloc.free(reduced);
         return full;
     }
 
     if (reduced.len < full.len) {
-        var buffer: [128]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(io, &buffer);
-        const out = &writer.interface;
-        try out.print("scf: kpoints reduced {d} -> {d}\n", .{ full.len, reduced.len });
-        try out.flush();
+        try logKpointInfo(io, "scf: kpoints reduced {d} -> {d}\n", .{ full.len, reduced.len });
     }
 
     alloc.free(full);
