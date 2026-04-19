@@ -23,6 +23,8 @@ const util = @import("util.zig");
 /// Based on benchmarks, dense solver (LAPACK zheev) is faster for small matrices.
 pub const auto_solver_threshold: usize = 400;
 
+var iterative_grid_warning_logged = std.atomic.Value(u8).init(0);
+
 pub const Grid = grid_mod.Grid;
 pub const KPoint = symmetry.KPoint;
 
@@ -32,6 +34,7 @@ const applyHamiltonianBatched = apply.applyHamiltonianBatched;
 const applyNonlocalPotential = apply.applyNonlocalPotential;
 const ScfProfile = logging.ScfProfile;
 const logKpoint = logging.logKpoint;
+const logIterativeGridTooSmall = logging.logIterativeGridTooSmall;
 const profileStart = logging.profileStart;
 const profileAdd = logging.profileAdd;
 const PwGridMap = pw_grid_map.PwGridMap;
@@ -427,14 +430,17 @@ pub fn computeKpointContribution(
     if (use_iterative) {
         const req = gridRequirement(basis.gvecs);
         if (req.nx > grid.nx or req.ny > grid.ny or req.nz > grid.nz) {
-            var buffer: [256]u8 = undefined;
-            var writer = std.Io.File.stderr().writer(io, &buffer);
-            const out = &writer.interface;
-            try out.print(
-                "scf: iterative grid too small (need >= {d},{d},{d}, suggest {d},{d},{d})\n",
-                .{ req.nx, req.ny, req.nz, nextFftSize(req.nx), nextFftSize(req.ny), nextFftSize(req.nz) },
-            );
-            try out.flush();
+            if (iterative_grid_warning_logged.cmpxchgStrong(0, 1, .acquire, .acquire) == null) {
+                try logIterativeGridTooSmall(
+                    io,
+                    req.nx,
+                    req.ny,
+                    req.nz,
+                    nextFftSize(req.nx),
+                    nextFftSize(req.ny),
+                    nextFftSize(req.nz),
+                );
+            }
             use_iterative = false;
         }
     }
@@ -490,7 +496,7 @@ pub fn computeKpointContribution(
             if (shared_fft_plan) |plan| {
                 break :blk2 try ApplyContext.initWithCache(
                     alloc,
-                io,
+                    io,
                     grid,
                     basis.gvecs,
                     local_values,
@@ -507,7 +513,7 @@ pub fn computeKpointContribution(
             } else {
                 break :blk2 try ApplyContext.initWithCache(
                     alloc,
-                io,
+                    io,
                     grid,
                     basis.gvecs,
                     local_values,
@@ -750,14 +756,17 @@ pub fn computeKpointEigenData(
     if (use_iterative) {
         const req = gridRequirement(basis.gvecs);
         if (req.nx > grid.nx or req.ny > grid.ny or req.nz > grid.nz) {
-            var buffer: [256]u8 = undefined;
-            var writer = std.Io.File.stderr().writer(io, &buffer);
-            const out = &writer.interface;
-            try out.print(
-                "scf: iterative grid too small (need >= {d},{d},{d}, suggest {d},{d},{d})\n",
-                .{ req.nx, req.ny, req.nz, nextFftSize(req.nx), nextFftSize(req.ny), nextFftSize(req.nz) },
-            );
-            try out.flush();
+            if (iterative_grid_warning_logged.cmpxchgStrong(0, 1, .acquire, .acquire) == null) {
+                try logIterativeGridTooSmall(
+                    io,
+                    req.nx,
+                    req.ny,
+                    req.nz,
+                    nextFftSize(req.nx),
+                    nextFftSize(req.ny),
+                    nextFftSize(req.nz),
+                );
+            }
             use_iterative = false;
         }
     }
@@ -811,7 +820,7 @@ pub fn computeKpointEigenData(
             if (shared_fft_plan) |plan| {
                 break :blk2 try ApplyContext.initWithCache(
                     alloc,
-                io,
+                    io,
                     grid,
                     basis.gvecs,
                     local_values,
@@ -828,7 +837,7 @@ pub fn computeKpointEigenData(
             } else {
                 break :blk2 try ApplyContext.initWithCache(
                     alloc,
-                io,
+                    io,
                     grid,
                     basis.gvecs,
                     local_values,

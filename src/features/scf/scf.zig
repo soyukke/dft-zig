@@ -59,7 +59,6 @@ const findFermiLevelSpin = kpoints_mod.findFermiLevelSpin;
 const accumulateKpointDensitySmearingSpin = kpoints_mod.accumulateKpointDensitySmearingSpin;
 const SmearingShared = kpoints_mod.SmearingShared;
 
-
 const buildFftIndexMap = fft_grid.buildFftIndexMap;
 pub const realToReciprocal = fft_grid.realToReciprocal;
 pub const reciprocalToReal = fft_grid.reciprocalToReal;
@@ -80,8 +79,12 @@ const logProgress = logging.logProgress;
 const logIterStart = logging.logIterStart;
 const logKpoint = logging.logKpoint;
 const logProfile = logging.logProfile;
+const logLoopProfile = logging.logLoopProfile;
 const logNonlocalDiagnostics = logging.logNonlocalDiagnostics;
 const logLocalDiagnostics = logging.logLocalDiagnostics;
+const logEnergySummary = logging.logEnergySummary;
+const logLocalPotentialMean = logging.logLocalPotentialMean;
+const logIterativeSolverDisabled = logging.logIterativeSolverDisabled;
 const profileStart = logging.profileStart;
 const profileAdd = logging.profileAdd;
 const mergeProfile = logging.mergeProfile;
@@ -317,7 +320,6 @@ pub fn symmetrizeDensity(
     defer alloc.free(rho_real);
     std.mem.copyForwards(f64, rho, rho_real);
 }
-
 
 /// Parameters for SCF calculation.
 pub const ScfParams = struct {
@@ -898,22 +900,15 @@ pub fn run(params: ScfParams) !ScfResult {
 
     // Print SCF loop profile
     if (cfg.scf.profile and !cfg.scf.quiet) {
-        const to_ms = 1.0 / @as(f64, @floatFromInt(std.time.ns_per_ms));
-        var buffer2: [512]u8 = undefined;
-        var writer2 = std.Io.File.stderr().writer(io, &buffer2);
-        const out2 = &writer2.interface;
-        try out2.print(
-            "scf_loop_profile compute_density_ms={d:.3} build_potential_ms={d:.3} residual_ms={d:.3} mixing_ms={d:.3} build_local_r_ms={d:.3} build_fft_map_ms={d:.3}\n",
-            .{
-                @as(f64, @floatFromInt(prof_compute_density_ns)) * to_ms,
-                @as(f64, @floatFromInt(prof_build_potential_ns)) * to_ms,
-                @as(f64, @floatFromInt(prof_residual_ns)) * to_ms,
-                @as(f64, @floatFromInt(prof_mixing_ns)) * to_ms,
-                @as(f64, @floatFromInt(prof_build_local_r_ns)) * to_ms,
-                @as(f64, @floatFromInt(prof_build_fft_map_ns)) * to_ms,
-            },
+        try logLoopProfile(
+            io,
+            prof_compute_density_ns,
+            prof_build_potential_ns,
+            prof_residual_ns,
+            prof_mixing_ns,
+            prof_build_local_r_ns,
+            prof_build_fft_map_ns,
         );
-        try out2.flush();
     }
 
     // For PAW: build augmented density ρ̃ + n̂hat for energy computation.
@@ -937,7 +932,8 @@ pub fn run(params: ScfParams) !ScfResult {
     defer if (rho_aug_for_energy) |a| alloc.free(a);
 
     var energy_terms = try energy_mod.computeEnergyTerms(
-        alloc, io,
+        alloc,
+        io,
         grid,
         rho,
         common.rho_core,
@@ -981,7 +977,8 @@ pub fn run(params: ScfParams) !ScfResult {
     var wavefunctions: ?WavefunctionData = null;
     if (cfg.relax.enabled or cfg.dfpt.enabled or cfg.scf.compute_stress or cfg.dos.enabled) {
         const wfn_result = try computeFinalWavefunctionsWithSpinFactor(
-            alloc, io,
+            alloc,
+            io,
             cfg,
             grid,
             kpoints,
@@ -1168,14 +1165,9 @@ pub fn run(params: ScfParams) !ScfResult {
     }
 
     if (!cfg.scf.quiet) {
-        std.debug.print("scf: electron_count {d:.6}\n", .{totalCharge(rho, grid)});
         const ionic_g0 = common.ionic.valueAt(0, 0, 0);
         const pot_g0 = potential.valueAt(0, 0, 0);
-        std.debug.print("scf: ionic_g0 {d:.6} {d:.6}\n", .{ ionic_g0.r, ionic_g0.i });
-        std.debug.print("scf: hartree_xc_g0 {d:.6} {d:.6}\n", .{ pot_g0.r, pot_g0.i });
-        std.debug.print("scf: E_band={d:.8} E_H={d:.8} E_xc={d:.8} E_ion={d:.8}\n", .{ energy_terms.band, energy_terms.hartree, energy_terms.xc, energy_terms.ion_ion });
-        std.debug.print("scf: E_psp={d:.8} E_dc={d:.8} E_local={d:.8} E_nl={d:.8}\n", .{ energy_terms.psp_core, energy_terms.double_counting, energy_terms.local_pseudo, energy_terms.nonlocal_pseudo });
-        std.debug.print("scf: E_paw_onsite={d:.8} E_paw_dxc={d:.8} E_total={d:.8}\n", .{ energy_terms.paw_onsite, energy_terms.paw_dxc_rhoij, energy_terms.total });
+        try logEnergySummary(io, totalCharge(rho, grid), ionic_g0, pot_g0, energy_terms);
     }
 
     // Write SCF log after all energy corrections (including PAW D^xc double-counting)
@@ -1225,9 +1217,6 @@ pub fn run(params: ScfParams) !ScfResult {
         } else null,
     };
 }
-
-
-
 
 pub const buildAtomicDensity = core_density.buildAtomicDensity;
 
@@ -1281,14 +1270,7 @@ pub fn computeFinalWavefunctionsWithSpinFactor(
             }
             const mean_local = sum / @as(f64, @floatFromInt(values.len));
             const pot_g0 = potential.valueAt(0, 0, 0);
-            var buffer: [256]u8 = undefined;
-            var writer = std.Io.File.stderr().writer(io, &buffer);
-            const out = &writer.interface;
-            try out.print(
-                "scf: local_r mean={d:.6} pot_g0={d:.6}\n",
-                .{ mean_local, pot_g0.r },
-            );
-            try out.flush();
+            try logLocalPotentialMean(io, "scf", mean_local, "pot_g0", pot_g0.r);
         }
     }
 
@@ -1313,7 +1295,8 @@ pub fn computeFinalWavefunctionsWithSpinFactor(
     var filled: usize = 0;
     for (kpoints, 0..) |kp, kidx| {
         const eigen_data = try computeKpointEigenData(
-            alloc, io,
+            alloc,
+            io,
             &cfg,
             grid,
             kp,
@@ -1429,13 +1412,9 @@ fn computeDensity(
     const use_iterative_config = (cfg.scf.solver == .iterative or cfg.scf.solver == .cg or cfg.scf.solver == .auto) and !has_qij;
 
     if ((cfg.scf.solver == .iterative or cfg.scf.solver == .cg or cfg.scf.solver == .auto) and !use_iterative_config) {
-        var buffer: [256]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(io, &buffer);
-        const out = &writer.interface;
         if (has_qij) {
-            try out.writeAll("scf: iterative solver disabled (QIJ present)\n");
+            try logIterativeSolverDisabled(io, "QIJ present");
         }
-        try out.flush();
     }
 
     var local_r: ?[]f64 = null;
@@ -1507,7 +1486,8 @@ fn computeDensity(
     const cfg_ptr = &cfg;
     if (smearingActive(cfg_ptr)) {
         return try computeDensitySmearing(
-            alloc, io,
+            alloc,
+            io,
             cfg_ptr,
             grid,
             kpoints,

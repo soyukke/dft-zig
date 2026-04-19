@@ -12,6 +12,7 @@ const nonlocal_mod = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const grid_requirements = @import("../plane_wave/grid_requirements.zig");
+const logging = @import("logging.zig");
 const potential_mod = @import("potential.zig");
 const pw_grid_map = @import("pw_grid_map.zig");
 const thread_pool = @import("../thread_pool.zig");
@@ -28,6 +29,7 @@ const hasNonlocal = util.hasNonlocal;
 const buildFftIndexMap = fft_grid.buildFftIndexMap;
 const applyHamiltonian = apply.applyHamiltonian;
 const applyHamiltonianBatched = apply.applyHamiltonianBatched;
+const logBandLocalPotentialMean = logging.logBandLocalPotentialMean;
 
 pub const BandIterativeContext = struct {
     grid: Grid,
@@ -109,14 +111,7 @@ pub fn initBandIterativeContext(
         const mean_local = sum / @as(f64, @floatFromInt(local_r.len));
         const ionic_g0 = ionic.valueAt(0, 0, 0);
         const extra_g0 = extra.valueAt(0, 0, 0);
-        var buffer: [256]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(io, &buffer);
-        const out = &writer.interface;
-        try out.print(
-            "band: local_r mean={d:.6} ionic_g0={d:.6} extra_g0={d:.6}\n",
-            .{ mean_local, ionic_g0.r, extra_g0.r },
-        );
-        try out.flush();
+        try logBandLocalPotentialMean(io, mean_local, ionic_g0.r, extra_g0.r);
     }
 
     const fft_index_map = try buildFftIndexMap(alloc, grid);

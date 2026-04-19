@@ -11,6 +11,7 @@ const nonlocal_context = @import("nonlocal_context.zig");
 const paw_mod = @import("../paw/paw.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const pw_grid_map = @import("pw_grid_map.zig");
+const runtime_logging = @import("../runtime/logging.zig");
 
 pub const Grid = grid_mod.Grid;
 pub const ScfProfile = logging.ScfProfile;
@@ -31,7 +32,6 @@ const fftComplexToReciprocalInPlaceMapped = fft_grid.fftComplexToReciprocalInPla
 
 const profileStart = logging.profileStart;
 const profileAdd = logging.profileAdd;
-
 
 /// Thread-local workspace for applyHamiltonian
 pub const ApplyWorkspace = struct {
@@ -563,12 +563,9 @@ pub fn checkHamiltonianApply(
         if (abs_val > max_abs) max_abs = abs_val;
     }
 
-    var buffer: [160]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
     const rel = if (max_abs > 0.0) max_diff / max_abs else 0.0;
-    try out.print("scf: apply_check max_abs={d:.6} max_diff={d:.6} rel={d:.6}\n", .{ max_abs, max_diff, rel });
-    try out.flush();
+    const logger = runtime_logging.stderr(io, .info);
+    try logger.print(.info, "scf: apply_check max_abs={d:.6} max_diff={d:.6} rel={d:.6}\n", .{ max_abs, max_diff, rel });
 }
 
 fn applyDenseMatrix(n: usize, mat: []const math.Complex, x: []const math.Complex, out: []math.Complex) void {

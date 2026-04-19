@@ -40,6 +40,11 @@ fn logBandTiming(io: std.Io, idx: usize, total: usize, ns: u64) void {
     logger.print(.info, "band_profile kpoint={d}/{d} ms={d:.1}\n", .{ idx + 1, total, ms }) catch {};
 }
 
+fn logBandDebug(io: std.Io, comptime fmt: []const u8, args: anytype) !void {
+    const logger = runtime_logging.stderr(io, .debug);
+    try logger.print(.debug, fmt, args);
+}
+
 /// Write band energies for k-path.
 pub fn writeBandEnergies(
     alloc: std.mem.Allocator,
@@ -487,11 +492,7 @@ pub fn writeBandEnergies(
             const count = @min(nbands, eig_dense.values.len);
             try logEigenvalues(io, "band", "gamma_dense", eig_dense.values, count);
         } else {
-            var buffer: [128]u8 = undefined;
-            var writer = std.Io.File.stderr().writer(io, &buffer);
-            const out = &writer.interface;
-            try out.writeAll("band: eig gamma not found\n");
-            try out.flush();
+            try logBandDebug(io, "band: eig gamma not found\n", .{});
         }
         var min_energy = std.math.inf(f64);
         var max_energy = -std.math.inf(f64);
@@ -499,14 +500,11 @@ pub fn writeBandEnergies(
             min_energy = @min(min_energy, value);
             max_energy = @max(max_energy, value);
         }
-        var buffer: [256]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(io, &buffer);
-        const out = &writer.interface;
-        try out.print(
+        try logBandDebug(
+            io,
             "band: eig min={d:.6} max={d:.6} nbands={d} points={d}\n",
             .{ min_energy, max_energy, nbands, total_points },
         );
-        try out.flush();
     }
 
     var file = try dir.createFile(io, "band_energies.csv", .{ .truncate = true });
@@ -708,19 +706,17 @@ fn writeBandEnergiesForSpin(
 
 fn logEigenvalues(io: std.Io, prefix: []const u8, label: []const u8, values: []const f64, count: usize) !void {
     const limit = @min(count, 8);
-    var buffer: [512]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
-    try out.print("{s}: eig {s} nbands={d}", .{ prefix, label, count });
+    try logBandDebug(io, "{s}: eig {s} nbands={d}", .{ prefix, label, count });
     var i: usize = 0;
     while (i < limit) : (i += 1) {
-        try out.print(" {d:.6}", .{values[i]});
+        try logBandDebug(io, " {d:.6}", .{values[i]});
     }
     if (count > limit) {
-        try out.writeAll(" ...");
+        const logger = runtime_logging.stderr(io, .debug);
+        try logger.writeAll(.debug, " ...");
     }
-    try out.writeAll("\n");
-    try out.flush();
+    const logger = runtime_logging.stderr(io, .debug);
+    try logger.writeAll(.debug, "\n");
 }
 
 /// Check if any species has QIJ coefficients.
