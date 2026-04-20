@@ -9,6 +9,7 @@ const std = @import("std");
 const math = @import("../../math/math.zig");
 const linalg = @import("../linalg.zig");
 const common = @import("common.zig");
+const logging = @import("logging.zig");
 
 pub const Operator = common.Operator;
 pub const Options = common.Options;
@@ -81,7 +82,7 @@ pub fn solve(
         @min(max_subspace, @max(opts.block_size, nbands));
 
     if (debug_iterative) {
-        std.debug.print("\n[LOBPCG] n={d} nbands={d} max_subspace={d} block={d} generalized={}\n", .{ op.n, nbands, max_subspace, block, has_overlap });
+        logging.debug(true, "\n[LOBPCG] n={d} nbands={d} max_subspace={d} block={d} generalized={}\n", .{ op.n, nbands, max_subspace, block, has_overlap });
     }
 
     // Allocate workspace
@@ -176,11 +177,11 @@ pub fn solve(
         defer eig.deinit(alloc);
 
         if (debug_iterative and iter == 0) {
-            std.debug.print("[LOBPCG] iter=0 m={d} eigenvalues: ", .{m});
+            logging.debug(true, "[LOBPCG] iter=0 m={d} eigenvalues: ", .{m});
             for (0..@min(nbands + 2, eig.values.len)) |i| {
-                std.debug.print("{d:.4} ", .{eig.values[i]});
+                logging.debug(true, "{d:.4} ", .{eig.values[i]});
             }
-            std.debug.print("\n", .{});
+            logging.debug(true, "\n", .{});
         }
 
         @memcpy(last_values, eig.values[0..nbands]);
@@ -214,13 +215,13 @@ pub fn solve(
         }
 
         if (debug_iterative) {
-            std.debug.print("[LOBPCG] iter={d} m={d} max_residual={e:.4}\n", .{ iter, m, max_residual });
+            logging.debug(true, "[LOBPCG] iter={d} m={d} max_residual={e:.4}\n", .{ iter, m, max_residual });
         }
 
         // Check convergence
         if (max_residual < opts.tol) {
             if (debug_iterative) {
-                std.debug.print("[LOBPCG] Converged at iter={d}!\n", .{iter});
+                logging.debug(true, "[LOBPCG] Converged at iter={d}!\n", .{iter});
             }
             const values = try alloc.alloc(f64, nbands);
             const vectors = try alloc.alloc(math.Complex, op.n * nbands);
@@ -252,7 +253,7 @@ pub fn solve(
         // If no vectors were added, all residuals are below tol individually.
         if (added == 0) {
             if (debug_iterative) {
-                std.debug.print("[LOBPCG] All residuals below tol, treating as converged at iter={d}\n", .{iter});
+                logging.debug(true, "[LOBPCG] All residuals below tol, treating as converged at iter={d}\n", .{iter});
             }
             const values = try alloc.alloc(f64, nbands);
             const vectors = try alloc.alloc(math.Complex, op.n * nbands);
@@ -276,7 +277,7 @@ pub fn solve(
 
     // Did not converge, return best estimate
     if (debug_iterative) {
-        std.debug.print("[LOBPCG] Did not converge after {d} iterations\n", .{opts.max_iter});
+        logging.debug(true, "[LOBPCG] Did not converge after {d} iterations\n", .{opts.max_iter});
     }
     const values = try alloc.alloc(f64, nbands);
     const vectors = try alloc.alloc(math.Complex, op.n * nbands);

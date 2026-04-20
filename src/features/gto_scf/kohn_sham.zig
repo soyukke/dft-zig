@@ -40,6 +40,7 @@ const blas = @import("../../lib/linalg/blas.zig");
 const density_fitting_mod = @import("density_fitting.zig");
 const DensityFittingContext = density_fitting_mod.DensityFittingContext;
 const aux_basis_mod = basis_mod.aux_basis;
+const logging = @import("logging.zig");
 
 const ContractedShell = basis_mod.ContractedShell;
 const AngularMomentum = basis_mod.AngularMomentum;
@@ -795,7 +796,7 @@ pub fn runKohnShamScf(
 
     // Step 1: Build one-electron integrals
     var timer = std.Io.Clock.Timestamp.now(io, .awake);
-    if (params.verbose) std.debug.print("  [KS] Step 1: Building one-electron integrals (n={d}, libcint={})...\n", .{ n, params.use_libcint });
+    logging.verbose(params.verbose, "  [KS] Step 1: Building one-electron integrals (n={d}, libcint={})...\n", .{ n, params.use_libcint });
 
     // Initialize libcint data if enabled
     // Convert Vec3 positions to [3]f64 arrays for libcint
@@ -831,7 +832,7 @@ pub fn runKohnShamScf(
     else
         try obara_saika.buildNuclearMatrix(alloc, shells, nuc_positions, nuc_charges);
     defer alloc.free(v_mat);
-    if (params.verbose) std.debug.print("  [KS] Step 1: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
+    logging.verbose(params.verbose, "  [KS] Step 1: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
 
     const h_core = try alloc.alloc(f64, n * n);
     defer alloc.free(h_core);
@@ -841,7 +842,7 @@ pub fn runKohnShamScf(
 
     // Step 2: Build ERI table or Schwarz table
     timer = std.Io.Clock.Timestamp.now(io, .awake);
-    if (params.verbose) std.debug.print("  [KS] Step 2: Building Schwarz/ERI table (direct={}, libcint={})...\n", .{ params.use_direct_scf, use_libcint_actual });
+    logging.verbose(params.verbose, "  [KS] Step 2: Building Schwarz/ERI table (direct={}, libcint={})...\n", .{ params.use_direct_scf, use_libcint_actual });
     var eri_table: ?obara_saika.GeneralEriTable = null;
     var schwarz_table: ?fock.SchwarzTable = null;
     var jk_builder: ?libcint.LibcintJKBuilder = null;
@@ -854,7 +855,7 @@ pub fn runKohnShamScf(
     } else {
         eri_table = try obara_saika.buildEriTable(alloc, shells);
     }
-    if (params.verbose) std.debug.print("  [KS] Step 2: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
+    logging.verbose(params.verbose, "  [KS] Step 2: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
     defer {
         if (eri_table) |*et| et.deinit(alloc);
         if (schwarz_table) |*st| st.deinit(alloc);
@@ -865,7 +866,7 @@ pub fn runKohnShamScf(
     var df_context: ?DensityFittingContext = null;
     if (params.use_density_fitting) {
         timer = std.Io.Clock.Timestamp.now(io, .awake);
-        if (params.verbose) std.debug.print("  [KS] Step 2b: Building density fitting context...\n", .{});
+        logging.verbose(params.verbose, "  [KS] Step 2b: Building density fitting context...\n", .{});
 
         var aux_buf_to_free: ?[]ContractedShell = null;
         const aux_shells = if (params.aux_shells) |as| as else blk: {
@@ -892,7 +893,7 @@ pub fn runKohnShamScf(
             alloc.free(buf);
         }
 
-        if (params.verbose) std.debug.print("  [KS] Step 2b: Done (n_aux={d}). ({d:.2}s)\n", .{ df_context.?.n_aux, @as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9 });
+        logging.verbose(params.verbose, "  [KS] Step 2b: Done (n_aux={d}). ({d:.2}s)\n", .{ df_context.?.n_aux, @as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9 });
     }
     defer if (df_context) |*dfc| dfc.deinit();
 
@@ -921,28 +922,28 @@ pub fn runKohnShamScf(
     };
 
     timer = std.Io.Clock.Timestamp.now(io, .awake);
-    if (params.verbose) std.debug.print("  [KS] Step 3: Building molecular grid ({d} radial, {d} angular)...\n", .{ params.n_radial, params.n_angular });
+    logging.verbose(params.verbose, "  [KS] Step 3: Building molecular grid ({d} radial, {d} angular)...\n", .{ params.n_radial, params.n_angular });
     const grid_points = try becke.buildMolecularGrid(alloc, atoms, grid_config);
     defer alloc.free(grid_points);
-    if (params.verbose) std.debug.print("  [KS] Step 3: Done ({d} grid points). ({d:.2}s)\n", .{ grid_points.len, @as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9 });
+    logging.verbose(params.verbose, "  [KS] Step 3: Done ({d} grid points). ({d:.2}s)\n", .{ grid_points.len, @as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9 });
 
     // Step 4: Pre-evaluate basis functions on grid
     timer = std.Io.Clock.Timestamp.now(io, .awake);
-    if (params.verbose) std.debug.print("  [KS] Step 4: Pre-evaluating basis functions on grid...\n", .{});
+    logging.verbose(params.verbose, "  [KS] Step 4: Pre-evaluating basis functions on grid...\n", .{});
     var bog = try evaluateBasisOnGrid(alloc, shells, grid_points);
     defer bog.deinit(alloc);
-    if (params.verbose) std.debug.print("  [KS] Step 4: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
+    logging.verbose(params.verbose, "  [KS] Step 4: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
 
     // Step 5: Initial guess — diagonalize H_core
     timer = std.Io.Clock.Timestamp.now(io, .awake);
-    if (params.verbose) std.debug.print("  [KS] Step 5: Initial guess (diagonalize H_core)...\n", .{});
+    logging.verbose(params.verbose, "  [KS] Step 5: Initial guess (diagonalize H_core)...\n", .{});
     var eigen = try solveRoothaanHall(alloc, n, h_core, s_mat);
     if (params.verbose) {
-        std.debug.print("  [KS] Step 5: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
+        logging.verbose(true, "  [KS] Step 5: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
         // Print initial orbital eigenvalues for comparison with PySCF
-        std.debug.print("  [KS] Initial orbital eigenvalues (ALL {d}):\n", .{n});
+        logging.verbose(true, "  [KS] Initial orbital eigenvalues (ALL {d}):\n", .{n});
         for (0..n) |i| {
-            std.debug.print("    [{d:2}] {e:20.12}\n", .{ i, eigen.values[i] });
+            logging.verbose(true, "    [{d:2}] {e:20.12}\n", .{ i, eigen.values[i] });
         }
         // Print S matrix eigenvalues for condition number check
         // Compute S eigenvalues using dsyev_ (standard eigenvalue problem)
@@ -954,18 +955,18 @@ pub fn runKohnShamScf(
             alloc.free(s_eigen.values);
             alloc.free(s_eigen.vectors);
         }
-        std.debug.print("  [KS] S matrix eigenvalues:\n", .{});
-        std.debug.print("    min = {e:20.12}\n", .{s_eigen.values[0]});
-        std.debug.print("    max = {e:20.12}\n", .{s_eigen.values[n - 1]});
-        std.debug.print("    condition number = {e:10.3}\n", .{s_eigen.values[n - 1] / s_eigen.values[0]});
+        logging.verbose(true, "  [KS] S matrix eigenvalues:\n", .{});
+        logging.verbose(true, "    min = {e:20.12}\n", .{s_eigen.values[0]});
+        logging.verbose(true, "    max = {e:20.12}\n", .{s_eigen.values[n - 1]});
+        logging.verbose(true, "    condition number = {e:10.3}\n", .{s_eigen.values[n - 1] / s_eigen.values[0]});
         // Print first few and last few
         for (0..@min(n, 5)) |i| {
-            std.debug.print("    [{d:2}] {e:20.12}\n", .{ i, s_eigen.values[i] });
+            logging.verbose(true, "    [{d:2}] {e:20.12}\n", .{ i, s_eigen.values[i] });
         }
         if (n > 10) {
-            std.debug.print("    ...\n", .{});
+            logging.verbose(true, "    ...\n", .{});
             for (n - 5..n) |i| {
-                std.debug.print("    [{d:2}] {e:20.12}\n", .{ i, s_eigen.values[i] });
+                logging.verbose(true, "    [{d:2}] {e:20.12}\n", .{ i, s_eigen.values[i] });
             }
         }
     }
@@ -1000,7 +1001,7 @@ pub fn runKohnShamScf(
     defer if (f_diis) |buf| alloc.free(buf);
 
     // Step 6: SCF loop
-    if (params.verbose) std.debug.print("  [KS] Step 6: Starting SCF loop (max_iter={d})...\n", .{params.max_iter});
+    logging.verbose(params.verbose, "  [KS] Step 6: Starting SCF loop (max_iter={d})...\n", .{params.max_iter});
     var e_total: f64 = 0.0;
     var e_old: f64 = 0.0;
     var converged = false;
@@ -1126,9 +1127,9 @@ pub fn runKohnShamScf(
         const rms_p = density_matrix.densityRmsDiff(n, p_mat, p_old);
 
         if (params.verbose) {
-            std.debug.print("  SCF iter {d:3}: E = {d:20.12}  dE = {e:10.3}  dP = {e:10.3}\n", .{ iter, e_total, delta_e, rms_p });
+            logging.verbose(true, "  SCF iter {d:3}: E = {d:20.12}  dE = {e:10.3}  dP = {e:10.3}\n", .{ iter, e_total, delta_e, rms_p });
             if (iter == 0) {
-                std.debug.print("    E_1e = {d:20.12}  E_J = {d:20.12}  E_K = {d:20.12}  E_XC = {d:20.12}  V_nn = {d:20.12}\n", .{ e_1e, e_j, e_k, e_xc, v_nn });
+                logging.verbose(true, "    E_1e = {d:20.12}  E_J = {d:20.12}  E_K = {d:20.12}  E_XC = {d:20.12}  V_nn = {d:20.12}\n", .{ e_1e, e_j, e_k, e_xc, v_nn });
                 // Print Tr(P), Tr(P*S)
                 var tr_p: f64 = 0.0;
                 var tr_ps: f64 = 0.0;
@@ -1138,7 +1139,7 @@ pub fn runKohnShamScf(
                         tr_ps += p_mat[imu * n + inu] * s_mat[imu * n + inu];
                     }
                 }
-                std.debug.print("    Tr(P) = {d:20.12}  Tr(P*S) = {d:20.12}\n", .{ tr_p, tr_ps });
+                logging.verbose(true, "    Tr(P) = {d:20.12}  Tr(P*S) = {d:20.12}\n", .{ tr_p, tr_ps });
             }
         }
 
@@ -1167,7 +1168,7 @@ pub fn runKohnShamScf(
     }
 
     if (params.verbose) {
-        std.debug.print("  [KS] SCF timing: J/K={d:.2}s  XC={d:.2}s  diag={d:.2}s\n", .{
+        logging.verbose(true, "  [KS] SCF timing: J/K={d:.2}s  XC={d:.2}s  diag={d:.2}s\n", .{
             @as(f64, @floatFromInt(scf_jk_ns)) / 1e9,
             @as(f64, @floatFromInt(scf_xc_ns)) / 1e9,
             @as(f64, @floatFromInt(scf_diag_ns)) / 1e9,

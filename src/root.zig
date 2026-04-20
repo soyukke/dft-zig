@@ -30,6 +30,7 @@ pub const basis = @import("features/basis/basis.zig");
 pub const integrals_mod = @import("features/integrals/integrals.zig");
 pub const gto_scf = @import("features/gto_scf/gto_scf.zig");
 pub const grid = @import("features/grid/grid.zig");
+pub const runtime_logging = @import("features/runtime/logging.zig");
 
 test {
     _ = @import("tests.zig");

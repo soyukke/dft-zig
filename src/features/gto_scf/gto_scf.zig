@@ -26,6 +26,7 @@ const energy_mod = @import("energy.zig");
 
 const diis_mod = @import("diis.zig");
 const GtoDiis = diis_mod.GtoDiis;
+const logging = @import("logging.zig");
 pub const kohn_sham = @import("kohn_sham.zig");
 pub const gradient = @import("gradient.zig");
 pub const optimizer = @import("optimizer.zig");
@@ -374,7 +375,7 @@ pub fn printIterInfo(
     delta_e: f64,
     rms_p: f64,
 ) void {
-    std.debug.print("SCF iter {d:3}: E = {d:16.10} Ha, dE = {e:10.3}, dP = {e:10.3}\n", .{
+    logging.verbose(true, "SCF iter {d:3}: E = {d:16.10} Ha, dE = {e:10.3}, dP = {e:10.3}\n", .{
         iter, e_total, delta_e, rms_p,
     });
 }

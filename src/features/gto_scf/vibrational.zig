@@ -27,6 +27,7 @@ const ContractedShell = basis_mod.ContractedShell;
 const gto_scf = @import("gto_scf.zig");
 const ScfParams = gto_scf.ScfParams;
 const gradient_mod = gto_scf.gradient;
+const logging = @import("logging.zig");
 
 // LAPACK dsyev extern
 extern fn dsyev_(
@@ -519,31 +520,31 @@ pub fn computeThermo(
 
 /// Print thermodynamic results.
 pub fn printThermo(r: *const ThermoResult) void {
-    std.debug.print("\n=== Thermodynamic Properties ({d:.2} K, {d:.0} Pa) ===\n", .{ r.temperature, r.pressure });
-    std.debug.print("\nElectronic:\n", .{});
-    std.debug.print("  E_elec          = {d:.10} Ha\n", .{r.e_elec});
-    std.debug.print("\nTranslational:\n", .{});
-    std.debug.print("  E_trans          = {d:.10} Ha\n", .{r.e_trans});
-    std.debug.print("  S_trans          = {e:15.6} Ha/K\n", .{r.s_trans});
-    std.debug.print("  Cv_trans         = {e:15.6} Ha/K\n", .{r.cv_trans});
-    std.debug.print("\nRotational:\n", .{});
-    std.debug.print("  Rot constants    = {d:.3}, {d:.3}, {d:.3} GHz\n", .{ r.rot_const_ghz[0], r.rot_const_ghz[1], r.rot_const_ghz[2] });
-    std.debug.print("  Symmetry number  = {d}\n", .{r.sym_number});
-    std.debug.print("  Linear           = {}\n", .{r.is_linear});
-    std.debug.print("  E_rot            = {d:.10} Ha\n", .{r.e_rot});
-    std.debug.print("  S_rot            = {e:15.6} Ha/K\n", .{r.s_rot});
-    std.debug.print("  Cv_rot           = {e:15.6} Ha/K\n", .{r.cv_rot});
-    std.debug.print("\nVibrational:\n", .{});
-    std.debug.print("  ZPVE             = {d:.10} Ha ({d:.4} kcal/mol)\n", .{ r.zpve, r.zpve * ha_to_kcal });
-    std.debug.print("  E_vib            = {d:.10} Ha\n", .{r.e_vib});
-    std.debug.print("  S_vib            = {e:15.6} Ha/K\n", .{r.s_vib});
-    std.debug.print("  Cv_vib           = {e:15.6} Ha/K\n", .{r.cv_vib});
-    std.debug.print("\nTotals:\n", .{});
-    std.debug.print("  E(0K)            = {d:.10} Ha\n", .{r.e_0k});
-    std.debug.print("  E_tot            = {d:.10} Ha\n", .{r.e_tot});
-    std.debug.print("  H_tot            = {d:.10} Ha\n", .{r.h_tot});
-    std.debug.print("  S_tot            = {e:15.6} Ha/K\n", .{r.s_tot});
-    std.debug.print("  G_tot            = {d:.10} Ha\n", .{r.g_tot});
+    logging.progress(true, "\n=== Thermodynamic Properties ({d:.2} K, {d:.0} Pa) ===\n", .{ r.temperature, r.pressure });
+    logging.progress(true, "\nElectronic:\n", .{});
+    logging.progress(true, "  E_elec          = {d:.10} Ha\n", .{r.e_elec});
+    logging.progress(true, "\nTranslational:\n", .{});
+    logging.progress(true, "  E_trans          = {d:.10} Ha\n", .{r.e_trans});
+    logging.progress(true, "  S_trans          = {e:15.6} Ha/K\n", .{r.s_trans});
+    logging.progress(true, "  Cv_trans         = {e:15.6} Ha/K\n", .{r.cv_trans});
+    logging.progress(true, "\nRotational:\n", .{});
+    logging.progress(true, "  Rot constants    = {d:.3}, {d:.3}, {d:.3} GHz\n", .{ r.rot_const_ghz[0], r.rot_const_ghz[1], r.rot_const_ghz[2] });
+    logging.progress(true, "  Symmetry number  = {d}\n", .{r.sym_number});
+    logging.progress(true, "  Linear           = {}\n", .{r.is_linear});
+    logging.progress(true, "  E_rot            = {d:.10} Ha\n", .{r.e_rot});
+    logging.progress(true, "  S_rot            = {e:15.6} Ha/K\n", .{r.s_rot});
+    logging.progress(true, "  Cv_rot           = {e:15.6} Ha/K\n", .{r.cv_rot});
+    logging.progress(true, "\nVibrational:\n", .{});
+    logging.progress(true, "  ZPVE             = {d:.10} Ha ({d:.4} kcal/mol)\n", .{ r.zpve, r.zpve * ha_to_kcal });
+    logging.progress(true, "  E_vib            = {d:.10} Ha\n", .{r.e_vib});
+    logging.progress(true, "  S_vib            = {e:15.6} Ha/K\n", .{r.s_vib});
+    logging.progress(true, "  Cv_vib           = {e:15.6} Ha/K\n", .{r.cv_vib});
+    logging.progress(true, "\nTotals:\n", .{});
+    logging.progress(true, "  E(0K)            = {d:.10} Ha\n", .{r.e_0k});
+    logging.progress(true, "  E_tot            = {d:.10} Ha\n", .{r.e_tot});
+    logging.progress(true, "  H_tot            = {d:.10} Ha\n", .{r.h_tot});
+    logging.progress(true, "  S_tot            = {e:15.6} Ha/K\n", .{r.s_tot});
+    logging.progress(true, "  G_tot            = {d:.10} Ha\n", .{r.g_tot});
 }
 
 // ============================================================================
@@ -626,17 +627,15 @@ pub fn computeNumericalHessian(
         const atom_i = i / 3;
         const coord_i = i % 3; // 0=x, 1=y, 2=z
 
-        if (params.print_progress) {
-            std.debug.print("  Hessian: displacing coord {d}/{d} (atom {d}, {c})\n", .{
-                i + 1, n3, atom_i,
-                @as(u8, switch (coord_i) {
-                    0 => 'x',
-                    1 => 'y',
-                    2 => 'z',
-                    else => '?',
-                }),
-            });
-        }
+        logging.progress(params.print_progress, "  Hessian: displacing coord {d}/{d} (atom {d}, {c})\n", .{
+            i + 1, n3, atom_i,
+            @as(u8, switch (coord_i) {
+                0 => 'x',
+                1 => 'y',
+                2 => 'z',
+                else => '?',
+            }),
+        });
 
         // +δ displacement
         @memcpy(nuc_positions, orig_positions);
@@ -813,9 +812,7 @@ pub fn vibrationalAnalysis(
     const n_atoms = nuc_positions.len;
     const n3 = n_atoms * 3;
 
-    if (params.print_progress) {
-        std.debug.print("\nVibrational Analysis ({d} atoms, {d} coordinates)\n", .{ n_atoms, n3 });
-    }
+    logging.progress(params.print_progress, "\nVibrational Analysis ({d} atoms, {d} coordinates)\n", .{ n_atoms, n3 });
 
     // Step 1: Compute numerical Hessian
     const hessian = try computeNumericalHessian(
@@ -866,9 +863,9 @@ pub fn vibrationalAnalysis(
     }
 
     if (params.print_progress) {
-        std.debug.print("\nAll frequencies (cm^-1):\n", .{});
+        logging.progress(true, "\nAll frequencies (cm^-1):\n", .{});
         for (0..n3) |i| {
-            std.debug.print("  mode {d}: {d:.2} cm^-1\n", .{ i + 1, frequencies[i] });
+            logging.progress(true, "  mode {d}: {d:.2} cm^-1\n", .{ i + 1, frequencies[i] });
         }
     }
 
@@ -900,11 +897,11 @@ pub fn vibrationalAnalysis(
     zpve *= 0.5;
 
     if (params.print_progress) {
-        std.debug.print("\nVibrational frequencies (cm^-1):\n", .{});
+        logging.progress(true, "\nVibrational frequencies (cm^-1):\n", .{});
         for (0..n_vib) |i| {
-            std.debug.print("  {d:.2}\n", .{vib_freqs[i]});
+            logging.progress(true, "  {d:.2}\n", .{vib_freqs[i]});
         }
-        std.debug.print("\nZPVE: {d:.10} Ha ({d:.4} kcal/mol)\n", .{ zpve, zpve * 627.509 });
+        logging.progress(true, "\nZPVE: {d:.10} Ha ({d:.4} kcal/mol)\n", .{ zpve, zpve * 627.509 });
     }
 
     return .{

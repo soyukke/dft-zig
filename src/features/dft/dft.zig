@@ -13,14 +13,20 @@ const output = @import("output.zig");
 const paw_mod = @import("../paw/paw.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
 const relax = @import("../relax/relax.zig");
+const runtime_logging = @import("../runtime/logging.zig");
 const xyz = @import("../structure/xyz.zig");
 
 fn logStep(io: std.Io, msg: []const u8) !void {
-    var buffer: [256]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
-    try out.print("{s}\n", .{msg});
-    try out.flush();
+    const logger = runtime_logging.stderr(io, .info);
+    try logger.print(.info, "{s}\n", .{msg});
+}
+
+fn logPhononFrequencies(io: std.Io, frequencies_cm1: []const f64) !void {
+    const logger = runtime_logging.stderr(io, .info);
+    try logger.print(.info, "phonon frequencies (cm⁻¹):\n", .{});
+    for (frequencies_cm1) |f| {
+        try logger.print(.info, "  {d:.2}\n", .{f});
+    }
 }
 
 fn nowNs(io: std.Io) u64 {
@@ -341,17 +347,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                 var phonon = try dfpt_mod.runPhonon(alloc, io, cfg, result, species, active.atoms, active.cell_bohr, active.recip, active.volume_bohr);
                 defer phonon.deinit(alloc);
                 try logStep(io, "step: dfpt phonon done");
-                // Print frequencies
-                {
-                    var buffer: [256]u8 = undefined;
-                    var writer = std.Io.File.stderr().writer(io, &buffer);
-                    const out = &writer.interface;
-                    try out.print("phonon frequencies (cm⁻¹):\n", .{});
-                    for (phonon.frequencies_cm1) |f| {
-                        try out.print("  {d:.2}\n", .{f});
-                    }
-                    try out.flush();
-                }
+                try logPhononFrequencies(io, phonon.frequencies_cm1);
             }
         } else {
             return error.ScfRequired;
