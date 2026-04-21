@@ -83,7 +83,7 @@ pub const Term = union(enum) {
 pub const EvalInput = struct {
     alloc: std.mem.Allocator,
     io: std.Io,
-    species: []const hamiltonian.SpeciesEntry,
+    species: []hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     cell_bohr: math.Mat3,
     recip: math.Mat3,

@@ -2,6 +2,7 @@ const std = @import("std");
 const config = @import("../config/config.zig");
 const coulomb = @import("../coulomb/coulomb.zig");
 const ewald = @import("../ewald/ewald.zig");
+const term_mod = @import("../dft/term.zig");
 const fft_grid = @import("fft_grid.zig");
 const grid_mod = @import("pw_grid.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
@@ -138,12 +139,30 @@ pub fn computeEnergyTerms(
         vxc_rho += vxc_r[i] * value * dv;
     }
 
-    // Ion-ion energy: Ewald for periodic, direct Coulomb for isolated
-    // Both return energy in Hartree; convert to Rydberg (* 2.0)
+    // Ion-ion energy: Ewald for periodic, direct Coulomb for isolated.
+    // Periodic Ewald is routed through the Term contract; direct Coulomb
+    // stays on its legacy helper for now. Both return Hartree → Rydberg.
     const ion = if (coulomb_r_cut != null)
         try computeDirectIonIonEnergy(alloc, species, atoms) * 2.0
-    else
-        try computeIonIonEnergy(alloc, io, grid, species, atoms, ewald_cfg, quiet) * 2.0;
+    else blk: {
+        const ewald_term: term_mod.Term = .{ .ewald = .{
+            .alpha = ewald_cfg.alpha,
+            .rcut = ewald_cfg.rcut,
+            .gcut = ewald_cfg.gcut,
+            .tol = ewald_cfg.tol,
+            .quiet = quiet,
+        } };
+        const input = term_mod.EvalInput{
+            .alloc = alloc,
+            .io = io,
+            .species = species,
+            .atoms = atoms,
+            .cell_bohr = grid.cell,
+            .recip = grid.recip,
+            .volume_bohr = grid.volume,
+        };
+        break :blk (try term_mod.termEnergy(ewald_term, input)) * 2.0;
+    };
     // E_psp_core = (n_elec / Ω) × Σ_atoms epsatm  (Rydberg units)
     // This is the volume-dependent correction from the G=0 local potential.
     // For isolated systems, this correction is not needed since G=0 is handled
