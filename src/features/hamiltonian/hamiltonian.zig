@@ -120,7 +120,7 @@ pub fn buildAtomData(
     alloc: std.mem.Allocator,
     atoms: []xyz.Atom,
     unit_scale_bohr: f64,
-    species: []SpeciesEntry,
+    species: []const SpeciesEntry,
 ) ![]AtomData {
     const data = try alloc.alloc(AtomData, atoms.len);
     errdefer alloc.free(data);
@@ -135,7 +135,7 @@ pub fn buildAtomData(
 }
 
 /// Locate species entry by symbol.
-pub fn findSpeciesIndex(species: []SpeciesEntry, symbol: []const u8) ?usize {
+pub fn findSpeciesIndex(species: []const SpeciesEntry, symbol: []const u8) ?usize {
     for (species, 0..) |entry, i| {
         if (std.mem.eql(u8, entry.symbol, symbol)) return i;
     }
@@ -146,7 +146,7 @@ pub fn findSpeciesIndex(species: []SpeciesEntry, symbol: []const u8) ?usize {
 pub fn buildHamiltonian(
     alloc: std.mem.Allocator,
     gvecs: []plane_wave.GVector,
-    species: []SpeciesEntry,
+    species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
     local_cfg: local_potential.LocalPotentialConfig,
@@ -178,7 +178,7 @@ pub fn buildHamiltonian(
 pub fn buildNonlocalMatrix(
     alloc: std.mem.Allocator,
     gvecs: []plane_wave.GVector,
-    species: []SpeciesEntry,
+    species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
 ) ![]math.Complex {
@@ -194,7 +194,7 @@ pub fn buildNonlocalMatrix(
 pub fn buildOverlapMatrix(
     alloc: std.mem.Allocator,
     gvecs: []plane_wave.GVector,
-    species: []SpeciesEntry,
+    species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
 ) ![]math.Complex {
@@ -223,7 +223,7 @@ fn addNonlocalContribution(
     alloc: std.mem.Allocator,
     h: []math.Complex,
     gvecs: []plane_wave.GVector,
-    species: []SpeciesEntry,
+    species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
     mode: NonlocalMode,
@@ -371,7 +371,7 @@ fn localPotential(
     q: math.Vec3,
     gi: plane_wave.GVector,
     gj: plane_wave.GVector,
-    species: []SpeciesEntry,
+    species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
     local_cfg: local_potential.LocalPotentialConfig,

@@ -59,7 +59,7 @@ pub fn computeDensitySmearing(
     cfg: *const config.Config,
     grid: Grid,
     kpoints: []KPoint,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,

@@ -14,7 +14,7 @@ const Grid = stress_util.Grid;
 pub fn localStress(
     grid: Grid,
     rho_g: []const math.Complex,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     local_cfg: local_potential.LocalPotentialConfig,
     ff_tables: ?[]const form_factor.LocalFormFactorTable,

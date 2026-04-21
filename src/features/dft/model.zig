@@ -10,7 +10,7 @@ const math = @import("../math/math.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 
 pub const Model = struct {
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     cell_bohr: math.Mat3,
     recip: math.Mat3,

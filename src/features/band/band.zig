@@ -259,7 +259,7 @@ pub fn writeBandEnergies(
             io: std.Io,
             cfg: *const config.Config,
             points: []const kpath.KPoint,
-            species: []hamiltonian.SpeciesEntry,
+            species: []const hamiltonian.SpeciesEntry,
             atoms: []const hamiltonian.AtomData,
             recip: math.Mat3,
             volume: f64,
@@ -723,7 +723,7 @@ fn logEigenvalues(io: std.Io, prefix: []const u8, label: []const u8, values: []c
 }
 
 /// Check if any species has QIJ coefficients.
-fn hasQij(species: []hamiltonian.SpeciesEntry) bool {
+fn hasQij(species: []const hamiltonian.SpeciesEntry) bool {
     for (species) |entry| {
         if (entry.upf.qij.len > 0) return true;
     }
@@ -747,7 +747,7 @@ fn buildAndSolveGeneralized(
     alloc: std.mem.Allocator,
     backend: linalg.Backend,
     gvecs: []plane_wave.GVector,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     inv_volume: f64,
     h: []math.Complex,

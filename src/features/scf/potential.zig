@@ -198,7 +198,7 @@ pub fn buildPotentialGridSpin(
 pub fn buildIonicPotentialGrid(
     alloc: std.mem.Allocator,
     grid: Grid,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     local_cfg: local_potential.LocalPotentialConfig,
     ff_tables: ?[]const form_factor.LocalFormFactorTable,

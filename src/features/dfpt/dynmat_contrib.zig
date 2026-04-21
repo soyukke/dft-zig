@@ -30,7 +30,7 @@ const Grid = scf_mod.Grid;
 pub fn computeSelfEnergyDynmat(
     alloc: std.mem.Allocator,
     grid: Grid,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     rho0_g: []const math.Complex,
     local_cfg: local_potential.LocalPotentialConfig,
@@ -224,7 +224,7 @@ pub fn computeNonlocalSelfEnergyDynmat(
 pub fn computeNlccSelfDynmat(
     alloc: std.mem.Allocator,
     grid: Grid,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     vxc_g: []const math.Complex,
     rho_core_tables: ?[]const form_factor.RadialFormFactorTable,

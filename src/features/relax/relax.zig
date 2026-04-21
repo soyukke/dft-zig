@@ -72,7 +72,7 @@ pub fn run(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     initial_atoms: []hamiltonian.AtomData,
     cell: math.Mat3, // Cell in Bohr units
     recip: math.Mat3,

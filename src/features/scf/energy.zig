@@ -49,7 +49,7 @@ pub fn computeEnergyTerms(
     band_energy: f64,
     nonlocal_energy: f64,
     entropy_energy: f64,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     local_cfg: local_potential.LocalPotentialConfig,
     ewald_cfg: config.EwaldConfig,
@@ -192,7 +192,7 @@ pub fn computeEnergyTermsSpin(
     band_energy: f64,
     nonlocal_energy: f64,
     entropy_energy: f64,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     local_cfg: local_potential.LocalPotentialConfig,
     ewald_cfg: config.EwaldConfig,
@@ -313,7 +313,7 @@ pub fn computeEnergyTermsSpin(
 /// Returns energy in Hartree (same convention as Ewald).
 fn computeDirectIonIonEnergy(
     alloc: std.mem.Allocator,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
 ) !f64 {
     const count = atoms.len;
@@ -355,7 +355,7 @@ pub fn bandNonlocalEnergy(
 /// Compute DFT-D3(BJ) dispersion energy from atomic data.
 fn computeDispersionEnergy(
     alloc: std.mem.Allocator,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     cell: math.Mat3,
     vdw_cfg: config.VdwConfig,

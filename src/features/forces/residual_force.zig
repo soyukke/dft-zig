@@ -13,7 +13,7 @@ pub fn residualForces(
     alloc: std.mem.Allocator,
     grid: Grid,
     vresid_g: []const math.Complex,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     rho_atom_tables: ?[]const form_factor.RadialFormFactorTable,
     rho_core_tables: ?[]const form_factor.RadialFormFactorTable,

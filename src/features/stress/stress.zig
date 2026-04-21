@@ -315,7 +315,7 @@ pub fn computeStress(
     rho_g: []const math.Complex,
     rho_r: []const f64,
     rho_core: ?[]const f64,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     ewald_cfg: config.EwaldConfig,
     wavefunctions: ?scf.WavefunctionData,

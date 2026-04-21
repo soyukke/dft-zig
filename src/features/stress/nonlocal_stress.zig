@@ -16,7 +16,7 @@ const dYlm_dq = stress_util.dYlm_dq;
 pub fn nonlocalStress(
     alloc: std.mem.Allocator,
     wavefunctions: ?scf.WavefunctionData,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,

@@ -66,7 +66,7 @@ pub const GroundState = struct {
     /// FFT grid
     grid: Grid,
     /// Species data
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     /// Atom data
     atoms: []const hamiltonian.AtomData,
     /// Local pseudopotential selection for this run
@@ -181,7 +181,7 @@ pub const IonicData = struct {
     positions: []math.Vec3,
     masses: []f64,
 
-    pub fn init(alloc: std.mem.Allocator, species: []hamiltonian.SpeciesEntry, atoms: []const hamiltonian.AtomData) !IonicData {
+    pub fn init(alloc: std.mem.Allocator, species: []const hamiltonian.SpeciesEntry, atoms: []const hamiltonian.AtomData) !IonicData {
         const n = atoms.len;
         const charges = try alloc.alloc(f64, n);
         errdefer alloc.free(charges);
@@ -231,7 +231,7 @@ pub fn prepareGroundState(
     io: std.Io,
     cfg: config_mod.Config,
     scf_result: *scf_mod.ScfResult,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     volume: f64,
     recip: math.Mat3,
@@ -535,7 +535,7 @@ pub fn buildFxcGrid(
 }
 
 /// Compute total number of valence electrons.
-fn totalElectrons(species: []hamiltonian.SpeciesEntry, atoms: []const hamiltonian.AtomData) f64 {
+fn totalElectrons(species: []const hamiltonian.SpeciesEntry, atoms: []const hamiltonian.AtomData) f64 {
     var total: f64 = 0.0;
     for (atoms) |atom| {
         total += species[atom.species_index].z_valence;

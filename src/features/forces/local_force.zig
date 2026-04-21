@@ -31,7 +31,7 @@ pub fn localPseudoForces(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho_g: []const math.Complex,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     _: f64, // volume (unused, kept for API compatibility)
     local_cfg: local_potential.LocalPotentialConfig,

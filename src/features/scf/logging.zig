@@ -343,7 +343,7 @@ pub fn logNonlocalDiagnostics(
     alloc: std.mem.Allocator,
     io: std.Io,
     gvecs: []plane_wave.GVector,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     inv_volume: f64,
 ) !void {
@@ -478,7 +478,7 @@ pub fn logNonlocalDiagnostics(
 pub fn logLocalDiagnostics(
     io: std.Io,
     gvecs: []plane_wave.GVector,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     local_cfg: local_potential.LocalPotentialConfig,
 ) !void {

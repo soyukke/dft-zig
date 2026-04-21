@@ -17,7 +17,7 @@ pub fn nlccStress(
     grid: Grid,
     rho_r: []const f64,
     rho_core: ?[]const f64,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     rho_core_tables: ?[]const form_factor.RadialFormFactorTable,
     xc_func: xc_mod.Functional,
