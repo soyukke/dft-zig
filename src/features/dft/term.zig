@@ -94,6 +94,8 @@ pub const EvalInput = struct {
     recip: math.Mat3,
     volume_bohr: f64,
     rho: ?[]const f64 = null,
+    /// Core density (NLCC) added to ρ for XC evaluation when present.
+    rho_core: ?[]const f64 = null,
     grid: ?*const Grid = null,
 };
 
@@ -142,7 +144,7 @@ fn xcEnergy(term: TermXc, input: EvalInput) !f64 {
     const rho = input.rho orelse return error.MissingDensity;
     if (rho.len != grid.count()) return error.DensitySizeMismatch;
 
-    const fields = try xc_fields.computeXcFields(input.alloc, grid.*, rho, null, false, term.functional);
+    const fields = try xc_fields.computeXcFields(input.alloc, grid.*, rho, input.rho_core, false, term.functional);
     defer {
         input.alloc.free(fields.vxc);
         input.alloc.free(fields.exc);

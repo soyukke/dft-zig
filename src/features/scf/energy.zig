@@ -73,7 +73,6 @@ pub fn computeEnergyTerms(
         alloc.free(xc_fields.exc);
     }
     const vxc_r = xc_fields.vxc;
-    const exc_r = xc_fields.exc;
 
     // Hartree energy via Term contract (uses augmented density for PAW).
     const hartree_input = term_mod.EvalInput{
@@ -110,11 +109,19 @@ pub fn computeEnergyTerms(
     });
 
     const dv = grid.volume / @as(f64, @floatFromInt(grid.count()));
-    var exc: f64 = 0.0;
     var vxc_rho: f64 = 0.0;
-    for (exc_r) |e| {
-        exc += e * dv;
-    }
+    const exc = try term_mod.termEnergy(.{ .xc = .{ .functional = xc_func } }, .{
+        .alloc = alloc,
+        .io = io,
+        .species = species,
+        .atoms = atoms,
+        .cell_bohr = grid.cell,
+        .recip = grid.recip,
+        .volume_bohr = grid.volume,
+        .rho = rho_for_hxc,
+        .rho_core = rho_core,
+        .grid = &grid,
+    });
     // vxc_rho = ∫V_xc(ρ_aug+core) × ρ_aug dr  (for PAW)
     //         = ∫V_xc(ρ+core) × ρ dr           (for NC)
     // For PAW: D^hat adds ∫V_Hxc × n̂ to band energy, so the double-counting
