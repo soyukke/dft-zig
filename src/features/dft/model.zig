@@ -8,6 +8,9 @@
 
 const math = @import("../math/math.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
+const term_mod = @import("term.zig");
+
+pub const Term = term_mod.Term;
 
 pub const Model = struct {
     species: []hamiltonian.SpeciesEntry,
