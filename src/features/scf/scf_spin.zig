@@ -705,29 +705,29 @@ pub fn runSpinPolarizedLoop(
     const paw_ecutrho: ?f64 = if (common.is_paw) ecutrho_scf else null;
 
     // Compute energy terms using spin-polarized XC
-    var energy_terms = try energy_mod.computeEnergyTermsSpin(
-        alloc,
-        io,
-        grid,
-        rho_up,
-        rho_down,
-        common.rho_core,
-        last_band_energy,
-        last_nonlocal_energy,
-        last_entropy_energy,
-        species,
-        atoms,
-        common.local_cfg,
-        cfg.ewald,
-        cfg.scf.use_rfft,
-        cfg.scf.xc,
-        cfg.scf.quiet,
-        common.coulomb_r_cut,
-        cfg.vdw,
-        rho_aug_up_for_energy,
-        rho_aug_down_for_energy,
-        paw_ecutrho,
-    );
+    var energy_terms = try energy_mod.computeEnergyTermsSpin(.{
+        .alloc = alloc,
+        .io = io,
+        .grid = grid,
+        .species = species,
+        .atoms = atoms,
+        .rho_up = rho_up,
+        .rho_down = rho_down,
+        .rho_core = common.rho_core,
+        .rho_aug_up = rho_aug_up_for_energy,
+        .rho_aug_down = rho_aug_down_for_energy,
+        .band_energy = last_band_energy,
+        .nonlocal_energy = last_nonlocal_energy,
+        .entropy_energy = last_entropy_energy,
+        .local_cfg = common.local_cfg,
+        .ewald_cfg = cfg.ewald,
+        .vdw_cfg = cfg.vdw,
+        .xc_func = cfg.scf.xc,
+        .use_rfft = cfg.scf.use_rfft,
+        .quiet = cfg.scf.quiet,
+        .coulomb_r_cut = common.coulomb_r_cut,
+        .ecutrho = paw_ecutrho,
+    });
 
     // Add PAW on-site energy correction (spin-resolved E_xc if rhoij_up/down available)
     if (common.is_paw) {
