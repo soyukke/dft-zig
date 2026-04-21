@@ -74,39 +74,36 @@ pub fn computeEnergyTerms(
     }
     const vxc_r = xc_fields.vxc;
 
-    // Hartree energy via Term contract (uses augmented density for PAW).
-    const hartree_input = term_mod.EvalInput{
-        .alloc = alloc,
-        .io = io,
+    const model = term_mod.Model{
         .species = species,
         .atoms = atoms,
         .cell_bohr = grid.cell,
         .recip = grid.recip,
         .volume_bohr = grid.volume,
-        .rho = rho_for_hxc,
+    };
+    const shared_input = term_mod.EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .model = &model,
         .grid = &grid,
     };
+
+    // Hartree energy via Term contract (uses augmented density for PAW).
+    var hartree_input = shared_input;
+    hartree_input.rho = rho_for_hxc;
     const eh = try term_mod.termEnergy(.{ .hartree = .{
         .isolated = (coulomb_r_cut != null),
         .ecutrho = ecutrho,
     } }, hartree_input);
 
     // Local pseudopotential energy via Term contract (pseudo density).
+    var local_input = shared_input;
+    local_input.rho = rho;
     const e_local = try term_mod.termEnergy(.{ .atomic_local = .{
         .mode = local_cfg.mode,
         .explicit_alpha = local_cfg.alpha,
         .ecutrho = ecutrho,
-    } }, .{
-        .alloc = alloc,
-        .io = io,
-        .species = species,
-        .atoms = atoms,
-        .cell_bohr = grid.cell,
-        .recip = grid.recip,
-        .volume_bohr = grid.volume,
-        .rho = rho,
-        .grid = &grid,
-    });
+    } }, local_input);
 
     const dv = grid.volume / @as(f64, @floatFromInt(grid.count()));
     var vxc_rho: f64 = 0.0;
@@ -129,25 +126,13 @@ pub fn computeEnergyTerms(
     // stays on its legacy helper for now. Both return Hartree → Rydberg.
     const ion = if (coulomb_r_cut != null)
         try computeDirectIonIonEnergy(alloc, species, atoms) * 2.0
-    else blk: {
-        const ewald_term: term_mod.Term = .{ .ewald = .{
-            .alpha = ewald_cfg.alpha,
-            .rcut = ewald_cfg.rcut,
-            .gcut = ewald_cfg.gcut,
-            .tol = ewald_cfg.tol,
-            .quiet = quiet,
-        } };
-        const input = term_mod.EvalInput{
-            .alloc = alloc,
-            .io = io,
-            .species = species,
-            .atoms = atoms,
-            .cell_bohr = grid.cell,
-            .recip = grid.recip,
-            .volume_bohr = grid.volume,
-        };
-        break :blk (try term_mod.termEnergy(ewald_term, input)) * 2.0;
-    };
+    else (try term_mod.termEnergy(.{ .ewald = .{
+        .alpha = ewald_cfg.alpha,
+        .rcut = ewald_cfg.rcut,
+        .gcut = ewald_cfg.gcut,
+        .tol = ewald_cfg.tol,
+        .quiet = quiet,
+    } }, shared_input)) * 2.0;
     // E_psp_core = (n_elec / Ω) × Σ_atoms epsatm  (Rydberg units)
     // This is the volume-dependent correction from the G=0 local potential.
     // For isolated systems, this correction is not needed since G=0 is handled
@@ -226,14 +211,17 @@ pub fn computeEnergyTermsSpin(
         alloc.free(xc_fields.exc);
     }
 
-    const shared_input = term_mod.EvalInput{
-        .alloc = alloc,
-        .io = io,
+    const model = term_mod.Model{
         .species = species,
         .atoms = atoms,
         .cell_bohr = grid.cell,
         .recip = grid.recip,
         .volume_bohr = grid.volume,
+    };
+    const shared_input = term_mod.EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .model = &model,
         .grid = &grid,
     };
 
@@ -272,17 +260,13 @@ pub fn computeEnergyTermsSpin(
 
     const ion = if (coulomb_r_cut != null)
         try computeDirectIonIonEnergy(alloc, species, atoms) * 2.0
-    else blk: {
-        var ewald_input = shared_input;
-        ewald_input.rho = null;
-        break :blk (try term_mod.termEnergy(.{ .ewald = .{
-            .alpha = ewald_cfg.alpha,
-            .rcut = ewald_cfg.rcut,
-            .gcut = ewald_cfg.gcut,
-            .tol = ewald_cfg.tol,
-            .quiet = quiet,
-        } }, ewald_input)) * 2.0;
-    };
+    else (try term_mod.termEnergy(.{ .ewald = .{
+        .alpha = ewald_cfg.alpha,
+        .rcut = ewald_cfg.rcut,
+        .gcut = ewald_cfg.gcut,
+        .tol = ewald_cfg.tol,
+        .quiet = quiet,
+    } }, shared_input)) * 2.0;
     var epsatm_sum: f64 = 0.0;
     var n_elec: f64 = 0.0;
     for (atoms) |atom| {

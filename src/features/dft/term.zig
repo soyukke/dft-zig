@@ -19,9 +19,11 @@ const local_potential = @import("../pseudopotential/local_potential.zig");
 const xc_fields = @import("../scf/xc_fields.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const math = @import("../math/math.zig");
+const model_mod = @import("model.zig");
 const xc_mod = @import("../xc/xc.zig");
 
 pub const Grid = grid_mod.Grid;
+pub const Model = model_mod.Model;
 
 /// Local component of the ionic pseudopotential: V_loc(r) = Σ_a v^a_loc(r-R_a).
 /// Depends on atomic positions (via Model), not on ρ. Contributes to V_eff(G).
@@ -68,18 +70,13 @@ pub const Term = union(enum) {
 
 /// Inputs passed to term energy evaluators.
 ///
-/// Mandatory fields describe the physical system (geometry + species + config).
-/// Optional fields carry state that only certain terms need (e.g. ρ for
-/// Hartree/XC). Callers populate what they have; each term either uses it
-/// or ignores it.
+/// `model` supplies the physical system (geometry, species). Optional
+/// fields carry state that only certain terms need — callers populate
+/// what they have; each term either uses it or returns an error.
 pub const EvalInput = struct {
     alloc: std.mem.Allocator,
     io: std.Io,
-    species: []const hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
-    cell_bohr: math.Mat3,
-    recip: math.Mat3,
-    volume_bohr: f64,
+    model: *const Model,
     rho: ?[]const f64 = null,
     /// Minority-spin density. When present, XC evaluation dispatches to
     /// the spin-polarized path (`rho` becomes the majority-spin density).
@@ -125,7 +122,7 @@ fn atomicLocalEnergy(term: TermAtomicLocal, input: EvalInput) !f64 {
             if (g.g2 >= ecut) continue;
         }
         const rho_val = rho_g[g.idx];
-        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, input.species, input.atoms, inv_volume, local_cfg);
+        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, input.model.species, input.model.atoms, inv_volume, local_cfg);
         e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
     }
     e_local *= grid.volume;
@@ -200,14 +197,15 @@ fn hartreeEnergy(term: TermHartree, input: EvalInput) !f64 {
 }
 
 fn ewaldEnergy(term: TermEwald, input: EvalInput) !f64 {
-    const count = input.atoms.len;
+    const atoms = input.model.atoms;
+    const count = atoms.len;
     if (count == 0) return 0.0;
     const charges = try input.alloc.alloc(f64, count);
     defer input.alloc.free(charges);
     const positions = try input.alloc.alloc(math.Vec3, count);
     defer input.alloc.free(positions);
-    for (input.atoms, 0..) |atom, i| {
-        charges[i] = input.species[atom.species_index].z_valence;
+    for (atoms, 0..) |atom, i| {
+        charges[i] = input.model.species[atom.species_index].z_valence;
         positions[i] = atom.position;
     }
     const params = ewald_mod.Params{
@@ -217,7 +215,7 @@ fn ewaldEnergy(term: TermEwald, input: EvalInput) !f64 {
         .tol = term.tol,
         .quiet = term.quiet,
     };
-    return try ewald_mod.ionIonEnergy(input.io, input.cell_bohr, input.recip, charges, positions, params);
+    return try ewald_mod.ionIonEnergy(input.io, input.model.cell_bohr, input.model.recip, charges, positions, params);
 }
 
 test "termEnergy(.hartree) returns zero for uniform periodic density" {
@@ -252,14 +250,17 @@ test "termEnergy(.hartree) returns zero for uniform periodic density" {
     defer alloc.free(rho);
     @memset(rho, 1.0 / volume);
 
-    const input = EvalInput{
-        .alloc = alloc,
-        .io = io,
+    const model = Model{
         .species = &.{},
         .atoms = &.{},
         .cell_bohr = cell,
         .recip = recip,
         .volume_bohr = volume,
+    };
+    const input = EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .model = &model,
         .rho = rho,
         .grid = &grid,
     };
@@ -313,14 +314,17 @@ test "termEnergy(.hartree) is positive and deterministic for cosine density" {
         }
     }
 
-    const input = EvalInput{
-        .alloc = alloc,
-        .io = io,
+    const model = Model{
         .species = &.{},
         .atoms = &.{},
         .cell_bohr = cell,
         .recip = recip,
         .volume_bohr = volume,
+    };
+    const input = EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .model = &model,
         .rho = rho,
         .grid = &grid,
     };
@@ -363,14 +367,17 @@ test "termEnergy(.atomic_local) is zero with no atoms" {
     defer alloc.free(rho);
     @memset(rho, 1.0 / volume);
 
-    const input = EvalInput{
-        .alloc = alloc,
-        .io = io,
+    const model = Model{
         .species = &.{},
         .atoms = &.{},
         .cell_bohr = cell,
         .recip = recip,
         .volume_bohr = volume,
+    };
+    const input = EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .model = &model,
         .rho = rho,
         .grid = &grid,
     };
@@ -411,14 +418,17 @@ test "termEnergy(.xc) matches computeXcFields integral (LDA)" {
     defer alloc.free(rho);
     @memset(rho, 0.5 / volume);
 
-    const input = EvalInput{
-        .alloc = alloc,
-        .io = io,
+    const model = Model{
         .species = &.{},
         .atoms = &.{},
         .cell_bohr = cell,
         .recip = recip,
         .volume_bohr = volume,
+    };
+    const input = EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .model = &model,
         .rho = rho,
         .grid = &grid,
     };
@@ -465,14 +475,17 @@ test "termEnergy(.ewald) matches direct ionIonEnergy" {
     const direct_params = ewald_mod.Params{ .alpha = 0.0, .rcut = 0.0, .gcut = 0.0, .tol = 0.0, .quiet = true };
     const e_direct = try ewald_mod.ionIonEnergy(io, cell, recip, &charges, &positions, direct_params);
 
-    const input = EvalInput{
-        .alloc = alloc,
-        .io = io,
+    const model = Model{
         .species = &species_arr,
         .atoms = &atoms,
         .cell_bohr = cell,
         .recip = recip,
         .volume_bohr = volume,
+    };
+    const input = EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .model = &model,
     };
     const e_term = try termEnergy(.{ .ewald = .{ .alpha = 0.0, .quiet = true } }, input);
 
