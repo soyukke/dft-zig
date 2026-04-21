@@ -8,9 +8,6 @@
 
 const math = @import("../math/math.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
-const term_mod = @import("term.zig");
-
-pub const Term = term_mod.Term;
 
 pub const Model = struct {
     species: []hamiltonian.SpeciesEntry,
@@ -18,5 +15,4 @@ pub const Model = struct {
     cell_bohr: math.Mat3,
     recip: math.Mat3,
     volume_bohr: f64,
-    terms: []const Term,
 };
