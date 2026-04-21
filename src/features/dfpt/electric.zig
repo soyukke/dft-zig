@@ -29,11 +29,11 @@ const DfptConfig = dfpt.DfptConfig;
 const KPointGsData = phonon_q.KPointGsData;
 
 const logDfpt = dfpt.logDfpt;
+const logDfptInfo = dfpt.logDfptInfo;
 
 pub const DielectricResult = struct {
     epsilon: [3][3]f64,
 };
-
 
 /// Compute ε∞ by solving ddk Sternheimer at all k-points,
 /// then self-consistently solving the efield Sternheimer with V^(1)_Hxc.
@@ -59,7 +59,7 @@ pub fn computeDielectricAllK(
         alloc.free(kgs);
     }
     const n_kpts = kgs.len;
-    logDfpt("ddk: {d} k-points in full BZ\n", .{n_kpts});
+    logDfptInfo("ddk: {d} k-points in full BZ\n", .{n_kpts});
 
     // Build RadialTableSets once
     const n_species = species.len;
@@ -215,7 +215,7 @@ pub fn computeDielectricAllK(
     var epsilon: [3][3]f64 = .{ .{ 0, 0, 0 }, .{ 0, 0, 0 }, .{ 0, 0, 0 } };
 
     for (0..3) |beta| {
-        logDfpt("efield SCF: direction β={d}\n", .{beta});
+        logDfptInfo("efield SCF: direction β={d}\n", .{beta});
 
         // V^(1)_Hxc in reciprocal space (real potential → Hermitian in G)
         // For q=0 efield, V^(1) is real, so we work in real G-space representation.
@@ -398,7 +398,7 @@ pub fn computeDielectricAllK(
 
             if (residual_norm < dfpt_cfg.scf_tol or (force_converge and residual_norm < 10.0 * dfpt_cfg.scf_tol)) {
                 alloc.free(residual);
-                logDfpt("efield SCF β={d}: converged at iter={d} vresid={e:.6}\n", .{ beta, iter, residual_norm });
+                logDfptInfo("efield SCF β={d}: converged at iter={d} vresid={e:.6}\n", .{ beta, iter, residual_norm });
                 break;
             }
 

@@ -5,6 +5,7 @@ const dft = @import("dft_zig");
 pub fn main(init: std.process.Init) !void {
     const alloc = init.gpa;
     const io = init.io;
+    const logger = dft.runtime_logging.stderr(io, .info);
 
     var args_iter = try init.minimal.args.iterateAllocator(alloc);
     defer args_iter.deinit();
@@ -24,12 +25,12 @@ pub fn main(init: std.process.Init) !void {
     const cwd = std.Io.Dir.cwd();
     var has_file_errors = false;
     if (cwd.statFile(io, cfg.xyz_path, .{})) |_| {} else |_| {
-        std.debug.print("[ERROR] [root.xyz] file not found: \"{s}\"\n", .{cfg.xyz_path});
+        try logger.print(.err, "[ERROR] [root.xyz] file not found: \"{s}\"\n", .{cfg.xyz_path});
         has_file_errors = true;
     }
     for (cfg.pseudopotentials) |pp| {
         if (cwd.statFile(io, pp.path, .{})) |_| {} else |_| {
-            std.debug.print("[ERROR] [pseudopotential.path] file not found: \"{s}\" (element {s})\n", .{ pp.path, pp.element });
+            try logger.print(.err, "[ERROR] [pseudopotential.path] file not found: \"{s}\" (element {s})\n", .{ pp.path, pp.element });
             has_file_errors = true;
         }
     }
@@ -39,17 +40,22 @@ pub fn main(init: std.process.Init) !void {
     defer validation.deinit();
 
     for (validation.issues) |issue| {
+        const level: dft.runtime_logging.Level = switch (issue.severity) {
+            .err => .err,
+            .warning => .warn,
+            .hint => .info,
+        };
         const prefix: []const u8 = switch (issue.severity) {
             .err => "ERROR",
             .warning => "WARNING",
             .hint => "HINT",
         };
         const field_sep: []const u8 = if (issue.field.len > 0) "." else "";
-        std.debug.print("[{s}] [{s}{s}{s}] {s}\n", .{ prefix, issue.section, field_sep, issue.field, issue.message });
+        try logger.print(level, "[{s}] [{s}{s}{s}] {s}\n", .{ prefix, issue.section, field_sep, issue.field, issue.message });
     }
 
     if (has_file_errors or validation.hasErrors()) {
-        std.debug.print("Config validation failed. Aborting.\n", .{});
+        try logger.print(.err, "Config validation failed. Aborting.\n", .{});
         return;
     }
 

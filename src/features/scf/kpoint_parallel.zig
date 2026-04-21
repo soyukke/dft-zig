@@ -1,11 +1,14 @@
 const std = @import("std");
 const config = @import("../config/config.zig");
 const fft = @import("../fft/fft.zig");
+const fft_sizing = @import("../../lib/fft/sizing.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const iterative = @import("../linalg/iterative.zig");
 const linalg = @import("../linalg/linalg.zig");
 const math = @import("../math/math.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
+const grid_requirements = @import("../plane_wave/grid_requirements.zig");
 const symmetry = @import("../symmetry/symmetry.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
@@ -20,6 +23,8 @@ const util = @import("util.zig");
 /// Based on benchmarks, dense solver (LAPACK zheev) is faster for small matrices.
 pub const auto_solver_threshold: usize = 400;
 
+var iterative_grid_warning_logged = std.atomic.Value(u8).init(0);
+
 pub const Grid = grid_mod.Grid;
 pub const KPoint = symmetry.KPoint;
 
@@ -29,11 +34,12 @@ const applyHamiltonianBatched = apply.applyHamiltonianBatched;
 const applyNonlocalPotential = apply.applyNonlocalPotential;
 const ScfProfile = logging.ScfProfile;
 const logKpoint = logging.logKpoint;
+const logIterativeGridTooSmall = logging.logIterativeGridTooSmall;
 const profileStart = logging.profileStart;
 const profileAdd = logging.profileAdd;
 const PwGridMap = pw_grid_map.PwGridMap;
-const gridRequirement = util.gridRequirement;
-const nextFftSize = util.nextFftSize;
+const gridRequirement = grid_requirements.gridRequirement;
+const nextFftSize = fft_sizing.nextFftSize;
 const fftReciprocalToComplexInPlace = fft_grid.fftReciprocalToComplexInPlace;
 const fftReciprocalToComplexInPlaceMapped = fft_grid.fftReciprocalToComplexInPlaceMapped;
 const fftComplexToReciprocalInPlace = fft_grid.fftComplexToReciprocalInPlace;
@@ -87,9 +93,10 @@ pub const KpointShared = struct {
     kpoints: []const KPoint,
     ionic: hamiltonian.PotentialGrid,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,
+    local_cfg: local_potential.LocalPotentialConfig,
     potential: hamiltonian.PotentialGrid,
     local_r: ?[]f64,
     nocc: usize,
@@ -173,6 +180,7 @@ pub fn kpointWorker(worker: *KpointWorker) void {
             shared.atoms,
             shared.recip,
             shared.volume,
+            shared.local_cfg,
             shared.potential,
             shared.local_r,
             shared.nocc,
@@ -223,9 +231,10 @@ pub const SmearingShared = struct {
     grid: Grid,
     kpoints: []const KPoint,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,
+    local_cfg: local_potential.LocalPotentialConfig,
     potential: hamiltonian.PotentialGrid,
     local_r: ?[]f64,
     nocc: usize,
@@ -302,6 +311,7 @@ pub fn smearingWorker(worker: *SmearingWorker) void {
             shared.atoms,
             shared.recip,
             shared.volume,
+            shared.local_cfg,
             shared.potential,
             shared.local_r,
             shared.nocc,
@@ -374,9 +384,10 @@ pub fn computeKpointContribution(
     grid: Grid,
     kp: KPoint,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,
+    local_cfg: local_potential.LocalPotentialConfig,
     potential: hamiltonian.PotentialGrid,
     local_r: ?[]f64,
     nocc: usize,
@@ -419,14 +430,17 @@ pub fn computeKpointContribution(
     if (use_iterative) {
         const req = gridRequirement(basis.gvecs);
         if (req.nx > grid.nx or req.ny > grid.ny or req.nz > grid.nz) {
-            var buffer: [256]u8 = undefined;
-            var writer = std.Io.File.stderr().writer(io, &buffer);
-            const out = &writer.interface;
-            try out.print(
-                "scf: iterative grid too small (need >= {d},{d},{d}, suggest {d},{d},{d})\n",
-                .{ req.nx, req.ny, req.nz, nextFftSize(req.nx), nextFftSize(req.ny), nextFftSize(req.nz) },
-            );
-            try out.flush();
+            if (iterative_grid_warning_logged.cmpxchgStrong(0, 1, .acquire, .acquire) == null) {
+                try logIterativeGridTooSmall(
+                    io,
+                    req.nx,
+                    req.ny,
+                    req.nz,
+                    nextFftSize(req.nx),
+                    nextFftSize(req.ny),
+                    nextFftSize(req.nz),
+                );
+            }
             use_iterative = false;
         }
     }
@@ -482,7 +496,7 @@ pub fn computeKpointContribution(
             if (shared_fft_plan) |plan| {
                 break :blk2 try ApplyContext.initWithCache(
                     alloc,
-                io,
+                    io,
                     grid,
                     basis.gvecs,
                     local_values,
@@ -499,7 +513,7 @@ pub fn computeKpointContribution(
             } else {
                 break :blk2 try ApplyContext.initWithCache(
                     alloc,
-                io,
+                    io,
                     grid,
                     basis.gvecs,
                     local_values,
@@ -571,7 +585,7 @@ pub fn computeKpointContribution(
             try iterative.hermitianEigenDecompIterative(alloc, cfg.linalg_backend, op, diag, nbands, opts);
     } else if (has_qij) blk: {
         const h_start = if (profile_ptr != null) profileStart(io) else null;
-        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, potential);
+        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, potential);
         if (profile_ptr) |p| profileAdd(io, &p.h_build_ns, h_start);
         defer alloc.free(h);
         const s_start = if (profile_ptr != null) profileStart(io) else null;
@@ -581,7 +595,7 @@ pub fn computeKpointContribution(
         break :blk try linalg.hermitianGenEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h, s);
     } else blk: {
         const h_start = if (profile_ptr != null) profileStart(io) else null;
-        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, potential);
+        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, potential);
         if (profile_ptr) |p| profileAdd(io, &p.h_build_ns, h_start);
         defer alloc.free(h);
         break :blk try linalg.hermitianEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h);
@@ -701,9 +715,10 @@ pub fn computeKpointEigenData(
     grid: Grid,
     kp: KPoint,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,
+    local_cfg: local_potential.LocalPotentialConfig,
     potential: hamiltonian.PotentialGrid,
     local_r: ?[]f64,
     nocc: usize,
@@ -741,14 +756,17 @@ pub fn computeKpointEigenData(
     if (use_iterative) {
         const req = gridRequirement(basis.gvecs);
         if (req.nx > grid.nx or req.ny > grid.ny or req.nz > grid.nz) {
-            var buffer: [256]u8 = undefined;
-            var writer = std.Io.File.stderr().writer(io, &buffer);
-            const out = &writer.interface;
-            try out.print(
-                "scf: iterative grid too small (need >= {d},{d},{d}, suggest {d},{d},{d})\n",
-                .{ req.nx, req.ny, req.nz, nextFftSize(req.nx), nextFftSize(req.ny), nextFftSize(req.nz) },
-            );
-            try out.flush();
+            if (iterative_grid_warning_logged.cmpxchgStrong(0, 1, .acquire, .acquire) == null) {
+                try logIterativeGridTooSmall(
+                    io,
+                    req.nx,
+                    req.ny,
+                    req.nz,
+                    nextFftSize(req.nx),
+                    nextFftSize(req.ny),
+                    nextFftSize(req.nz),
+                );
+            }
             use_iterative = false;
         }
     }
@@ -802,7 +820,7 @@ pub fn computeKpointEigenData(
             if (shared_fft_plan) |plan| {
                 break :blk2 try ApplyContext.initWithCache(
                     alloc,
-                io,
+                    io,
                     grid,
                     basis.gvecs,
                     local_values,
@@ -819,7 +837,7 @@ pub fn computeKpointEigenData(
             } else {
                 break :blk2 try ApplyContext.initWithCache(
                     alloc,
-                io,
+                    io,
                     grid,
                     basis.gvecs,
                     local_values,
@@ -891,7 +909,7 @@ pub fn computeKpointEigenData(
             try iterative.hermitianEigenDecompIterative(alloc, cfg.linalg_backend, op, diag, nbands, opts);
     } else if (has_qij) blk: {
         const h_start = if (profile_ptr != null) profileStart(io) else null;
-        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, potential);
+        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, potential);
         if (profile_ptr) |p| profileAdd(io, &p.h_build_ns, h_start);
         defer alloc.free(h);
         const s_start = if (profile_ptr != null) profileStart(io) else null;
@@ -901,7 +919,7 @@ pub fn computeKpointEigenData(
         break :blk try linalg.hermitianGenEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h, s);
     } else blk: {
         const h_start = if (profile_ptr != null) profileStart(io) else null;
-        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, potential);
+        const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, potential);
         if (profile_ptr) |p| profileAdd(io, &p.h_build_ns, h_start);
         defer alloc.free(h);
         break :blk try linalg.hermitianEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h);

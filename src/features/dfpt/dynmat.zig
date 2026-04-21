@@ -605,9 +605,6 @@ pub fn symmetrizeDynmatComplex(
         nsym_used += 1;
     }
 
-    // Log little group size for debugging
-    std.debug.print("symmetrizeDynmat: nsym_total={d} nsym_used(little_group)={d} q_frac=({d:.4},{d:.4},{d:.4})\n", .{ nsym, nsym_used, q_frac.x, q_frac.y, q_frac.z });
-
     // Average over symmetry operations
     if (nsym_used > 0) {
         const inv_nsym = 1.0 / @as(f64, @floatFromInt(nsym_used));

@@ -2,11 +2,13 @@ const std = @import("std");
 const config = @import("../config/config.zig");
 const coulomb = @import("../coulomb/coulomb.zig");
 const ewald = @import("../ewald/ewald.zig");
+const term_mod = @import("../dft/term.zig");
 const fft_grid = @import("fft_grid.zig");
 const grid_mod = @import("pw_grid.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const math = @import("../math/math.zig");
 const gvec_iter = @import("gvec_iter.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const d3 = @import("../vdw/d3.zig");
 const d3_params = @import("../vdw/d3_params.zig");
 const xc_fields_mod = @import("xc_fields.zig");
@@ -48,7 +50,8 @@ pub fn computeEnergyTerms(
     nonlocal_energy: f64,
     entropy_energy: f64,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
+    local_cfg: local_potential.LocalPotentialConfig,
     ewald_cfg: config.EwaldConfig,
     use_rfft: bool,
     xc_func: xc.Functional,
@@ -63,17 +66,6 @@ pub fn computeEnergyTerms(
     // For NC pseudopotentials, rho_aug is null and we use rho (pseudo density).
     const rho_for_hxc = rho_aug orelse rho;
 
-    const rho_g = try realToReciprocal(alloc, grid, rho, use_rfft);
-    defer alloc.free(rho_g);
-
-    // E_H uses augmented density in G-space
-    const rho_hxc_g = if (rho_aug != null)
-        try realToReciprocal(alloc, grid, rho_for_hxc, use_rfft)
-    else
-        null;
-    defer if (rho_hxc_g) |g| alloc.free(g);
-    const rho_g_for_eh = rho_hxc_g orelse rho_g;
-
     // E_xc and V_xc use augmented density
     const xc_fields = try computeXcFields(alloc, grid, rho_for_hxc, rho_core, use_rfft, xc_func);
     defer {
@@ -81,53 +73,56 @@ pub fn computeEnergyTerms(
         alloc.free(xc_fields.exc);
     }
     const vxc_r = xc_fields.vxc;
-    const exc_r = xc_fields.exc;
 
-    const inv_volume = 1.0 / grid.volume;
-    var eh: f64 = 0.0;
-    var e_local: f64 = 0.0;
-    var it = gvec_iter.GVecIterator.init(grid);
-    while (it.next()) |g| {
-        // ecutrho spherical cutoff: skip G-vectors beyond ecutrho
-        const beyond_ecutrho = if (ecutrho) |ecut| g.g2 >= ecut else false;
-        if (beyond_ecutrho) {
-            continue;
-        }
-        const rho_val = rho_g[g.idx];
-        // E_H uses augmented density
-        const rho_eh_val = rho_g_for_eh[g.idx];
-        const rho2_eh = rho_eh_val.r * rho_eh_val.r + rho_eh_val.i * rho_eh_val.i;
-        if (coulomb_r_cut) |r_cut| {
-            // Isolated system: cutoff Coulomb Hartree energy
-            // E_H = (Ω/2) Σ_G |ρ(G)|² × v_c(G)
-            const g_mag = @sqrt(g.g2);
-            const kernel = coulomb.cutoffCoulombEnergyKernel(g.g2, g_mag, r_cut);
-            eh += 0.5 * kernel * rho2_eh * grid.volume;
-        } else {
-            // Periodic system: skip G=0
-            if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
-                // e_local always uses pseudo density
-                const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume);
-                e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
-                continue;
-            }
-            if (g.g2 > 1e-12) {
-                // E_H = (Ω/2) × 8π × Σ |ρ_aug(G)|² / |G|² (Rydberg units)
-                eh += 0.5 * 8.0 * std.math.pi * rho2_eh / g.g2 * grid.volume;
-            }
-        }
-        // e_local always uses pseudo density
-        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume);
-        e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
-    }
-    e_local *= grid.volume;
+    // Hartree energy via Term contract (uses augmented density for PAW).
+    const hartree_input = term_mod.EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .species = species,
+        .atoms = atoms,
+        .cell_bohr = grid.cell,
+        .recip = grid.recip,
+        .volume_bohr = grid.volume,
+        .rho = rho_for_hxc,
+        .grid = &grid,
+    };
+    const eh = try term_mod.termEnergy(.{ .hartree = .{
+        .isolated = (coulomb_r_cut != null),
+        .ecutrho = ecutrho,
+    } }, hartree_input);
+
+    // Local pseudopotential energy via Term contract (pseudo density).
+    const e_local = try term_mod.termEnergy(.{ .atomic_local = .{
+        .mode = local_cfg.mode,
+        .explicit_alpha = local_cfg.alpha,
+        .ecutrho = ecutrho,
+    } }, .{
+        .alloc = alloc,
+        .io = io,
+        .species = species,
+        .atoms = atoms,
+        .cell_bohr = grid.cell,
+        .recip = grid.recip,
+        .volume_bohr = grid.volume,
+        .rho = rho,
+        .grid = &grid,
+    });
 
     const dv = grid.volume / @as(f64, @floatFromInt(grid.count()));
-    var exc: f64 = 0.0;
     var vxc_rho: f64 = 0.0;
-    for (exc_r) |e| {
-        exc += e * dv;
-    }
+    const exc = try term_mod.termEnergy(.{ .xc = .{ .functional = xc_func } }, .{
+        .alloc = alloc,
+        .io = io,
+        .species = species,
+        .atoms = atoms,
+        .cell_bohr = grid.cell,
+        .recip = grid.recip,
+        .volume_bohr = grid.volume,
+        .rho = rho_for_hxc,
+        .rho_core = rho_core,
+        .grid = &grid,
+        .use_rfft = use_rfft,
+    });
     // vxc_rho = ∫V_xc(ρ_aug+core) × ρ_aug dr  (for PAW)
     //         = ∫V_xc(ρ+core) × ρ dr           (for NC)
     // For PAW: D^hat adds ∫V_Hxc × n̂ to band energy, so the double-counting
@@ -136,12 +131,30 @@ pub fn computeEnergyTerms(
         vxc_rho += vxc_r[i] * value * dv;
     }
 
-    // Ion-ion energy: Ewald for periodic, direct Coulomb for isolated
-    // Both return energy in Hartree; convert to Rydberg (* 2.0)
+    // Ion-ion energy: Ewald for periodic, direct Coulomb for isolated.
+    // Periodic Ewald is routed through the Term contract; direct Coulomb
+    // stays on its legacy helper for now. Both return Hartree → Rydberg.
     const ion = if (coulomb_r_cut != null)
         try computeDirectIonIonEnergy(alloc, species, atoms) * 2.0
-    else
-        try computeIonIonEnergy(alloc, io, grid, species, atoms, ewald_cfg, quiet) * 2.0;
+    else blk: {
+        const ewald_term: term_mod.Term = .{ .ewald = .{
+            .alpha = ewald_cfg.alpha,
+            .rcut = ewald_cfg.rcut,
+            .gcut = ewald_cfg.gcut,
+            .tol = ewald_cfg.tol,
+            .quiet = quiet,
+        } };
+        const input = term_mod.EvalInput{
+            .alloc = alloc,
+            .io = io,
+            .species = species,
+            .atoms = atoms,
+            .cell_bohr = grid.cell,
+            .recip = grid.recip,
+            .volume_bohr = grid.volume,
+        };
+        break :blk (try term_mod.termEnergy(ewald_term, input)) * 2.0;
+    };
     // E_psp_core = (n_elec / Ω) × Σ_atoms epsatm  (Rydberg units)
     // This is the volume-dependent correction from the G=0 local potential.
     // For isolated systems, this correction is not needed since G=0 is handled
@@ -187,7 +200,8 @@ pub fn computeEnergyTermsSpin(
     nonlocal_energy: f64,
     entropy_energy: f64,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
+    local_cfg: local_potential.LocalPotentialConfig,
     ewald_cfg: config.EwaldConfig,
     use_rfft: bool,
     xc_func: xc.Functional,
@@ -211,22 +225,6 @@ pub fn computeEnergyTermsSpin(
         rho_total[i] = rho_up_hxc[i] + rho_down_hxc[i];
     }
 
-    // rho_g uses augmented density for E_H
-    const rho_g = try realToReciprocal(alloc, grid, rho_total, use_rfft);
-    defer alloc.free(rho_g);
-
-    // For e_local, use pseudo density (not augmented)
-    const rho_pseudo_g = if (rho_aug_up != null) blk: {
-        const rho_pseudo_total = try alloc.alloc(f64, total);
-        defer alloc.free(rho_pseudo_total);
-        for (0..total) |i| {
-            rho_pseudo_total[i] = rho_up[i] + rho_down[i];
-        }
-        break :blk try realToReciprocal(alloc, grid, rho_pseudo_total, use_rfft);
-    } else null;
-    defer if (rho_pseudo_g) |g| alloc.free(g);
-    const rho_g_for_eloc = rho_pseudo_g orelse rho_g;
-
     // Spin XC — use augmented density for PAW
     const xc_fields = try computeXcFieldsSpin(alloc, grid, rho_up_hxc, rho_down_hxc, rho_core, use_rfft, xc_func);
     defer {
@@ -235,45 +233,48 @@ pub fn computeEnergyTermsSpin(
         alloc.free(xc_fields.exc);
     }
 
-    const inv_volume = 1.0 / grid.volume;
-    var eh: f64 = 0.0;
-    var e_local: f64 = 0.0;
-    var it2 = gvec_iter.GVecIterator.init(grid);
-    while (it2.next()) |g| {
-        // ecutrho spherical cutoff: skip G-vectors beyond ecutrho
-        const beyond_ecutrho = if (ecutrho) |ecut| g.g2 >= ecut else false;
-        if (beyond_ecutrho) {
-            continue;
-        }
-        const rho_val = rho_g[g.idx];
-        const rho2 = rho_val.r * rho_val.r + rho_val.i * rho_val.i;
-        // e_local uses pseudo density
-        const rho_loc = rho_g_for_eloc[g.idx];
-        if (coulomb_r_cut) |r_cut| {
-            const g_mag = @sqrt(g.g2);
-            const kernel = coulomb.cutoffCoulombEnergyKernel(g.g2, g_mag, r_cut);
-            eh += 0.5 * kernel * rho2 * grid.volume;
-        } else {
-            if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
-                const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume);
-                e_local += rho_loc.r * vloc.r + rho_loc.i * vloc.i;
-                continue;
-            }
-            if (g.g2 > 1e-12) {
-                eh += 0.5 * 8.0 * std.math.pi * rho2 / g.g2 * grid.volume;
-            }
-        }
-        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume);
-        e_local += rho_loc.r * vloc.r + rho_loc.i * vloc.i;
-    }
-    e_local *= grid.volume;
+    const shared_input = term_mod.EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .species = species,
+        .atoms = atoms,
+        .cell_bohr = grid.cell,
+        .recip = grid.recip,
+        .volume_bohr = grid.volume,
+        .grid = &grid,
+    };
+
+    // Hartree uses the augmented total density.
+    var hartree_input = shared_input;
+    hartree_input.rho = rho_total;
+    const eh = try term_mod.termEnergy(.{ .hartree = .{
+        .isolated = (coulomb_r_cut != null),
+        .ecutrho = ecutrho,
+    } }, hartree_input);
+
+    // Local pseudo uses the pseudo total density (not augmented).
+    const rho_pseudo_total = if (rho_aug_up != null) blk: {
+        const buf = try alloc.alloc(f64, total);
+        for (0..total) |i| buf[i] = rho_up[i] + rho_down[i];
+        break :blk buf;
+    } else null;
+    defer if (rho_pseudo_total) |buf| alloc.free(buf);
+    var local_input = shared_input;
+    local_input.rho = rho_pseudo_total orelse rho_total;
+    const e_local = try term_mod.termEnergy(.{ .atomic_local = .{
+        .mode = local_cfg.mode,
+        .explicit_alpha = local_cfg.alpha,
+        .ecutrho = ecutrho,
+    } }, local_input);
 
     const dv = grid.volume / @as(f64, @floatFromInt(grid.count()));
-    var exc: f64 = 0.0;
     var vxc_rho: f64 = 0.0;
-    for (xc_fields.exc) |e| {
-        exc += e * dv;
-    }
+    var xc_input = shared_input;
+    xc_input.rho = rho_up_hxc;
+    xc_input.rho_down = rho_down_hxc;
+    xc_input.rho_core = rho_core;
+    xc_input.use_rfft = use_rfft;
+    const exc = try term_mod.termEnergy(.{ .xc = .{ .functional = xc_func } }, xc_input);
     // vxc_rho = ∫(V_xc_up * rho_up + V_xc_down * rho_down) dv — use augmented for PAW
     for (0..total) |i| {
         vxc_rho += (xc_fields.vxc_up[i] * rho_up_hxc[i] + xc_fields.vxc_down[i] * rho_down_hxc[i]) * dv;
@@ -281,8 +282,17 @@ pub fn computeEnergyTermsSpin(
 
     const ion = if (coulomb_r_cut != null)
         try computeDirectIonIonEnergy(alloc, species, atoms) * 2.0
-    else
-        try computeIonIonEnergy(alloc, io, grid, species, atoms, ewald_cfg, quiet) * 2.0;
+    else blk: {
+        var ewald_input = shared_input;
+        ewald_input.rho = null;
+        break :blk (try term_mod.termEnergy(.{ .ewald = .{
+            .alpha = ewald_cfg.alpha,
+            .rcut = ewald_cfg.rcut,
+            .gcut = ewald_cfg.gcut,
+            .tol = ewald_cfg.tol,
+            .quiet = quiet,
+        } }, ewald_input)) * 2.0;
+    };
     var epsatm_sum: f64 = 0.0;
     var n_elec: f64 = 0.0;
     for (atoms) |atom| {
@@ -309,42 +319,12 @@ pub fn computeEnergyTermsSpin(
     };
 }
 
-/// Compute ion-ion Ewald energy.
-fn computeIonIonEnergy(
-    alloc: std.mem.Allocator,
-    io: std.Io,
-    grid: Grid,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
-    ewald_cfg: config.EwaldConfig,
-    quiet: bool,
-) !f64 {
-    const count = atoms.len;
-    if (count == 0) return 0.0;
-    const charges = try alloc.alloc(f64, count);
-    defer alloc.free(charges);
-    const positions = try alloc.alloc(math.Vec3, count);
-    defer alloc.free(positions);
-    for (atoms, 0..) |atom, i| {
-        charges[i] = species[atom.species_index].z_valence;
-        positions[i] = atom.position;
-    }
-    const params = ewald.Params{
-        .alpha = ewald_cfg.alpha,
-        .rcut = ewald_cfg.rcut,
-        .gcut = ewald_cfg.gcut,
-        .tol = ewald_cfg.tol,
-        .quiet = quiet,
-    };
-    return try ewald.ionIonEnergy(io, grid.cell, grid.recip, charges, positions, params);
-}
-
 /// Compute ion-ion energy by direct pairwise Coulomb sum (for isolated systems).
 /// Returns energy in Hartree (same convention as Ewald).
 fn computeDirectIonIonEnergy(
     alloc: std.mem.Allocator,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
 ) !f64 {
     const count = atoms.len;
     if (count == 0) return 0.0;
@@ -386,7 +366,7 @@ pub fn bandNonlocalEnergy(
 fn computeDispersionEnergy(
     alloc: std.mem.Allocator,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     cell: math.Mat3,
     vdw_cfg: config.VdwConfig,
 ) !f64 {

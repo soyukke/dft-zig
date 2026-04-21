@@ -31,6 +31,9 @@ const mixDensity = mixing.mixDensity;
 const mixDensityKerker = mixing.mixDensityKerker;
 const logProgress = logging.logProgress;
 const logIterStart = logging.logIterStart;
+const logSpinInit = logging.logSpinInit;
+const logSpinMagnetization = logging.logSpinMagnetization;
+const logSpinEnergySummary = logging.logSpinEnergySummary;
 
 const KPoint = symmetry.KPoint;
 
@@ -99,7 +102,8 @@ fn solveKpointsForSpin(
     for (kpoints, 0..) |kp, kidx| {
         const ac_ptr: ?*apply.KpointApplyCache = &apply_caches[kidx];
         eigen_data[kidx] = try computeKpointEigenData(
-            alloc, io,
+            alloc,
+            io,
             &cfg,
             grid,
             kp,
@@ -107,6 +111,7 @@ fn solveKpointsForSpin(
             atoms,
             recip,
             volume_bohr,
+            common.local_cfg,
             potential,
             local_r,
             nocc,
@@ -142,7 +147,7 @@ pub fn runSpinPolarizedLoop(
     io: std.Io,
     cfg: config.Config,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     volume_bohr: f64,
     common: *scf_mod.ScfCommon,
 ) !ScfResult {
@@ -202,11 +207,7 @@ pub fn runSpinPolarizedLoop(
     }
 
     if (!cfg.scf.quiet) {
-        var buffer: [256]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(io, &buffer);
-        const out = &writer.interface;
-        try out.print("spin-scf: nspin=2, nelec={d:.1}, m_init={d:.2}\n", .{ total_electrons, m_total });
-        try out.flush();
+        try logSpinInit(io, total_electrons, m_total);
     }
 
     // Build initial potentials
@@ -347,7 +348,8 @@ pub fn runSpinPolarizedLoop(
         // Accumulate densities for each spin channel (FSM uses separate mu)
         for (eigen_data_up[0..result_up.filled], 0..) |entry, kidx| {
             try accumulateKpointDensitySmearingSpin(
-                alloc, io,
+                alloc,
+                io,
                 &cfg,
                 grid,
                 kpoints[kidx],
@@ -370,7 +372,8 @@ pub fn runSpinPolarizedLoop(
         }
         for (eigen_data_down[0..result_down.filled], 0..) |entry, kidx| {
             try accumulateKpointDensitySmearingSpin(
-                alloc, io,
+                alloc,
+                io,
                 &cfg,
                 grid,
                 kpoints[kidx],
@@ -658,11 +661,7 @@ pub fn runSpinPolarizedLoop(
     }
 
     if (!cfg.scf.quiet) {
-        var buffer: [256]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(io, &buffer);
-        const out = &writer.interface;
-        try out.print("spin-scf: magnetization = {d:.6} μ_B\n", .{magnetization});
-        try out.flush();
+        try logSpinMagnetization(io, magnetization);
     }
 
     // Compute total density for energy calculation
@@ -707,7 +706,8 @@ pub fn runSpinPolarizedLoop(
 
     // Compute energy terms using spin-polarized XC
     var energy_terms = try energy_mod.computeEnergyTermsSpin(
-        alloc, io,
+        alloc,
+        io,
         grid,
         rho_up,
         rho_down,
@@ -717,6 +717,7 @@ pub fn runSpinPolarizedLoop(
         last_entropy_energy,
         species,
         atoms,
+        common.local_cfg,
         cfg.ewald,
         cfg.scf.use_rfft,
         cfg.scf.xc,
@@ -941,16 +942,7 @@ pub fn runSpinPolarizedLoop(
     }
 
     if (!cfg.scf.quiet) {
-        var buffer: [256]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(io, &buffer);
-        const out = &writer.interface;
-        try out.print("spin-scf: total_energy = {d:.10} Ry\n", .{energy_terms.total});
-        try out.print("spin-scf: E_band={d:.8} E_H={d:.8} E_xc={d:.8} E_ion={d:.8}\n", .{ energy_terms.band, energy_terms.hartree, energy_terms.xc, energy_terms.ion_ion });
-        try out.print("spin-scf: E_psp={d:.8} E_dc={d:.8} E_local={d:.8} E_nl={d:.8}\n", .{ energy_terms.psp_core, energy_terms.double_counting, energy_terms.local_pseudo, energy_terms.nonlocal_pseudo });
-        if (common.is_paw) {
-            try out.print("spin-scf: E_paw_onsite={d:.8} E_paw_dxc={d:.8}\n", .{ energy_terms.paw_onsite, energy_terms.paw_dxc_rhoij });
-        }
-        try out.flush();
+        try logSpinEnergySummary(io, energy_terms, common.is_paw);
     }
 
     try common.log.writeResult(
@@ -971,13 +963,41 @@ pub fn runSpinPolarizedLoop(
     var vxc_r_down_result: ?[]f64 = null;
     if (cfg.relax.enabled or cfg.dfpt.enabled or cfg.scf.compute_stress or cfg.dos.enabled) {
         const wfn_up = try scf_mod.computeFinalWavefunctionsWithSpinFactor(
-            alloc, io, cfg, grid, kpoints, common.ionic, species, atoms, recip, volume_bohr,
-            potential_up, kpoint_cache_up, apply_caches_up, common.radial_tables, common.paw_tabs, 1.0,
+            alloc,
+            io,
+            cfg,
+            grid,
+            kpoints,
+            common.ionic,
+            species,
+            atoms,
+            recip,
+            volume_bohr,
+            potential_up,
+            kpoint_cache_up,
+            apply_caches_up,
+            common.radial_tables,
+            common.paw_tabs,
+            1.0,
         );
         wavefunctions_up = wfn_up.wavefunctions;
         const wfn_down = try scf_mod.computeFinalWavefunctionsWithSpinFactor(
-            alloc, io, cfg, grid, kpoints, common.ionic, species, atoms, recip, volume_bohr,
-            potential_down, kpoint_cache_down, apply_caches_down, common.radial_tables, common.paw_tabs, 1.0,
+            alloc,
+            io,
+            cfg,
+            grid,
+            kpoints,
+            common.ionic,
+            species,
+            atoms,
+            recip,
+            volume_bohr,
+            potential_down,
+            kpoint_cache_down,
+            apply_caches_down,
+            common.radial_tables,
+            common.paw_tabs,
+            1.0,
         );
         wavefunctions_down_final = wfn_down.wavefunctions;
 

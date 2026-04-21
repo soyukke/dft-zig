@@ -13,6 +13,7 @@ const d3 = @import("../vdw/d3.zig");
 const d3_params = @import("../vdw/d3_params.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const config_mod = @import("../config/config.zig");
+const model_mod = @import("../dft/model.zig");
 const iterative = @import("../linalg/iterative.zig");
 const symmetry_mod = @import("../symmetry/symmetry.zig");
 
@@ -30,6 +31,7 @@ const DfptConfig = dfpt.DfptConfig;
 const IonicData = dfpt.IonicData;
 const PerturbationResult = dfpt.PerturbationResult;
 const logDfpt = dfpt.logDfpt;
+const logDfptInfo = dfpt.logDfptInfo;
 
 const kpoints_mod = @import("../kpoints/kpoints.zig");
 const symmetry = @import("../symmetry/symmetry.zig");
@@ -98,7 +100,7 @@ pub fn prepareFullBZKpoints(
     defer alloc.free(full_kpts);
 
     const n_kpts = full_kpts.len;
-    logDfpt("dfpt_band: generating full BZ k-mesh: {d}x{d}x{d} = {d} k-points\n", .{ kmesh[0], kmesh[1], kmesh[2], n_kpts });
+    logDfptInfo("dfpt_band: generating full BZ k-mesh: {d}x{d}x{d} = {d} k-points\n", .{ kmesh[0], kmesh[1], kmesh[2], n_kpts });
 
     var kgs_data = try alloc.alloc(KPointGsData, n_kpts);
     var built: usize = 0;
@@ -126,7 +128,7 @@ pub fn prepareFullBZKpoints(
         errdefer alloc.destroy(apply_ctx_k);
         apply_ctx_k.* = try scf_mod.ApplyContext.init(
             alloc,
-                io,
+            io,
             grid,
             @constCast(basis_k.gvecs),
             local_r,
@@ -236,7 +238,7 @@ pub fn prepareFullBZKpointsFromIBZ(
     // Get symmetry operations
     const symops = try symmetry_mod.getSymmetryOps(alloc, cell_bohr, atoms, 1e-5);
     defer alloc.free(symops);
-    logDfpt("dfpt_ibz: {d} symmetry operations\n", .{symops.len});
+    logDfptInfo("dfpt_ibz: {d} symmetry operations\n", .{symops.len});
 
     // Filter symmetry ops compatible with k-mesh
     const kmesh_ops = try reduction.filterSymOpsForKmesh(alloc, symops, kmesh, shift, 1e-8);
@@ -246,7 +248,7 @@ pub fn prepareFullBZKpointsFromIBZ(
     var mapping = try reduction.reduceKmeshWithMapping(alloc, kmesh, shift, kmesh_ops, recip, true);
     defer mapping.deinit(alloc);
     const n_ibz = mapping.ibz_kpoints.len;
-    logDfpt("dfpt_ibz: {d} IBZ k-points -> {d} full BZ k-points\n", .{ n_ibz, total });
+    logDfptInfo("dfpt_ibz: {d} IBZ k-points -> {d} full BZ k-points\n", .{ n_ibz, total });
 
     // Generate full BZ mesh for reference (to get k_frac/k_cart for each full point)
     const full_kpts = try mesh_mod.generateKmesh(alloc, kmesh, recip, shift);
@@ -271,7 +273,7 @@ pub fn prepareFullBZKpointsFromIBZ(
         errdefer alloc.destroy(apply_ctx_k);
         apply_ctx_k.* = try scf_mod.ApplyContext.init(
             alloc,
-                io,
+            io,
             grid,
             @constCast(basis_k.gvecs),
             local_r,
@@ -428,7 +430,7 @@ pub fn prepareFullBZKpointsFromIBZ(
         errdefer alloc.destroy(apply_ctx_sk);
         apply_ctx_sk.* = try scf_mod.ApplyContext.init(
             alloc,
-                io,
+            io,
             grid,
             @constCast(basis_sk.gvecs),
             local_r,
@@ -593,7 +595,7 @@ fn buildKPointDfptDataFromGS(
         errdefer alloc.destroy(apply_ctx_kq);
         apply_ctx_kq.* = try scf_mod.ApplyContext.initWithWorkspaces(
             alloc,
-                io,
+            io,
             grid,
             @constCast(basis_kq.gvecs),
             local_r,
@@ -1150,6 +1152,7 @@ pub fn solvePerturbationQ(
         gs.species,
         direction,
         q_cart,
+        gs.local_cfg,
         gs.ff_tables,
     );
     defer alloc.free(vloc1_g);
@@ -1486,7 +1489,6 @@ pub fn solvePerturbationQ(
 // Multi-k-point DFPT perturbation solver
 // =====================================================================
 
-
 /// Shared data for parallel DFPT k-point processing within one SCF iteration.
 const DfptKpointShared = struct {
     io: std.Io,
@@ -1691,6 +1693,7 @@ pub fn solvePerturbationQMultiK(
         species,
         direction,
         q_cart,
+        gs.local_cfg,
         ff_tables,
     );
     defer alloc.free(vloc1_g);
@@ -1874,7 +1877,7 @@ pub fn solvePerturbationQMultiK(
         } else {
             // Parallel path — spawn worker threads
             if (iter == 0) {
-                logDfpt("dfptQ_mk: using {d} threads for {d} k-points\n", .{ thread_count, n_kpts });
+                logDfptInfo("dfptQ_mk: using {d} threads for {d} k-points\n", .{ thread_count, n_kpts });
             }
 
             // Allocate thread-local ρ^(1) buffers
@@ -2221,7 +2224,7 @@ fn buildQDynmat(
     }
 
     // Self-energy contribution (local V_loc^(2)) — q-independent
-    const self_dyn_real = try dynmat_contrib.computeSelfEnergyDynmat(alloc, grid, gs.species, gs.atoms, rho0_g, gs.ff_tables);
+    const self_dyn_real = try dynmat_contrib.computeSelfEnergyDynmat(alloc, grid, gs.species, gs.atoms, rho0_g, gs.local_cfg, gs.ff_tables);
     defer alloc.free(self_dyn_real);
     logDfpt("dfptQ_dyn: D_self(0x,0x)={e:.6} D_self(0x,1x)={e:.6}\n", .{ self_dyn_real[0], self_dyn_real[3] });
     for (0..dim * dim) |i| {
@@ -2536,7 +2539,7 @@ fn buildQDynmatMultiK(
     }
 
     // Self-energy (local V_loc^(2))
-    const self_dyn_real = try dynmat_contrib.computeSelfEnergyDynmat(alloc, grid, species, atoms, rho0_g, ff_tables);
+    const self_dyn_real = try dynmat_contrib.computeSelfEnergyDynmat(alloc, grid, species, atoms, rho0_g, gs.local_cfg, ff_tables);
     defer alloc.free(self_dyn_real);
     logDfpt("dfptQ_mk_dyn: D_self(0x,0x)={e:.6}\n", .{self_dyn_real[0]});
     for (0..dim * dim) |i| {
@@ -2826,18 +2829,19 @@ pub fn runPhononBand(
     io: std.Io,
     cfg: config_mod.Config,
     scf_result: *scf_mod.ScfResult,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
-    cell_bohr: math.Mat3,
-    recip: math.Mat3,
-    volume: f64,
+    model: *const model_mod.Model,
     npoints_per_seg: usize,
 ) !PhononBandResult {
+    const species = model.species;
+    const atoms = model.atoms;
+    const cell_bohr = model.cell_bohr;
+    const recip = model.recip;
+    const volume = model.volume_bohr;
     const n_atoms = atoms.len;
     const dim = 3 * n_atoms;
     const grid = scf_result.grid;
 
-    logDfpt("dfpt_band: starting phonon band calculation ({d} atoms)\n", .{n_atoms});
+    logDfptInfo("dfpt_band: starting phonon band calculation ({d} atoms)\n", .{n_atoms});
 
     // Prepare ground state (PW basis, eigenvalues, wavefunctions, NLCC, etc.)
     var prepared = try dfpt.prepareGroundState(alloc, io, cfg, scf_result, species, atoms, volume, recip);
@@ -2865,12 +2869,12 @@ pub fn runPhononBand(
     defer alloc.free(qpath.q_points_cart);
 
     const n_q = qpath.q_points_cart.len;
-    logDfpt("dfpt_band: {d} q-points along path\n", .{n_q});
+    logDfptInfo("dfpt_band: {d} q-points along path\n", .{n_q});
 
     // Build symmetry operations and atom mapping table for dynmat symmetrization
     const symops = try symmetry_mod.getSymmetryOps(alloc, cell_bohr, atoms, 1e-5);
     defer alloc.free(symops);
-    logDfpt("dfpt_band: {d} symmetry operations found\n", .{symops.len});
+    logDfptInfo("dfpt_band: {d} symmetry operations found\n", .{symops.len});
 
     const sym_data = try dynmat_mod.buildIndsym(alloc, symops, atoms, recip, 1e-5);
     defer {
@@ -2898,7 +2902,8 @@ pub fn runPhononBand(
     // symmetry operations that map k to its star.
     // ---------------------------------------------------------------
     const kgs_data = try prepareFullBZKpoints(
-        alloc, io,
+        alloc,
+        io,
         cfg,
         &gs,
         prepared.local_r,
@@ -2936,7 +2941,8 @@ pub fn runPhononBand(
         // Build KPointDfptData from precomputed ground-state data + q-dependent k+q data
         const pert_thread_count = dfpt.perturbationThreadCount(dim, dfpt_cfg.perturbation_threads);
         const kpts = try buildKPointDfptDataFromGS(
-            alloc, io,
+            alloc,
+            io,
             kgs_data,
             q_cart,
             q_norm,
@@ -2983,6 +2989,7 @@ pub fn runPhononBand(
                         species,
                         dir,
                         q_cart,
+                        gs.local_cfg,
                         gs.ff_tables,
                     );
                     vloc1_count_local = pidx + 1;
@@ -3013,7 +3020,8 @@ pub fn runPhononBand(
                     const pidx = 3 * ia + dir;
 
                     pert_results_mk[pidx] = try solvePerturbationQMultiK(
-                        alloc, io,
+                        alloc,
+                        io,
                         kpts,
                         ia,
                         dir,
@@ -3042,7 +3050,7 @@ pub fn runPhononBand(
             var pert_dfpt_cfg = dfpt_cfg;
             pert_dfpt_cfg.kpoint_threads = dfpt.kpointThreadsForPertParallel(pert_thread_count, dfpt_cfg.kpoint_threads);
 
-            logDfpt("dfpt_band: using {d} pert threads × {d} kpt threads for {d} perturbations ({d} irreducible)\n", .{ pert_thread_count, pert_dfpt_cfg.kpoint_threads, dim, n_irr_perts });
+            logDfptInfo("dfpt_band: using {d} pert threads × {d} kpt threads for {d} perturbations ({d} irreducible)\n", .{ pert_thread_count, pert_dfpt_cfg.kpoint_threads, dim, n_irr_perts });
 
             // Initialize output arrays to safe defaults for cleanup
             for (0..dim) |i| {
@@ -3065,6 +3073,7 @@ pub fn runPhononBand(
                         species,
                         dir,
                         q_cart,
+                        gs.local_cfg,
                         gs.ff_tables,
                     );
                     rho1_core_gs[pidx] = try perturbation.buildCorePerturbationQ(
@@ -3193,11 +3202,11 @@ pub fn runPhononBand(
         @memcpy(frequencies[iq], result_q.frequencies_cm1);
         freq_count = iq + 1;
 
-        logDfpt("dfpt_band: q[{d}] freqs:", .{iq});
+        logDfptInfo("dfpt_band: q[{d}] freqs:", .{iq});
         for (result_q.frequencies_cm1) |f| {
-            logDfpt(" {d:.1}", .{f});
+            logDfptInfo(" {d:.1}", .{f});
         }
-        logDfpt("\n", .{});
+        logDfptInfo("\n", .{});
     }
 
     return PhononBandResult{
@@ -3322,18 +3331,19 @@ pub fn runPhononBandIFC(
     io: std.Io,
     cfg: config_mod.Config,
     scf_result: *scf_mod.ScfResult,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
-    cell_bohr: math.Mat3,
-    recip: math.Mat3,
-    volume: f64,
+    model: *const model_mod.Model,
 ) !PhononBandResult {
+    const species = model.species;
+    const atoms = model.atoms;
+    const cell_bohr = model.cell_bohr;
+    const recip = model.recip;
+    const volume = model.volume_bohr;
     const n_atoms = atoms.len;
     const dim = 3 * n_atoms;
     const grid = scf_result.grid;
     const qgrid = cfg.dfpt.qgrid orelse return error.MissingQgrid;
 
-    logDfpt("dfpt_ifc: starting IFC phonon band ({d} atoms, qgrid={d}x{d}x{d})\n", .{ n_atoms, qgrid[0], qgrid[1], qgrid[2] });
+    logDfptInfo("dfpt_ifc: starting IFC phonon band ({d} atoms, qgrid={d}x{d}x{d})\n", .{ n_atoms, qgrid[0], qgrid[1], qgrid[2] });
 
     // Prepare ground state
     var prepared = try dfpt.prepareGroundState(alloc, io, cfg, scf_result, species, atoms, volume, recip);
@@ -3358,7 +3368,7 @@ pub fn runPhononBandIFC(
     // Build symmetry operations for dynmat symmetrization
     const symops = try symmetry_mod.getSymmetryOps(alloc, cell_bohr, atoms, 1e-5);
     defer alloc.free(symops);
-    logDfpt("dfpt_ifc: {d} symmetry operations found\n", .{symops.len});
+    logDfptInfo("dfpt_ifc: {d} symmetry operations found\n", .{symops.len});
 
     const sym_data = try dynmat_mod.buildIndsym(alloc, symops, atoms, recip, 1e-5);
     defer {
@@ -3372,7 +3382,8 @@ pub fn runPhononBandIFC(
 
     // Prepare full-BZ k-point ground-state data
     const kgs_data = try prepareFullBZKpoints(
-        alloc, io,
+        alloc,
+        io,
         cfg,
         &gs,
         prepared.local_r,
@@ -3395,7 +3406,7 @@ pub fn runPhononBandIFC(
     const qgrid_points = try mesh_mod.generateKmesh(alloc, qgrid, recip, shift_zero);
     defer alloc.free(qgrid_points);
     const n_qgrid = qgrid_points.len;
-    logDfpt("dfpt_ifc: {d} q-grid points for DFPT\n", .{n_qgrid});
+    logDfptInfo("dfpt_ifc: {d} q-grid points for DFPT\n", .{n_qgrid});
 
     // Store fractional q-points and dynamical matrices
     var q_frac_grid = try alloc.alloc(math.Vec3, n_qgrid);
@@ -3427,7 +3438,8 @@ pub fn runPhononBandIFC(
         // Build k+q data for this q-point
         const pert_thread_count = dfpt.perturbationThreadCount(dim, dfpt_cfg.perturbation_threads);
         const kpts = try buildKPointDfptDataFromGS(
-            alloc, io,
+            alloc,
+            io,
             kgs_data,
             q_cart,
             q_norm,
@@ -3474,6 +3486,7 @@ pub fn runPhononBandIFC(
                         species,
                         dir,
                         q_cart,
+                        gs.local_cfg,
                         gs.ff_tables,
                     );
                     vloc1_count_local = pidx + 1;
@@ -3502,7 +3515,8 @@ pub fn runPhononBandIFC(
                     const pidx = 3 * ia + dir;
 
                     pert_results_mk[pidx] = try solvePerturbationQMultiK(
-                        alloc, io,
+                        alloc,
+                        io,
                         kpts,
                         ia,
                         dir,
@@ -3542,6 +3556,7 @@ pub fn runPhononBandIFC(
                         species,
                         dir,
                         q_cart,
+                        gs.local_cfg,
                         gs.ff_tables,
                     );
                     rho1_core_gs[pidx] = try perturbation.buildCorePerturbationQ(
@@ -3662,7 +3677,7 @@ pub fn runPhononBandIFC(
     // =============================================================
     // Phase 2: Compute IFC: C(R) = FT[D(q)]
     // =============================================================
-    logDfpt("dfpt_ifc: computing IFC from {d} q-grid points\n", .{n_qgrid});
+    logDfptInfo("dfpt_ifc: computing IFC from {d} q-grid points\n", .{n_qgrid});
 
     // Cast dynmat_grid to const slices for computeIFC
     var dynmat_const = try alloc.alloc([]const math.Complex, n_qgrid);
@@ -3676,7 +3691,7 @@ pub fn runPhononBandIFC(
 
     // Apply ASR in IFC space
     ifc_mod.applyASR(&ifc_data);
-    logDfpt("dfpt_ifc: IFC ASR applied\n", .{});
+    logDfptInfo("dfpt_ifc: IFC ASR applied\n", .{});
 
     // =============================================================
     // Phase 3: Generate q-path and interpolate
@@ -3709,7 +3724,7 @@ pub fn runPhononBandIFC(
     defer alloc.free(q_points_cart);
 
     const n_q = q_points_cart.len;
-    logDfpt("dfpt_ifc: interpolating {d} q-path points\n", .{n_q});
+    logDfptInfo("dfpt_ifc: interpolating {d} q-path points\n", .{n_q});
 
     // Allocate result arrays
     var frequencies = try alloc.alloc([]f64, n_q);
@@ -3744,11 +3759,11 @@ pub fn runPhononBandIFC(
         freq_count = iq + 1;
 
         if (iq % 10 == 0 or iq == n_q - 1) {
-            logDfpt("dfpt_ifc: q[{d}] freqs:", .{iq});
+            logDfptInfo("dfpt_ifc: q[{d}] freqs:", .{iq});
             for (result_q.frequencies_cm1) |f| {
-                logDfpt(" {d:.1}", .{f});
+                logDfptInfo(" {d:.1}", .{f});
             }
-            logDfpt("\n", .{});
+            logDfptInfo("\n", .{});
         }
     }
 
@@ -3757,7 +3772,7 @@ pub fn runPhononBandIFC(
     // =============================================================
     if (cfg.dfpt.dos_qmesh) |dos_qmesh| {
         const phonon_dos_mod = @import("phonon_dos.zig");
-        logDfpt("dfpt_ifc: computing phonon DOS on {d}x{d}x{d} mesh\n", .{ dos_qmesh[0], dos_qmesh[1], dos_qmesh[2] });
+        logDfptInfo("dfpt_ifc: computing phonon DOS on {d}x{d}x{d} mesh\n", .{ dos_qmesh[0], dos_qmesh[1], dos_qmesh[2] });
 
         var pdos = try phonon_dos_mod.computePhononDos(
             alloc,
@@ -3774,7 +3789,7 @@ pub fn runPhononBandIFC(
         var out_dir = try std.Io.Dir.cwd().openDir(io, cfg.out_dir, .{});
         defer out_dir.close(io);
         try phonon_dos_mod.writePhononDosCsv(io, out_dir, pdos);
-        logDfpt("dfpt_ifc: phonon DOS written to phonon_dos.csv\n", .{});
+        logDfptInfo("dfpt_ifc: phonon DOS written to phonon_dos.csv\n", .{});
     }
 
     return PhononBandResult{

@@ -7,8 +7,10 @@ const d3_params = @import("../vdw/d3_params.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const ewald = @import("../ewald/ewald.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
+const runtime_logging = @import("../runtime/logging.zig");
 const scf = @import("../scf/scf.zig");
 pub const local_force = @import("local_force.zig");
 pub const nonlocal_force = @import("nonlocal_force.zig");
@@ -69,6 +71,7 @@ pub fn computeForces(
     recip: math.Mat3,
     volume: f64,
     alpha: f64,
+    local_cfg: local_potential.LocalPotentialConfig,
     wavefunctions: ?scf.WavefunctionData,
     vresid_g: ?[]const math.Complex,
     quiet: bool,
@@ -139,7 +142,7 @@ pub fn computeForces(
         species,
         atoms,
         volume,
-        alpha,
+        local_cfg,
         ff_tables,
     );
 
@@ -324,17 +327,15 @@ pub fn computeForces(
     }
 
     // Force timing profile (unbuffered write)
+    const log_level: runtime_logging.Level = if (quiet) .warn else .info;
+    const logger = runtime_logging.stderr(io, log_level);
     if (!quiet) {
         const ewald_ms = @as(f64, @floatFromInt(t0.durationTo(after_ewald).raw.nanoseconds)) / 1_000_000.0;
         const local_ms = @as(f64, @floatFromInt(after_ewald.durationTo(after_local).raw.nanoseconds)) / 1_000_000.0;
         const nl_ms = @as(f64, @floatFromInt(after_local.durationTo(after_nonlocal).raw.nanoseconds)) / 1_000_000.0;
         const nlcc_ms = @as(f64, @floatFromInt(after_nonlocal.durationTo(after_nlcc).raw.nanoseconds)) / 1_000_000.0;
         const total_ms = @as(f64, @floatFromInt(t0.durationTo(after_nlcc).raw.nanoseconds)) / 1_000_000.0;
-        var buf: [256]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(io, &buf);
-        const out = &writer.interface;
-        out.print("force_profile ewald_ms={d:.1} local_ms={d:.1} nonlocal_ms={d:.1} nlcc_ms={d:.1} total_ms={d:.1}\n", .{ ewald_ms, local_ms, nl_ms, nlcc_ms, total_ms }) catch {};
-        out.flush() catch {};
+        logger.print(.info, "force_profile ewald_ms={d:.1} local_ms={d:.1} nonlocal_ms={d:.1} nlcc_ms={d:.1} total_ms={d:.1}\n", .{ ewald_ms, local_ms, nl_ms, nlcc_ms, total_ms }) catch {};
     }
 
     // Total forces
@@ -359,11 +360,8 @@ pub fn computeForces(
     }
 
     // Debug output for force components
-    if (!quiet) {
-        var buffer: [1024]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(io, &buffer);
-        const out = &writer.interface;
-        out.print("\n=== Force Components (Ry/Bohr) ===\n", .{}) catch {};
+    if (runtime_logging.enabled(log_level, .debug)) {
+        logger.print(.debug, "\n=== Force Components (Ry/Bohr) ===\n", .{}) catch {};
         for (0..n_atoms) |i| {
             const ew = ewald_forces[i];
             const loc = local_forces[i];
@@ -373,12 +371,14 @@ pub fn computeForces(
                 if (resid_forces != null or nlcc_forces != null) {
                     const rf = if (resid_forces) |resid| resid[i] else math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
                     const cf = if (nlcc_forces) |nlcc| nlcc[i] else math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-                    out.print(
+                    logger.print(
+                        .debug,
                         "Atom {d}: Ewald=({d:.6},{d:.6},{d:.6}) Local=({d:.6},{d:.6},{d:.6}) Nonlocal=({d:.6},{d:.6},{d:.6}) Resid=({d:.6},{d:.6},{d:.6}) NLCC=({d:.6},{d:.6},{d:.6}) Total=({d:.6},{d:.6},{d:.6})\n",
                         .{ i, ew.x, ew.y, ew.z, loc.x, loc.y, loc.z, nlf.x, nlf.y, nlf.z, rf.x, rf.y, rf.z, cf.x, cf.y, cf.z, tot.x, tot.y, tot.z },
                     ) catch {};
                 } else {
-                    out.print(
+                    logger.print(
+                        .debug,
                         "Atom {d}: Ewald=({d:.6},{d:.6},{d:.6}) Local=({d:.6},{d:.6},{d:.6}) Nonlocal=({d:.6},{d:.6},{d:.6}) Total=({d:.6},{d:.6},{d:.6})\n",
                         .{ i, ew.x, ew.y, ew.z, loc.x, loc.y, loc.z, nlf.x, nlf.y, nlf.z, tot.x, tot.y, tot.z },
                     ) catch {};
@@ -387,19 +387,20 @@ pub fn computeForces(
                 if (resid_forces != null or nlcc_forces != null) {
                     const rf = if (resid_forces) |resid| resid[i] else math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
                     const cf = if (nlcc_forces) |nlcc| nlcc[i] else math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-                    out.print(
+                    logger.print(
+                        .debug,
                         "Atom {d}: Ewald=({d:.6},{d:.6},{d:.6}) Local=({d:.6},{d:.6},{d:.6}) Resid=({d:.6},{d:.6},{d:.6}) NLCC=({d:.6},{d:.6},{d:.6}) Total=({d:.6},{d:.6},{d:.6})\n",
                         .{ i, ew.x, ew.y, ew.z, loc.x, loc.y, loc.z, rf.x, rf.y, rf.z, cf.x, cf.y, cf.z, tot.x, tot.y, tot.z },
                     ) catch {};
                 } else {
-                    out.print(
+                    logger.print(
+                        .debug,
                         "Atom {d}: Ewald=({d:.6},{d:.6},{d:.6}) Local=({d:.6},{d:.6},{d:.6}) Total=({d:.6},{d:.6},{d:.6})\n",
                         .{ i, ew.x, ew.y, ew.z, loc.x, loc.y, loc.z, tot.x, tot.y, tot.z },
                     ) catch {};
                 }
             }
         }
-        out.flush() catch {};
     }
 
     return ForceTerms{

@@ -1,9 +1,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const fft_sizing = @import("../../lib/fft/sizing.zig");
 const linalg = @import("../linalg/linalg.zig");
 const math = @import("../math/math.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
-const scf_util = @import("../scf/util.zig");
+const runtime_logging = @import("../runtime/logging.zig");
 const xc = @import("../xc/xc.zig");
 
 pub const BandPathPoint = struct {
@@ -108,11 +110,7 @@ pub const ConvergenceMetric = enum {
     potential,
 };
 
-pub const LocalPotentialMode = enum {
-    tail,
-    ewald,
-    short_range,
-};
+pub const LocalPotentialMode = local_potential.LocalPotentialMode;
 
 pub const BoundaryCondition = enum {
     periodic, // Standard periodic boundary conditions (crystals)
@@ -209,11 +207,7 @@ pub fn convergenceMetricName(metric: ConvergenceMetric) []const u8 {
 }
 
 pub fn localPotentialModeName(mode: LocalPotentialMode) []const u8 {
-    return switch (mode) {
-        .tail => "tail",
-        .ewald => "ewald",
-        .short_range => "short_range",
-    };
+    return local_potential.name(mode);
 }
 
 pub const EwaldConfig = struct {
@@ -279,6 +273,7 @@ pub const DfptConfig = struct {
     dos_sigma: f64 = 5.0, // Phonon DOS Gaussian width (cm⁻¹)
     dos_nbin: usize = 500, // Number of frequency bins for phonon DOS
     compute_dielectric: bool = false, // Compute dielectric tensor ε∞
+    log_level: runtime_logging.Level = .info, // warn=warnings only, info=summary, debug=full diagnostics
 };
 
 pub const DosConfig = struct {
@@ -420,17 +415,14 @@ pub const Config = struct {
 
         // --- SCF checks ---
         if (self.scf.ecut_ry <= 0) {
-            try addIssue(alloc, &issues, .err, "scf", "ecut_ry",
-                try std.fmt.allocPrint(alloc, "must be positive (got {d:.2})", .{self.scf.ecut_ry}));
+            try addIssue(alloc, &issues, .err, "scf", "ecut_ry", try std.fmt.allocPrint(alloc, "must be positive (got {d:.2})", .{self.scf.ecut_ry}));
         } else if (self.scf.ecut_ry < 5.0) {
-            try addIssue(alloc, &issues, .warning, "scf", "ecut_ry",
-                try std.fmt.allocPrint(alloc, "{d:.1} is unusually low; typical range is 15-100 Ry", .{self.scf.ecut_ry}));
+            try addIssue(alloc, &issues, .warning, "scf", "ecut_ry", try std.fmt.allocPrint(alloc, "{d:.1} is unusually low; typical range is 15-100 Ry", .{self.scf.ecut_ry}));
         }
 
         for (self.scf.kmesh, 0..) |k, i| {
             if (k == 0) {
-                try addIssue(alloc, &issues, .err, "scf", "kmesh",
-                    try std.fmt.allocPrint(alloc, "dimension [{d}] must be positive", .{i}));
+                try addIssue(alloc, &issues, .err, "scf", "kmesh", try std.fmt.allocPrint(alloc, "dimension [{d}] must be positive", .{i}));
             }
         }
 
@@ -445,16 +437,13 @@ pub const Config = struct {
         if (self.scf.convergence <= 0) {
             try addIssueLiteral(alloc, &issues, .err, "scf", "convergence", "must be positive");
         } else if (self.scf.convergence > 1e-3) {
-            try addIssue(alloc, &issues, .warning, "scf", "convergence",
-                try std.fmt.allocPrint(alloc, "{e} is loose; results may be inaccurate", .{self.scf.convergence}));
+            try addIssue(alloc, &issues, .warning, "scf", "convergence", try std.fmt.allocPrint(alloc, "{e} is loose; results may be inaccurate", .{self.scf.convergence}));
         }
 
         if (self.scf.mixing_beta <= 0 or self.scf.mixing_beta > 1.0) {
-            try addIssue(alloc, &issues, .err, "scf", "mixing_beta",
-                try std.fmt.allocPrint(alloc, "must be in (0, 1] (got {d:.3})", .{self.scf.mixing_beta}));
+            try addIssue(alloc, &issues, .err, "scf", "mixing_beta", try std.fmt.allocPrint(alloc, "must be in (0, 1] (got {d:.3})", .{self.scf.mixing_beta}));
         } else if (self.scf.mixing_beta > 0.7) {
-            try addIssue(alloc, &issues, .warning, "scf", "mixing_beta",
-                try std.fmt.allocPrint(alloc, "{d:.2} is high; may cause SCF oscillation", .{self.scf.mixing_beta}));
+            try addIssue(alloc, &issues, .warning, "scf", "mixing_beta", try std.fmt.allocPrint(alloc, "{d:.2} is high; may cause SCF oscillation", .{self.scf.mixing_beta}));
         }
 
         if (self.scf.smearing != .none and self.scf.smear_ry <= 0) {
@@ -465,8 +454,7 @@ pub const Config = struct {
         }
 
         if (self.scf.pulay_history > 0 and self.scf.pulay_start > self.scf.pulay_history) {
-            try addIssue(alloc, &issues, .err, "scf", "pulay_start",
-                try std.fmt.allocPrint(alloc, "({d}) exceeds pulay_history ({d})", .{ self.scf.pulay_start, self.scf.pulay_history }));
+            try addIssue(alloc, &issues, .err, "scf", "pulay_start", try std.fmt.allocPrint(alloc, "({d}) exceeds pulay_history ({d})", .{ self.scf.pulay_start, self.scf.pulay_history }));
         }
 
         // --- Boundary + kmesh consistency ---
@@ -522,26 +510,22 @@ pub const Config = struct {
                 try addIssueLiteral(alloc, &issues, .err, "dfpt", "scf_tol", "must be positive");
             }
             if (self.dfpt.mixing_beta <= 0 or self.dfpt.mixing_beta > 1.0) {
-                try addIssue(alloc, &issues, .err, "dfpt", "mixing_beta",
-                    try std.fmt.allocPrint(alloc, "must be in (0, 1] (got {d:.3})", .{self.dfpt.mixing_beta}));
+                try addIssue(alloc, &issues, .err, "dfpt", "mixing_beta", try std.fmt.allocPrint(alloc, "must be in (0, 1] (got {d:.3})", .{self.dfpt.mixing_beta}));
             }
             if (self.dfpt.pulay_history > 0 and self.dfpt.pulay_start > self.dfpt.pulay_history) {
-                try addIssue(alloc, &issues, .err, "dfpt", "pulay_start",
-                    try std.fmt.allocPrint(alloc, "({d}) exceeds pulay_history ({d})", .{ self.dfpt.pulay_start, self.dfpt.pulay_history }));
+                try addIssue(alloc, &issues, .err, "dfpt", "pulay_start", try std.fmt.allocPrint(alloc, "({d}) exceeds pulay_history ({d})", .{ self.dfpt.pulay_start, self.dfpt.pulay_history }));
             }
             if (self.dfpt.qgrid) |qg| {
                 for (qg, 0..) |q, i| {
                     if (q == 0) {
-                        try addIssue(alloc, &issues, .err, "dfpt", "qgrid",
-                            try std.fmt.allocPrint(alloc, "dimension [{d}] must be positive", .{i}));
+                        try addIssue(alloc, &issues, .err, "dfpt", "qgrid", try std.fmt.allocPrint(alloc, "dimension [{d}] must be positive", .{i}));
                     }
                 }
             }
             if (self.dfpt.dos_qmesh) |qm| {
                 for (qm, 0..) |q, i| {
                     if (q == 0) {
-                        try addIssue(alloc, &issues, .err, "dfpt", "dos_qmesh",
-                            try std.fmt.allocPrint(alloc, "dimension [{d}] must be positive", .{i}));
+                        try addIssue(alloc, &issues, .err, "dfpt", "dos_qmesh", try std.fmt.allocPrint(alloc, "dimension [{d}] must be positive", .{i}));
                     }
                 }
             }
@@ -574,8 +558,7 @@ pub const Config = struct {
 
         // --- Spin consistency ---
         if (self.scf.nspin == 2 and self.scf.spinat == null) {
-            try addIssueLiteral(alloc, &issues, .warning, "scf", "spinat",
-                "nspin=2 but spinat not set; calculation may converge to non-magnetic solution");
+            try addIssueLiteral(alloc, &issues, .warning, "scf", "spinat", "nspin=2 but spinat not set; calculation may converge to non-magnetic solution");
         }
 
         // --- Grid vs ecut consistency ---
@@ -588,17 +571,16 @@ pub const Config = struct {
             const raw1 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / math.Vec3.norm(recip.row(0))))) * 2 + 1;
             const raw2 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / math.Vec3.norm(recip.row(1))))) * 2 + 1;
             const raw3 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / math.Vec3.norm(recip.row(2))))) * 2 + 1;
-            const rec1 = scf_util.nextFftSize(@max(raw1, 3));
-            const rec2 = scf_util.nextFftSize(@max(raw2, 3));
-            const rec3 = scf_util.nextFftSize(@max(raw3, 3));
+            const rec1 = fft_sizing.nextFftSize(@max(raw1, 3));
+            const rec2 = fft_sizing.nextFftSize(@max(raw2, 3));
+            const rec3 = fft_sizing.nextFftSize(@max(raw3, 3));
             if (self.scf.grid[0] < raw1 or self.scf.grid[1] < raw2 or self.scf.grid[2] < raw3) {
-                try addIssue(alloc, &issues, .warning, "scf", "grid",
-                    try std.fmt.allocPrint(alloc, "grid [{},{},{}] is smaller than recommended [{},{},{}] for ecut_ry={d:.1}; use grid = [{},{},{}] or set grid = [0,0,0] for auto", .{
-                        self.scf.grid[0], self.scf.grid[1], self.scf.grid[2],
-                        raw1,             raw2,             raw3,
-                        self.scf.ecut_ry,
-                        rec1, rec2, rec3,
-                    }));
+                try addIssue(alloc, &issues, .warning, "scf", "grid", try std.fmt.allocPrint(alloc, "grid [{},{},{}] is smaller than recommended [{},{},{}] for ecut_ry={d:.1}; use grid = [{},{},{}] or set grid = [0,0,0] for auto", .{
+                    self.scf.grid[0], self.scf.grid[1], self.scf.grid[2],
+                    raw1,             raw2,             raw3,
+                    self.scf.ecut_ry, rec1,             rec2,
+                    rec3,
+                }));
             }
         }
 
@@ -606,51 +588,43 @@ pub const Config = struct {
 
         // Solver: dense is very slow for non-trivial systems
         if (self.scf.enabled and self.scf.solver == .dense) {
-            try addIssueLiteral(alloc, &issues, .hint, "scf", "solver",
-                "solver = \"dense\" is slow for large systems; consider solver = \"iterative\" (LOBPCG)");
+            try addIssueLiteral(alloc, &issues, .hint, "scf", "solver", "solver = \"dense\" is slow for large systems; consider solver = \"iterative\" (LOBPCG)");
         }
 
         // FFT backend: fftw is significantly faster than pure Zig backends
         if (self.scf.enabled and self.scf.fft_backend != .fftw) {
-            try addIssueLiteral(alloc, &issues, .hint, "scf", "fft_backend",
-                "fft_backend = \"fftw\" is recommended for production calculations");
+            try addIssueLiteral(alloc, &issues, .hint, "scf", "fft_backend", "fft_backend = \"fftw\" is recommended for production calculations");
         }
 
         // Dielectric preconditioner: diemac=1.0 means disabled
         if (self.scf.enabled and self.scf.diemac == 1.0 and self.scf.convergence < 1e-6) {
-            try addIssueLiteral(alloc, &issues, .hint, "scf", "diemac",
-                "diemac = 1.0 (disabled); for tight convergence (<1e-6), set ~12 for semiconductors or ~1e6 for metals");
+            try addIssueLiteral(alloc, &issues, .hint, "scf", "diemac", "diemac = 1.0 (disabled); for tight convergence (<1e-6), set ~12 for semiconductors or ~1e6 for metals");
         }
 
         // Pulay/DIIS disabled
         if (self.scf.enabled and self.scf.pulay_history == 0) {
-            try addIssueLiteral(alloc, &issues, .hint, "scf", "pulay_history",
-                "pulay_history = 0 (DIIS disabled); pulay_history = 8 with pulay_start = 4 typically improves SCF convergence");
+            try addIssueLiteral(alloc, &issues, .hint, "scf", "pulay_history", "pulay_history = 0 (DIIS disabled); pulay_history = 8 with pulay_start = 4 typically improves SCF convergence");
         }
 
         // Density mixing is known to oscillate for large ecut
         if (self.scf.enabled and self.scf.mixing_mode == .density) {
-            try addIssueLiteral(alloc, &issues, .hint, "scf", "mixing_mode",
-                "mixing_mode = \"density\" can oscillate at large ecut; mixing_mode = \"potential\" is recommended");
+            try addIssueLiteral(alloc, &issues, .hint, "scf", "mixing_mode", "mixing_mode = \"density\" can oscillate at large ecut; mixing_mode = \"potential\" is recommended");
         }
 
         // iterative_tol too tight increases per-iteration cost
         if (self.scf.enabled and self.scf.solver == .iterative and self.scf.iterative_tol < 1e-6) {
-            try addIssueLiteral(alloc, &issues, .hint, "scf", "iterative_tol",
-                "iterative_tol < 1e-6 increases eigensolver cost per SCF iteration; 1e-4 is usually sufficient");
+            try addIssueLiteral(alloc, &issues, .hint, "scf", "iterative_tol", "iterative_tol < 1e-6 increases eigensolver cost per SCF iteration; 1e-4 is usually sufficient");
         }
 
         // Symmetry disabled
         if (self.scf.enabled and !self.scf.symmetry) {
-            try addIssueLiteral(alloc, &issues, .hint, "scf", "symmetry",
-                "symmetry = false; enabling symmetry reduces k-points and speeds up the calculation");
+            try addIssueLiteral(alloc, &issues, .hint, "scf", "symmetry", "symmetry = false; enabling symmetry reduces k-points and speeds up the calculation");
         }
 
         // Band solver recommendation
         if (self.band.path.len > 0 or self.band.path_string != null) {
             if (self.band.solver == .dense) {
-                try addIssueLiteral(alloc, &issues, .hint, "band", "solver",
-                    "solver = \"dense\" is slow for band structure; consider solver = \"iterative\"");
+                try addIssueLiteral(alloc, &issues, .hint, "band", "solver", "solver = \"dense\" is slow for band structure; consider solver = \"iterative\"");
             }
         }
 
@@ -1269,6 +1243,10 @@ pub fn load(alloc: std.mem.Allocator, io: std.Io, path: []const u8) !Config {
                     dfpt_cfg.dos_nbin = try floatToIndex(try parseFloat(value));
                 } else if (std.mem.eql(u8, key, "compute_dielectric")) {
                     dfpt_cfg.compute_dielectric = try parseBool(value);
+                } else if (std.mem.eql(u8, key, "log_level")) {
+                    const level_str = try parseString(alloc, value);
+                    defer alloc.free(level_str);
+                    dfpt_cfg.log_level = try runtime_logging.parseLevel(level_str);
                 } else {
                     return error.UnsupportedToml;
                 }

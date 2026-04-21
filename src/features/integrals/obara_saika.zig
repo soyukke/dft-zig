@@ -2118,10 +2118,6 @@ test "OS nuclear attraction primitive p-type displaced nucleus" {
         1.0,
     );
 
-    std.debug.print("\nPrimitive nuclear attraction (alpha=beta=5.03):\n", .{});
-    std.debug.print("  V_xx = {e:20.12} (Python: -4.711472014e-03)\n", .{v_xx});
-    std.debug.print("  V_yy = {e:20.12} (Python: -4.847328847e-03)\n", .{v_yy});
-
     // Now test with alpha != beta
     const beta: f64 = 1.1695961;
     const v_yy_ab = primitiveNuclearAttraction(
@@ -2145,10 +2141,9 @@ test "OS nuclear attraction primitive p-type displaced nucleus" {
         1.0,
     );
 
-    std.debug.print("\nPrimitive nuclear attraction (alpha=5.03, beta=1.17):\n", .{});
-    std.debug.print("  V_xx = {e:20.12}\n", .{v_xx_ab});
-    std.debug.print("  V_yy = {e:20.12} (Python: -1.639599402e-02)\n", .{v_yy_ab});
-
+    try testing.expectApproxEqAbs(-0.004711472014, v_xx, 1e-6);
+    try testing.expectApproxEqAbs(-0.004847328847, v_yy, 1e-6);
+    try testing.expectApproxEqAbs(-0.015656249025, v_xx_ab, 1e-6);
     try testing.expectApproxEqAbs(-0.016395994025, v_yy_ab, 1e-6);
 }
 

@@ -12,6 +12,7 @@ const scf_mod = @import("../scf/scf.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 
 const dfpt = @import("dfpt.zig");
 const GroundState = dfpt.GroundState;
@@ -32,6 +33,7 @@ pub fn computeSelfEnergyDynmat(
     species: []hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     rho0_g: []const math.Complex,
+    local_cfg: local_potential.LocalPotentialConfig,
     ff_tables: ?[]const form_factor.LocalFormFactorTable,
 ) ![]f64 {
     const n_atoms = atoms.len;
@@ -53,7 +55,7 @@ pub fn computeSelfEnergyDynmat(
             const v_loc = if (ff_tables) |tables|
                 tables[atom.species_index].eval(g_norm)
             else
-                hamiltonian.localFormFactor(sp, g_norm);
+                hamiltonian.localFormFactor(sp, g_norm, local_cfg);
 
             // exp(+iG·τ_I) × ρ(G) × V_form
             const phase = math.complex.expi(math.Vec3.dot(g.gvec, atom.position));

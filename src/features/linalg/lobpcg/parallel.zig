@@ -13,6 +13,7 @@ const std = @import("std");
 const math = @import("../../math/math.zig");
 const linalg = @import("../linalg.zig");
 const common = @import("common.zig");
+const logging = @import("logging.zig");
 const thread_pool = @import("../../thread_pool.zig");
 
 pub const Operator = common.Operator;
@@ -64,7 +65,7 @@ pub fn solve(
         @min(max_subspace, @max(opts.base.block_size, nbands));
 
     if (debug_parallel) {
-        std.debug.print("\n[LOBPCG-PAR] n={d} nbands={d} threads={d} generalized={}\n", .{ op.n, nbands, pool.num_threads, has_overlap });
+        logging.debug(true, "\n[LOBPCG-PAR] n={d} nbands={d} threads={d} generalized={}\n", .{ op.n, nbands, pool.num_threads, has_overlap });
     }
 
     // Allocate workspace
@@ -181,7 +182,7 @@ pub fn solve(
         }
 
         if (debug_parallel) {
-            std.debug.print("[LOBPCG-PAR] iter={d} m={d} max_residual={e:.4}\n", .{ iter, m, max_residual });
+            logging.debug(true, "[LOBPCG-PAR] iter={d} m={d} max_residual={e:.4}\n", .{ iter, m, max_residual });
         }
 
         // Check convergence

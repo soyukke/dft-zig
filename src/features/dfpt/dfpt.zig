@@ -26,9 +26,11 @@ const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const scf_mod = @import("../scf/scf.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const config_mod = @import("../config/config.zig");
 const iterative = @import("../linalg/iterative.zig");
 const linalg = @import("../linalg/linalg.zig");
+const runtime_logging = @import("../runtime/logging.zig");
 
 const Grid = scf_mod.Grid;
 
@@ -67,6 +69,8 @@ pub const GroundState = struct {
     species: []hamiltonian.SpeciesEntry,
     /// Atom data
     atoms: []const hamiltonian.AtomData,
+    /// Local pseudopotential selection for this run
+    local_cfg: local_potential.LocalPotentialConfig,
     /// Form factor tables
     ff_tables: ?[]const form_factor.LocalFormFactorTable,
     /// Apply context for H₀ application
@@ -151,6 +155,7 @@ pub const DfptConfig = struct {
     pulay_start: usize = 4,
     kpoint_threads: usize = 0,
     perturbation_threads: usize = 1,
+    log_level: runtime_logging.Level = .info,
 
     /// Build DfptConfig from the global config.
     pub fn fromConfig(cfg: config_mod.Config) DfptConfig {
@@ -165,6 +170,7 @@ pub const DfptConfig = struct {
             .pulay_start = cfg.dfpt.pulay_start,
             .kpoint_threads = cfg.dfpt.kpoint_threads,
             .perturbation_threads = cfg.dfpt.perturbation_threads,
+            .log_level = cfg.dfpt.log_level,
         };
     }
 };
@@ -230,7 +236,9 @@ pub fn prepareGroundState(
     volume: f64,
     recip: math.Mat3,
 ) !PreparedGroundState {
+    setDfptLogLevel(cfg.dfpt.log_level);
     const grid = scf_result.grid;
+    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, grid.cell);
 
     // Compute number of occupied bands
     const nelec = totalElectrons(species, atoms);
@@ -243,10 +251,10 @@ pub fn prepareGroundState(
     const gvecs = basis.gvecs;
     const n_pw = gvecs.len;
 
-    logDfpt("dfpt: nelec={d:.1} n_occ={d} n_pw={d}\n", .{ nelec, n_occ, n_pw });
+    logDfptInfo("dfpt: nelec={d:.1} n_occ={d} n_pw={d}\n", .{ nelec, n_occ, n_pw });
 
     // Build ionic potential grid
-    var ionic = try scf_mod.buildIonicPotentialGrid(alloc, grid, species, @constCast(atoms), null, null);
+    var ionic = try scf_mod.buildIonicPotentialGrid(alloc, grid, species, @constCast(atoms), local_cfg, null, null);
     errdefer ionic.deinit(alloc);
 
     // Build local_r = IFFT(ionic + SCF potential)
@@ -260,7 +268,7 @@ pub fn prepareGroundState(
     errdefer alloc.destroy(apply_ctx_ptr);
     apply_ctx_ptr.* = try scf_mod.ApplyContext.initWithWorkspaces(
         alloc,
-                io,
+        io,
         grid,
         @constCast(gvecs),
         local_r,
@@ -277,7 +285,7 @@ pub fn prepareGroundState(
     errdefer apply_ctx_ptr.deinit(alloc);
 
     // Solve eigenvalue problem at Γ-point using LOBPCG
-    logDfpt("dfpt: solving Gamma-point eigenvalues with LOBPCG\n", .{});
+    logDfptInfo("dfpt: solving Gamma-point eigenvalues with LOBPCG\n", .{});
     const nbands_solve = @max(n_occ + 2, @as(usize, 8));
     const diag = try alloc.alloc(f64, n_pw);
     defer alloc.free(diag);
@@ -301,11 +309,11 @@ pub fn prepareGroundState(
     );
     errdefer eig.deinit(alloc);
 
-    logDfpt("dfpt: Gamma eigenvalues (Ry):", .{});
+    logDfptDebug("dfpt: Gamma eigenvalues (Ry):", .{});
     for (0..@min(n_occ + 2, eig.values.len)) |i| {
-        logDfpt(" {d:.6}", .{eig.values[i]});
+        logDfptDebug(" {d:.6}", .{eig.values[i]});
     }
-    logDfpt("\n", .{});
+    logDfptDebug("\n", .{});
 
     // Extract occupied wavefunctions as 2D array
     const wf_const = try alloc.alloc([]const math.Complex, n_occ);
@@ -325,7 +333,7 @@ pub fn prepareGroundState(
     var rho_core: ?[]f64 = null;
     if (scf_mod.hasNlcc(species)) {
         rho_core = try scf_mod.buildCoreDensity(alloc, grid, species, @constCast(atoms));
-        logDfpt("dfpt: NLCC core charge built on grid\n", .{});
+        logDfptDebug("dfpt: NLCC core charge built on grid\n", .{});
     }
     errdefer if (rho_core) |rc| alloc.free(rc);
 
@@ -380,6 +388,7 @@ pub fn prepareGroundState(
         .grid = grid,
         .species = species,
         .atoms = atoms,
+        .local_cfg = local_cfg,
         .ff_tables = null,
         .apply_ctx = apply_ctx_ptr,
         .rho_core = rho_core,
@@ -536,7 +545,29 @@ fn totalElectrons(species: []hamiltonian.SpeciesEntry, atoms: []const hamiltonia
 
 /// Log output for DFPT diagnostics.
 pub fn logDfpt(comptime fmt: []const u8, args: anytype) void {
-    std.debug.print(fmt, args);
+    logDfptDebug(fmt, args);
+}
+
+var dfpt_log_level = std.atomic.Value(u8).init(@intFromEnum(runtime_logging.Level.info));
+
+pub fn setDfptLogLevel(level: runtime_logging.Level) void {
+    dfpt_log_level.store(@intFromEnum(level), .release);
+}
+
+pub fn getDfptLogLevel() runtime_logging.Level {
+    return @enumFromInt(dfpt_log_level.load(.acquire));
+}
+
+pub fn logDfptInfo(comptime fmt: []const u8, args: anytype) void {
+    runtime_logging.debugPrint(getDfptLogLevel(), .info, fmt, args);
+}
+
+pub fn logDfptDebug(comptime fmt: []const u8, args: anytype) void {
+    runtime_logging.debugPrint(getDfptLogLevel(), .debug, fmt, args);
+}
+
+pub fn logDfptWarn(comptime fmt: []const u8, args: anytype) void {
+    runtime_logging.debugPrint(getDfptLogLevel(), .warn, fmt, args);
 }
 
 test {

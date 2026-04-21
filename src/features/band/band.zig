@@ -5,9 +5,12 @@ const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const kpath = @import("../kpath/kpath.zig");
 const linalg = @import("../linalg/linalg.zig");
 const math = @import("../math/math.zig");
+const model_mod = @import("../dft/model.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
+const runtime_logging = @import("../runtime/logging.zig");
 const scf = @import("../scf/scf.zig");
 const symmetry = @import("../symmetry/symmetry.zig");
 const thread_pool = @import("../thread_pool.zig");
@@ -15,11 +18,8 @@ const thread_pool = @import("../thread_pool.zig");
 const ThreadPool = thread_pool.ThreadPool;
 
 fn logStep(io: std.Io, msg: []const u8) !void {
-    var buffer: [256]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
-    try out.print("{s}\n", .{msg});
-    try out.flush();
+    const logger = runtime_logging.stderr(io, .info);
+    try logger.print(.info, "{s}\n", .{msg});
 }
 
 fn bandThreadCount(total: usize, cfg_threads: usize) usize {
@@ -31,20 +31,19 @@ fn bandThreadCount(total: usize, cfg_threads: usize) usize {
 }
 
 fn logBandKpoint(io: std.Io, idx: usize, total: usize) void {
-    var buffer: [128]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
-    out.print("band kpoint {d}/{d}\n", .{ idx + 1, total }) catch {};
-    out.flush() catch {};
+    const logger = runtime_logging.stderr(io, .info);
+    logger.print(.info, "band kpoint {d}/{d}\n", .{ idx + 1, total }) catch {};
 }
 
 fn logBandTiming(io: std.Io, idx: usize, total: usize, ns: u64) void {
-    var buffer: [128]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
     const ms = @as(f64, @floatFromInt(ns)) / 1e6;
-    out.print("band_profile kpoint={d}/{d} ms={d:.1}\n", .{ idx + 1, total, ms }) catch {};
-    out.flush() catch {};
+    const logger = runtime_logging.stderr(io, .info);
+    logger.print(.info, "band_profile kpoint={d}/{d} ms={d:.1}\n", .{ idx + 1, total, ms }) catch {};
+}
+
+fn logBandDebug(io: std.Io, comptime fmt: []const u8, args: anytype) !void {
+    const logger = runtime_logging.stderr(io, .debug);
+    try logger.print(.debug, fmt, args);
 }
 
 /// Write band energies for k-path.
@@ -54,34 +53,27 @@ pub fn writeBandEnergies(
     dir: std.Io.Dir,
     cfg: config.Config,
     path: kpath.KPath,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
-    cell_bohr: math.Mat3,
-    recip: math.Mat3,
-    volume_bohr: f64,
+    model: *const model_mod.Model,
     extra: ?*hamiltonian.PotentialGrid,
     extra_down: ?*hamiltonian.PotentialGrid,
     paw_tabs: ?[]const paw_mod.PawTab,
     paw_dij: ?[]const []const f64,
 ) !void {
+    const species = model.species;
+    const atoms = model.atoms;
+    const cell_bohr = model.cell_bohr;
+    const recip = model.recip;
+    const volume_bohr = model.volume_bohr;
     // For nspin=2, compute bands for each spin channel separately
     if (cfg.scf.nspin == 2 and extra != null and extra_down != null) {
-        try writeBandEnergiesForSpin(alloc, io, dir, cfg, path, species, atoms, cell_bohr, recip, volume_bohr, extra, "band_energies_up.csv", paw_tabs, paw_dij);
-        try writeBandEnergiesForSpin(alloc, io, dir, cfg, path, species, atoms, cell_bohr, recip, volume_bohr, extra_down, "band_energies_down.csv", paw_tabs, paw_dij);
+        try writeBandEnergiesForSpin(alloc, io, dir, cfg, path, model, extra, "band_energies_up.csv", paw_tabs, paw_dij);
+        try writeBandEnergiesForSpin(alloc, io, dir, cfg, path, model, extra_down, "band_energies_down.csv", paw_tabs, paw_dij);
         return;
     }
     if (cfg.band.nbands == 0) return error.InvalidBandConfig;
     if (species.len == 0) return error.MissingPseudopotential;
 
-    const local_alpha = if (cfg.scf.local_potential == .ewald) blk: {
-        if (cfg.ewald.alpha > 0.0) break :blk cfg.ewald.alpha;
-        const lmin = @min(
-            @min(math.Vec3.norm(cell_bohr.row(0)), math.Vec3.norm(cell_bohr.row(1))),
-            math.Vec3.norm(cell_bohr.row(2)),
-        );
-        break :blk 5.0 / lmin;
-    } else 0.0;
-    hamiltonian.configureLocalPotential(species, cfg.scf.local_potential, local_alpha);
+    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, cell_bohr);
 
     const min_npw = try minPlaneWaves(alloc, cfg.scf.ecut_ry, path, recip);
     if (min_npw == 0) return error.NoPlaneWaves;
@@ -103,7 +95,8 @@ pub fn writeBandEnergies(
             use_iterative = false;
         } else {
             const ctx_result = scf.initBandIterativeContext(
-                alloc, io,
+                alloc,
+                io,
                 cfg,
                 species,
                 atoms,
@@ -197,7 +190,8 @@ pub fn writeBandEnergies(
             const band_start_ts = std.Io.Clock.Timestamp.now(io, .awake);
             if (use_iterative) {
                 const result = scf.bandEigenvaluesIterativeExt(
-                    alloc, io,
+                    alloc,
+                    io,
                     cfg,
                     &band_ctx.?,
                     kp.k_cart,
@@ -237,7 +231,7 @@ pub fn writeBandEnergies(
 
                 const inv_volume = 1.0 / volume_bohr;
                 const extra_grid = if (extra) |ptr| ptr.* else null;
-                const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, extra_grid);
+                const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, extra_grid);
                 defer alloc.free(h);
 
                 if (hasQij(species)) {
@@ -266,9 +260,10 @@ pub fn writeBandEnergies(
             cfg: *const config.Config,
             points: []const kpath.KPoint,
             species: []hamiltonian.SpeciesEntry,
-            atoms: []hamiltonian.AtomData,
+            atoms: []const hamiltonian.AtomData,
             recip: math.Mat3,
             volume: f64,
+            local_cfg: local_potential.LocalPotentialConfig,
             extra: ?hamiltonian.PotentialGrid,
             nbands: usize,
             use_iterative: bool,
@@ -366,7 +361,7 @@ pub fn writeBandEnergies(
                             break;
                         };
                         const inv_volume = 1.0 / shared.volume;
-                        const h = hamiltonian.buildHamiltonian(kalloc, basis.gvecs, shared.species, shared.atoms, inv_volume, shared.extra) catch |err| {
+                        const h = hamiltonian.buildHamiltonian(kalloc, basis.gvecs, shared.species, shared.atoms, inv_volume, shared.local_cfg, shared.extra) catch |err| {
                             basis.deinit(kalloc);
                             setBandError(shared, err);
                             shared.stop.store(1, .release);
@@ -441,6 +436,7 @@ pub fn writeBandEnergies(
             .atoms = atoms,
             .recip = recip,
             .volume = volume_bohr,
+            .local_cfg = local_cfg,
             .extra = if (extra) |ptr| ptr.* else null,
             .nbands = nbands,
             .use_iterative = use_iterative,
@@ -491,18 +487,14 @@ pub fn writeBandEnergies(
             defer basis.deinit(alloc);
             const inv_volume = 1.0 / volume_bohr;
             const extra_grid = if (extra) |ptr| ptr.* else null;
-            const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, extra_grid);
+            const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, extra_grid);
             defer alloc.free(h);
             var eig_dense = try linalg.hermitianEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h);
             defer eig_dense.deinit(alloc);
             const count = @min(nbands, eig_dense.values.len);
             try logEigenvalues(io, "band", "gamma_dense", eig_dense.values, count);
         } else {
-            var buffer: [128]u8 = undefined;
-            var writer = std.Io.File.stderr().writer(io, &buffer);
-            const out = &writer.interface;
-            try out.writeAll("band: eig gamma not found\n");
-            try out.flush();
+            try logBandDebug(io, "band: eig gamma not found\n", .{});
         }
         var min_energy = std.math.inf(f64);
         var max_energy = -std.math.inf(f64);
@@ -510,14 +502,11 @@ pub fn writeBandEnergies(
             min_energy = @min(min_energy, value);
             max_energy = @max(max_energy, value);
         }
-        var buffer: [256]u8 = undefined;
-        var writer = std.Io.File.stderr().writer(io, &buffer);
-        const out = &writer.interface;
-        try out.print(
+        try logBandDebug(
+            io,
             "band: eig min={d:.6} max={d:.6} nbands={d} points={d}\n",
             .{ min_energy, max_energy, nbands, total_points },
         );
-        try out.flush();
     }
 
     var file = try dir.createFile(io, "band_energies.csv", .{ .truncate = true });
@@ -553,28 +542,21 @@ fn writeBandEnergiesForSpin(
     dir: std.Io.Dir,
     cfg: config.Config,
     path: kpath.KPath,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
-    cell_bohr: math.Mat3,
-    recip: math.Mat3,
-    volume_bohr: f64,
+    model: *const model_mod.Model,
     extra: ?*hamiltonian.PotentialGrid,
     filename: []const u8,
     paw_tabs: ?[]const paw_mod.PawTab,
     paw_dij: ?[]const []const f64,
 ) !void {
+    const species = model.species;
+    const atoms = model.atoms;
+    const cell_bohr = model.cell_bohr;
+    const recip = model.recip;
+    const volume_bohr = model.volume_bohr;
     if (cfg.band.nbands == 0) return error.InvalidBandConfig;
     if (species.len == 0) return error.MissingPseudopotential;
 
-    const local_alpha = if (cfg.scf.local_potential == .ewald) blk: {
-        if (cfg.ewald.alpha > 0.0) break :blk cfg.ewald.alpha;
-        const lmin = @min(
-            @min(math.Vec3.norm(cell_bohr.row(0)), math.Vec3.norm(cell_bohr.row(1))),
-            math.Vec3.norm(cell_bohr.row(2)),
-        );
-        break :blk 5.0 / lmin;
-    } else 0.0;
-    hamiltonian.configureLocalPotential(species, cfg.scf.local_potential, local_alpha);
+    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, cell_bohr);
 
     const min_npw = try minPlaneWaves(alloc, cfg.scf.ecut_ry, path, recip);
     if (min_npw == 0) return error.NoPlaneWaves;
@@ -583,7 +565,8 @@ fn writeBandEnergiesForSpin(
     var band_ctx: ?scf.BandIterativeContext = null;
     if (extra != null) {
         const ctx_result = scf.initBandIterativeContext(
-            alloc, io,
+            alloc,
+            io,
             cfg,
             species,
             atoms,
@@ -660,7 +643,8 @@ fn writeBandEnergiesForSpin(
         var eigvals_opt: ?[]f64 = null;
         if (band_ctx != null) {
             const result = scf.bandEigenvaluesIterativeExt(
-                alloc, io,
+                alloc,
+                io,
                 cfg,
                 &band_ctx.?,
                 kp.k_cart,
@@ -687,7 +671,7 @@ fn writeBandEnergiesForSpin(
             defer basis.deinit(alloc);
             const inv_volume = 1.0 / volume_bohr;
             const extra_grid = if (extra) |ptr| ptr.* else null;
-            const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, extra_grid);
+            const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, extra_grid);
             defer alloc.free(h);
             eigvals_opt = try linalg.hermitianEigenvalues(alloc, cfg.linalg_backend, basis.gvecs.len, h);
         }
@@ -725,19 +709,17 @@ fn writeBandEnergiesForSpin(
 
 fn logEigenvalues(io: std.Io, prefix: []const u8, label: []const u8, values: []const f64, count: usize) !void {
     const limit = @min(count, 8);
-    var buffer: [512]u8 = undefined;
-    var writer = std.Io.File.stderr().writer(io, &buffer);
-    const out = &writer.interface;
-    try out.print("{s}: eig {s} nbands={d}", .{ prefix, label, count });
+    try logBandDebug(io, "{s}: eig {s} nbands={d}", .{ prefix, label, count });
     var i: usize = 0;
     while (i < limit) : (i += 1) {
-        try out.print(" {d:.6}", .{values[i]});
+        try logBandDebug(io, " {d:.6}", .{values[i]});
     }
     if (count > limit) {
-        try out.writeAll(" ...");
+        const logger = runtime_logging.stderr(io, .debug);
+        try logger.writeAll(.debug, " ...");
     }
-    try out.writeAll("\n");
-    try out.flush();
+    const logger = runtime_logging.stderr(io, .debug);
+    try logger.writeAll(.debug, "\n");
 }
 
 /// Check if any species has QIJ coefficients.
@@ -766,7 +748,7 @@ fn buildAndSolveGeneralized(
     backend: linalg.Backend,
     gvecs: []plane_wave.GVector,
     species: []hamiltonian.SpeciesEntry,
-    atoms: []hamiltonian.AtomData,
+    atoms: []const hamiltonian.AtomData,
     inv_volume: f64,
     h: []math.Complex,
 ) ![]f64 {

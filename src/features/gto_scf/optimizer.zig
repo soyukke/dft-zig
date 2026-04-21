@@ -24,6 +24,7 @@ const kohn_sham = gto_scf.kohn_sham;
 const KsParams = kohn_sham.KsParams;
 const KsResult = kohn_sham.KsResult;
 const XcFunctional = kohn_sham.XcFunctional;
+const logging = @import("logging.zig");
 const becke = @import("../grid/becke.zig");
 const GridPoint = becke.GridPoint;
 
@@ -359,9 +360,7 @@ pub fn optimizeGeometry(
         const grad_rms = vecRms(current_grad_flat);
         const grad_max = vecMaxAbs(current_grad_flat);
 
-        if (params.print_progress) {
-            std.debug.print("  Opt step {d}: E = {d:.12} Ha, grad_rms = {e:10.3}, grad_max = {e:10.3}\n", .{ steps, current_energy, grad_rms, grad_max });
-        }
+        logging.progress(params.print_progress, "  Opt step {d}: E = {d:.12} Ha, grad_rms = {e:10.3}, grad_max = {e:10.3}\n", .{ steps, current_energy, grad_rms, grad_max });
 
         // Check gradient convergence
         if (grad_rms < params.grad_rms_threshold and grad_max < params.grad_max_threshold) {
@@ -533,7 +532,7 @@ pub fn optimizeKsDftGeometry(
         // Run KS-DFT SCF
         var ks_result = try kohn_sham.runKohnShamScf(
             alloc,
-        io,
+            io,
             shells,
             nuc_positions,
             nuc_charges,
@@ -589,9 +588,7 @@ pub fn optimizeKsDftGeometry(
         const grad_rms = vecRms(current_grad_flat);
         const grad_max = vecMaxAbs(current_grad_flat);
 
-        if (params.print_progress) {
-            std.debug.print("  KS-DFT opt step {d}: E = {d:.12} Ha, grad_rms = {e:10.3}, grad_max = {e:10.3}\n", .{ steps, current_energy, grad_rms, grad_max });
-        }
+        logging.progress(params.print_progress, "  KS-DFT opt step {d}: E = {d:.12} Ha, grad_rms = {e:10.3}, grad_max = {e:10.3}\n", .{ steps, current_energy, grad_rms, grad_max });
 
         // Check gradient convergence
         if (grad_rms < params.grad_rms_threshold and grad_max < params.grad_max_threshold) {

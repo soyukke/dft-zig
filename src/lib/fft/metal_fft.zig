@@ -57,12 +57,6 @@ pub const MetalPlan3d = struct {
             return error.MetalFftPlanFailed;
         };
 
-        // Log the GPU device name for diagnostics
-        const device_name = metal.metal_device_name(ctx);
-        std.debug.print("Metal FFT: using GPU device '{s}' for {d}x{d}x{d} grid\n", .{
-            device_name, nx, ny, nz,
-        });
-
         return .{
             .nx = nx,
             .ny = ny,
@@ -101,8 +95,7 @@ pub const MetalPlan3d = struct {
 test "MetalPlan3d availability" {
     if (comptime builtin.os.tag != .macos) return;
 
-    const available = isAvailable();
-    std.debug.print("Metal available: {}\n", .{available});
+    _ = isAvailable();
 }
 
 test "MetalPlan3d roundtrip" {
@@ -110,8 +103,7 @@ test "MetalPlan3d roundtrip" {
 
     const allocator = std.testing.allocator;
 
-    var plan = MetalPlan3d.init(allocator, 4, 4, 4) catch |err| {
-        std.debug.print("Metal FFT init failed (expected if no GPU): {}\n", .{err});
+    var plan = MetalPlan3d.init(allocator, 4, 4, 4) catch {
         return;
     };
     defer plan.deinit();
