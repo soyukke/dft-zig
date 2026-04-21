@@ -95,20 +95,22 @@ pub fn computeEnergyTerms(
         .ecutrho = ecutrho,
     } }, hartree_input);
 
-    // Local pseudopotential energy in G-space (pseudo density).
-    // ionicLocalPotential returns 0 at G=0, so the G=0 term contributes nothing.
-    const inv_volume = 1.0 / grid.volume;
-    var e_local: f64 = 0.0;
-    var it = gvec_iter.GVecIterator.init(grid);
-    while (it.next()) |g| {
-        if (ecutrho) |ecut| {
-            if (g.g2 >= ecut) continue;
-        }
-        const rho_val = rho_g[g.idx];
-        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume, local_cfg);
-        e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
-    }
-    e_local *= grid.volume;
+    // Local pseudopotential energy via Term contract (pseudo density).
+    const e_local = try term_mod.termEnergy(.{ .atomic_local = .{
+        .mode = local_cfg.mode,
+        .explicit_alpha = local_cfg.alpha,
+        .ecutrho = ecutrho,
+    } }, .{
+        .alloc = alloc,
+        .io = io,
+        .species = species,
+        .atoms = atoms,
+        .cell_bohr = grid.cell,
+        .recip = grid.recip,
+        .volume_bohr = grid.volume,
+        .rho = rho,
+        .grid = &grid,
+    });
 
     const dv = grid.volume / @as(f64, @floatFromInt(grid.count()));
     var exc: f64 = 0.0;

@@ -38,6 +38,8 @@ pub const TermKinetic = struct {};
 pub const TermAtomicLocal = struct {
     mode: local_potential.LocalPotentialMode = .short_range,
     explicit_alpha: f64 = 0.0,
+    /// Optional spherical G² cutoff (PAW augmented-density regime).
+    ecutrho: ?f64 = null,
 };
 
 /// Non-local pseudopotential: Σ_a Σ_ij |β^a_i⟩ D_ij ⟨β^a_j|.
@@ -124,6 +126,9 @@ fn atomicLocalEnergy(term: TermAtomicLocal, input: EvalInput) !f64 {
     var e_local: f64 = 0.0;
     var it = gvec_iter.GVecIterator.init(grid.*);
     while (it.next()) |g| {
+        if (term.ecutrho) |ecut| {
+            if (g.g2 >= ecut) continue;
+        }
         const rho_val = rho_g[g.idx];
         const vloc = try hamiltonian.ionicLocalPotential(g.gvec, input.species, input.atoms, inv_volume, local_cfg);
         e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
