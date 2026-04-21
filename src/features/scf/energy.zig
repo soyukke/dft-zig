@@ -224,22 +224,6 @@ pub fn computeEnergyTermsSpin(
         rho_total[i] = rho_up_hxc[i] + rho_down_hxc[i];
     }
 
-    // rho_g uses augmented density for E_H
-    const rho_g = try realToReciprocal(alloc, grid, rho_total, use_rfft);
-    defer alloc.free(rho_g);
-
-    // For e_local, use pseudo density (not augmented)
-    const rho_pseudo_g = if (rho_aug_up != null) blk: {
-        const rho_pseudo_total = try alloc.alloc(f64, total);
-        defer alloc.free(rho_pseudo_total);
-        for (0..total) |i| {
-            rho_pseudo_total[i] = rho_up[i] + rho_down[i];
-        }
-        break :blk try realToReciprocal(alloc, grid, rho_pseudo_total, use_rfft);
-    } else null;
-    defer if (rho_pseudo_g) |g| alloc.free(g);
-    const rho_g_for_eloc = rho_pseudo_g orelse rho_g;
-
     // Spin XC — use augmented density for PAW
     const xc_fields = try computeXcFieldsSpin(alloc, grid, rho_up_hxc, rho_down_hxc, rho_core, use_rfft, xc_func);
     defer {
@@ -248,38 +232,39 @@ pub fn computeEnergyTermsSpin(
         alloc.free(xc_fields.exc);
     }
 
-    const inv_volume = 1.0 / grid.volume;
-    var eh: f64 = 0.0;
-    var e_local: f64 = 0.0;
-    var it2 = gvec_iter.GVecIterator.init(grid);
-    while (it2.next()) |g| {
-        // ecutrho spherical cutoff: skip G-vectors beyond ecutrho
-        const beyond_ecutrho = if (ecutrho) |ecut| g.g2 >= ecut else false;
-        if (beyond_ecutrho) {
-            continue;
-        }
-        const rho_val = rho_g[g.idx];
-        const rho2 = rho_val.r * rho_val.r + rho_val.i * rho_val.i;
-        // e_local uses pseudo density
-        const rho_loc = rho_g_for_eloc[g.idx];
-        if (coulomb_r_cut) |r_cut| {
-            const g_mag = @sqrt(g.g2);
-            const kernel = coulomb.cutoffCoulombEnergyKernel(g.g2, g_mag, r_cut);
-            eh += 0.5 * kernel * rho2 * grid.volume;
-        } else {
-            if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
-                const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume, local_cfg);
-                e_local += rho_loc.r * vloc.r + rho_loc.i * vloc.i;
-                continue;
-            }
-            if (g.g2 > 1e-12) {
-                eh += 0.5 * 8.0 * std.math.pi * rho2 / g.g2 * grid.volume;
-            }
-        }
-        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume, local_cfg);
-        e_local += rho_loc.r * vloc.r + rho_loc.i * vloc.i;
-    }
-    e_local *= grid.volume;
+    const shared_input = term_mod.EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .species = species,
+        .atoms = atoms,
+        .cell_bohr = grid.cell,
+        .recip = grid.recip,
+        .volume_bohr = grid.volume,
+        .grid = &grid,
+    };
+
+    // Hartree uses the augmented total density.
+    var hartree_input = shared_input;
+    hartree_input.rho = rho_total;
+    const eh = try term_mod.termEnergy(.{ .hartree = .{
+        .isolated = (coulomb_r_cut != null),
+        .ecutrho = ecutrho,
+    } }, hartree_input);
+
+    // Local pseudo uses the pseudo total density (not augmented).
+    const rho_pseudo_total = if (rho_aug_up != null) blk: {
+        const buf = try alloc.alloc(f64, total);
+        for (0..total) |i| buf[i] = rho_up[i] + rho_down[i];
+        break :blk buf;
+    } else null;
+    defer if (rho_pseudo_total) |buf| alloc.free(buf);
+    var local_input = shared_input;
+    local_input.rho = rho_pseudo_total orelse rho_total;
+    const e_local = try term_mod.termEnergy(.{ .atomic_local = .{
+        .mode = local_cfg.mode,
+        .explicit_alpha = local_cfg.alpha,
+        .ecutrho = ecutrho,
+    } }, local_input);
 
     const dv = grid.volume / @as(f64, @floatFromInt(grid.count()));
     var exc: f64 = 0.0;
@@ -294,8 +279,17 @@ pub fn computeEnergyTermsSpin(
 
     const ion = if (coulomb_r_cut != null)
         try computeDirectIonIonEnergy(alloc, species, atoms) * 2.0
-    else
-        try computeIonIonEnergy(alloc, io, grid, species, atoms, ewald_cfg, quiet) * 2.0;
+    else blk: {
+        var ewald_input = shared_input;
+        ewald_input.rho = null;
+        break :blk (try term_mod.termEnergy(.{ .ewald = .{
+            .alpha = ewald_cfg.alpha,
+            .rcut = ewald_cfg.rcut,
+            .gcut = ewald_cfg.gcut,
+            .tol = ewald_cfg.tol,
+            .quiet = quiet,
+        } }, ewald_input)) * 2.0;
+    };
     var epsatm_sum: f64 = 0.0;
     var n_elec: f64 = 0.0;
     for (atoms) |atom| {
