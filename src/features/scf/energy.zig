@@ -268,11 +268,13 @@ pub fn computeEnergyTermsSpin(
     } }, local_input);
 
     const dv = grid.volume / @as(f64, @floatFromInt(grid.count()));
-    var exc: f64 = 0.0;
     var vxc_rho: f64 = 0.0;
-    for (xc_fields.exc) |e| {
-        exc += e * dv;
-    }
+    var xc_input = shared_input;
+    xc_input.rho = rho_up_hxc;
+    xc_input.rho_down = rho_down_hxc;
+    xc_input.rho_core = rho_core;
+    xc_input.use_rfft = use_rfft;
+    const exc = try term_mod.termEnergy(.{ .xc = .{ .functional = xc_func } }, xc_input);
     // vxc_rho = ∫(V_xc_up * rho_up + V_xc_down * rho_down) dv — use augmented for PAW
     for (0..total) |i| {
         vxc_rho += (xc_fields.vxc_up[i] * rho_up_hxc[i] + xc_fields.vxc_down[i] * rho_down_hxc[i]) * dv;

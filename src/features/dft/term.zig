@@ -94,6 +94,9 @@ pub const EvalInput = struct {
     recip: math.Mat3,
     volume_bohr: f64,
     rho: ?[]const f64 = null,
+    /// Minority-spin density. When present, XC evaluation dispatches to
+    /// the spin-polarized path (`rho` becomes the majority-spin density).
+    rho_down: ?[]const f64 = null,
     /// Core density (NLCC) added to ρ for XC evaluation when present.
     rho_core: ?[]const f64 = null,
     grid: ?*const Grid = null,
@@ -152,13 +155,27 @@ fn xcEnergy(term: TermXc, input: EvalInput) !f64 {
     // this evaluator currently duplicates that work. A follow-up will
     // extend termEnergy to expose V_xc alongside E_xc, letting the SCF
     // driver drop its own computeXcFields call.
+    const dv = grid.volume / @as(f64, @floatFromInt(grid.count()));
+
+    if (input.rho_down) |rho_down| {
+        if (rho_down.len != grid.count()) return error.DensitySizeMismatch;
+        const fields = try xc_fields.computeXcFieldsSpin(input.alloc, grid.*, rho, rho_down, input.rho_core, input.use_rfft, term.functional);
+        defer {
+            input.alloc.free(fields.vxc_up);
+            input.alloc.free(fields.vxc_down);
+            input.alloc.free(fields.exc);
+        }
+        var sum: f64 = 0.0;
+        for (fields.exc) |e| sum += e * dv;
+        return sum;
+    }
+
     const fields = try xc_fields.computeXcFields(input.alloc, grid.*, rho, input.rho_core, input.use_rfft, term.functional);
     defer {
         input.alloc.free(fields.vxc);
         input.alloc.free(fields.exc);
     }
 
-    const dv = grid.volume / @as(f64, @floatFromInt(grid.count()));
     var sum: f64 = 0.0;
     for (fields.exc) |e| sum += e * dv;
     return sum;
