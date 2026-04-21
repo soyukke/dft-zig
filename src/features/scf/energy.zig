@@ -121,6 +121,7 @@ pub fn computeEnergyTerms(
         .rho = rho_for_hxc,
         .rho_core = rho_core,
         .grid = &grid,
+        .use_rfft = use_rfft,
     });
     // vxc_rho = ∫V_xc(ρ_aug+core) × ρ_aug dr  (for PAW)
     //         = ∫V_xc(ρ+core) × ρ dr           (for NC)

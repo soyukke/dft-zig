@@ -97,6 +97,10 @@ pub const EvalInput = struct {
     /// Core density (NLCC) added to ρ for XC evaluation when present.
     rho_core: ?[]const f64 = null,
     grid: ?*const Grid = null,
+    /// Use real-to-complex FFT for ρ→ρ(G) and gradient transforms.
+    /// Matches the SCF driver's `use_rfft` so GGA gradients computed by
+    /// the evaluator line up with the externally-held V_xc.
+    use_rfft: bool = false,
 };
 
 /// Return the scalar energy contribution of a term.
@@ -144,7 +148,11 @@ fn xcEnergy(term: TermXc, input: EvalInput) !f64 {
     const rho = input.rho orelse return error.MissingDensity;
     if (rho.len != grid.count()) return error.DensitySizeMismatch;
 
-    const fields = try xc_fields.computeXcFields(input.alloc, grid.*, rho, input.rho_core, false, term.functional);
+    // NOTE: the SCF energy path also calls computeXcFields for V_xc, so
+    // this evaluator currently duplicates that work. A follow-up will
+    // extend termEnergy to expose V_xc alongside E_xc, letting the SCF
+    // driver drop its own computeXcFields call.
+    const fields = try xc_fields.computeXcFields(input.alloc, grid.*, rho, input.rho_core, input.use_rfft, term.functional);
     defer {
         input.alloc.free(fields.vxc);
         input.alloc.free(fields.exc);
