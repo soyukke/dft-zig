@@ -110,19 +110,12 @@ pub fn computeEnergyTerms(
 
     const dv = grid.volume / @as(f64, @floatFromInt(grid.count()));
     var vxc_rho: f64 = 0.0;
-    const exc = try term_mod.termEnergy(.{ .xc = .{ .functional = xc_func } }, .{
-        .alloc = alloc,
-        .io = io,
-        .species = species,
-        .atoms = atoms,
-        .cell_bohr = grid.cell,
-        .recip = grid.recip,
-        .volume_bohr = grid.volume,
-        .rho = rho_for_hxc,
-        .rho_core = rho_core,
-        .grid = &grid,
-        .use_rfft = use_rfft,
-    });
+    // E_xc integrates the exc density from the computeXcFields call above.
+    // Going through termEnergy(.xc) would run computeXcFields a second time
+    // (measured: ~11% overhead on Cu/PBE). termEnergy(.xc) is kept for
+    // standalone use (tests, future term-driven aggregation).
+    var exc: f64 = 0.0;
+    for (xc_fields.exc) |e| exc += e * dv;
     // vxc_rho = ∫V_xc(ρ_aug+core) × ρ_aug dr  (for PAW)
     //         = ∫V_xc(ρ+core) × ρ dr           (for NC)
     // For PAW: D^hat adds ∫V_Hxc × n̂ to band energy, so the double-counting
@@ -269,12 +262,9 @@ pub fn computeEnergyTermsSpin(
 
     const dv = grid.volume / @as(f64, @floatFromInt(grid.count()));
     var vxc_rho: f64 = 0.0;
-    var xc_input = shared_input;
-    xc_input.rho = rho_up_hxc;
-    xc_input.rho_down = rho_down_hxc;
-    xc_input.rho_core = rho_core;
-    xc_input.use_rfft = use_rfft;
-    const exc = try term_mod.termEnergy(.{ .xc = .{ .functional = xc_func } }, xc_input);
+    // Integrate exc directly from xc_fields (see computeEnergyTerms comment).
+    var exc: f64 = 0.0;
+    for (xc_fields.exc) |e| exc += e * dv;
     // vxc_rho = ∫(V_xc_up * rho_up + V_xc_down * rho_down) dv — use augmented for PAW
     for (0..total) |i| {
         vxc_rho += (xc_fields.vxc_up[i] * rho_up_hxc[i] + xc_fields.vxc_down[i] * rho_down_hxc[i]) * dv;
