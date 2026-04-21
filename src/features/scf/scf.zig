@@ -929,27 +929,27 @@ pub fn run(params: ScfParams) !ScfResult {
     }
     defer if (rho_aug_for_energy) |a| alloc.free(a);
 
-    var energy_terms = try energy_mod.computeEnergyTerms(
-        alloc,
-        io,
-        grid,
-        rho,
-        common.rho_core,
-        last_band_energy,
-        last_nonlocal_energy,
-        last_entropy_energy,
-        species,
-        atoms,
-        common.local_cfg,
-        cfg.ewald,
-        cfg.scf.use_rfft,
-        cfg.scf.xc,
-        cfg.scf.quiet,
-        common.coulomb_r_cut,
-        cfg.vdw,
-        rho_aug_for_energy,
-        paw_ecutrho,
-    );
+    var energy_terms = try energy_mod.computeEnergyTerms(.{
+        .alloc = alloc,
+        .io = io,
+        .grid = grid,
+        .species = species,
+        .atoms = atoms,
+        .rho = rho,
+        .rho_core = common.rho_core,
+        .rho_aug = rho_aug_for_energy,
+        .band_energy = last_band_energy,
+        .nonlocal_energy = last_nonlocal_energy,
+        .entropy_energy = last_entropy_energy,
+        .local_cfg = common.local_cfg,
+        .ewald_cfg = cfg.ewald,
+        .vdw_cfg = cfg.vdw,
+        .xc_func = cfg.scf.xc,
+        .use_rfft = cfg.scf.use_rfft,
+        .quiet = cfg.scf.quiet,
+        .coulomb_r_cut = common.coulomb_r_cut,
+        .ecutrho = paw_ecutrho,
+    });
 
     // Add PAW on-site energy correction
     if (common.is_paw) {

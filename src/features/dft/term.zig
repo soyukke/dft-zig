@@ -1,18 +1,15 @@
 //! Physical terms of the DFT Hamiltonian.
 //!
-//! Each Term contributes:
-//!   (1) an energy value (possibly depending on the current density)
-//!   (2) a per-k-point operator that sums into H|ψ⟩
+//! Each Term carries the parameters for one density-dependent contribution
+//! to the total energy (Hartree, XC, local pseudo, Ewald). Evaluation goes
+//! through `termEnergy(term, input)`.
 //!
-//! This is the dft-zig analogue of DFTK.jl's Term abstraction. The long-term
-//! goal is to replace the monolithic buildHamiltonian / buildPotentialGrid
-//! flow with an iteration over physics terms, each self-contained.
-//!
-//! This module (Step 2a) defines the types. Wiring to the SCF loop happens
-//! in subsequent commits.
+//! Wavefunction-dependent contributions (kinetic, nonlocal pseudopotential)
+//! are not represented here — they are handled inside the band solver,
+//! where ψ is available. When a ψ-aware Term contract is introduced, those
+//! variants join this enum.
 
 const std = @import("std");
-const config_mod = @import("../config/config.zig");
 const coulomb_mod = @import("../coulomb/coulomb.zig");
 const ewald_mod = @import("../ewald/ewald.zig");
 const fft_grid = @import("../scf/fft_grid.zig");
@@ -22,13 +19,11 @@ const local_potential = @import("../pseudopotential/local_potential.zig");
 const xc_fields = @import("../scf/xc_fields.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const math = @import("../math/math.zig");
+const model_mod = @import("model.zig");
 const xc_mod = @import("../xc/xc.zig");
 
 pub const Grid = grid_mod.Grid;
-
-/// Kinetic energy: T|ψ⟩ = |G+k|²/2 |ψ⟩ (Rydberg).
-/// Density-independent; operator-only (does not contribute to V_eff(r)).
-pub const TermKinetic = struct {};
+pub const Model = model_mod.Model;
 
 /// Local component of the ionic pseudopotential: V_loc(r) = Σ_a v^a_loc(r-R_a).
 /// Depends on atomic positions (via Model), not on ρ. Contributes to V_eff(G).
@@ -41,10 +36,6 @@ pub const TermAtomicLocal = struct {
     /// Optional spherical G² cutoff (PAW augmented-density regime).
     ecutrho: ?f64 = null,
 };
-
-/// Non-local pseudopotential: Σ_a Σ_ij |β^a_i⟩ D_ij ⟨β^a_j|.
-/// Density-independent. Operator-only.
-pub const TermAtomicNonlocal = struct {};
 
 /// Hartree: V_H(G) = 8π/G² ρ(G) (Rydberg).
 /// Uses a real-space Coulomb cutoff for isolated boundary conditions.
@@ -71,9 +62,7 @@ pub const TermEwald = struct {
 };
 
 pub const Term = union(enum) {
-    kinetic: TermKinetic,
     atomic_local: TermAtomicLocal,
-    atomic_nonlocal: TermAtomicNonlocal,
     hartree: TermHartree,
     xc: TermXc,
     ewald: TermEwald,
@@ -81,18 +70,13 @@ pub const Term = union(enum) {
 
 /// Inputs passed to term energy evaluators.
 ///
-/// Mandatory fields describe the physical system (geometry + species + config).
-/// Optional fields carry state that only certain terms need (e.g. ρ for
-/// Hartree/XC). Callers populate what they have; each term either uses it
-/// or ignores it.
+/// `model` supplies the physical system (geometry, species). Optional
+/// fields carry state that only certain terms need — callers populate
+/// what they have; each term either uses it or returns an error.
 pub const EvalInput = struct {
     alloc: std.mem.Allocator,
     io: std.Io,
-    species: []const hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
-    cell_bohr: math.Mat3,
-    recip: math.Mat3,
-    volume_bohr: f64,
+    model: *const Model,
     rho: ?[]const f64 = null,
     /// Minority-spin density. When present, XC evaluation dispatches to
     /// the spin-polarized path (`rho` becomes the majority-spin density).
@@ -113,7 +97,6 @@ pub const EvalInput = struct {
 /// wired, the corresponding legacy path is retired.
 pub fn termEnergy(term: Term, input: EvalInput) !f64 {
     return switch (term) {
-        .kinetic, .atomic_nonlocal => 0.0,
         .atomic_local => |t| try atomicLocalEnergy(t, input),
         .hartree => |t| try hartreeEnergy(t, input),
         .xc => |t| try xcEnergy(t, input),
@@ -139,7 +122,7 @@ fn atomicLocalEnergy(term: TermAtomicLocal, input: EvalInput) !f64 {
             if (g.g2 >= ecut) continue;
         }
         const rho_val = rho_g[g.idx];
-        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, input.species, input.atoms, inv_volume, local_cfg);
+        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, input.model.species, input.model.atoms, inv_volume, local_cfg);
         e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
     }
     e_local *= grid.volume;
@@ -214,14 +197,15 @@ fn hartreeEnergy(term: TermHartree, input: EvalInput) !f64 {
 }
 
 fn ewaldEnergy(term: TermEwald, input: EvalInput) !f64 {
-    const count = input.atoms.len;
+    const atoms = input.model.atoms;
+    const count = atoms.len;
     if (count == 0) return 0.0;
     const charges = try input.alloc.alloc(f64, count);
     defer input.alloc.free(charges);
     const positions = try input.alloc.alloc(math.Vec3, count);
     defer input.alloc.free(positions);
-    for (input.atoms, 0..) |atom, i| {
-        charges[i] = input.species[atom.species_index].z_valence;
+    for (atoms, 0..) |atom, i| {
+        charges[i] = input.model.species[atom.species_index].z_valence;
         positions[i] = atom.position;
     }
     const params = ewald_mod.Params{
@@ -231,34 +215,7 @@ fn ewaldEnergy(term: TermEwald, input: EvalInput) !f64 {
         .tol = term.tol,
         .quiet = term.quiet,
     };
-    return try ewald_mod.ionIonEnergy(input.io, input.cell_bohr, input.recip, charges, positions, params);
-}
-
-/// Build the canonical term list for a given configuration.
-/// Caller owns the returned slice.
-pub fn termsFromConfig(alloc: std.mem.Allocator, cfg: config_mod.Config) ![]Term {
-    var list: std.ArrayList(Term) = .empty;
-    errdefer list.deinit(alloc);
-
-    try list.append(alloc, .{ .kinetic = .{} });
-    try list.append(alloc, .{ .atomic_local = .{
-        .mode = cfg.scf.local_potential,
-        .explicit_alpha = cfg.ewald.alpha,
-    } });
-    if (cfg.scf.enable_nonlocal) {
-        try list.append(alloc, .{ .atomic_nonlocal = .{} });
-    }
-    try list.append(alloc, .{ .hartree = .{ .isolated = (cfg.boundary == .isolated) } });
-    try list.append(alloc, .{ .xc = .{ .functional = cfg.scf.xc } });
-    try list.append(alloc, .{ .ewald = .{
-        .alpha = cfg.ewald.alpha,
-        .rcut = cfg.ewald.rcut,
-        .gcut = cfg.ewald.gcut,
-        .tol = cfg.ewald.tol,
-        .quiet = cfg.scf.quiet,
-    } });
-
-    return list.toOwnedSlice(alloc);
+    return try ewald_mod.ionIonEnergy(input.io, input.model.cell_bohr, input.model.recip, charges, positions, params);
 }
 
 test "termEnergy(.hartree) returns zero for uniform periodic density" {
@@ -293,14 +250,17 @@ test "termEnergy(.hartree) returns zero for uniform periodic density" {
     defer alloc.free(rho);
     @memset(rho, 1.0 / volume);
 
-    const input = EvalInput{
-        .alloc = alloc,
-        .io = io,
+    const model = Model{
         .species = &.{},
         .atoms = &.{},
         .cell_bohr = cell,
         .recip = recip,
         .volume_bohr = volume,
+    };
+    const input = EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .model = &model,
         .rho = rho,
         .grid = &grid,
     };
@@ -354,14 +314,17 @@ test "termEnergy(.hartree) is positive and deterministic for cosine density" {
         }
     }
 
-    const input = EvalInput{
-        .alloc = alloc,
-        .io = io,
+    const model = Model{
         .species = &.{},
         .atoms = &.{},
         .cell_bohr = cell,
         .recip = recip,
         .volume_bohr = volume,
+    };
+    const input = EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .model = &model,
         .rho = rho,
         .grid = &grid,
     };
@@ -404,14 +367,17 @@ test "termEnergy(.atomic_local) is zero with no atoms" {
     defer alloc.free(rho);
     @memset(rho, 1.0 / volume);
 
-    const input = EvalInput{
-        .alloc = alloc,
-        .io = io,
+    const model = Model{
         .species = &.{},
         .atoms = &.{},
         .cell_bohr = cell,
         .recip = recip,
         .volume_bohr = volume,
+    };
+    const input = EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .model = &model,
         .rho = rho,
         .grid = &grid,
     };
@@ -452,14 +418,17 @@ test "termEnergy(.xc) matches computeXcFields integral (LDA)" {
     defer alloc.free(rho);
     @memset(rho, 0.5 / volume);
 
-    const input = EvalInput{
-        .alloc = alloc,
-        .io = io,
+    const model = Model{
         .species = &.{},
         .atoms = &.{},
         .cell_bohr = cell,
         .recip = recip,
         .volume_bohr = volume,
+    };
+    const input = EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .model = &model,
         .rho = rho,
         .grid = &grid,
     };
@@ -506,14 +475,17 @@ test "termEnergy(.ewald) matches direct ionIonEnergy" {
     const direct_params = ewald_mod.Params{ .alpha = 0.0, .rcut = 0.0, .gcut = 0.0, .tol = 0.0, .quiet = true };
     const e_direct = try ewald_mod.ionIonEnergy(io, cell, recip, &charges, &positions, direct_params);
 
-    const input = EvalInput{
-        .alloc = alloc,
-        .io = io,
+    const model = Model{
         .species = &species_arr,
         .atoms = &atoms,
         .cell_bohr = cell,
         .recip = recip,
         .volume_bohr = volume,
+    };
+    const input = EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .model = &model,
     };
     const e_term = try termEnergy(.{ .ewald = .{ .alpha = 0.0, .quiet = true } }, input);
 
