@@ -66,9 +66,6 @@ pub fn computeEnergyTerms(
     // For NC pseudopotentials, rho_aug is null and we use rho (pseudo density).
     const rho_for_hxc = rho_aug orelse rho;
 
-    const rho_g = try realToReciprocal(alloc, grid, rho, use_rfft);
-    defer alloc.free(rho_g);
-
     // E_xc and V_xc use augmented density
     const xc_fields = try computeXcFields(alloc, grid, rho_for_hxc, rho_core, use_rfft, xc_func);
     defer {
