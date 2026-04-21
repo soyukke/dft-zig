@@ -394,7 +394,7 @@ fn localPotential(
 /// energy calculation via Ewald summation.
 pub fn ionicLocalPotential(
     q: math.Vec3,
-    species: []SpeciesEntry,
+    species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
     local_cfg: local_potential.LocalPotentialConfig,
@@ -405,7 +405,7 @@ pub fn ionicLocalPotential(
 /// Fast version using pre-computed form factor tables.
 pub fn ionicLocalPotentialWithTable(
     q: math.Vec3,
-    species: []SpeciesEntry,
+    species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
     local_cfg: local_potential.LocalPotentialConfig,
