@@ -9,6 +9,7 @@ const timing_mod = @import("../runtime/timing.zig");
 const runtime_logging = @import("../runtime/logging.zig");
 const scf = @import("../scf/scf.zig");
 const model_mod = @import("../dft/model.zig");
+const term_mod = @import("../dft/term.zig");
 const forces_mod = @import("../forces/forces.zig");
 pub const optimizer = @import("optimizer.zig");
 
@@ -236,12 +237,15 @@ pub fn run(
 
         // Run SCF calculation (with density + wavefunction + nonlocal warmstart)
         const scf_start = std.Io.Clock.Timestamp.now(io, .awake);
+        const step_terms = try term_mod.termsFromConfig(alloc, relax_cfg);
+        defer alloc.free(step_terms);
         const step_model = model_mod.Model{
             .species = species,
             .atoms = atoms,
             .cell_bohr = current_cell,
             .recip = current_recip,
             .volume_bohr = current_volume,
+            .terms = step_terms,
         };
         var scf_result = try scf.run(.{
             .alloc = alloc,

@@ -11,6 +11,8 @@
 //! This module (Step 2a) defines the types. Wiring to the SCF loop happens
 //! in subsequent commits.
 
+const std = @import("std");
+const config_mod = @import("../config/config.zig");
 const xc_mod = @import("../xc/xc.zig");
 
 /// Kinetic energy: T|ψ⟩ = |G+k|²/2 |ψ⟩ (Rydberg).
@@ -50,3 +52,21 @@ pub const Term = union(enum) {
     xc: TermXc,
     ewald: TermEwald,
 };
+
+/// Build the canonical term list for a given configuration.
+/// Caller owns the returned slice.
+pub fn termsFromConfig(alloc: std.mem.Allocator, cfg: config_mod.Config) ![]Term {
+    var list: std.ArrayList(Term) = .empty;
+    errdefer list.deinit(alloc);
+
+    try list.append(alloc, .{ .kinetic = .{} });
+    try list.append(alloc, .{ .atomic_local = .{} });
+    if (cfg.scf.enable_nonlocal) {
+        try list.append(alloc, .{ .atomic_nonlocal = .{} });
+    }
+    try list.append(alloc, .{ .hartree = .{ .isolated = (cfg.boundary == .isolated) } });
+    try list.append(alloc, .{ .xc = .{ .functional = cfg.scf.xc } });
+    try list.append(alloc, .{ .ewald = .{ .alpha = cfg.ewald.alpha } });
+
+    return list.toOwnedSlice(alloc);
+}

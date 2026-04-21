@@ -10,6 +10,7 @@ const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const linear_scaling = @import("../linear_scaling/linear_scaling.zig");
 const math = @import("../math/math.zig");
 const model_mod = @import("model.zig");
+const term_mod = @import("term.zig");
 const output = @import("output.zig");
 const paw_mod = @import("../paw/paw.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
@@ -145,12 +146,16 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
     const have_relax_potential = if (relax_result) |rr| rr.final_potential != null else false;
     const needs_reference = cfg.scf.reference_json != null or cfg.scf.compare_reference_json != null;
 
+    const terms = try term_mod.termsFromConfig(alloc, cfg);
+    defer alloc.free(terms);
+
     const active_model = model_mod.Model{
         .species = species,
         .atoms = active.atoms,
         .cell_bohr = active.cell_bohr,
         .recip = active.recip,
         .volume_bohr = active.volume_bohr,
+        .terms = terms,
     };
 
     if (cfg.scf.enabled and !(have_relax_potential and !needs_reference)) {

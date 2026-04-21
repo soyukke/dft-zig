@@ -18,4 +18,5 @@ pub const Model = struct {
     cell_bohr: math.Mat3,
     recip: math.Mat3,
     volume_bohr: f64,
+    terms: []const Term,
 };
