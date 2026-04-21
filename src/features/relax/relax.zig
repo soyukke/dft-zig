@@ -8,6 +8,7 @@ const local_potential = @import("../pseudopotential/local_potential.zig");
 const timing_mod = @import("../runtime/timing.zig");
 const runtime_logging = @import("../runtime/logging.zig");
 const scf = @import("../scf/scf.zig");
+const model_mod = @import("../dft/model.zig");
 const forces_mod = @import("../forces/forces.zig");
 pub const optimizer = @import("optimizer.zig");
 
@@ -235,14 +236,18 @@ pub fn run(
 
         // Run SCF calculation (with density + wavefunction + nonlocal warmstart)
         const scf_start = std.Io.Clock.Timestamp.now(io, .awake);
+        const step_model = model_mod.Model{
+            .species = species,
+            .atoms = atoms,
+            .cell_bohr = current_cell,
+            .recip = current_recip,
+            .volume_bohr = current_volume,
+        };
         var scf_result = try scf.run(.{
             .alloc = alloc,
             .io = io,
             .cfg = relax_cfg,
-            .species = species,
-            .atoms = atoms,
-            .recip = current_recip,
-            .volume_bohr = current_volume,
+            .model = &step_model,
             .initial_density = if (prev_density) |pd| pd else null,
             .initial_kpoint_cache = prev_kpoint_cache,
             .initial_apply_caches = prev_apply_caches,
@@ -437,7 +442,7 @@ pub fn run(
         var max_stress_gpa: f64 = 0.0;
         var cached_stress_total: ?stress_mod.Stress3x3 = null;
         if (cfg.relax.cell_relax) {
-            const stress_terms = try stress_mod.computeStressFromScf(alloc, io, &scf_result, relax_cfg, species, atoms);
+            const stress_terms = try stress_mod.computeStressFromScf(alloc, io, &scf_result, relax_cfg, &step_model);
             // Symmetrize stress using original symmetry (even though k-points are not reduced)
             var sym_total = stress_terms.total;
             if (cfg.scf.symmetry) {

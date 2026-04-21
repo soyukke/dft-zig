@@ -13,6 +13,7 @@ const d3 = @import("../vdw/d3.zig");
 const d3_params = @import("../vdw/d3_params.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const config_mod = @import("../config/config.zig");
+const model_mod = @import("../dft/model.zig");
 const iterative = @import("../linalg/iterative.zig");
 const symmetry_mod = @import("../symmetry/symmetry.zig");
 
@@ -2828,13 +2829,14 @@ pub fn runPhononBand(
     io: std.Io,
     cfg: config_mod.Config,
     scf_result: *scf_mod.ScfResult,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
-    cell_bohr: math.Mat3,
-    recip: math.Mat3,
-    volume: f64,
+    model: *const model_mod.Model,
     npoints_per_seg: usize,
 ) !PhononBandResult {
+    const species = model.species;
+    const atoms = model.atoms;
+    const cell_bohr = model.cell_bohr;
+    const recip = model.recip;
+    const volume = model.volume_bohr;
     const n_atoms = atoms.len;
     const dim = 3 * n_atoms;
     const grid = scf_result.grid;
@@ -3329,12 +3331,13 @@ pub fn runPhononBandIFC(
     io: std.Io,
     cfg: config_mod.Config,
     scf_result: *scf_mod.ScfResult,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
-    cell_bohr: math.Mat3,
-    recip: math.Mat3,
-    volume: f64,
+    model: *const model_mod.Model,
 ) !PhononBandResult {
+    const species = model.species;
+    const atoms = model.atoms;
+    const cell_bohr = model.cell_bohr;
+    const recip = model.recip;
+    const volume = model.volume_bohr;
     const n_atoms = atoms.len;
     const dim = 3 * n_atoms;
     const grid = scf_result.grid;

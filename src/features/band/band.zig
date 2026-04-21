@@ -5,6 +5,7 @@ const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const kpath = @import("../kpath/kpath.zig");
 const linalg = @import("../linalg/linalg.zig");
 const math = @import("../math/math.zig");
+const model_mod = @import("../dft/model.zig");
 const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
@@ -52,20 +53,21 @@ pub fn writeBandEnergies(
     dir: std.Io.Dir,
     cfg: config.Config,
     path: kpath.KPath,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
-    cell_bohr: math.Mat3,
-    recip: math.Mat3,
-    volume_bohr: f64,
+    model: *const model_mod.Model,
     extra: ?*hamiltonian.PotentialGrid,
     extra_down: ?*hamiltonian.PotentialGrid,
     paw_tabs: ?[]const paw_mod.PawTab,
     paw_dij: ?[]const []const f64,
 ) !void {
+    const species = model.species;
+    const atoms = model.atoms;
+    const cell_bohr = model.cell_bohr;
+    const recip = model.recip;
+    const volume_bohr = model.volume_bohr;
     // For nspin=2, compute bands for each spin channel separately
     if (cfg.scf.nspin == 2 and extra != null and extra_down != null) {
-        try writeBandEnergiesForSpin(alloc, io, dir, cfg, path, species, atoms, cell_bohr, recip, volume_bohr, extra, "band_energies_up.csv", paw_tabs, paw_dij);
-        try writeBandEnergiesForSpin(alloc, io, dir, cfg, path, species, atoms, cell_bohr, recip, volume_bohr, extra_down, "band_energies_down.csv", paw_tabs, paw_dij);
+        try writeBandEnergiesForSpin(alloc, io, dir, cfg, path, model, extra, "band_energies_up.csv", paw_tabs, paw_dij);
+        try writeBandEnergiesForSpin(alloc, io, dir, cfg, path, model, extra_down, "band_energies_down.csv", paw_tabs, paw_dij);
         return;
     }
     if (cfg.band.nbands == 0) return error.InvalidBandConfig;
@@ -540,16 +542,17 @@ fn writeBandEnergiesForSpin(
     dir: std.Io.Dir,
     cfg: config.Config,
     path: kpath.KPath,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
-    cell_bohr: math.Mat3,
-    recip: math.Mat3,
-    volume_bohr: f64,
+    model: *const model_mod.Model,
     extra: ?*hamiltonian.PotentialGrid,
     filename: []const u8,
     paw_tabs: ?[]const paw_mod.PawTab,
     paw_dij: ?[]const []const f64,
 ) !void {
+    const species = model.species;
+    const atoms = model.atoms;
+    const cell_bohr = model.cell_bohr;
+    const recip = model.recip;
+    const volume_bohr = model.volume_bohr;
     if (cfg.band.nbands == 0) return error.InvalidBandConfig;
     if (species.len == 0) return error.MissingPseudopotential;
 

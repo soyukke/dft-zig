@@ -15,6 +15,7 @@ const kmesh_mod = @import("../kpoints/kpoints.zig");
 const logging = @import("logging.zig");
 const math = @import("../math/math.zig");
 const mixing = @import("mixing.zig");
+const model_mod = @import("../dft/model.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
 const local_potential = @import("../pseudopotential/local_potential.zig");
 const nonlocal_mod = @import("../pseudopotential/nonlocal.zig");
@@ -326,10 +327,7 @@ pub const ScfParams = struct {
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
-    recip: math.Mat3,
-    volume_bohr: f64,
+    model: *const model_mod.Model,
     initial_density: ?[]const f64 = null,
     initial_kpoint_cache: ?[]KpointCache = null,
     initial_apply_caches: ?[]apply.KpointApplyCache = null,
@@ -389,10 +387,10 @@ fn initScfCommon(params: ScfParams) !ScfCommon {
     const alloc = params.alloc;
     const io = params.io;
     const cfg = params.cfg;
-    const species = params.species;
-    const atoms = params.atoms;
-    const recip = params.recip;
-    const volume_bohr = params.volume_bohr;
+    const species = params.model.species;
+    const atoms = params.model.atoms;
+    const recip = params.model.recip;
+    const volume_bohr = params.model.volume_bohr;
     const ff_tables = params.ff_tables;
 
     const grid = grid_mod.gridFromConfig(cfg, recip, volume_bohr);
@@ -600,10 +598,10 @@ pub fn run(params: ScfParams) !ScfResult {
     const alloc = params.alloc;
     const io = params.io;
     const cfg = params.cfg;
-    const species = params.species;
-    const atoms = params.atoms;
-    const recip = params.recip;
-    const volume_bohr = params.volume_bohr;
+    const species = params.model.species;
+    const atoms = params.model.atoms;
+    const recip = params.model.recip;
+    const volume_bohr = params.model.volume_bohr;
     const initial_density = params.initial_density;
     const initial_kpoint_cache = params.initial_kpoint_cache;
     const initial_apply_caches = params.initial_apply_caches;

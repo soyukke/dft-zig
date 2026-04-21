@@ -9,6 +9,7 @@ const kpath = @import("../kpath/kpath.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const linear_scaling = @import("../linear_scaling/linear_scaling.zig");
 const math = @import("../math/math.zig");
+const model_mod = @import("model.zig");
 const output = @import("output.zig");
 const paw_mod = @import("../paw/paw.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
@@ -144,6 +145,14 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
     const have_relax_potential = if (relax_result) |rr| rr.final_potential != null else false;
     const needs_reference = cfg.scf.reference_json != null or cfg.scf.compare_reference_json != null;
 
+    const active_model = model_mod.Model{
+        .species = species,
+        .atoms = active.atoms,
+        .cell_bohr = active.cell_bohr,
+        .recip = active.recip,
+        .volume_bohr = active.volume_bohr,
+    };
+
     if (cfg.scf.enabled and !(have_relax_potential and !needs_reference)) {
         const scf_start_ns = nowNs(io);
         try logStep(io, "step: scf start");
@@ -161,10 +170,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
             .alloc = alloc,
             .io = io,
             .cfg = cfg,
-            .species = species,
-            .atoms = active.atoms,
-            .recip = active.recip,
-            .volume_bohr = active.volume_bohr,
+            .model = &active_model,
             .initial_density = init_density,
             .initial_kpoint_cache = init_kpoint_cache,
             .initial_apply_caches = init_apply_caches,
@@ -179,7 +185,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         if (scf_result) |*result| {
             try logStep(io, "step: stress tensor start");
             const stress = @import("../stress/stress.zig");
-            const stress_terms = try stress.computeStressFromScf(alloc, io, result, cfg, species, active.atoms);
+            const stress_terms = try stress.computeStressFromScf(alloc, io, result, cfg, &active_model);
             _ = stress_terms;
             try logStep(io, "step: stress tensor done");
         }
@@ -292,30 +298,9 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
             if (cfg.dfpt.qpath_npoints > 0) {
                 try logStep(io, "step: dfpt phonon band start");
                 var band_result = if (cfg.dfpt.qgrid != null)
-                    try dfpt_mod.runPhononBandIFC(
-                        alloc,
-                        io,
-                        cfg,
-                        result,
-                        species,
-                        active.atoms,
-                        active.cell_bohr,
-                        active.recip,
-                        active.volume_bohr,
-                    )
+                    try dfpt_mod.runPhononBandIFC(alloc, io, cfg, result, &active_model)
                 else
-                    try dfpt_mod.runPhononBand(
-                        alloc,
-                        io,
-                        cfg,
-                        result,
-                        species,
-                        active.atoms,
-                        active.cell_bohr,
-                        active.recip,
-                        active.volume_bohr,
-                        cfg.dfpt.qpath_npoints,
-                    );
+                    try dfpt_mod.runPhononBand(alloc, io, cfg, result, &active_model, cfg.dfpt.qpath_npoints);
                 defer band_result.deinit(alloc);
 
                 // Write phonon band CSV
@@ -344,7 +329,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                 try logStep(io, "step: dfpt phonon band done");
             } else {
                 try logStep(io, "step: dfpt phonon start");
-                var phonon = try dfpt_mod.runPhonon(alloc, io, cfg, result, species, active.atoms, active.cell_bohr, active.recip, active.volume_bohr);
+                var phonon = try dfpt_mod.runPhonon(alloc, io, cfg, result, &active_model);
                 defer phonon.deinit(alloc);
                 try logStep(io, "step: dfpt phonon done");
                 try logPhononFrequencies(io, phonon.frequencies_cm1);
@@ -379,7 +364,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         try logStep(io, "step: band energies");
         const band_paw_tabs: ?[]const paw_mod.PawTab = if (scf_result) |r| r.paw_tabs else null;
         const band_paw_dij: ?[]const []const f64 = if (scf_result) |r| r.paw_dij else null;
-        try band.writeBandEnergies(alloc, io, out_dir, cfg, kpoints, species, active.atoms, active.cell_bohr, active.recip, active.volume_bohr, extra_potential, extra_potential_down, band_paw_tabs, band_paw_dij);
+        try band.writeBandEnergies(alloc, io, out_dir, cfg, kpoints, &active_model, extra_potential, extra_potential_down, band_paw_tabs, band_paw_dij);
         timing.band_ns = elapsedNs(io, band_start_ns);
     }
 

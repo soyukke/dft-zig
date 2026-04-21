@@ -11,6 +11,7 @@ const runtime_logging = @import("../runtime/logging.zig");
 const scf = @import("../scf/scf.zig");
 const xc_mod = @import("../xc/xc.zig");
 const paw_mod = @import("../paw/paw_tab.zig");
+const model_mod = @import("../dft/model.zig");
 
 // Sub-module imports
 const kinetic_stress = @import("kinetic_stress.zig");
@@ -469,9 +470,10 @@ pub fn computeStressFromScf(
     io: std.Io,
     scf_result: *const scf.ScfResult,
     cfg: config.Config,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
+    model: *const model_mod.Model,
 ) !StressTerms {
+    const species = model.species;
+    const atoms = model.atoms;
     const grid = Grid{
         .nx = scf_result.grid.nx,
         .ny = scf_result.grid.ny,
