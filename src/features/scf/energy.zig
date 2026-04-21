@@ -316,36 +316,6 @@ pub fn computeEnergyTermsSpin(
     };
 }
 
-/// Compute ion-ion Ewald energy.
-fn computeIonIonEnergy(
-    alloc: std.mem.Allocator,
-    io: std.Io,
-    grid: Grid,
-    species: []hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
-    ewald_cfg: config.EwaldConfig,
-    quiet: bool,
-) !f64 {
-    const count = atoms.len;
-    if (count == 0) return 0.0;
-    const charges = try alloc.alloc(f64, count);
-    defer alloc.free(charges);
-    const positions = try alloc.alloc(math.Vec3, count);
-    defer alloc.free(positions);
-    for (atoms, 0..) |atom, i| {
-        charges[i] = species[atom.species_index].z_valence;
-        positions[i] = atom.position;
-    }
-    const params = ewald.Params{
-        .alpha = ewald_cfg.alpha,
-        .rcut = ewald_cfg.rcut,
-        .gcut = ewald_cfg.gcut,
-        .tol = ewald_cfg.tol,
-        .quiet = quiet,
-    };
-    return try ewald.ionIonEnergy(io, grid.cell, grid.recip, charges, positions, params);
-}
-
 /// Compute ion-ion energy by direct pairwise Coulomb sum (for isolated systems).
 /// Returns energy in Hartree (same convention as Ewald).
 fn computeDirectIonIonEnergy(
