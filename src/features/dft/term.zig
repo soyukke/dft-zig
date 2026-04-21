@@ -18,6 +18,7 @@ const ewald_mod = @import("../ewald/ewald.zig");
 const fft_grid = @import("../scf/fft_grid.zig");
 const grid_mod = @import("../scf/pw_grid.zig");
 const gvec_iter = @import("../scf/gvec_iter.zig");
+const xc_fields = @import("../scf/xc_fields.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const math = @import("../math/math.zig");
 const xc_mod = @import("../xc/xc.zig");
@@ -91,10 +92,28 @@ pub const EvalInput = struct {
 /// wired, the corresponding legacy path is retired.
 pub fn termEnergy(term: Term, input: EvalInput) !f64 {
     return switch (term) {
-        .kinetic, .atomic_local, .atomic_nonlocal, .xc => 0.0,
+        .kinetic, .atomic_local, .atomic_nonlocal => 0.0,
         .hartree => |t| try hartreeEnergy(t, input),
+        .xc => |t| try xcEnergy(t, input),
         .ewald => |t| try ewaldEnergy(t, input),
     };
+}
+
+fn xcEnergy(term: TermXc, input: EvalInput) !f64 {
+    const grid = input.grid orelse return error.MissingGrid;
+    const rho = input.rho orelse return error.MissingDensity;
+    if (rho.len != grid.count()) return error.DensitySizeMismatch;
+
+    const fields = try xc_fields.computeXcFields(input.alloc, grid.*, rho, null, false, term.functional);
+    defer {
+        input.alloc.free(fields.vxc);
+        input.alloc.free(fields.exc);
+    }
+
+    const dv = grid.volume / @as(f64, @floatFromInt(grid.count()));
+    var sum: f64 = 0.0;
+    for (fields.exc) |e| sum += e * dv;
+    return sum;
 }
 
 fn hartreeEnergy(term: TermHartree, input: EvalInput) !f64 {
@@ -282,6 +301,63 @@ test "termEnergy(.hartree) is positive and deterministic for cosine density" {
     // Deterministic: re-running gives the same value.
     const eh2 = try termEnergy(.{ .hartree = .{} }, input);
     try testing.expectApproxEqAbs(eh, eh2, 1e-14);
+}
+
+test "termEnergy(.xc) matches computeXcFields integral (LDA)" {
+    const testing = std.testing;
+    const io = testing.io;
+    const alloc = testing.allocator;
+
+    const L = 6.0;
+    const cell = math.Mat3.fromRows(
+        .{ .x = L, .y = 0.0, .z = 0.0 },
+        .{ .x = 0.0, .y = L, .z = 0.0 },
+        .{ .x = 0.0, .y = 0.0, .z = L },
+    );
+    const recip = math.reciprocal(cell);
+    const volume = L * L * L;
+
+    const nx: usize = 6;
+    const grid = Grid{
+        .nx = nx,
+        .ny = nx,
+        .nz = nx,
+        .cell = cell,
+        .recip = recip,
+        .volume = volume,
+        .min_h = grid_mod.minIndex(nx),
+        .min_k = grid_mod.minIndex(nx),
+        .min_l = grid_mod.minIndex(nx),
+    };
+
+    const n_points = grid.count();
+    const rho = try alloc.alloc(f64, n_points);
+    defer alloc.free(rho);
+    @memset(rho, 0.5 / volume);
+
+    const input = EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .species = &.{},
+        .atoms = &.{},
+        .cell_bohr = cell,
+        .recip = recip,
+        .volume_bohr = volume,
+        .rho = rho,
+        .grid = &grid,
+    };
+
+    const fields = try xc_fields.computeXcFields(alloc, grid, rho, null, false, .lda_pz);
+    defer {
+        alloc.free(fields.vxc);
+        alloc.free(fields.exc);
+    }
+    const dv = volume / @as(f64, @floatFromInt(n_points));
+    var expected: f64 = 0.0;
+    for (fields.exc) |e| expected += e * dv;
+
+    const actual = try termEnergy(.{ .xc = .{ .functional = .lda_pz } }, input);
+    try testing.expectApproxEqRel(expected, actual, 1e-12);
 }
 
 test "termEnergy(.ewald) matches direct ionIonEnergy" {
