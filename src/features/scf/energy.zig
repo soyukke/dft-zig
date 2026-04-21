@@ -69,14 +69,6 @@ pub fn computeEnergyTerms(
     const rho_g = try realToReciprocal(alloc, grid, rho, use_rfft);
     defer alloc.free(rho_g);
 
-    // E_H uses augmented density in G-space
-    const rho_hxc_g = if (rho_aug != null)
-        try realToReciprocal(alloc, grid, rho_for_hxc, use_rfft)
-    else
-        null;
-    defer if (rho_hxc_g) |g| alloc.free(g);
-    const rho_g_for_eh = rho_hxc_g orelse rho_g;
-
     // E_xc and V_xc use augmented density
     const xc_fields = try computeXcFields(alloc, grid, rho_for_hxc, rho_core, use_rfft, xc_func);
     defer {
@@ -86,40 +78,33 @@ pub fn computeEnergyTerms(
     const vxc_r = xc_fields.vxc;
     const exc_r = xc_fields.exc;
 
+    // Hartree energy via Term contract (uses augmented density for PAW).
+    const hartree_input = term_mod.EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .species = species,
+        .atoms = atoms,
+        .cell_bohr = grid.cell,
+        .recip = grid.recip,
+        .volume_bohr = grid.volume,
+        .rho = rho_for_hxc,
+        .grid = &grid,
+    };
+    const eh = try term_mod.termEnergy(.{ .hartree = .{
+        .isolated = (coulomb_r_cut != null),
+        .ecutrho = ecutrho,
+    } }, hartree_input);
+
+    // Local pseudopotential energy in G-space (pseudo density).
+    // ionicLocalPotential returns 0 at G=0, so the G=0 term contributes nothing.
     const inv_volume = 1.0 / grid.volume;
-    var eh: f64 = 0.0;
     var e_local: f64 = 0.0;
     var it = gvec_iter.GVecIterator.init(grid);
     while (it.next()) |g| {
-        // ecutrho spherical cutoff: skip G-vectors beyond ecutrho
-        const beyond_ecutrho = if (ecutrho) |ecut| g.g2 >= ecut else false;
-        if (beyond_ecutrho) {
-            continue;
+        if (ecutrho) |ecut| {
+            if (g.g2 >= ecut) continue;
         }
         const rho_val = rho_g[g.idx];
-        // E_H uses augmented density
-        const rho_eh_val = rho_g_for_eh[g.idx];
-        const rho2_eh = rho_eh_val.r * rho_eh_val.r + rho_eh_val.i * rho_eh_val.i;
-        if (coulomb_r_cut) |r_cut| {
-            // Isolated system: cutoff Coulomb Hartree energy
-            // E_H = (Ω/2) Σ_G |ρ(G)|² × v_c(G)
-            const g_mag = @sqrt(g.g2);
-            const kernel = coulomb.cutoffCoulombEnergyKernel(g.g2, g_mag, r_cut);
-            eh += 0.5 * kernel * rho2_eh * grid.volume;
-        } else {
-            // Periodic system: skip G=0
-            if (g.gh == 0 and g.gk == 0 and g.gl == 0) {
-                // e_local always uses pseudo density
-                const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume, local_cfg);
-                e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
-                continue;
-            }
-            if (g.g2 > 1e-12) {
-                // E_H = (Ω/2) × 8π × Σ |ρ_aug(G)|² / |G|² (Rydberg units)
-                eh += 0.5 * 8.0 * std.math.pi * rho2_eh / g.g2 * grid.volume;
-            }
-        }
-        // e_local always uses pseudo density
         const vloc = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms, inv_volume, local_cfg);
         e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
     }

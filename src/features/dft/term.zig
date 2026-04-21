@@ -49,6 +49,9 @@ pub const TermAtomicNonlocal = struct {};
 pub const TermHartree = struct {
     /// true for isolated boundary conditions (Coulomb cutoff applied at eval time).
     isolated: bool = false,
+    /// Optional spherical G² cutoff — PAW uses this to truncate the
+    /// augmented-density sum when the density grid is denser than ecut.
+    ecutrho: ?f64 = null,
 };
 
 /// Exchange-correlation: V_xc[ρ](r), E_xc[ρ].
@@ -159,6 +162,9 @@ fn hartreeEnergy(term: TermHartree, input: EvalInput) !f64 {
     var eh: f64 = 0.0;
     var it = gvec_iter.GVecIterator.init(grid.*);
     while (it.next()) |g| {
+        if (term.ecutrho) |ecut| {
+            if (g.g2 >= ecut) continue;
+        }
         const rho_val = rho_g[g.idx];
         const rho2 = rho_val.r * rho_val.r + rho_val.i * rho_val.i;
         if (r_cut) |rc| {
