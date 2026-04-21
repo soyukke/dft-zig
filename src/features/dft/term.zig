@@ -1,15 +1,13 @@
 //! Physical terms of the DFT Hamiltonian.
 //!
-//! Each Term contributes:
-//!   (1) an energy value (possibly depending on the current density)
-//!   (2) a per-k-point operator that sums into H|ψ⟩
+//! Each Term carries the parameters for one density-dependent contribution
+//! to the total energy (Hartree, XC, local pseudo, Ewald). Evaluation goes
+//! through `termEnergy(term, input)`.
 //!
-//! This is the dft-zig analogue of DFTK.jl's Term abstraction. The long-term
-//! goal is to replace the monolithic buildHamiltonian / buildPotentialGrid
-//! flow with an iteration over physics terms, each self-contained.
-//!
-//! This module (Step 2a) defines the types. Wiring to the SCF loop happens
-//! in subsequent commits.
+//! Wavefunction-dependent contributions (kinetic, nonlocal pseudopotential)
+//! are not represented here — they are handled inside the band solver,
+//! where ψ is available. When a ψ-aware Term contract is introduced, those
+//! variants join this enum.
 
 const std = @import("std");
 const coulomb_mod = @import("../coulomb/coulomb.zig");
@@ -25,10 +23,6 @@ const xc_mod = @import("../xc/xc.zig");
 
 pub const Grid = grid_mod.Grid;
 
-/// Kinetic energy: T|ψ⟩ = |G+k|²/2 |ψ⟩ (Rydberg).
-/// Density-independent; operator-only (does not contribute to V_eff(r)).
-pub const TermKinetic = struct {};
-
 /// Local component of the ionic pseudopotential: V_loc(r) = Σ_a v^a_loc(r-R_a).
 /// Depends on atomic positions (via Model), not on ρ. Contributes to V_eff(G).
 ///
@@ -40,10 +34,6 @@ pub const TermAtomicLocal = struct {
     /// Optional spherical G² cutoff (PAW augmented-density regime).
     ecutrho: ?f64 = null,
 };
-
-/// Non-local pseudopotential: Σ_a Σ_ij |β^a_i⟩ D_ij ⟨β^a_j|.
-/// Density-independent. Operator-only.
-pub const TermAtomicNonlocal = struct {};
 
 /// Hartree: V_H(G) = 8π/G² ρ(G) (Rydberg).
 /// Uses a real-space Coulomb cutoff for isolated boundary conditions.
@@ -70,9 +60,7 @@ pub const TermEwald = struct {
 };
 
 pub const Term = union(enum) {
-    kinetic: TermKinetic,
     atomic_local: TermAtomicLocal,
-    atomic_nonlocal: TermAtomicNonlocal,
     hartree: TermHartree,
     xc: TermXc,
     ewald: TermEwald,
@@ -112,7 +100,6 @@ pub const EvalInput = struct {
 /// wired, the corresponding legacy path is retired.
 pub fn termEnergy(term: Term, input: EvalInput) !f64 {
     return switch (term) {
-        .kinetic, .atomic_nonlocal => 0.0,
         .atomic_local => |t| try atomicLocalEnergy(t, input),
         .hartree => |t| try hartreeEnergy(t, input),
         .xc => |t| try xcEnergy(t, input),
