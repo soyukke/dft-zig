@@ -13,10 +13,16 @@
 
 const std = @import("std");
 const config_mod = @import("../config/config.zig");
+const coulomb_mod = @import("../coulomb/coulomb.zig");
 const ewald_mod = @import("../ewald/ewald.zig");
+const fft_grid = @import("../scf/fft_grid.zig");
+const grid_mod = @import("../scf/pw_grid.zig");
+const gvec_iter = @import("../scf/gvec_iter.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const math = @import("../math/math.zig");
 const xc_mod = @import("../xc/xc.zig");
+
+pub const Grid = grid_mod.Grid;
 
 /// Kinetic energy: T|ψ⟩ = |G+k|²/2 |ψ⟩ (Rydberg).
 /// Density-independent; operator-only (does not contribute to V_eff(r)).
@@ -75,6 +81,7 @@ pub const EvalInput = struct {
     recip: math.Mat3,
     volume_bohr: f64,
     rho: ?[]const f64 = null,
+    grid: ?*const Grid = null,
 };
 
 /// Return the scalar energy contribution of a term.
@@ -84,9 +91,39 @@ pub const EvalInput = struct {
 /// wired, the corresponding legacy path is retired.
 pub fn termEnergy(term: Term, input: EvalInput) !f64 {
     return switch (term) {
-        .kinetic, .atomic_local, .atomic_nonlocal, .hartree, .xc => 0.0,
+        .kinetic, .atomic_local, .atomic_nonlocal, .xc => 0.0,
+        .hartree => |t| try hartreeEnergy(t, input),
         .ewald => |t| try ewaldEnergy(t, input),
     };
+}
+
+fn hartreeEnergy(term: TermHartree, input: EvalInput) !f64 {
+    const grid = input.grid orelse return error.MissingGrid;
+    const rho = input.rho orelse return error.MissingDensity;
+    if (rho.len != grid.count()) return error.DensitySizeMismatch;
+
+    const rho_g = try fft_grid.realToReciprocal(input.alloc, grid.*, rho, false);
+    defer input.alloc.free(rho_g);
+
+    const r_cut: ?f64 = if (term.isolated) coulomb_mod.cutoffRadius(grid.cell) else null;
+
+    var eh: f64 = 0.0;
+    var it = gvec_iter.GVecIterator.init(grid.*);
+    while (it.next()) |g| {
+        const rho_val = rho_g[g.idx];
+        const rho2 = rho_val.r * rho_val.r + rho_val.i * rho_val.i;
+        if (r_cut) |rc| {
+            const g_mag = @sqrt(g.g2);
+            const kernel = coulomb_mod.cutoffCoulombEnergyKernel(g.g2, g_mag, rc);
+            eh += 0.5 * kernel * rho2 * grid.volume;
+        } else {
+            if (g.gh == 0 and g.gk == 0 and g.gl == 0) continue;
+            if (g.g2 > 1e-12) {
+                eh += 0.5 * 8.0 * std.math.pi * rho2 / g.g2 * grid.volume;
+            }
+        }
+    }
+    return eh;
 }
 
 fn ewaldEnergy(term: TermEwald, input: EvalInput) !f64 {
@@ -132,6 +169,119 @@ pub fn termsFromConfig(alloc: std.mem.Allocator, cfg: config_mod.Config) ![]Term
     } });
 
     return list.toOwnedSlice(alloc);
+}
+
+test "termEnergy(.hartree) returns zero for uniform periodic density" {
+    const testing = std.testing;
+    const io = testing.io;
+    const alloc = testing.allocator;
+
+    const L = 8.0; // Bohr
+    const cell = math.Mat3.fromRows(
+        .{ .x = L, .y = 0.0, .z = 0.0 },
+        .{ .x = 0.0, .y = L, .z = 0.0 },
+        .{ .x = 0.0, .y = 0.0, .z = L },
+    );
+    const recip = math.reciprocal(cell);
+    const volume = L * L * L;
+
+    const nx: usize = 8;
+    const grid = Grid{
+        .nx = nx,
+        .ny = nx,
+        .nz = nx,
+        .cell = cell,
+        .recip = recip,
+        .volume = volume,
+        .min_h = grid_mod.minIndex(nx),
+        .min_k = grid_mod.minIndex(nx),
+        .min_l = grid_mod.minIndex(nx),
+    };
+
+    const n_points = grid.count();
+    const rho = try alloc.alloc(f64, n_points);
+    defer alloc.free(rho);
+    @memset(rho, 1.0 / volume);
+
+    const input = EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .species = &.{},
+        .atoms = &.{},
+        .cell_bohr = cell,
+        .recip = recip,
+        .volume_bohr = volume,
+        .rho = rho,
+        .grid = &grid,
+    };
+
+    // Uniform ρ has non-zero Fourier component only at G=0, which
+    // the periodic Hartree sum skips — so E_H must vanish.
+    const eh = try termEnergy(.{ .hartree = .{} }, input);
+    try testing.expectApproxEqAbs(eh, 0.0, 1e-10);
+}
+
+test "termEnergy(.hartree) is positive and deterministic for cosine density" {
+    const testing = std.testing;
+    const io = testing.io;
+    const alloc = testing.allocator;
+
+    const L = 8.0;
+    const cell = math.Mat3.fromRows(
+        .{ .x = L, .y = 0.0, .z = 0.0 },
+        .{ .x = 0.0, .y = L, .z = 0.0 },
+        .{ .x = 0.0, .y = 0.0, .z = L },
+    );
+    const recip = math.reciprocal(cell);
+    const volume = L * L * L;
+
+    const nx: usize = 8;
+    const grid = Grid{
+        .nx = nx,
+        .ny = nx,
+        .nz = nx,
+        .cell = cell,
+        .recip = recip,
+        .volume = volume,
+        .min_h = grid_mod.minIndex(nx),
+        .min_k = grid_mod.minIndex(nx),
+        .min_l = grid_mod.minIndex(nx),
+    };
+
+    const n_points = grid.count();
+    const rho = try alloc.alloc(f64, n_points);
+    defer alloc.free(rho);
+    const twopi_L = 2.0 * std.math.pi / L;
+    const rho0 = 1.0 / volume;
+    const amp = 0.3 * rho0;
+    for (0..nx) |ix| {
+        const x = @as(f64, @floatFromInt(ix)) * L / @as(f64, @floatFromInt(nx));
+        for (0..nx) |iy| {
+            for (0..nx) |iz| {
+                const idx = ix + nx * (iy + nx * iz);
+                rho[idx] = rho0 + amp * @cos(twopi_L * x);
+            }
+        }
+    }
+
+    const input = EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .species = &.{},
+        .atoms = &.{},
+        .cell_bohr = cell,
+        .recip = recip,
+        .volume_bohr = volume,
+        .rho = rho,
+        .grid = &grid,
+    };
+
+    const eh = try termEnergy(.{ .hartree = .{} }, input);
+    // Positive by construction (cos density has real Fourier components at ±G₁).
+    try testing.expect(eh > 0.0);
+    // Deterministic: re-running gives the same value.
+    const eh2 = try termEnergy(.{ .hartree = .{} }, input);
+    try testing.expectApproxEqAbs(eh, eh2, 1e-14);
 }
 
 test "termEnergy(.ewald) matches direct ionIonEnergy" {
