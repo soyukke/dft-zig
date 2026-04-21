@@ -12,7 +12,6 @@
 //! in subsequent commits.
 
 const std = @import("std");
-const config_mod = @import("../config/config.zig");
 const coulomb_mod = @import("../coulomb/coulomb.zig");
 const ewald_mod = @import("../ewald/ewald.zig");
 const fft_grid = @import("../scf/fft_grid.zig");
@@ -232,33 +231,6 @@ fn ewaldEnergy(term: TermEwald, input: EvalInput) !f64 {
         .quiet = term.quiet,
     };
     return try ewald_mod.ionIonEnergy(input.io, input.cell_bohr, input.recip, charges, positions, params);
-}
-
-/// Build the canonical term list for a given configuration.
-/// Caller owns the returned slice.
-pub fn termsFromConfig(alloc: std.mem.Allocator, cfg: config_mod.Config) ![]Term {
-    var list: std.ArrayList(Term) = .empty;
-    errdefer list.deinit(alloc);
-
-    try list.append(alloc, .{ .kinetic = .{} });
-    try list.append(alloc, .{ .atomic_local = .{
-        .mode = cfg.scf.local_potential,
-        .explicit_alpha = cfg.ewald.alpha,
-    } });
-    if (cfg.scf.enable_nonlocal) {
-        try list.append(alloc, .{ .atomic_nonlocal = .{} });
-    }
-    try list.append(alloc, .{ .hartree = .{ .isolated = (cfg.boundary == .isolated) } });
-    try list.append(alloc, .{ .xc = .{ .functional = cfg.scf.xc } });
-    try list.append(alloc, .{ .ewald = .{
-        .alpha = cfg.ewald.alpha,
-        .rcut = cfg.ewald.rcut,
-        .gcut = cfg.ewald.gcut,
-        .tol = cfg.ewald.tol,
-        .quiet = cfg.scf.quiet,
-    } });
-
-    return list.toOwnedSlice(alloc);
 }
 
 test "termEnergy(.hartree) returns zero for uniform periodic density" {
