@@ -18,6 +18,7 @@ const ewald_mod = @import("../ewald/ewald.zig");
 const fft_grid = @import("../scf/fft_grid.zig");
 const grid_mod = @import("../scf/pw_grid.zig");
 const gvec_iter = @import("../scf/gvec_iter.zig");
+const local_potential = @import("../pseudopotential/local_potential.zig");
 const xc_fields = @import("../scf/xc_fields.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const math = @import("../math/math.zig");
@@ -31,7 +32,13 @@ pub const TermKinetic = struct {};
 
 /// Local component of the ionic pseudopotential: V_loc(r) = Σ_a v^a_loc(r-R_a).
 /// Depends on atomic positions (via Model), not on ρ. Contributes to V_eff(G).
-pub const TermAtomicLocal = struct {};
+///
+/// mode and explicit_alpha parameterize the long-range splitting; resolved
+/// against the cell at evaluation time (the effective alpha depends on geometry).
+pub const TermAtomicLocal = struct {
+    mode: local_potential.LocalPotentialMode = .short_range,
+    explicit_alpha: f64 = 0.0,
+};
 
 /// Non-local pseudopotential: Σ_a Σ_ij |β^a_i⟩ D_ij ⟨β^a_j|.
 /// Density-independent. Operator-only.
@@ -92,11 +99,34 @@ pub const EvalInput = struct {
 /// wired, the corresponding legacy path is retired.
 pub fn termEnergy(term: Term, input: EvalInput) !f64 {
     return switch (term) {
-        .kinetic, .atomic_local, .atomic_nonlocal => 0.0,
+        .kinetic, .atomic_nonlocal => 0.0,
+        .atomic_local => |t| try atomicLocalEnergy(t, input),
         .hartree => |t| try hartreeEnergy(t, input),
         .xc => |t| try xcEnergy(t, input),
         .ewald => |t| try ewaldEnergy(t, input),
     };
+}
+
+fn atomicLocalEnergy(term: TermAtomicLocal, input: EvalInput) !f64 {
+    const grid = input.grid orelse return error.MissingGrid;
+    const rho = input.rho orelse return error.MissingDensity;
+    if (rho.len != grid.count()) return error.DensitySizeMismatch;
+
+    const rho_g = try fft_grid.realToReciprocal(input.alloc, grid.*, rho, false);
+    defer input.alloc.free(rho_g);
+
+    const local_cfg = local_potential.resolve(term.mode, term.explicit_alpha, grid.cell);
+    const inv_volume = 1.0 / grid.volume;
+
+    var e_local: f64 = 0.0;
+    var it = gvec_iter.GVecIterator.init(grid.*);
+    while (it.next()) |g| {
+        const rho_val = rho_g[g.idx];
+        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, input.species, input.atoms, inv_volume, local_cfg);
+        e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
+    }
+    e_local *= grid.volume;
+    return e_local;
 }
 
 fn xcEnergy(term: TermXc, input: EvalInput) !f64 {
@@ -173,7 +203,10 @@ pub fn termsFromConfig(alloc: std.mem.Allocator, cfg: config_mod.Config) ![]Term
     errdefer list.deinit(alloc);
 
     try list.append(alloc, .{ .kinetic = .{} });
-    try list.append(alloc, .{ .atomic_local = .{} });
+    try list.append(alloc, .{ .atomic_local = .{
+        .mode = cfg.scf.local_potential,
+        .explicit_alpha = cfg.ewald.alpha,
+    } });
     if (cfg.scf.enable_nonlocal) {
         try list.append(alloc, .{ .atomic_nonlocal = .{} });
     }
@@ -301,6 +334,52 @@ test "termEnergy(.hartree) is positive and deterministic for cosine density" {
     // Deterministic: re-running gives the same value.
     const eh2 = try termEnergy(.{ .hartree = .{} }, input);
     try testing.expectApproxEqAbs(eh, eh2, 1e-14);
+}
+
+test "termEnergy(.atomic_local) is zero with no atoms" {
+    const testing = std.testing;
+    const io = testing.io;
+    const alloc = testing.allocator;
+
+    const L = 6.0;
+    const cell = math.Mat3.fromRows(
+        .{ .x = L, .y = 0.0, .z = 0.0 },
+        .{ .x = 0.0, .y = L, .z = 0.0 },
+        .{ .x = 0.0, .y = 0.0, .z = L },
+    );
+    const recip = math.reciprocal(cell);
+    const volume = L * L * L;
+    const nx: usize = 4;
+    const grid = Grid{
+        .nx = nx,
+        .ny = nx,
+        .nz = nx,
+        .cell = cell,
+        .recip = recip,
+        .volume = volume,
+        .min_h = grid_mod.minIndex(nx),
+        .min_k = grid_mod.minIndex(nx),
+        .min_l = grid_mod.minIndex(nx),
+    };
+
+    const rho = try alloc.alloc(f64, grid.count());
+    defer alloc.free(rho);
+    @memset(rho, 1.0 / volume);
+
+    const input = EvalInput{
+        .alloc = alloc,
+        .io = io,
+        .species = &.{},
+        .atoms = &.{},
+        .cell_bohr = cell,
+        .recip = recip,
+        .volume_bohr = volume,
+        .rho = rho,
+        .grid = &grid,
+    };
+
+    const e = try termEnergy(.{ .atomic_local = .{} }, input);
+    try testing.expectApproxEqAbs(e, 0.0, 1e-14);
 }
 
 test "termEnergy(.xc) matches computeXcFields integral (LDA)" {
