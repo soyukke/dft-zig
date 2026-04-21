@@ -127,7 +127,7 @@ fn buildForceProjectors(
 pub fn nonlocalForces(
     alloc: std.mem.Allocator,
     wavefunctions: scf.WavefunctionData,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,

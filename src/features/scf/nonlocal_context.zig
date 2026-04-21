@@ -137,7 +137,7 @@ pub const NonlocalContext = struct {
 /// Public wrapper for buildNonlocalContext (used by kpoints.zig for caching).
 pub fn buildNonlocalContextPub(
     alloc: std.mem.Allocator,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     gvecs: []plane_wave.GVector,
 ) !?NonlocalContext {
     return buildNonlocalContext(alloc, species, gvecs);
@@ -146,7 +146,7 @@ pub fn buildNonlocalContextPub(
 /// Build NonlocalContext using pre-computed radial tables for fast evaluation.
 pub fn buildNonlocalContextWithTables(
     alloc: std.mem.Allocator,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     gvecs: []plane_wave.GVector,
     radial_tables: []const nonlocal.RadialTableSet,
 ) !?NonlocalContext {
@@ -179,7 +179,7 @@ pub fn buildNonlocalContextWithTables(
 /// paw_tabs should have one entry per species. Species with nbeta=0 are treated as non-PAW.
 pub fn buildNonlocalContextPaw(
     alloc: std.mem.Allocator,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     gvecs: []plane_wave.GVector,
     radial_tables: ?[]const nonlocal.RadialTableSet,
     paw_tabs: []const paw_mod.PawTab,
@@ -236,7 +236,7 @@ pub fn buildNonlocalContextPaw(
 
 fn buildNonlocalContext(
     alloc: std.mem.Allocator,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     gvecs: []plane_wave.GVector,
 ) !?NonlocalContext {
     var list: std.ArrayList(NonlocalSpecies) = .empty;

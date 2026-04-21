@@ -12,7 +12,7 @@ const reciprocalToReal = fft_grid.reciprocalToReal;
 const Grid = grid_mod.Grid;
 
 /// Check if any species provides NLCC data.
-pub fn hasNlcc(species: []hamiltonian.SpeciesEntry) bool {
+pub fn hasNlcc(species: []const hamiltonian.SpeciesEntry) bool {
     for (species) |entry| {
         if (entry.upf.nlcc.len > 0) return true;
     }
@@ -23,7 +23,7 @@ pub fn hasNlcc(species: []hamiltonian.SpeciesEntry) bool {
 pub fn buildCoreDensity(
     alloc: std.mem.Allocator,
     grid: Grid,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
 ) ![]f64 {
     const total = grid.count();

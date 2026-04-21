@@ -43,7 +43,7 @@ pub fn computeDielectricAllK(
     cfg: config_mod.Config,
     gs: *const GroundState,
     local_r: []const f64,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     cell_bohr: math.Mat3,
     recip: math.Mat3,

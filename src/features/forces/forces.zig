@@ -65,7 +65,7 @@ pub fn computeForces(
     rho_g: []const math.Complex,
     potential_g: ?[]const math.Complex,
     _: ?[]const math.Complex,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     cell: math.Mat3,
     recip: math.Mat3,

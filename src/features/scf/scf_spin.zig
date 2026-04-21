@@ -146,7 +146,7 @@ pub fn runSpinPolarizedLoop(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     volume_bohr: f64,
     common: *scf_mod.ScfCommon,

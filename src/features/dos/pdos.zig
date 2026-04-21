@@ -39,7 +39,7 @@ pub const PdosResult = struct {
 pub fn computePdos(
     alloc: std.mem.Allocator,
     wf_data: scf.WavefunctionData,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
     volume: f64,

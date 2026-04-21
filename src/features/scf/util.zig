@@ -24,7 +24,7 @@ pub fn densityDiff(rho: []f64, rho_new: []f64) f64 {
 }
 
 /// Check if any species has nonlocal coefficients.
-pub fn hasNonlocal(species: []hamiltonian.SpeciesEntry) bool {
+pub fn hasNonlocal(species: []const hamiltonian.SpeciesEntry) bool {
     for (species) |entry| {
         if (entry.upf.dij.len > 0) return true;
     }
@@ -32,7 +32,7 @@ pub fn hasNonlocal(species: []hamiltonian.SpeciesEntry) bool {
 }
 
 /// Check if any species has QIJ coefficients.
-pub fn hasQij(species: []hamiltonian.SpeciesEntry) bool {
+pub fn hasQij(species: []const hamiltonian.SpeciesEntry) bool {
     for (species) |entry| {
         if (entry.upf.qij.len > 0) return true;
     }
@@ -40,7 +40,7 @@ pub fn hasQij(species: []hamiltonian.SpeciesEntry) bool {
 }
 
 /// Check if any species uses PAW.
-pub fn hasPaw(species: []hamiltonian.SpeciesEntry) bool {
+pub fn hasPaw(species: []const hamiltonian.SpeciesEntry) bool {
     for (species) |entry| {
         if (entry.upf.paw != null) return true;
     }
@@ -48,7 +48,7 @@ pub fn hasPaw(species: []hamiltonian.SpeciesEntry) bool {
 }
 
 /// Compute total valence electrons in the cell.
-pub fn totalElectrons(species: []hamiltonian.SpeciesEntry, atoms: []const hamiltonian.AtomData) f64 {
+pub fn totalElectrons(species: []const hamiltonian.SpeciesEntry, atoms: []const hamiltonian.AtomData) f64 {
     var total: f64 = 0.0;
     for (atoms) |atom| {
         total += species[atom.species_index].z_valence;

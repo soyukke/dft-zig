@@ -17,7 +17,7 @@ pub fn nlccForces(
     alloc: std.mem.Allocator,
     grid: Grid,
     vxc_r: []const f64,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     volume: f64,
 ) ![]math.Vec3 {
@@ -126,7 +126,7 @@ pub fn nlccForcesGSpace(
     alloc: std.mem.Allocator,
     grid: Grid,
     vxc_g: []const math.Complex,
-    species: []hamiltonian.SpeciesEntry,
+    species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
     rho_core_tables: ?[]const form_factor.RadialFormFactorTable,
 ) ![]math.Vec3 {
