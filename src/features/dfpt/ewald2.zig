@@ -77,7 +77,10 @@ pub fn ewaldDynmat(
                             ),
                             math.Vec3.scale(a3, @as(f64, @floatFromInt(n3))),
                         );
-                        const delta = math.Vec3.add(math.Vec3.sub(positions[i], positions[j]), lvec);
+                        const delta = math.Vec3.add(
+                            math.Vec3.sub(positions[i], positions[j]),
+                            lvec,
+                        );
                         const r = math.Vec3.norm(delta);
                         if (r > rcut or r < 1e-12) continue;
 
@@ -96,7 +99,9 @@ pub fn ewaldDynmat(
                         const r5_inv = r3_inv * r_inv * r_inv;
 
                         const A = -(erfc_ar + two_alpha_sqrtpi * r * exp_ar2) * r3_inv;
-                        const B = (3.0 * erfc_ar + two_alpha_sqrtpi * r * (3.0 + 2.0 * alpha2 * r2) * exp_ar2) * r5_inv;
+                        const b_poly = 3.0 + 2.0 * alpha2 * r2;
+                        const b_num = 3.0 * erfc_ar + two_alpha_sqrtpi * r * b_poly * exp_ar2;
+                        const B = b_num * r5_inv;
 
                         const d = [3]f64{ delta.x, delta.y, delta.z };
                         const zz = charges[i] * charges[j];
@@ -257,7 +262,10 @@ pub fn ewaldDynmatQ(
                             ),
                             math.Vec3.scale(a3, @as(f64, @floatFromInt(n3))),
                         );
-                        const delta = math.Vec3.add(math.Vec3.sub(positions[i], positions[j]), lvec);
+                        const delta = math.Vec3.add(
+                            math.Vec3.sub(positions[i], positions[j]),
+                            lvec,
+                        );
                         const r = math.Vec3.norm(delta);
                         if (r > rcut or r < 1e-12) continue;
 
@@ -271,7 +279,9 @@ pub fn ewaldDynmatQ(
                         const r5_inv = r3_inv * r_inv * r_inv;
 
                         const A = -(erfc_ar + two_alpha_sqrtpi * r * exp_ar2) * r3_inv;
-                        const B = (3.0 * erfc_ar + two_alpha_sqrtpi * r * (3.0 + 2.0 * alpha2 * r2) * exp_ar2) * r5_inv;
+                        const b_poly = 3.0 + 2.0 * alpha2 * r2;
+                        const b_num = 3.0 * erfc_ar + two_alpha_sqrtpi * r * b_poly * exp_ar2;
+                        const B = b_num * r5_inv;
 
                         const d = [3]f64{ delta.x, delta.y, delta.z };
                         const zz = charges[i] * charges[j];
@@ -357,7 +367,8 @@ pub fn ewaldDynmatQ(
     //   D_ewald(μ,ia; ν,ia) -= dyewq0(μ,ν,ia)
     //
     // C-bar(q=0) has two parts:
-    //   (a) Reciprocal: (4π/V) Σ_{G≠0} exp(-G²/4α²)/G² × G_μ G_ν × cos(G·(R_ia-R_ib)) × Z_ia Z_ib
+    //   (a) Reciprocal: (4π/V) Σ_{G≠0} exp(-G²/4α²)/G² × G_μ G_ν
+    //       × cos(G·(R_ia-R_ib)) × Z_ia Z_ib
     //   (b) Real-space off-diagonal: same erfc terms as above but with q=0 (no phase)
 
     // dyewq0[ia][3*μ+ν] = Σ_ib contribution
@@ -427,7 +438,10 @@ pub fn ewaldDynmatQ(
                             ),
                             math.Vec3.scale(a3, @as(f64, @floatFromInt(rn3))),
                         );
-                        const delta = math.Vec3.add(math.Vec3.sub(positions[ia], positions[ib]), lvec);
+                        const delta = math.Vec3.add(
+                            math.Vec3.sub(positions[ia], positions[ib]),
+                            lvec,
+                        );
                         const r = math.Vec3.norm(delta);
                         if (r > rcut or r < 1e-12) continue;
 
@@ -441,7 +455,9 @@ pub fn ewaldDynmatQ(
                         const r5_inv = r3_inv * r_inv * r_inv;
 
                         const Aq0 = -(erfc_ar + two_alpha_sqrtpi * r * exp_ar2) * r3_inv;
-                        const Bq0 = (3.0 * erfc_ar + two_alpha_sqrtpi * r * (3.0 + 2.0 * alpha2 * r2) * exp_ar2) * r5_inv;
+                        const b_poly = 3.0 + 2.0 * alpha2 * r2;
+                        const b_num = 3.0 * erfc_ar + two_alpha_sqrtpi * r * b_poly * exp_ar2;
+                        const Bq0 = b_num * r5_inv;
 
                         const dd = [3]f64{ delta.x, delta.y, delta.z };
                         const zz = charges[ia] * charges[ib];
@@ -531,9 +547,23 @@ test "ewald dynmat finite difference" {
                 else => {},
             }
 
-            const forces_plus = try ewald.ionIonForces(alloc, cell, recip_lat, &charges, &pos_plus, null);
+            const forces_plus = try ewald.ionIonForces(
+                alloc,
+                cell,
+                recip_lat,
+                &charges,
+                &pos_plus,
+                null,
+            );
             defer alloc.free(forces_plus);
-            const forces_minus = try ewald.ionIonForces(alloc, cell, recip_lat, &charges, &pos_minus, null);
+            const forces_minus = try ewald.ionIonForces(
+                alloc,
+                cell,
+                recip_lat,
+                &charges,
+                &pos_minus,
+                null,
+            );
             defer alloc.free(forces_minus);
 
             for (0..n_atoms) |i| {

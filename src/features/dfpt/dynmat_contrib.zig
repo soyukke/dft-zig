@@ -79,7 +79,8 @@ pub fn computeSelfEnergyDynmat(
 }
 
 /// Compute the nonlocal self-energy (V_nl^(2)) contribution to the dynamical matrix.
-/// C_nl2_{Iα,Iβ} = (4/Ω) × Σ_n Re[Σ_{ββ'} D_{ββ'} Σ_m {conj(P^{αβ}_{βm}) P_{β'm} + conj(P^α_{βm}) P^β_{β'm}}]
+/// C_nl2_{Iα,Iβ} = (4/Ω) × Σ_n Re[Σ_{ββ'} D_{ββ'} Σ_m
+///     {conj(P^{αβ}_{βm}) P_{β'm} + conj(P^α_{βm}) P^β_{β'm}}]
 ///
 /// where P_{βm} = Σ_G φ_β(G) exp(+iG·τ_I) ψ_n(G), etc.
 /// This contributes only to diagonal blocks (I=J).
@@ -131,9 +132,12 @@ pub fn computeNonlocalSelfEnergyDynmat(
                     const m_count = entry.m_counts[b];
                     var m_idx: usize = 0;
                     while (m_idx < m_count) : (m_idx += 1) {
-                        const phi = entry.phi[(offset + m_idx) * g_count .. (offset + m_idx + 1) * g_count];
-                        var p_std = math.complex.init(0.0, 0.0);
-                        var p_a: [3]math.Complex = .{ math.complex.init(0.0, 0.0), math.complex.init(0.0, 0.0), math.complex.init(0.0, 0.0) };
+                        const phi_start = (offset + m_idx) * g_count;
+                        const phi_end = (offset + m_idx + 1) * g_count;
+                        const phi = entry.phi[phi_start..phi_end];
+                        const zero_c = math.complex.init(0.0, 0.0);
+                        var p_std = zero_c;
+                        var p_a: [3]math.Complex = .{ zero_c, zero_c, zero_c };
                         var p_ab: [3][3]math.Complex = undefined;
                         for (0..3) |a| {
                             for (0..3) |bb| {
@@ -144,7 +148,8 @@ pub fn computeNonlocalSelfEnergyDynmat(
                         for (0..n_pw) |g| {
                             const gvec = gs.gvecs[g].cart;
                             const gc = [3]f64{ gvec.x, gvec.y, gvec.z };
-                            const base = math.complex.scale(math.complex.mul(phase[g], psi_n[g]), phi[g]);
+                            const phase_psi = math.complex.mul(phase[g], psi_n[g]);
+                            const base = math.complex.scale(phase_psi, phi[g]);
                             // P = Σ_G φ(G) e^{+iGτ} ψ(G)
                             p_std = math.complex.add(p_std, base);
                             // P^α = Σ_G (+iG_α) φ(G) e^{+iGτ} ψ(G)
@@ -152,12 +157,14 @@ pub fn computeNonlocalSelfEnergyDynmat(
                                 // (+iG_α) × base = i × G_α × base
                                 const weighted = math.complex.scale(base, gc[a]);
                                 // multiply by +i: i×(a+bi) = (-b + ai)
-                                p_a[a] = math.complex.add(p_a[a], math.complex.init(-weighted.i, weighted.r));
+                                const i_weighted = math.complex.init(-weighted.i, weighted.r);
+                                p_a[a] = math.complex.add(p_a[a], i_weighted);
                             }
                             // P^{αβ} = Σ_G (-G_α G_β) φ(G) e^{+iGτ} ψ(G)
                             for (0..3) |a| {
                                 for (0..3) |bb| {
-                                    p_ab[a][bb] = math.complex.add(p_ab[a][bb], math.complex.scale(base, -gc[a] * gc[bb]));
+                                    const term = math.complex.scale(base, -gc[a] * gc[bb]);
+                                    p_ab[a][bb] = math.complex.add(p_ab[a][bb], term);
                                 }
                             }
                         }
@@ -168,7 +175,8 @@ pub fn computeNonlocalSelfEnergyDynmat(
                     }
                 }
 
-                // Accumulate dynmat: (4/Ω) × Re[Σ D Σ_m {conj(P^{αβ}_β) P_{β'} + conj(P^α_β) P^β_{β'}}]
+                // Accumulate dynmat: (4/Ω) × Re[Σ D Σ_m
+                //     {conj(P^{αβ}_β) P_{β'} + conj(P^α_β) P^β_{β'}}]
                 b = 0;
                 while (b < entry.beta_count) : (b += 1) {
                     const l_b = entry.l_list[b];
@@ -189,8 +197,9 @@ pub fn computeNonlocalSelfEnergyDynmat(
                             for (0..3) |alpha| {
                                 for (0..3) |beta| {
                                     // Term 1: conj(P^{αβ}_b) × P_{b'}
+                                    const p_ab_b = proj_alpha_beta[off_b + m_idx][alpha][beta];
                                     const t1 = math.complex.mul(
-                                        math.complex.conj(proj_alpha_beta[off_b + m_idx][alpha][beta]),
+                                        math.complex.conj(p_ab_b),
                                         p_std_bp,
                                     );
                                     // Term 2: conj(P^α_b) × P^β_{b'}

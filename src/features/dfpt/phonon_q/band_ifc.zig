@@ -70,10 +70,22 @@ pub fn runPhononBandIFC(
     const grid = scf_result.grid;
     const qgrid = cfg.dfpt.qgrid orelse return error.MissingQgrid;
 
-    logDfptInfo("dfpt_ifc: starting IFC phonon band ({d} atoms, qgrid={d}x{d}x{d})\n", .{ n_atoms, qgrid[0], qgrid[1], qgrid[2] });
+    logDfptInfo(
+        "dfpt_ifc: starting IFC phonon band ({d} atoms, qgrid={d}x{d}x{d})\n",
+        .{ n_atoms, qgrid[0], qgrid[1], qgrid[2] },
+    );
 
     // Prepare ground state
-    var prepared = try dfpt.prepareGroundState(alloc, io, cfg, scf_result, species, atoms, volume, recip);
+    var prepared = try dfpt.prepareGroundState(
+        alloc,
+        io,
+        cfg,
+        scf_result,
+        species,
+        atoms,
+        volume,
+        recip,
+    );
     defer prepared.deinit();
     const gs = prepared.gs;
 
@@ -152,13 +164,25 @@ pub fn runPhononBandIFC(
 
         q_frac_grid[iq] = qf;
 
-        logDfpt("dfpt_ifc: q_grid[{d}] = ({d:.4},{d:.4},{d:.4}) |q|={d:.6}\n", .{ iq, qf.x, qf.y, qf.z, q_norm });
+        logDfpt(
+            "dfpt_ifc: q_grid[{d}] = ({d:.4},{d:.4},{d:.4}) |q|={d:.6}\n",
+            .{ iq, qf.x, qf.y, qf.z, q_norm },
+        );
         logDfpt("dfpt_ifc: q_grid[{d}] using {d} k-points (full BZ)\n", .{ iq, n_kpts });
 
         // Find irreducible atoms for this q-point
-        var irr_info = try dynmat_mod.findIrreducibleAtoms(alloc, symops, sym_data.indsym, n_atoms, qf);
+        var irr_info = try dynmat_mod.findIrreducibleAtoms(
+            alloc,
+            symops,
+            sym_data.indsym,
+            n_atoms,
+            qf,
+        );
         defer irr_info.deinit(alloc);
-        logDfpt("dfpt_ifc: q_grid[{d}] {d}/{d} irreducible atoms\n", .{ iq, irr_info.n_irr_atoms, n_atoms });
+        logDfpt(
+            "dfpt_ifc: q_grid[{d}] {d}/{d} irreducible atoms\n",
+            .{ iq, irr_info.n_irr_atoms, n_atoms },
+        );
 
         // Find irreducible perturbations (atom+direction) for this q-point
 
@@ -261,7 +285,10 @@ pub fn runPhononBandIFC(
         } else {
             const n_irr_perts = irr_info.n_irr_atoms * 3;
             var pert_dfpt_cfg = dfpt_cfg;
-            pert_dfpt_cfg.kpoint_threads = dfpt.kpointThreadsForPertParallel(pert_thread_count, dfpt_cfg.kpoint_threads);
+            pert_dfpt_cfg.kpoint_threads = dfpt.kpointThreadsForPertParallel(
+                pert_thread_count,
+                dfpt_cfg.kpoint_threads,
+            );
 
             for (0..dim) |i| {
                 pert_results_mk[i] = .{ .rho1_g = &.{}, .psi1_per_k = &.{} };
@@ -352,7 +379,11 @@ pub fn runPhononBandIFC(
             }
 
             for (0..pert_thread_count - 1) |ti| {
-                threads_arr[ti] = try std.Thread.spawn(.{}, qpointPertWorkerFn, .{&workers[ti + 1]});
+                threads_arr[ti] = try std.Thread.spawn(
+                    .{},
+                    qpointPertWorkerFn,
+                    .{&workers[ti + 1]},
+                );
             }
 
             qpointPertWorkerFn(&workers[0]);
@@ -392,7 +423,16 @@ pub fn runPhononBandIFC(
 
         // Reconstruct non-irreducible columns from symmetry
         if (irr_info.n_irr_atoms < n_atoms) {
-            dynmat_mod.reconstructDynmatColumnsComplex(dyn_q, n_atoms, irr_info, symops, sym_data.indsym, sym_data.tnons_shift, cell_bohr, qf);
+            dynmat_mod.reconstructDynmatColumnsComplex(
+                dyn_q,
+                n_atoms,
+                irr_info,
+                symops,
+                sym_data.indsym,
+                sym_data.tnons_shift,
+                cell_bohr,
+                qf,
+            );
         }
 
         dynmat_grid[iq] = dyn_q;
@@ -498,7 +538,10 @@ pub fn runPhononBandIFC(
     // Phase 4 (optional): Phonon DOS from IFC interpolation
     // =============================================================
     if (cfg.dfpt.dos_qmesh) |dos_qmesh| {
-        logDfptInfo("dfpt_ifc: computing phonon DOS on {d}x{d}x{d} mesh\n", .{ dos_qmesh[0], dos_qmesh[1], dos_qmesh[2] });
+        logDfptInfo(
+            "dfpt_ifc: computing phonon DOS on {d}x{d}x{d} mesh\n",
+            .{ dos_qmesh[0], dos_qmesh[1], dos_qmesh[2] },
+        );
 
         var pdos = try phonon_dos_mod.computePhononDos(
             alloc,

@@ -150,8 +150,10 @@ pub const PulayMixer = struct {
         @memset(rho, 0.0);
         for (0..m) |i| {
             const c = coeffs[i];
+            const rho_i = self.rho_history.items[i];
+            const res_i = self.residual_history.items[i];
             for (0..n) |k| {
-                rho[k] += c * (self.rho_history.items[i][k] + beta * self.residual_history.items[i][k]);
+                rho[k] += c * (rho_i[k] + beta * res_i[k]);
             }
         }
     }
@@ -159,7 +161,12 @@ pub const PulayMixer = struct {
     /// Mix using Pulay/DIIS with a pre-computed (preconditioned) residual.
     /// The caller is responsible for computing and preconditioning the residual.
     /// Ownership of precond_residual is transferred to the mixer.
-    pub fn mixWithResidual(self: *PulayMixer, rho: []f64, precond_residual: []f64, beta: f64) !void {
+    pub fn mixWithResidual(
+        self: *PulayMixer,
+        rho: []f64,
+        precond_residual: []f64,
+        beta: f64,
+    ) !void {
         const n = rho.len;
 
         // Store current input and preconditioned residual
@@ -198,10 +205,12 @@ pub const PulayMixer = struct {
         defer self.alloc.free(rhs);
 
         for (0..m) |i| {
+            const res_i = self.residual_history.items[i];
             for (0..m) |j| {
+                const res_j = self.residual_history.items[j];
                 var dot: f64 = 0.0;
                 for (0..n) |k| {
-                    dot += self.residual_history.items[i][k] * self.residual_history.items[j][k];
+                    dot += res_i[k] * res_j[k];
                 }
                 B[i * matrix_size + j] = dot;
             }
@@ -219,15 +228,25 @@ pub const PulayMixer = struct {
         @memset(rho, 0.0);
         for (0..m) |i| {
             const c = coeffs[i];
+            const rho_i = self.rho_history.items[i];
+            const res_i = self.residual_history.items[i];
             for (0..n) |k| {
-                rho[k] += c * (self.rho_history.items[i][k] + beta * self.residual_history.items[i][k]);
+                rho[k] += c * (rho_i[k] + beta * res_i[k]);
             }
         }
     }
 
     /// Mix density using Pulay/DIIS with Kerker preconditioning.
     /// Kerker suppresses long-wavelength charge oscillations for faster convergence.
-    pub fn mixKerkerPulay(self: *PulayMixer, rho: []f64, rho_new: []const f64, beta: f64, grid: Grid, q0: f64, use_rfft: bool) !void {
+    pub fn mixKerkerPulay(
+        self: *PulayMixer,
+        rho: []f64,
+        rho_new: []const f64,
+        beta: f64,
+        grid: Grid,
+        q0: f64,
+        use_rfft: bool,
+    ) !void {
         const n = rho.len;
 
         // Compute raw residual R = rho_new - rho
@@ -238,7 +257,13 @@ pub const PulayMixer = struct {
         }
 
         // Apply Kerker preconditioning to residual
-        const precond_residual = try applyKerkerPreconditioner(self.alloc, grid, residual, q0, use_rfft);
+        const precond_residual = try applyKerkerPreconditioner(
+            self.alloc,
+            grid,
+            residual,
+            q0,
+            use_rfft,
+        );
         errdefer self.alloc.free(precond_residual);
         self.alloc.free(residual);
 
@@ -273,10 +298,12 @@ pub const PulayMixer = struct {
         defer self.alloc.free(rhs_vec);
 
         for (0..m) |i| {
+            const res_i = self.residual_history.items[i];
             for (0..m) |j| {
+                const res_j = self.residual_history.items[j];
                 var dot: f64 = 0.0;
                 for (0..n) |k| {
-                    dot += self.residual_history.items[i][k] * self.residual_history.items[j][k];
+                    dot += res_i[k] * res_j[k];
                 }
                 B[i * matrix_size + j] = dot;
             }
@@ -294,8 +321,10 @@ pub const PulayMixer = struct {
         @memset(rho, 0.0);
         for (0..m) |i| {
             const c = coeffs[i];
+            const rho_i = self.rho_history.items[i];
+            const res_i = self.residual_history.items[i];
             for (0..n) |k| {
-                rho[k] += c * (self.rho_history.items[i][k] + beta * self.residual_history.items[i][k]);
+                rho[k] += c * (rho_i[k] + beta * res_i[k]);
             }
         }
     }
@@ -303,7 +332,13 @@ pub const PulayMixer = struct {
 
 /// Apply Kerker preconditioner to a residual vector.
 /// Returns a new allocated array with the preconditioned residual.
-fn applyKerkerPreconditioner(alloc: std.mem.Allocator, grid: Grid, residual: []const f64, q0: f64, use_rfft: bool) ![]f64 {
+fn applyKerkerPreconditioner(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    residual: []const f64,
+    q0: f64,
+    use_rfft: bool,
+) ![]f64 {
     const q0_sq = q0 * q0;
 
     // FFT to reciprocal space
@@ -457,7 +492,12 @@ pub const ComplexPulayMixer = struct {
 
     /// Mix complex arrays using Pulay/DIIS with pre-computed (preconditioned) residual.
     /// Ownership of precond_residual is transferred to the mixer.
-    pub fn mixWithResidual(self: *ComplexPulayMixer, rho: []math.Complex, precond_residual: []math.Complex, beta: f64) !void {
+    pub fn mixWithResidual(
+        self: *ComplexPulayMixer,
+        rho: []math.Complex,
+        precond_residual: []math.Complex,
+        beta: f64,
+    ) !void {
         const n = rho.len;
 
         // Store current input and preconditioned residual
@@ -496,12 +536,13 @@ pub const ComplexPulayMixer = struct {
         defer self.alloc.free(rhs);
 
         for (0..m) |i| {
+            const res_i = self.residual_history.items[i];
             for (0..m) |j| {
+                const res_j = self.residual_history.items[j];
                 var dot: f64 = 0.0;
                 for (0..n) |k| {
                     // Re(conj(a) * b) = a.r*b.r + a.i*b.i
-                    dot += self.residual_history.items[i][k].r * self.residual_history.items[j][k].r +
-                        self.residual_history.items[i][k].i * self.residual_history.items[j][k].i;
+                    dot += res_i[k].r * res_j[k].r + res_i[k].i * res_j[k].i;
                 }
                 B[i * matrix_size + j] = dot;
             }

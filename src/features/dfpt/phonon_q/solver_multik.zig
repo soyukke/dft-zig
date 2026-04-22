@@ -132,7 +132,14 @@ fn processOneKpointDfpt(
     // Solve Sternheimer for each occupied band at this k-point
     for (0..n_occ) |n| {
         // RHS: -P_c^{k+q} × H^(1)|ψ^(0)_{n,k}⟩
-        const rhs = try applyV1PsiQCached(alloc, shared.grid, map_kq_ptr, shared.v_scf_r, psi0_r_k[n], n_pw_kq);
+        const rhs = try applyV1PsiQCached(
+            alloc,
+            shared.grid,
+            map_kq_ptr,
+            shared.v_scf_r,
+            psi0_r_k[n],
+            n_pw_kq,
+        );
         defer alloc.free(rhs);
 
         // Add nonlocal perturbation
@@ -346,7 +353,14 @@ pub fn solvePerturbationQMultiK(
                 // Solve Sternheimer for each occupied band at this k-point
                 for (0..n_occ) |n| {
                     // RHS: -P_c^{k+q} × H^(1)|ψ^(0)_{n,k}⟩
-                    const rhs = try applyV1PsiQCached(alloc, grid, map_kq_ptr, v_scf_r, psi0_r_cache[ik][n], n_pw_kq);
+                    const rhs = try applyV1PsiQCached(
+                        alloc,
+                        grid,
+                        map_kq_ptr,
+                        v_scf_r,
+                        psi0_r_cache[ik][n],
+                        n_pw_kq,
+                    );
                     defer alloc.free(rhs);
 
                     // Add nonlocal perturbation
@@ -424,7 +438,10 @@ pub fn solvePerturbationQMultiK(
         } else {
             // Parallel path — spawn worker threads
             if (iter == 0) {
-                logDfptInfo("dfptQ_mk: using {d} threads for {d} k-points\n", .{ thread_count, n_kpts });
+                logDfptInfo(
+                    "dfptQ_mk: using {d} threads for {d} k-points\n",
+                    .{ thread_count, n_kpts },
+                );
             }
 
             // Allocate thread-local ρ^(1) buffers
@@ -480,7 +497,11 @@ pub fn solvePerturbationQMultiK(
 
             // Spawn worker threads (skip thread 0, it runs on main)
             for (0..thread_count - 1) |ti| {
-                threads[ti] = try std.Thread.spawn(.{}, dfptKpointWorkerFn, .{&workers[ti + 1]});
+                threads[ti] = try std.Thread.spawn(
+                    .{},
+                    dfptKpointWorkerFn,
+                    .{&workers[ti + 1]},
+                );
             }
 
             // Run thread 0 on main thread
@@ -516,7 +537,10 @@ pub fn solvePerturbationQMultiK(
             }
             rho_norm = @sqrt(rho_norm);
             const d_elec_diag = computeElecDynmatElementQ(vloc1_g, rho1_g, grid.volume);
-            logDfpt("dfptQ_mk: iter={d} |rho1|={e:.6} D_elec_bare=({e:.6},{e:.6}) nk={d}\n", .{ iter, rho_norm, d_elec_diag.r, d_elec_diag.i, n_kpts });
+            logDfpt(
+                "dfptQ_mk: iter={d} |rho1|={e:.6} D_elec_bare=({e:.6},{e:.6}) nk={d}\n",
+                .{ iter, rho_norm, d_elec_diag.r, d_elec_diag.i, n_kpts },
+            );
         }
 
         // Build V_out(G) = V_loc^(1) + V_H^(1)[ρ] + V_xc^(1)[ρ]
@@ -567,7 +591,9 @@ pub fn solvePerturbationQMultiK(
 
         logDfpt("dfptQ_mk: iter={d} vresid={e:.6}\n", .{ iter, residual_norm });
 
-        if (residual_norm < cfg.scf_tol or (force_converge and residual_norm < 10.0 * cfg.scf_tol)) {
+        const converged_now = residual_norm < cfg.scf_tol or
+            (force_converge and residual_norm < 10.0 * cfg.scf_tol);
+        if (converged_now) {
             alloc.free(residual);
             logDfpt("dfptQ_mk: converged at iter={d} vresid={e:.6}\n", .{ iter, residual_norm });
             break;
@@ -581,18 +607,26 @@ pub fn solvePerturbationQMultiK(
         }
 
         // Pulay restart: if residual exceeds restart_factor × best, reset and restore
-        if (iter >= pulay_active_since and residual_norm > restart_factor * best_vresid and best_vresid < 1.0) {
+        const restart_triggered = iter >= pulay_active_since and
+            residual_norm > restart_factor * best_vresid and
+            best_vresid < 1.0;
+        if (restart_triggered) {
             if (best_v_scf) |v| @memcpy(v_scf_g, v);
             // If best is near convergence, force accept on next iteration
             if (best_vresid < 10.0 * cfg.scf_tol) {
                 force_converge = true;
-                logDfpt("dfptQ_mk: Pulay restart (near-converged) at iter={d} vresid={e:.6} best={e:.6}\n", .{ iter, residual_norm, best_vresid });
+                const fmt_near = "dfptQ_mk: Pulay restart (near-converged) at iter={d}" ++
+                    " vresid={e:.6} best={e:.6}\n";
+                logDfpt(fmt_near, .{ iter, residual_norm, best_vresid });
                 alloc.free(residual);
                 continue;
             }
             pulay.reset();
             pulay_active_since = iter + 1 + cfg.pulay_start;
-            logDfpt("dfptQ_mk: Pulay restart at iter={d} vresid={e:.6} best={e:.6}\n", .{ iter, residual_norm, best_vresid });
+            logDfpt(
+                "dfptQ_mk: Pulay restart at iter={d} vresid={e:.6} best={e:.6}\n",
+                .{ iter, residual_norm, best_vresid },
+            );
             alloc.free(residual);
             continue;
         }
