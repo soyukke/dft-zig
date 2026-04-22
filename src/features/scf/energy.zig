@@ -179,13 +179,14 @@ pub fn computeEnergyTerms(in: EnergyInput) !EnergyTerms {
     // stays on its legacy helper for now. Both return Hartree → Rydberg.
     const ion = if (coulomb_r_cut != null)
         try computeDirectIonIonEnergy(alloc, species, atoms) * 2.0
-    else (try term_mod.termEnergy(.{ .ewald = .{
-        .alpha = ewald_cfg.alpha,
-        .rcut = ewald_cfg.rcut,
-        .gcut = ewald_cfg.gcut,
-        .tol = ewald_cfg.tol,
-        .quiet = quiet,
-    } }, shared_input)) * 2.0;
+    else
+        (try term_mod.termEnergy(.{ .ewald = .{
+            .alpha = ewald_cfg.alpha,
+            .rcut = ewald_cfg.rcut,
+            .gcut = ewald_cfg.gcut,
+            .tol = ewald_cfg.tol,
+            .quiet = quiet,
+        } }, shared_input)) * 2.0;
     // E_psp_core = (n_elec / Ω) × Σ_atoms epsatm  (Rydberg units)
     // This is the volume-dependent correction from the G=0 local potential.
     // For isolated systems, this correction is not needed since G=0 is handled
@@ -313,13 +314,14 @@ pub fn computeEnergyTermsSpin(in: EnergyInputSpin) !EnergyTerms {
 
     const ion = if (coulomb_r_cut != null)
         try computeDirectIonIonEnergy(alloc, species, atoms) * 2.0
-    else (try term_mod.termEnergy(.{ .ewald = .{
-        .alpha = ewald_cfg.alpha,
-        .rcut = ewald_cfg.rcut,
-        .gcut = ewald_cfg.gcut,
-        .tol = ewald_cfg.tol,
-        .quiet = quiet,
-    } }, shared_input)) * 2.0;
+    else
+        (try term_mod.termEnergy(.{ .ewald = .{
+            .alpha = ewald_cfg.alpha,
+            .rcut = ewald_cfg.rcut,
+            .gcut = ewald_cfg.gcut,
+            .tol = ewald_cfg.tol,
+            .quiet = quiet,
+        } }, shared_input)) * 2.0;
     var epsatm_sum: f64 = 0.0;
     var n_elec: f64 = 0.0;
     for (atoms) |atom| {

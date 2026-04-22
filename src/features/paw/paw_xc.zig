@@ -10,7 +10,6 @@ const ctrapWeight = @import("../math/math.zig").radial.ctrapWeight;
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const lebedev = @import("../grid/lebedev.zig");
 
-
 /// Find Q_ij^L(r) entry from paw.qijl for given (i,j,L) triplet.
 fn findQijL(paw: PawData, i: usize, j: usize, big_l: usize) ?[]const f64 {
     for (paw.qijl) |entry| {

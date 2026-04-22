@@ -262,6 +262,24 @@ lint-strict:
 lint-update-baseline:
     zig run {{style_checker}} -- --root src --update-baseline
 
+# Install project git hooks (symlinks scripts/hooks/* into .git/hooks/).
+# Run once per clone. Currently installs: pre-commit (zig fmt --check).
+install-hooks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    src_dir="$(pwd)/scripts/hooks"
+    dst_dir="$(git rev-parse --git-dir)/hooks"
+    if [ ! -d "$src_dir" ]; then
+        echo "no hooks to install (missing $src_dir)" >&2
+        exit 1
+    fi
+    for hook in "$src_dir"/*; do
+        [ -f "$hook" ] || continue
+        name=$(basename "$hook")
+        ln -sf "$hook" "$dst_dir/$name"
+        echo "installed: $dst_dir/$name -> $hook"
+    done
+
 # Clean build artifacts and caches
 clean:
     rm -rf zig-out zig-cache .zig-cache

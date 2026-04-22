@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# DFT-Zig pre-commit hook: enforce `zig fmt` on src/ and scripts/.
+# Install via `just install-hooks`.
+
+set -euo pipefail
+
+if ! command -v zig >/dev/null 2>&1; then
+    echo "pre-commit: 'zig' not found in PATH." >&2
+    echo "pre-commit: run commits from inside 'nix develop' (direnv also works)." >&2
+    exit 1
+fi
+
+if ! zig fmt --check src scripts; then
+    echo "" >&2
+    echo "pre-commit: formatting issues found." >&2
+    echo "pre-commit: run 'just fmt' and re-stage the changes." >&2
+    exit 1
+fi
