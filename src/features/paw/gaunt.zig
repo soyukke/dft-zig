@@ -8,7 +8,9 @@ const lebedev = @import("../grid/lebedev.zig");
 ///   G(l1,m1, l2,m2, L,M) = integral Y_{l1,m1}(Omega) Y_{l2,m2}(Omega) Y_{L,M}(Omega) dOmega
 ///
 /// These appear in the PAW compensation charge formula:
-///   n_hat(G) = sum_a sum_ij rho_ij sum_{L,M} G(l_i,m_i, l_j,m_j, L,M) * Q^L_ij(|G|) * Y_{L,M}(G_hat) * exp(-iGR) / Omega
+///   n_hat(G) = sum_a sum_ij rho_ij sum_{L,M}
+///              G(l_i,m_i, l_j,m_j, L,M) * Q^L_ij(|G|)
+///              * Y_{L,M}(G_hat) * exp(-iGR) / Omega
 ///
 /// and similarly in D^hat and on-site quantities.
 ///
@@ -35,7 +37,15 @@ pub const GauntTable = struct {
 
     /// Get Gaunt coefficient G(l1, m1, l2, m2, L, M).
     /// Returns 0.0 if any index is out of range.
-    pub fn get(self: *const GauntTable, l1: usize, m1: i32, l2: usize, m2: i32, big_l: usize, big_m: i32) f64 {
+    pub fn get(
+        self: *const GauntTable,
+        l1: usize,
+        m1: i32,
+        l2: usize,
+        m2: i32,
+        big_l: usize,
+        big_m: i32,
+    ) f64 {
         const lm1 = lmIndex(l1, m1);
         const lm2 = lmIndex(l2, m2);
         const lm3 = lmIndex(big_l, big_m);
@@ -65,7 +75,9 @@ pub const GauntTable = struct {
                 // Recover (L, M) from flat index lm3
                 // lm3 = L*L + L + M => L = floor(sqrt(lm3)), M = lm3 - L*L - L
                 const big_l = lFromLmIndex(lm3);
-                const big_m: i32 = @intCast(@as(i64, @intCast(lm3)) - @as(i64, @intCast(big_l * big_l + big_l)));
+                const big_m: i32 = @intCast(
+                    @as(i64, @intCast(lm3)) - @as(i64, @intCast(big_l * big_l + big_l)),
+                );
                 callback(context, big_l, big_m, val);
             }
         }
@@ -246,7 +258,11 @@ test "Gaunt selection rule: l1+l2+L must be even" {
         while (m2 <= 1) : (m2 += 1) {
             var big_m: i32 = -1;
             while (big_m <= 1) : (big_m += 1) {
-                try std.testing.expectApproxEqAbs(@as(f64, 0.0), table.get(1, m1, 1, m2, 1, big_m), 1e-14);
+                try std.testing.expectApproxEqAbs(
+                    @as(f64, 0.0),
+                    table.get(1, m1, 1, m2, 1, big_m),
+                    1e-14,
+                );
             }
         }
     }
@@ -268,11 +284,15 @@ test "Gaunt known value: G(1,0, 1,0, 2,0)" {
 
     const val = table.get(1, 0, 1, 0, 2, 0);
 
-    // Numerical integration gives: sqrt(5)/(4*pi*sqrt(pi)) * 2*pi * integral_0^pi (3cos^4-cos^2) sin d theta
-    // = sqrt(5)/(2*sqrt(pi)) * [3*2/5 - 2/3] = sqrt(5)/(2*sqrt(pi)) * (6/5 - 2/3) = sqrt(5)/(2*sqrt(pi)) * 8/15
+    // Numerical integration gives:
+    //   sqrt(5)/(4*pi*sqrt(pi)) * 2*pi * integral_0^pi (3cos^4-cos^2) sin d theta
+    // = sqrt(5)/(2*sqrt(pi)) * [3*2/5 - 2/3]
+    // = sqrt(5)/(2*sqrt(pi)) * (6/5 - 2/3)
+    // = sqrt(5)/(2*sqrt(pi)) * 8/15
     // But let's use the standard formula: G(1,0,1,0,2,0) = (1/sqrt(4pi)) * sqrt(5/pi) * (1/5)
     // Actually, more directly:
-    // integral Y_10^2 Y_20 = (3/(4pi)) * sqrt(5/(16pi)) * 2pi * integral_0^pi cos^2(t) (3cos^2(t)-1) sin(t) dt
+    // integral Y_10^2 Y_20 = (3/(4pi)) * sqrt(5/(16pi)) * 2pi
+    //                      * integral_0^pi cos^2(t) (3cos^2(t)-1) sin(t) dt
     // = (3/(4pi)) * sqrt(5/(16pi)) * 2pi * [3*2/5 - 2/3]
     // = (3/2) * sqrt(5/(16pi)) * 8/15
     // = (3/2) * (8/15) * sqrt(5/(16pi))

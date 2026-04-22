@@ -181,7 +181,11 @@ pub const IonicData = struct {
     positions: []math.Vec3,
     masses: []f64,
 
-    pub fn init(alloc: std.mem.Allocator, species: []const hamiltonian.SpeciesEntry, atoms: []const hamiltonian.AtomData) !IonicData {
+    pub fn init(
+        alloc: std.mem.Allocator,
+        species: []const hamiltonian.SpeciesEntry,
+        atoms: []const hamiltonian.AtomData,
+    ) !IonicData {
         const n = atoms.len;
         const charges = try alloc.alloc(f64, n);
         errdefer alloc.free(charges);
@@ -254,7 +258,15 @@ pub fn prepareGroundState(
     logDfptInfo("dfpt: nelec={d:.1} n_occ={d} n_pw={d}\n", .{ nelec, n_occ, n_pw });
 
     // Build ionic potential grid
-    var ionic = try scf_mod.buildIonicPotentialGrid(alloc, grid, species, @constCast(atoms), local_cfg, null, null);
+    var ionic = try scf_mod.buildIonicPotentialGrid(
+        alloc,
+        grid,
+        species,
+        @constCast(atoms),
+        local_cfg,
+        null,
+        null,
+    );
     errdefer ionic.deinit(alloc);
 
     // Build local_r = IFFT(ionic + SCF potential)
@@ -359,7 +371,14 @@ pub fn prepareGroundState(
     var vxc_r: ?[]f64 = null;
     if (rho_core != null) {
         if (cfg.scf.xc == .pbe) {
-            const fields = try scf_mod.computeXcFields(alloc, grid, scf_result.density, rho_core, false, .pbe);
+            const fields = try scf_mod.computeXcFields(
+                alloc,
+                grid,
+                scf_result.density,
+                rho_core,
+                false,
+                .pbe,
+            );
             alloc.free(fields.exc);
             vxc_r = fields.vxc;
         } else {
@@ -535,7 +554,10 @@ pub fn buildFxcGrid(
 }
 
 /// Compute total number of valence electrons.
-fn totalElectrons(species: []const hamiltonian.SpeciesEntry, atoms: []const hamiltonian.AtomData) f64 {
+fn totalElectrons(
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+) f64 {
     var total: f64 = 0.0;
     for (atoms) |atom| {
         total += species[atom.species_index].z_valence;

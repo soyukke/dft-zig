@@ -111,10 +111,16 @@ pub const MAX_SHELLS_PER_ATOM = 8;
 ///
 /// Returns the shells and the count of valid shells, or null if the element
 /// is not supported.
-pub fn buildAtomShells(z: u32, center: math.Vec3) ?struct { shells: [MAX_SHELLS_PER_ATOM]ContractedShell, count: usize } {
+pub fn buildAtomShells(
+    z: u32,
+    center: math.Vec3,
+) ?struct { shells: [MAX_SHELLS_PER_ATOM]ContractedShell, count: usize } {
     const empty_prims = &[_]PrimitiveGaussian{};
     const dummy = ContractedShell{ .center = center, .l = 0, .primitives = empty_prims };
-    var result: [MAX_SHELLS_PER_ATOM]ContractedShell = .{ dummy, dummy, dummy, dummy, dummy, dummy, dummy, dummy };
+    var result: [MAX_SHELLS_PER_ATOM]ContractedShell = .{
+        dummy, dummy, dummy, dummy,
+        dummy, dummy, dummy, dummy,
+    };
 
     switch (z) {
         1 => {

@@ -429,7 +429,11 @@ fn hermitianEigenDecompLapack(alloc: std.mem.Allocator, n: usize, a: []math.Comp
     defer lapack_mutex.unlock();
     if (a.len != n * n) return error.InvalidMatrixSize;
     if (n == 0) {
-        return EigenDecomp{ .values = try alloc.alloc(f64, 0), .vectors = try alloc.alloc(math.Complex, 0), .n = 0 };
+        return EigenDecomp{
+            .values = try alloc.alloc(f64, 0),
+            .vectors = try alloc.alloc(math.Complex, 0),
+            .n = 0,
+        };
     }
 
     const matrix = try alloc.alloc(math.Complex, n * n);
@@ -580,7 +584,11 @@ fn hermitianGenEigenDecompLapack(
     defer lapack_mutex.unlock();
     if (a.len != n * n or b.len != n * n) return error.InvalidMatrixSize;
     if (n == 0) {
-        return EigenDecomp{ .values = try alloc.alloc(f64, 0), .vectors = try alloc.alloc(math.Complex, 0), .n = 0 };
+        return EigenDecomp{
+            .values = try alloc.alloc(f64, 0),
+            .vectors = try alloc.alloc(math.Complex, 0),
+            .n = 0,
+        };
     }
 
     const matrix_a = try alloc.alloc(math.Complex, n * n);

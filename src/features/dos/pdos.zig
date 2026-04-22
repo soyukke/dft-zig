@@ -199,7 +199,10 @@ pub fn computePdos(
                             var ylm: f64 = undefined;
                             if (kpg_norm < 1e-12) {
                                 // At G=0: Y_00 = 1/√(4π), Y_{l>0} = 0
-                                ylm = if (l == 0 and m == 0) nonlocal.realSphericalHarmonic(0, 0, 0, 0, 1.0) else 0.0;
+                                ylm = if (l == 0 and m == 0)
+                                    nonlocal.realSphericalHarmonic(0, 0, 0, 0, 1.0)
+                                else
+                                    0.0;
                             } else {
                                 ylm = nonlocal.realSphericalHarmonic(l, m, kpg.x, kpg.y, kpg.z);
                             }
@@ -221,7 +224,8 @@ pub fn computePdos(
                             // conj(φ) × c_n
                             const c = kp.coefficients[g + n * n_pw];
                             // conj(φ) = (phi_r - i×phi_i)
-                            // conj(φ)×c = (phi_r×c.r + phi_i×c.i) + i×(phi_r×c.i - phi_i×c.r)
+                            // conj(φ)×c = (phi_r×c.r + phi_i×c.i)
+                            //           + i×(phi_r×c.i - phi_i×c.r)
                             proj_r += phi_r * c.r + phi_i * c.i;
                             proj_i += phi_r * c.i - phi_i * c.r;
                         }
@@ -234,7 +238,8 @@ pub fn computePdos(
                         for (0..npoints) |ie| {
                             const diff = energies[ie] - ek;
                             if (@abs(diff) <= cutoff) {
-                                projections[pi].pdos[ie] += kp.weight * spin_factor * proj_sq * gaussianDelta(diff, inv_sigma_sqrt2pi, inv_2sigma2);
+                                projections[pi].pdos[ie] += kp.weight * spin_factor * proj_sq *
+                                    gaussianDelta(diff, inv_sigma_sqrt2pi, inv_2sigma2);
                             }
                         }
                     }

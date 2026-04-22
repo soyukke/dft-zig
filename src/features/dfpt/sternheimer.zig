@@ -35,12 +35,18 @@ pub fn projectConduction(
         // Compute ⟨ψ_m|x⟩
         var overlap = math.complex.init(0.0, 0.0);
         for (0..n) |g| {
-            overlap = math.complex.add(overlap, math.complex.mul(math.complex.conj(psi_m[g]), x[g]));
+            overlap = math.complex.add(
+                overlap,
+                math.complex.mul(math.complex.conj(psi_m[g]), x[g]),
+            );
         }
         // x -= |ψ_m⟩⟨ψ_m|x⟩
         for (0..n) |g| {
             x[g] = math.complex.sub(x[g], math.complex.scale(psi_m[g], overlap.r));
-            x[g] = math.complex.sub(x[g], math.complex.mul(psi_m[g], math.complex.init(0.0, overlap.i)));
+            x[g] = math.complex.sub(
+                x[g],
+                math.complex.mul(psi_m[g], math.complex.init(0.0, overlap.i)),
+            );
         }
     }
 }
@@ -172,7 +178,10 @@ fn applySternheimer(
             const psi_m = occupied[m];
             var overlap = math.complex.init(0.0, 0.0);
             for (0..n) |g| {
-                overlap = math.complex.add(overlap, math.complex.mul(math.complex.conj(psi_m[g]), x[g]));
+                overlap = math.complex.add(
+                    overlap,
+                    math.complex.mul(math.complex.conj(psi_m[g]), x[g]),
+                );
             }
             for (0..n) |g| {
                 const proj = math.complex.mul(psi_m[g], overlap);
@@ -315,7 +324,17 @@ pub fn solve(
         if (residual_norm < params.tol) break;
 
         // ad = A × d
-        try applySternheimerBlas(ctx, d, ad, epsilon_n, params.alpha_shift, psi_matrix, n, n_occ, overlaps);
+        try applySternheimerBlas(
+            ctx,
+            d,
+            ad,
+            epsilon_n,
+            params.alpha_shift,
+            psi_matrix,
+            n,
+            n_occ,
+            overlaps,
+        );
         projectConductionBlas(ad, psi_matrix, n, n_occ, overlaps);
 
         // α_cg = ⟨r|z⟩ / ⟨d|Ad⟩

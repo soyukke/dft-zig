@@ -42,15 +42,18 @@ pub fn writeCubeFile(
     const a1 = cell_bohr.row(0);
     const a2 = cell_bohr.row(1);
     const a3 = cell_bohr.row(2);
+    const inv_nx: f64 = 1.0 / @as(f64, @floatFromInt(nx));
+    const inv_ny: f64 = 1.0 / @as(f64, @floatFromInt(ny));
+    const inv_nz: f64 = 1.0 / @as(f64, @floatFromInt(nz));
 
     try out.print("{d:>5} {d:>12.6} {d:>12.6} {d:>12.6}\n", .{
-        nx, a1.x / @as(f64, @floatFromInt(nx)), a1.y / @as(f64, @floatFromInt(nx)), a1.z / @as(f64, @floatFromInt(nx)),
+        nx, a1.x * inv_nx, a1.y * inv_nx, a1.z * inv_nx,
     });
     try out.print("{d:>5} {d:>12.6} {d:>12.6} {d:>12.6}\n", .{
-        ny, a2.x / @as(f64, @floatFromInt(ny)), a2.y / @as(f64, @floatFromInt(ny)), a2.z / @as(f64, @floatFromInt(ny)),
+        ny, a2.x * inv_ny, a2.y * inv_ny, a2.z * inv_ny,
     });
     try out.print("{d:>5} {d:>12.6} {d:>12.6} {d:>12.6}\n", .{
-        nz, a3.x / @as(f64, @floatFromInt(nz)), a3.y / @as(f64, @floatFromInt(nz)), a3.z / @as(f64, @floatFromInt(nz)),
+        nz, a3.x * inv_nz, a3.y * inv_nz, a3.z * inv_nz,
     });
 
     // Atom positions (in Bohr)

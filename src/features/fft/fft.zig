@@ -65,7 +65,14 @@ pub const Fft3dPlan = struct {
     }
 
     /// Initialize with specified backend
-    pub fn initWithBackend(alloc: std.mem.Allocator, io: std.Io, nx: usize, ny: usize, nz: usize, backend: FftBackend) !Fft3dPlan {
+    pub fn initWithBackend(
+        alloc: std.mem.Allocator,
+        io: std.Io,
+        nx: usize,
+        ny: usize,
+        nz: usize,
+        backend: FftBackend,
+    ) !Fft3dPlan {
         switch (backend) {
             .zig => {
                 const plan = try fft_lib.Plan3d.init(alloc, nx, ny, nz);
@@ -313,7 +320,11 @@ pub const RealFft3dPlan = struct {
     }
 
     /// Forward RFFT: real[nx*ny*nz] -> complex[(nx/2+1)*ny*nz]
-    pub fn forward(self: *RealFft3dPlan, real_input: []const f64, complex_output: []LibComplex) void {
+    pub fn forward(
+        self: *RealFft3dPlan,
+        real_input: []const f64,
+        complex_output: []LibComplex,
+    ) void {
         self.plan.forward(real_input, complex_output);
     }
 

@@ -50,10 +50,14 @@ pub fn residualForces(
                     const phase = math.Vec3.dot(g.gvec, pos);
                     const cos_phase = std.math.cos(phase);
                     const sin_phase = std.math.sin(phase);
-                    // Uses Re[i * v_resid(G) * exp(-iG·R)] for E_res = Re[V_resid(G) ρ_atom(G) exp(-iG·R)].
+                    // Uses Re[i * v_resid(G) * exp(-iG·R)]
+                    // for E_res = Re[V_resid(G) ρ_atom(G) exp(-iG·R)].
                     const phase_factor = vresid.r * sin_phase - vresid.i * cos_phase;
                     const coeff = rho_total_g * phase_factor;
-                    forces[atom_index] = math.Vec3.add(forces[atom_index], math.Vec3.scale(g.gvec, coeff));
+                    forces[atom_index] = math.Vec3.add(
+                        forces[atom_index],
+                        math.Vec3.scale(g.gvec, coeff),
+                    );
                 }
             }
         }

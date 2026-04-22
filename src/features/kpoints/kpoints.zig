@@ -49,12 +49,23 @@ pub fn generateKmeshSymmetry(
     if (filtered_ops.len == 0) return full;
 
     if (filtered_ops.len != ops.len) {
-        try logKpointInfo(io, "scf: kmesh-compatible symmetry ops {d}/{d}\n", .{ filtered_ops.len, ops.len });
+        try logKpointInfo(
+            io,
+            "scf: kmesh-compatible symmetry ops {d}/{d}\n",
+            .{ filtered_ops.len, ops.len },
+        );
     }
 
     try logKpointInfo(io, "scf: symmetry ops {d}\n", .{ops.len});
 
-    const reduced = try reduction.reduceKmesh(alloc, kmesh, shift, filtered_ops, recip, time_reversal);
+    const reduced = try reduction.reduceKmesh(
+        alloc,
+        kmesh,
+        shift,
+        filtered_ops,
+        recip,
+        time_reversal,
+    );
     const verified = try reduction.verifyKmeshReduction(
         alloc,
         full,
@@ -88,9 +99,20 @@ test "abinit kmesh reduction for aluminum fcc" {
     );
     const cell_bohr = cell_ang.scale(math.unitsScaleToBohr(.angstrom));
     const recip = math.reciprocal(cell_bohr);
-    const atoms = [_]hamiltonian.AtomData{.{ .position = .{ .x = 0.0, .y = 0.0, .z = 0.0 }, .species_index = 0 }};
+    const atoms = [_]hamiltonian.AtomData{
+        .{ .position = .{ .x = 0.0, .y = 0.0, .z = 0.0 }, .species_index = 0 },
+    };
     const shift = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-    const kpoints = try generateKmeshSymmetry(alloc, std.testing.io, .{ 6, 6, 6 }, shift, recip, cell_bohr, atoms[0..], true);
+    const kpoints = try generateKmeshSymmetry(
+        alloc,
+        std.testing.io,
+        .{ 6, 6, 6 },
+        shift,
+        recip,
+        cell_bohr,
+        atoms[0..],
+        true,
+    );
     defer alloc.free(kpoints);
     try std.testing.expectEqual(@as(usize, 16), kpoints.len);
     var weight_sum: f64 = 0.0;

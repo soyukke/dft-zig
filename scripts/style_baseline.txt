@@ -7,9 +7,7 @@
 #
 # Format: <path>\t<rule>\t<count>
 src/features/band/band.zig	line_too_long	26
-src/features/basis/basis631g_2dfp.zig	line_too_long	2
 src/features/config/config.zig	line_too_long	47
-src/features/dfpt/dfpt.zig	line_too_long	4
 src/features/dfpt/dynmat.zig	line_too_long	10
 src/features/dfpt/dynmat_contrib.zig	line_too_long	8
 src/features/dfpt/electric.zig	line_too_long	20
@@ -23,18 +21,12 @@ src/features/dfpt/phonon_q/dynmat_elem_q.zig	line_too_long	3
 src/features/dfpt/phonon_q/kpt_gs.zig	line_too_long	4
 src/features/dfpt/phonon_q/solver_multik.zig	line_too_long	8
 src/features/dfpt/phonon_q/solver_single.zig	line_too_long	11
-src/features/dfpt/sternheimer.zig	line_too_long	4
-src/features/dft/cube.zig	line_too_long	3
 src/features/dft/dft.zig	line_too_long	23
 src/features/dft/output.zig	line_too_long	14
 src/features/dft/term.zig	line_too_long	6
-src/features/dos/dos.zig	line_too_long	2
-src/features/dos/pdos.zig	line_too_long	3
 src/features/ewald/ewald.zig	line_too_long	22
-src/features/fft/fft.zig	line_too_long	2
 src/features/forces/forces.zig	line_too_long	20
 src/features/forces/nonlocal_force.zig	line_too_long	11
-src/features/forces/residual_force.zig	line_too_long	2
 src/features/grid/lebedev.zig	line_too_long	1292
 src/features/gto_scf/density_fitting.zig	line_too_long	3
 src/features/gto_scf/diis.zig	line_too_long	1
@@ -59,13 +51,10 @@ src/features/integrals/obara_saika.zig	line_too_long	84
 src/features/integrals/rys_eri.zig	line_too_long	64
 src/features/integrals/rys_roots.zig	line_too_long	2
 src/features/kpath/kpath.zig	line_too_long	1
-src/features/kpoints/kpoints.zig	line_too_long	4
 src/features/kpoints/reduction.zig	line_too_long	1
 src/features/linalg/cg/cg.zig	line_too_long	1
-src/features/linalg/linalg.zig	line_too_long	2
 src/features/linalg/lobpcg/common.zig	line_too_long	13
 src/features/linalg/lobpcg/parallel.zig	line_too_long	7
-src/features/linalg/lobpcg/serial.zig	line_too_long	4
 src/features/linear_scaling/compare.zig	line_too_long	5
 src/features/linear_scaling/density_grid.zig	line_too_long	3
 src/features/linear_scaling/density_matrix.zig	line_too_long	2
@@ -85,7 +74,6 @@ src/features/linear_scaling/scf_json.zig	line_too_long	1
 src/features/linear_scaling/scf_runner.zig	line_too_long	3
 src/features/linear_scaling/scf_tolerance.zig	line_too_long	3
 src/features/linear_scaling/sparse.zig	line_too_long	3
-src/features/paw/gaunt.zig	line_too_long	7
 src/features/paw/paw_xc.zig	line_too_long	73
 src/features/paw/rhoij.zig	line_too_long	1
 src/features/plane_wave/basis.zig	line_too_long	3

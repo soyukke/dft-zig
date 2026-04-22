@@ -82,7 +82,11 @@ pub fn solve(
         @min(max_subspace, @max(opts.block_size, nbands));
 
     if (debug_iterative) {
-        logging.debug(true, "\n[LOBPCG] n={d} nbands={d} max_subspace={d} block={d} generalized={}\n", .{ op.n, nbands, max_subspace, block, has_overlap });
+        logging.debug(
+            true,
+            "\n[LOBPCG] n={d} nbands={d} max_subspace={d} block={d} generalized={}\n",
+            .{ op.n, nbands, max_subspace, block, has_overlap },
+        );
     }
 
     // Allocate workspace
@@ -146,7 +150,10 @@ pub fn solve(
     const t = try alloc.alloc(math.Complex, max_subspace * max_subspace);
     defer alloc.free(t);
     // Overlap projected matrix T_S = V†·S·V (only for generalized)
-    const ts = if (has_overlap) try alloc.alloc(math.Complex, max_subspace * max_subspace) else null;
+    const ts = if (has_overlap)
+        try alloc.alloc(math.Complex, max_subspace * max_subspace)
+    else
+        null;
     defer if (ts) |s| alloc.free(s);
     const last_values = try alloc.alloc(f64, nbands);
     defer alloc.free(last_values);
@@ -215,7 +222,11 @@ pub fn solve(
         }
 
         if (debug_iterative) {
-            logging.debug(true, "[LOBPCG] iter={d} m={d} max_residual={e:.4}\n", .{ iter, m, max_residual });
+            logging.debug(
+                true,
+                "[LOBPCG] iter={d} m={d} max_residual={e:.4}\n",
+                .{ iter, m, max_residual },
+            );
         }
 
         // Check convergence
@@ -253,7 +264,11 @@ pub fn solve(
         // If no vectors were added, all residuals are below tol individually.
         if (added == 0) {
             if (debug_iterative) {
-                logging.debug(true, "[LOBPCG] All residuals below tol, treating as converged at iter={d}\n", .{iter});
+                logging.debug(
+                    true,
+                    "[LOBPCG] All residuals below tol, treating as converged at iter={d}\n",
+                    .{iter},
+                );
             }
             const values = try alloc.alloc(f64, nbands);
             const vectors = try alloc.alloc(math.Complex, op.n * nbands);
