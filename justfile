@@ -239,7 +239,28 @@ plot-graphene:
 
 # Format all Zig source files
 fmt:
-    zig fmt src
+    zig fmt src scripts
+
+# Path to the shared style checker in ~/dotfiles/zig-tools. Override with
+# ZIG_STYLE_CHECKER=/some/other/check_style.zig if needed.
+style_checker := env("ZIG_STYLE_CHECKER", env("HOME") + "/dotfiles/zig-tools/check_style.zig")
+
+# Check formatting without rewriting (reports diffs; not part of `lint`).
+fmt-check:
+    zig fmt --check src scripts
+
+# Run the style checker against the ratcheting baseline.
+# Fails only when a file has *more* violations than scripts/style_baseline.txt.
+lint:
+    zig run {{style_checker}} -- --root src
+
+# Report every violation, ignoring the baseline (fails on any).
+lint-strict:
+    zig run {{style_checker}} -- --root src --strict
+
+# Regenerate the style baseline from current violations (run after cleanup).
+lint-update-baseline:
+    zig run {{style_checker}} -- --root src --update-baseline
 
 # Clean build artifacts and caches
 clean:
