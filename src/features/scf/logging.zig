@@ -12,7 +12,14 @@ pub const ScfLoopProfile = struct {
     build_fft_map_ns: *u64,
 };
 
-pub fn logProgress(io: std.Io, iter: usize, diff: f64, vresid: f64, band_energy: f64, nonlocal_energy: f64) !void {
+pub fn logProgress(
+    io: std.Io,
+    iter: usize,
+    diff: f64,
+    vresid: f64,
+    band_energy: f64,
+    nonlocal_energy: f64,
+) !void {
     const logger = runtime_logging.stderr(io, .info);
     try logger.print(
         .info,
@@ -90,9 +97,13 @@ pub const ScfLog = struct {
         var buffer: [4096]u8 = undefined;
         var writer = self.file.writer(self.io, &buffer);
         const out = &writer.interface;
-        try out.print("# converged={s} iterations={d}\n", .{ if (converged) "true" else "false", iterations });
         try out.print(
-            "# energy_total={d:.10} band={d:.10} hartree={d:.10} xc={d:.10} ion_ion={d:.10} psp_core={d:.10}\n",
+            "# converged={s} iterations={d}\n",
+            .{ if (converged) "true" else "false", iterations },
+        );
+        try out.print(
+            "# energy_total={d:.10} band={d:.10} hartree={d:.10}" ++
+                " xc={d:.10} ion_ion={d:.10} psp_core={d:.10}\n",
             .{ energy_total, band, hartree, xc, ion_ion, psp_core },
         );
         try out.flush();
@@ -134,7 +145,11 @@ pub fn logProfile(io: std.Io, profile: ScfProfile, kpoints: usize) !void {
     const to_ms = 1.0 / @as(f64, @floatFromInt(std.time.ns_per_ms));
     try logger.print(
         .info,
-        "profile kpoints={d} basis_ms={d:.3} eig_ms={d:.3} h_ms={d:.3} vnl_ms={d:.3} s_ms={d:.3} apply_ms={d:.3} density_ms={d:.3} local_ms={d:.3} nonlocal_ms={d:.3} apply_calls={d} scatter_ms={d:.3} ifft_ms={d:.3} vmul_ms={d:.3} fft_ms={d:.3} gather_ms={d:.3}\n",
+        "profile kpoints={d} basis_ms={d:.3} eig_ms={d:.3} h_ms={d:.3}" ++
+            " vnl_ms={d:.3} s_ms={d:.3} apply_ms={d:.3} density_ms={d:.3}" ++
+            " local_ms={d:.3} nonlocal_ms={d:.3} apply_calls={d}" ++
+            " scatter_ms={d:.3} ifft_ms={d:.3} vmul_ms={d:.3}" ++
+            " fft_ms={d:.3} gather_ms={d:.3}\n",
         .{
             kpoints,
             @as(f64, @floatFromInt(profile.basis_ns)) * to_ms,
@@ -169,7 +184,9 @@ pub fn logLoopProfile(
     const to_ms = 1.0 / @as(f64, @floatFromInt(std.time.ns_per_ms));
     try logger.print(
         .info,
-        "scf_loop_profile compute_density_ms={d:.3} build_potential_ms={d:.3} residual_ms={d:.3} mixing_ms={d:.3} build_local_r_ms={d:.3} build_fft_map_ms={d:.3}\n",
+        "scf_loop_profile compute_density_ms={d:.3} build_potential_ms={d:.3}" ++
+            " residual_ms={d:.3} mixing_ms={d:.3} build_local_r_ms={d:.3}" ++
+            " build_fft_map_ms={d:.3}\n",
         .{
             @as(f64, @floatFromInt(compute_density_ns)) * to_ms,
             @as(f64, @floatFromInt(build_potential_ns)) * to_ms,
@@ -181,7 +198,13 @@ pub fn logLoopProfile(
     );
 }
 
-pub fn logEnergySummary(io: std.Io, electron_count: f64, ionic_g0: math.Complex, pot_g0: math.Complex, energy_terms: anytype) !void {
+pub fn logEnergySummary(
+    io: std.Io,
+    electron_count: f64,
+    ionic_g0: math.Complex,
+    pot_g0: math.Complex,
+    energy_terms: anytype,
+) !void {
     const logger = runtime_logging.stderr(io, .info);
     try logger.print(.info, "scf: electron_count {d:.6}\n", .{electron_count});
     try logger.print(.info, "scf: ionic_g0 {d:.6} {d:.6}\n", .{ ionic_g0.r, ionic_g0.i });
@@ -210,7 +233,11 @@ pub fn logEnergySummary(io: std.Io, electron_count: f64, ionic_g0: math.Complex,
 
 pub fn logSpinInit(io: std.Io, total_electrons: f64, magnetization: f64) !void {
     const logger = runtime_logging.stderr(io, .info);
-    try logger.print(.info, "spin-scf: nspin=2, nelec={d:.1}, m_init={d:.2}\n", .{ total_electrons, magnetization });
+    try logger.print(
+        .info,
+        "spin-scf: nspin=2, nelec={d:.1}, m_init={d:.2}\n",
+        .{ total_electrons, magnetization },
+    );
 }
 
 pub fn logSpinMagnetization(io: std.Io, magnetization: f64) !void {
@@ -245,7 +272,13 @@ pub fn logSpinEnergySummary(io: std.Io, energy_terms: anytype, include_paw: bool
     }
 }
 
-pub fn logLocalPotentialMean(io: std.Io, prefix: []const u8, mean_local: f64, g0_label: []const u8, g0_value: f64) !void {
+pub fn logLocalPotentialMean(
+    io: std.Io,
+    prefix: []const u8,
+    mean_local: f64,
+    g0_label: []const u8,
+    g0_value: f64,
+) !void {
     const logger = runtime_logging.stderr(io, .debug);
     try logger.print(
         .debug,
@@ -263,7 +296,13 @@ pub fn logBandLocalPotentialMean(io: std.Io, mean_local: f64, ionic_g0: f64, ext
     );
 }
 
-pub fn logEigenvalues(io: std.Io, prefix: []const u8, label: []const u8, values: []const f64, count: usize) !void {
+pub fn logEigenvalues(
+    io: std.Io,
+    prefix: []const u8,
+    label: []const u8,
+    values: []const f64,
+    count: usize,
+) !void {
     const limit = @min(count, 8);
     const logger = runtime_logging.stderr(io, .debug);
     try logger.print(.debug, "{s}: eig {s} nbands={d}", .{ prefix, label, count });
@@ -292,7 +331,8 @@ pub fn logFermiDiag(
     const logger = runtime_logging.stderr(io, .debug);
     try logger.print(
         .debug,
-        "scf: fermi diag min={d:.6} max={d:.6} mu={d:.6} outside={s} nelec={d:.6} nbands={d}-{d} smear={s} sigma={d:.6}\n",
+        "scf: fermi diag min={d:.6} max={d:.6} mu={d:.6} outside={s}" ++
+            " nelec={d:.6} nbands={d}-{d} smear={s} sigma={d:.6}\n",
         .{
             min_energy,
             max_energy,
@@ -307,7 +347,15 @@ pub fn logFermiDiag(
     );
 }
 
-pub fn logIterativeGridTooSmall(io: std.Io, nx: usize, ny: usize, nz: usize, sx: usize, sy: usize, sz: usize) !void {
+pub fn logIterativeGridTooSmall(
+    io: std.Io,
+    nx: usize,
+    ny: usize,
+    nz: usize,
+    sx: usize,
+    sy: usize,
+    sz: usize,
+) !void {
     const logger = runtime_logging.stderr(io, .warn);
     try logger.print(
         .warn,
@@ -449,7 +497,8 @@ pub fn logNonlocalDiagnostics(
         const scale = inv_volume * @as(f64, @floatFromInt(atom_count));
         try logger.print(
             .debug,
-            "scf: nonlocal diag species={s} atoms={d} min={d:.6} max={d:.6} mean={d:.6} mean_abs={d:.6} neg={d}/{d}\n",
+            "scf: nonlocal diag species={s} atoms={d} min={d:.6} max={d:.6}" ++
+                " mean={d:.6} mean_abs={d:.6} neg={d}/{d}\n",
             .{ entry.symbol, atom_count, min_val, max_val, mean_val, mean_abs, neg_count, g_count },
         );
         try logger.print(
@@ -545,7 +594,9 @@ pub fn logLocalDiagnostics(
         const vq_max = hamiltonian.localFormFactor(entry, g_max, local_cfg);
         try logger.print(
             .debug,
-            "scf: local diag species={s} mode={s} alpha={d:.6} atoms={d} min={d:.6} max={d:.6} mean={d:.6} mean_abs={d:.6} neg={d}/{d}\n",
+            "scf: local diag species={s} mode={s} alpha={d:.6} atoms={d}" ++
+                " min={d:.6} max={d:.6} mean={d:.6} mean_abs={d:.6}" ++
+                " neg={d}/{d}\n",
             .{
                 entry.symbol,
                 config.localPotentialModeName(local_cfg.mode),
@@ -561,7 +612,8 @@ pub fn logLocalDiagnostics(
         );
         try logger.print(
             .debug,
-            "scf: local sample species={s} q0={d:.6} vq0={d:.6} q_min={d:.6} vq_min={d:.6} q_max={d:.6} vq_max={d:.6}\n",
+            "scf: local sample species={s} q0={d:.6} vq0={d:.6}" ++
+                " q_min={d:.6} vq_min={d:.6} q_max={d:.6} vq_max={d:.6}\n",
             .{ entry.symbol, 0.0, vq0, g_min_nonzero, vq_min, g_max, vq_max },
         );
     }

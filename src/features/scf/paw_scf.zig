@@ -112,7 +112,13 @@ pub fn addPawCompensationCharge(
                         var bm: i32 = -bl_i32;
                         while (bm <= bl_i32) : (bm += 1) {
                             ylm_g[paw_mod.GauntTable.lmIndex(big_l, bm)] =
-                                nonlocal_mod.realSphericalHarmonic(bl_i32, bm, gvec.x, gvec.y, gvec.z);
+                                nonlocal_mod.realSphericalHarmonic(
+                                    bl_i32,
+                                    bm,
+                                    gvec.x,
+                                    gvec.y,
+                                    gvec.z,
+                                );
                         }
                     }
                 } else {
@@ -151,7 +157,10 @@ pub fn addPawCompensationCharge(
                         const l_i = @as(usize, @intCast(l_list_r[i_beta]));
                         const l_j = @as(usize, @intCast(l_list_r[j_beta]));
 
-                        // Sum over M: Σ_M Y_{L,M}(Ĝ) × [Σ_{m_i,m_j} G(l_i,m_i,l_j,m_j,L,M) × ρ_{(i,m_i),(j,m_j)}]
+                        // Sum over M:
+                        //   Σ_M Y_{L,M}(Ĝ)
+                        //     × [Σ_{m_i,m_j} G(l_i,m_i,l_j,m_j,L,M)
+                        //                    × ρ_{(i,m_i),(j,m_j)}]
                         const bl_i32: i32 = @intCast(big_l);
                         var bm: i32 = -bl_i32;
                         while (bm <= bl_i32) : (bm += 1) {
@@ -164,12 +173,14 @@ pub fn addPawCompensationCharge(
                             const lj_i32: i32 = @intCast(l_j);
                             var mi: i32 = -li_i32;
                             while (mi <= li_i32) : (mi += 1) {
-                                const mi_idx = m_offsets_r[i_beta] + @as(usize, @intCast(mi + li_i32));
+                                const mi_idx = m_offsets_r[i_beta] +
+                                    @as(usize, @intCast(mi + li_i32));
                                 var mj: i32 = -lj_i32;
                                 while (mj <= lj_i32) : (mj += 1) {
                                     const g_coeff = gaunt_table.get(l_i, mi, l_j, mj, big_l, bm);
                                     if (g_coeff == 0.0) continue;
-                                    const mj_idx = m_offsets_r[j_beta] + @as(usize, @intCast(mj + lj_i32));
+                                    const mj_idx = m_offsets_r[j_beta] +
+                                        @as(usize, @intCast(mj + lj_i32));
                                     gaunt_rhoij += g_coeff * rij_m[mi_idx * mt + mj_idx];
                                 }
                             }
@@ -282,7 +293,8 @@ pub fn updatePawDij(
             defer alloc.free(dij_m);
             @memset(dij_m, 0.0);
 
-            // Expand D^0 from radial to m-resolved: D^0_{(i,m),(j,m')} = D^0_ij × δ_{mm'} × δ_{li,lj}
+            // Expand D^0 from radial to m-resolved:
+            //   D^0_{(i,m),(j,m')} = D^0_ij × δ_{mm'} × δ_{li,lj}
             for (0..nb) |i| {
                 for (0..nb) |j| {
                     if (tab.l_list[i] != tab.l_list[j]) continue;
@@ -302,8 +314,14 @@ pub fn updatePawDij(
                 if (g.g2 >= ecutrho) continue;
                 const g_abs = @sqrt(g.g2);
 
-                const v_hxc = if (g.idx < total) potential.values[g.idx] else math.complex.init(0.0, 0.0);
-                const v_loc = if (g.idx < total) ionic.values[g.idx] else math.complex.init(0.0, 0.0);
+                const v_hxc = if (g.idx < total)
+                    potential.values[g.idx]
+                else
+                    math.complex.init(0.0, 0.0);
+                const v_loc = if (g.idx < total)
+                    ionic.values[g.idx]
+                else
+                    math.complex.init(0.0, 0.0);
                 const v_eff = math.complex.add(v_hxc, v_loc);
 
                 const g_dot_r = math.Vec3.dot(g.gvec, pos);
@@ -320,7 +338,13 @@ pub fn updatePawDij(
                         var bm: i32 = -bl_i32;
                         while (bm <= bl_i32) : (bm += 1) {
                             ylm_g[paw_mod.GauntTable.lmIndex(big_l, bm)] =
-                                nonlocal_mod.realSphericalHarmonic(bl_i32, bm, g.gvec.x, g.gvec.y, g.gvec.z);
+                                nonlocal_mod.realSphericalHarmonic(
+                                    bl_i32,
+                                    bm,
+                                    g.gvec.x,
+                                    g.gvec.y,
+                                    g.gvec.z,
+                                );
                         }
                     }
                 } else {
@@ -491,14 +515,16 @@ pub fn updatePawDij(
                         if (nl.species[si].dij_per_atom) |dpa| {
                             if (atom_counter < dpa.len) {
                                 for (0..@min(dij.len, dpa[atom_counter].len)) |ii| {
-                                    dij[ii] = (1.0 - dij_mix_beta) * dpa[atom_counter][ii] + dij_mix_beta * dij[ii];
+                                    dij[ii] = (1.0 - dij_mix_beta) * dpa[atom_counter][ii] +
+                                        dij_mix_beta * dij[ii];
                                 }
                             }
                         }
                         if (nl.species[si].dij_m_per_atom) |dpa| {
                             if (atom_counter < dpa.len) {
                                 for (0..@min(dij_m.len, dpa[atom_counter].len)) |ii| {
-                                    dij_m[ii] = (1.0 - dij_mix_beta) * dpa[atom_counter][ii] + dij_mix_beta * dij_m[ii];
+                                    dij_m[ii] = (1.0 - dij_mix_beta) * dpa[atom_counter][ii] +
+                                        dij_mix_beta * dij_m[ii];
                                 }
                             }
                         }

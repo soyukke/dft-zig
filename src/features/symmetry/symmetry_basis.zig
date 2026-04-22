@@ -47,7 +47,14 @@ pub fn symmetryBlockDiagEigenvalues(
     tol: f64,
 ) !BlockDiagResult {
     // Analyze basis symmetry
-    var sym_info = try little_group.analyzeBasisSymmetry(alloc, gvecs, k_frac, k_cart, space_group_ops, tol);
+    var sym_info = try little_group.analyzeBasisSymmetry(
+        alloc,
+        gvecs,
+        k_frac,
+        k_cart,
+        space_group_ops,
+        tol,
+    );
     defer sym_info.deinit(alloc);
 
     // If only one block with no pairs, just solve the full matrix
@@ -149,7 +156,16 @@ fn buildBlockHamiltonian(
     while (row < block_size) : (row += 1) {
         var col: usize = 0;
         while (col < block_size) : (col += 1) {
-            const val = computeBlockElement(full_h, n, block, row, col, num_inv, is_even, inv_sqrt2);
+            const val = computeBlockElement(
+                full_h,
+                n,
+                block,
+                row,
+                col,
+                num_inv,
+                is_even,
+                inv_sqrt2,
+            );
             h_block[row + col * block_size] = val;
         }
     }
@@ -187,7 +203,15 @@ fn buildC3vBlockHamiltonian(
         while (row < block_size) : (row += 1) {
             var col: usize = 0;
             while (col < block_size) : (col += 1) {
-                const val = computeEBlockElement(full_h, n, block.triplets, row, col, inv_sqrt6, inv_sqrt2);
+                const val = computeEBlockElement(
+                    full_h,
+                    n,
+                    block.triplets,
+                    row,
+                    col,
+                    inv_sqrt6,
+                    inv_sqrt2,
+                );
                 h_block[row + col * block_size] = val;
             }
         }
@@ -466,8 +490,22 @@ test "symmetry block diag - trivial case" {
     };
 
     const gvecs = [_]plane_wave.GVector{
-        .{ .h = 0, .k = 0, .l = 0, .cart = .{ .x = 0, .y = 0, .z = 0 }, .kpg = .{ .x = 0, .y = 0, .z = 0 }, .kinetic = 0 },
-        .{ .h = 1, .k = 0, .l = 0, .cart = .{ .x = 1, .y = 0, .z = 0 }, .kpg = .{ .x = 1, .y = 0, .z = 0 }, .kinetic = 1 },
+        .{
+            .h = 0,
+            .k = 0,
+            .l = 0,
+            .cart = .{ .x = 0, .y = 0, .z = 0 },
+            .kpg = .{ .x = 0, .y = 0, .z = 0 },
+            .kinetic = 0,
+        },
+        .{
+            .h = 1,
+            .k = 0,
+            .l = 0,
+            .cart = .{ .x = 1, .y = 0, .z = 0 },
+            .kpg = .{ .x = 1, .y = 0, .z = 0 },
+            .kinetic = 1,
+        },
     };
 
     // No symmetry operations except identity
@@ -512,17 +550,57 @@ test "Cs symmetry block diag - paired G-vectors" {
 
     // Simpler test: all invariant G-vectors
     var h = [_]math.Complex{
-        math.complex.init(1.0, 0.0), math.complex.init(0.1, 0.0), math.complex.init(0.1, 0.0), math.complex.init(0.1, 0.0),
-        math.complex.init(0.1, 0.0), math.complex.init(2.0, 0.0), math.complex.init(0.1, 0.0), math.complex.init(0.1, 0.0),
-        math.complex.init(0.1, 0.0), math.complex.init(0.1, 0.0), math.complex.init(3.0, 0.0), math.complex.init(0.1, 0.0),
-        math.complex.init(0.1, 0.0), math.complex.init(0.1, 0.0), math.complex.init(0.1, 0.0), math.complex.init(4.0, 0.0),
+        math.complex.init(1.0, 0.0),
+        math.complex.init(0.1, 0.0),
+        math.complex.init(0.1, 0.0),
+        math.complex.init(0.1, 0.0),
+        math.complex.init(0.1, 0.0),
+        math.complex.init(2.0, 0.0),
+        math.complex.init(0.1, 0.0),
+        math.complex.init(0.1, 0.0),
+        math.complex.init(0.1, 0.0),
+        math.complex.init(0.1, 0.0),
+        math.complex.init(3.0, 0.0),
+        math.complex.init(0.1, 0.0),
+        math.complex.init(0.1, 0.0),
+        math.complex.init(0.1, 0.0),
+        math.complex.init(0.1, 0.0),
+        math.complex.init(4.0, 0.0),
     };
 
     const gvecs = [_]plane_wave.GVector{
-        .{ .h = 0, .k = 0, .l = 0, .cart = .{ .x = 0, .y = 0, .z = 0 }, .kpg = .{ .x = 0, .y = 0, .z = 0 }, .kinetic = 0 },
-        .{ .h = 1, .k = 0, .l = 0, .cart = .{ .x = 1, .y = 0, .z = 0 }, .kpg = .{ .x = 1, .y = 0, .z = 0 }, .kinetic = 1 },
-        .{ .h = -1, .k = 0, .l = 0, .cart = .{ .x = -1, .y = 0, .z = 0 }, .kpg = .{ .x = -1, .y = 0, .z = 0 }, .kinetic = 1 },
-        .{ .h = 0, .k = 1, .l = 0, .cart = .{ .x = 0, .y = 1, .z = 0 }, .kpg = .{ .x = 0, .y = 1, .z = 0 }, .kinetic = 1 },
+        .{
+            .h = 0,
+            .k = 0,
+            .l = 0,
+            .cart = .{ .x = 0, .y = 0, .z = 0 },
+            .kpg = .{ .x = 0, .y = 0, .z = 0 },
+            .kinetic = 0,
+        },
+        .{
+            .h = 1,
+            .k = 0,
+            .l = 0,
+            .cart = .{ .x = 1, .y = 0, .z = 0 },
+            .kpg = .{ .x = 1, .y = 0, .z = 0 },
+            .kinetic = 1,
+        },
+        .{
+            .h = -1,
+            .k = 0,
+            .l = 0,
+            .cart = .{ .x = -1, .y = 0, .z = 0 },
+            .kpg = .{ .x = -1, .y = 0, .z = 0 },
+            .kinetic = 1,
+        },
+        .{
+            .h = 0,
+            .k = 1,
+            .l = 0,
+            .cart = .{ .x = 0, .y = 1, .z = 0 },
+            .kpg = .{ .x = 0, .y = 1, .z = 0 },
+            .kinetic = 1,
+        },
     };
 
     // σ_y mirror: (h,k,l) -> (h,-k,l)

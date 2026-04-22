@@ -77,7 +77,10 @@ pub fn solvePerturbationQ(
             vloc_sum_r += c.r;
             vloc_sum_i += c.i;
         }
-        logDfpt("dfptQ_vloc1: atom={d} dir={d} |vloc1_g|={e:.6} sum=({e:.6},{e:.6})\n", .{ atom_index, direction, @sqrt(vloc_norm), vloc_sum_r, vloc_sum_i });
+        logDfpt(
+            "dfptQ_vloc1: atom={d} dir={d} |vloc1_g|={e:.6} sum=({e:.6},{e:.6})\n",
+            .{ atom_index, direction, @sqrt(vloc_norm), vloc_sum_r, vloc_sum_i },
+        );
         // Print first few G-point values
         const nshow = @min(vloc1_g.len, 5);
         for (0..nshow) |gi| {
@@ -89,11 +92,15 @@ pub fn solvePerturbationQ(
             const g0_k: usize = @intCast(-grid.min_k);
             const g0_l: usize = @intCast(-grid.min_l);
             const g0_idx = g0_l * grid.ny * grid.nx + g0_k * grid.nx + g0_h;
-            logDfpt("  vloc1_g[G=0, idx={d}]=({e:.8},{e:.8}) grid=({d},{d},{d}) min=({d},{d},{d})\n", .{
-                g0_idx,     vloc1_g[g0_idx].r, vloc1_g[g0_idx].i,
-                grid.nx,    grid.ny,           grid.nz,
-                grid.min_h, grid.min_k,        grid.min_l,
-            });
+            logDfpt(
+                "  vloc1_g[G=0, idx={d}]=({e:.8},{e:.8})" ++
+                    " grid=({d},{d},{d}) min=({d},{d},{d})\n",
+                .{
+                    g0_idx,     vloc1_g[g0_idx].r, vloc1_g[g0_idx].i,
+                    grid.nx,    grid.ny,           grid.nz,
+                    grid.min_h, grid.min_k,        grid.min_l,
+                },
+            );
         }
     }
 
@@ -172,17 +179,29 @@ pub fn solvePerturbationQ(
 
         // Debug: on first iteration, print some v_scf values
         if (iter == 0) {
-            logDfpt("dfptQ_vscf: atom={d} dir={d} iter=0 v_scf_r[0]=({e:.8},{e:.8}) v_scf_r[1]=({e:.8},{e:.8}) v_scf_r[100]=({e:.8},{e:.8})\n", .{
-                atom_index,                                  direction,
-                v_scf_r[0].r,                                v_scf_r[0].i,
-                v_scf_r[1].r,                                v_scf_r[1].i,
-                v_scf_r[@min(@as(usize, 100), total - 1)].r, v_scf_r[@min(@as(usize, 100), total - 1)].i,
-            });
-            logDfpt("dfptQ_vscf: v_scf_g[0]=({e:.8},{e:.8}) v_scf_g[1]=({e:.8},{e:.8}) v_scf_g[2]=({e:.8},{e:.8})\n", .{
-                v_scf_g[0].r, v_scf_g[0].i,
-                v_scf_g[1].r, v_scf_g[1].i,
-                v_scf_g[2].r, v_scf_g[2].i,
-            });
+            const v_scf_r_100 = v_scf_r[@min(@as(usize, 100), total - 1)];
+            logDfpt(
+                "dfptQ_vscf: atom={d} dir={d} iter=0" ++
+                    " v_scf_r[0]=({e:.8},{e:.8})" ++
+                    " v_scf_r[1]=({e:.8},{e:.8})" ++
+                    " v_scf_r[100]=({e:.8},{e:.8})\n",
+                .{
+                    atom_index,    direction,
+                    v_scf_r[0].r,  v_scf_r[0].i,
+                    v_scf_r[1].r,  v_scf_r[1].i,
+                    v_scf_r_100.r, v_scf_r_100.i,
+                },
+            );
+            logDfpt(
+                "dfptQ_vscf: v_scf_g[0]=({e:.8},{e:.8})" ++
+                    " v_scf_g[1]=({e:.8},{e:.8})" ++
+                    " v_scf_g[2]=({e:.8},{e:.8})\n",
+                .{
+                    v_scf_g[0].r, v_scf_g[0].i,
+                    v_scf_g[1].r, v_scf_g[1].i,
+                    v_scf_g[2].r, v_scf_g[2].i,
+                },
+            );
         }
 
         // Nonlocal contexts for V_nl^(1) (cross-basis: k → k+q)
@@ -193,7 +212,14 @@ pub fn solvePerturbationQ(
         for (0..n_occ) |n| {
             // RHS: -P_c^{k+q} × H^(1)|ψ^(0)_{n,k}⟩
             // H^(1)|ψ⟩ = V_SCF(r)|ψ(r)⟩ + V_nl^(1)|ψ⟩
-            const rhs = try applyV1PsiQCached(alloc, grid, map_kq, v_scf_r, psi0_r_cache[n], n_pw_kq);
+            const rhs = try applyV1PsiQCached(
+                alloc,
+                grid,
+                map_kq,
+                v_scf_r,
+                psi0_r_cache[n],
+                n_pw_kq,
+            );
             defer alloc.free(rhs);
 
             // Add nonlocal perturbation: V_nl^(1)_{q}|ψ_k⟩ (cross-basis: k → k+q)
@@ -274,7 +300,10 @@ pub fn solvePerturbationQ(
             rho_norm = @sqrt(rho_norm);
             // D_elec from bare V^(1) and current ρ^(1)
             const d_elec_diag = computeElecDynmatElementQ(vloc1_g, rho1_g, grid.volume);
-            logDfpt("dfptQ_diag: iter={d} |rho1|={e:.6} D_elec_bare(0)=({e:.6},{e:.6})\n", .{ iter, rho_norm, d_elec_diag.r, d_elec_diag.i });
+            logDfpt(
+                "dfptQ_diag: iter={d} |rho1|={e:.6} D_elec_bare(0)=({e:.6},{e:.6})\n",
+                .{ iter, rho_norm, d_elec_diag.r, d_elec_diag.i },
+            );
         }
 
         // Build V_out(G) = V_loc^(1) + V_H^(1)[ρ] + V_xc^(1)[ρ]
@@ -327,7 +356,9 @@ pub fn solvePerturbationQ(
 
         logDfpt("dfptQ_scf: iter={d} vresid={e:.6}\n", .{ iter, residual_norm });
 
-        if (residual_norm < cfg.scf_tol or (force_converge and residual_norm < 10.0 * cfg.scf_tol)) {
+        const converged_tight = residual_norm < cfg.scf_tol;
+        const converged_forced = force_converge and residual_norm < 10.0 * cfg.scf_tol;
+        if (converged_tight or converged_forced) {
             alloc.free(residual);
             logDfpt("dfptQ_scf: converged at iter={d} vresid={e:.6}\n", .{ iter, residual_norm });
             break;
@@ -341,18 +372,27 @@ pub fn solvePerturbationQ(
         }
 
         // Pulay restart: if residual exceeds restart_factor × best, reset and restore
-        if (iter >= pulay_active_since and residual_norm > restart_factor * best_vresid and best_vresid < 1.0) {
+        const pulay_ready = iter >= pulay_active_since;
+        const pulay_diverged = residual_norm > restart_factor * best_vresid;
+        if (pulay_ready and pulay_diverged and best_vresid < 1.0) {
             if (best_v_scf) |v| @memcpy(v_scf_g, v);
             // If best is near convergence, force accept on next iteration
             if (best_vresid < 10.0 * cfg.scf_tol) {
                 force_converge = true;
-                logDfpt("dfptQ_scf: Pulay restart (near-converged) at iter={d} vresid={e:.6} best={e:.6}\n", .{ iter, residual_norm, best_vresid });
+                logDfpt(
+                    "dfptQ_scf: Pulay restart (near-converged)" ++
+                        " at iter={d} vresid={e:.6} best={e:.6}\n",
+                    .{ iter, residual_norm, best_vresid },
+                );
                 alloc.free(residual);
                 continue;
             }
             pulay.reset();
             pulay_active_since = iter + 1 + cfg.pulay_start;
-            logDfpt("dfptQ_scf: Pulay restart at iter={d} vresid={e:.6} best={e:.6}\n", .{ iter, residual_norm, best_vresid });
+            logDfpt(
+                "dfptQ_scf: Pulay restart at iter={d} vresid={e:.6} best={e:.6}\n",
+                .{ iter, residual_norm, best_vresid },
+            );
             alloc.free(residual);
             continue;
         }

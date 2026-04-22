@@ -92,7 +92,16 @@ pub fn runPhononBand(
     logDfptInfo("dfpt_band: starting phonon band calculation ({d} atoms)\n", .{n_atoms});
 
     // Prepare ground state (PW basis, eigenvalues, wavefunctions, NLCC, etc.)
-    var prepared = try dfpt.prepareGroundState(alloc, io, cfg, scf_result, species, atoms, volume, recip);
+    var prepared = try dfpt.prepareGroundState(
+        alloc,
+        io,
+        cfg,
+        scf_result,
+        species,
+        atoms,
+        volume,
+        recip,
+    );
     defer prepared.deinit();
     const gs = prepared.gs;
 
@@ -104,7 +113,8 @@ pub fn runPhononBand(
     const rho0_g = try scf_mod.realToReciprocal(alloc, grid, scf_result.density, false);
     defer alloc.free(rho0_g);
 
-    // V_xc(G) for NLCC self-energy (need mutable copy since realToReciprocal requires mutable input)
+    // V_xc(G) for NLCC self-energy
+    // (need mutable copy since realToReciprocal requires mutable input)
     var vxc_g: ?[]math.Complex = null;
     if (prepared.vxc_r) |v| {
         vxc_g = try scf_mod.realToReciprocal(alloc, grid, v, false);
@@ -173,13 +183,25 @@ pub fn runPhononBand(
         const qf = q_path_data.q_points_frac[iq];
         const q_norm = math.Vec3.norm(q_cart);
 
-        logDfpt("dfpt_band: q[{d}] = ({d:.4},{d:.4},{d:.4}) |q|={d:.6}\n", .{ iq, qf.x, qf.y, qf.z, q_norm });
+        logDfpt(
+            "dfpt_band: q[{d}] = ({d:.4},{d:.4},{d:.4}) |q|={d:.6}\n",
+            .{ iq, qf.x, qf.y, qf.z, q_norm },
+        );
         logDfpt("dfpt_band: q[{d}] using {d} k-points (full BZ)\n", .{ iq, n_kpts });
 
         // Find irreducible atoms for this q-point
-        var irr_info = try dynmat_mod.findIrreducibleAtoms(alloc, symops, sym_data.indsym, n_atoms, qf);
+        var irr_info = try dynmat_mod.findIrreducibleAtoms(
+            alloc,
+            symops,
+            sym_data.indsym,
+            n_atoms,
+            qf,
+        );
         defer irr_info.deinit(alloc);
-        logDfpt("dfpt_band: q[{d}] {d}/{d} irreducible atoms\n", .{ iq, irr_info.n_irr_atoms, n_atoms });
+        logDfpt(
+            "dfpt_band: q[{d}] {d}/{d} irreducible atoms\n",
+            .{ iq, irr_info.n_irr_atoms, n_atoms },
+        );
 
         // Find irreducible perturbations (atom+direction) for this q-point
         // Note: direction-level perturbation reduction (findIrreduciblePerturbations) is available
@@ -288,7 +310,10 @@ pub fn runPhononBand(
                         for (pert_results_mk[pidx].rho1_g) |c| {
                             rho1_norm += c.r * c.r + c.i * c.i;
                         }
-                        logDfpt("dfptQ_mk: pert({d},{d}) |rho1_g|={e:.6}\n", .{ ia, dir, @sqrt(rho1_norm) });
+                        logDfpt(
+                            "dfptQ_mk: pert({d},{d}) |rho1_g|={e:.6}\n",
+                            .{ ia, dir, @sqrt(rho1_norm) },
+                        );
                     }
                 }
             }
@@ -296,9 +321,21 @@ pub fn runPhononBand(
             // Parallel path — solve only irreducible atoms' perturbations concurrently
             const n_irr_perts = irr_info.n_irr_atoms * 3;
             var pert_dfpt_cfg = dfpt_cfg;
-            pert_dfpt_cfg.kpoint_threads = dfpt.kpointThreadsForPertParallel(pert_thread_count, dfpt_cfg.kpoint_threads);
+            pert_dfpt_cfg.kpoint_threads = dfpt.kpointThreadsForPertParallel(
+                pert_thread_count,
+                dfpt_cfg.kpoint_threads,
+            );
 
-            logDfptInfo("dfpt_band: using {d} pert threads × {d} kpt threads for {d} perturbations ({d} irreducible)\n", .{ pert_thread_count, pert_dfpt_cfg.kpoint_threads, dim, n_irr_perts });
+            logDfptInfo(
+                "dfpt_band: using {d} pert threads × {d} kpt threads" ++
+                    " for {d} perturbations ({d} irreducible)\n",
+                .{
+                    pert_thread_count,
+                    pert_dfpt_cfg.kpoint_threads,
+                    dim,
+                    n_irr_perts,
+                },
+            );
 
             // Initialize output arrays to safe defaults for cleanup
             for (0..dim) |i| {
@@ -390,7 +427,11 @@ pub fn runPhononBand(
             }
 
             for (0..pert_thread_count - 1) |ti| {
-                threads_arr[ti] = try std.Thread.spawn(.{}, qpointPertWorkerFn, .{&workers[ti + 1]});
+                threads_arr[ti] = try std.Thread.spawn(
+                    .{},
+                    qpointPertWorkerFn,
+                    .{&workers[ti + 1]},
+                );
             }
 
             qpointPertWorkerFn(&workers[0]);
@@ -431,7 +472,16 @@ pub fn runPhononBand(
 
         // Reconstruct non-irreducible columns from symmetry
         if (irr_info.n_irr_atoms < n_atoms) {
-            dynmat_mod.reconstructDynmatColumnsComplex(dyn_q, n_atoms, irr_info, symops, sym_data.indsym, sym_data.tnons_shift, cell_bohr, qf);
+            dynmat_mod.reconstructDynmatColumnsComplex(
+                dyn_q,
+                n_atoms,
+                irr_info,
+                symops,
+                sym_data.indsym,
+                sym_data.tnons_shift,
+                cell_bohr,
+                qf,
+            );
         }
 
         // Apply acoustic sum rule at Γ-point (q=0)
@@ -527,7 +577,17 @@ pub fn qpointPertWorkerFn(worker: *QPointPertWorker) void {
             shared.log_mutex.lockUncancelable(shared.io);
             defer shared.log_mutex.unlock(shared.io);
             const dir_names = [_][]const u8{ "x", "y", "z" };
-            logDfpt("dfpt_band: [thread {d}] solving perturbation atom={d} dir={s} ({d}/{d})\n", .{ worker.thread_index, ia, dir_names[dir], work_idx + 1, shared.dim });
+            logDfpt(
+                "dfpt_band: [thread {d}] solving perturbation" ++
+                    " atom={d} dir={s} ({d}/{d})\n",
+                .{
+                    worker.thread_index,
+                    ia,
+                    dir_names[dir],
+                    work_idx + 1,
+                    shared.dim,
+                },
+            );
         }
 
         // Solve perturbation SCF with all k-points (vloc1/rho1_core already built by caller)

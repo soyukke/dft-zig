@@ -241,7 +241,10 @@ fn computeInertiaTensor(
     var com = Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
     var total_mass: f64 = 0.0;
     for (0..n_atoms) |i| {
-        const m = if (use_integer_masses) atomicMassInt(atomic_numbers[i]) else atomicMass(atomic_numbers[i]);
+        const m = if (use_integer_masses)
+            atomicMassInt(atomic_numbers[i])
+        else
+            atomicMass(atomic_numbers[i]);
         com.x += m * positions[i].x;
         com.y += m * positions[i].y;
         com.z += m * positions[i].z;
@@ -254,7 +257,10 @@ fn computeInertiaTensor(
     // Build inertia tensor relative to COM
     var tensor = [_]f64{0.0} ** 9;
     for (0..n_atoms) |i| {
-        const m = if (use_integer_masses) atomicMassInt(atomic_numbers[i]) else atomicMass(atomic_numbers[i]);
+        const m = if (use_integer_masses)
+            atomicMassInt(atomic_numbers[i])
+        else
+            atomicMass(atomic_numbers[i]);
         const rx = positions[i].x - com.x;
         const ry = positions[i].y - com.y;
         const rz = positions[i].z - com.z;
@@ -312,7 +318,10 @@ fn diag3x3(tensor: [9]f64) [3]f64 {
     const b23 = f * inv_p;
 
     // det(B)
-    const det_b = b11 * (b22 * b33 - b23 * b23) - b12 * (b12 * b33 - b23 * b13) + b13 * (b12 * b23 - b22 * b13);
+    const det_b =
+        b11 * (b22 * b33 - b23 * b23) -
+        b12 * (b12 * b33 - b23 * b13) +
+        b13 * (b12 * b23 - b22 * b13);
 
     // r = det(B) / 2, clamp to [-1, 1]
     var r = det_b / 2.0;
@@ -383,7 +392,10 @@ pub fn computeThermo(
     // ---- Total molecular mass ----
     var total_mass_amu: f64 = 0.0;
     for (0..n_atoms) |i| {
-        total_mass_amu += if (use_integer_masses) atomicMassInt(atomic_numbers[i]) else atomicMass(atomic_numbers[i]);
+        total_mass_amu += if (use_integer_masses)
+            atomicMassInt(atomic_numbers[i])
+        else
+            atomicMass(atomic_numbers[i]);
     }
 
     // ==== Translational contribution (ideal gas) ====
@@ -520,7 +532,11 @@ pub fn computeThermo(
 
 /// Print thermodynamic results.
 pub fn printThermo(r: *const ThermoResult) void {
-    logging.progress(true, "\n=== Thermodynamic Properties ({d:.2} K, {d:.0} Pa) ===\n", .{ r.temperature, r.pressure });
+    logging.progress(
+        true,
+        "\n=== Thermodynamic Properties ({d:.2} K, {d:.0} Pa) ===\n",
+        .{ r.temperature, r.pressure },
+    );
     logging.progress(true, "\nElectronic:\n", .{});
     logging.progress(true, "  E_elec          = {d:.10} Ha\n", .{r.e_elec});
     logging.progress(true, "\nTranslational:\n", .{});
@@ -528,14 +544,22 @@ pub fn printThermo(r: *const ThermoResult) void {
     logging.progress(true, "  S_trans          = {e:15.6} Ha/K\n", .{r.s_trans});
     logging.progress(true, "  Cv_trans         = {e:15.6} Ha/K\n", .{r.cv_trans});
     logging.progress(true, "\nRotational:\n", .{});
-    logging.progress(true, "  Rot constants    = {d:.3}, {d:.3}, {d:.3} GHz\n", .{ r.rot_const_ghz[0], r.rot_const_ghz[1], r.rot_const_ghz[2] });
+    logging.progress(
+        true,
+        "  Rot constants    = {d:.3}, {d:.3}, {d:.3} GHz\n",
+        .{ r.rot_const_ghz[0], r.rot_const_ghz[1], r.rot_const_ghz[2] },
+    );
     logging.progress(true, "  Symmetry number  = {d}\n", .{r.sym_number});
     logging.progress(true, "  Linear           = {}\n", .{r.is_linear});
     logging.progress(true, "  E_rot            = {d:.10} Ha\n", .{r.e_rot});
     logging.progress(true, "  S_rot            = {e:15.6} Ha/K\n", .{r.s_rot});
     logging.progress(true, "  Cv_rot           = {e:15.6} Ha/K\n", .{r.cv_rot});
     logging.progress(true, "\nVibrational:\n", .{});
-    logging.progress(true, "  ZPVE             = {d:.10} Ha ({d:.4} kcal/mol)\n", .{ r.zpve, r.zpve * ha_to_kcal });
+    logging.progress(
+        true,
+        "  ZPVE             = {d:.10} Ha ({d:.4} kcal/mol)\n",
+        .{ r.zpve, r.zpve * ha_to_kcal },
+    );
     logging.progress(true, "  E_vib            = {d:.10} Ha\n", .{r.e_vib});
     logging.progress(true, "  S_vib            = {e:15.6} Ha/K\n", .{r.s_vib});
     logging.progress(true, "  Cv_vib           = {e:15.6} Ha/K\n", .{r.cv_vib});
@@ -627,15 +651,19 @@ pub fn computeNumericalHessian(
         const atom_i = i / 3;
         const coord_i = i % 3; // 0=x, 1=y, 2=z
 
-        logging.progress(params.print_progress, "  Hessian: displacing coord {d}/{d} (atom {d}, {c})\n", .{
-            i + 1, n3, atom_i,
-            @as(u8, switch (coord_i) {
-                0 => 'x',
-                1 => 'y',
-                2 => 'z',
-                else => '?',
-            }),
-        });
+        logging.progress(
+            params.print_progress,
+            "  Hessian: displacing coord {d}/{d} (atom {d}, {c})\n",
+            .{
+                i + 1, n3, atom_i,
+                @as(u8, switch (coord_i) {
+                    0 => 'x',
+                    1 => 'y',
+                    2 => 'z',
+                    else => '?',
+                }),
+            },
+        );
 
         // +δ displacement
         @memcpy(nuc_positions, orig_positions);
@@ -647,7 +675,15 @@ pub fn computeNumericalHessian(
         }
         updateShellCenters(shells, shell_to_atom, nuc_positions);
 
-        const grad_plus = try computeGradientFlat(alloc, shells, nuc_positions, nuc_charges, n_electrons, n_occ, params.scf_params);
+        const grad_plus = try computeGradientFlat(
+            alloc,
+            shells,
+            nuc_positions,
+            nuc_charges,
+            n_electrons,
+            n_occ,
+            params.scf_params,
+        );
         defer alloc.free(grad_plus);
 
         // -δ displacement
@@ -660,7 +696,15 @@ pub fn computeNumericalHessian(
         }
         updateShellCenters(shells, shell_to_atom, nuc_positions);
 
-        const grad_minus = try computeGradientFlat(alloc, shells, nuc_positions, nuc_charges, n_electrons, n_occ, params.scf_params);
+        const grad_minus = try computeGradientFlat(
+            alloc,
+            shells,
+            nuc_positions,
+            nuc_charges,
+            n_electrons,
+            n_occ,
+            params.scf_params,
+        );
         defer alloc.free(grad_minus);
 
         // H[i, j] = (g_j(+) - g_j(-)) / (2δ)
@@ -812,7 +856,11 @@ pub fn vibrationalAnalysis(
     const n_atoms = nuc_positions.len;
     const n3 = n_atoms * 3;
 
-    logging.progress(params.print_progress, "\nVibrational Analysis ({d} atoms, {d} coordinates)\n", .{ n_atoms, n3 });
+    logging.progress(
+        params.print_progress,
+        "\nVibrational Analysis ({d} atoms, {d} coordinates)\n",
+        .{ n_atoms, n3 },
+    );
 
     // Step 1: Compute numerical Hessian
     const hessian = try computeNumericalHessian(

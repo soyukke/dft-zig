@@ -186,18 +186,66 @@ pub const d6h_table = CharacterTable{
     .order = 24,
     .num_classes = 12,
     .irreps = &[_]IrrepInfo{
-        .{ .label = .a1g, .dimension = 1, .characters = &[_]f64{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 } },
-        .{ .label = .a2g, .dimension = 1, .characters = &[_]f64{ 1, 1, 1, 1, -1, -1, 1, 1, 1, 1, -1, -1 } },
-        .{ .label = .b1g, .dimension = 1, .characters = &[_]f64{ 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1 } },
-        .{ .label = .b2g, .dimension = 1, .characters = &[_]f64{ 1, -1, 1, -1, -1, 1, 1, -1, 1, -1, -1, 1 } },
-        .{ .label = .e1g, .dimension = 2, .characters = &[_]f64{ 2, 1, -1, -2, 0, 0, 2, 1, -1, -2, 0, 0 } },
-        .{ .label = .e2g, .dimension = 2, .characters = &[_]f64{ 2, -1, -1, 2, 0, 0, 2, -1, -1, 2, 0, 0 } },
-        .{ .label = .a1u, .dimension = 1, .characters = &[_]f64{ 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1 } },
-        .{ .label = .a2u, .dimension = 1, .characters = &[_]f64{ 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, 1, 1 } },
-        .{ .label = .b1u, .dimension = 1, .characters = &[_]f64{ 1, -1, 1, -1, 1, -1, -1, 1, -1, 1, -1, 1 } },
-        .{ .label = .b2u, .dimension = 1, .characters = &[_]f64{ 1, -1, 1, -1, -1, 1, -1, 1, -1, 1, 1, -1 } },
-        .{ .label = .e1u, .dimension = 2, .characters = &[_]f64{ 2, 1, -1, -2, 0, 0, -2, -1, 1, 2, 0, 0 } },
-        .{ .label = .e2u, .dimension = 2, .characters = &[_]f64{ 2, -1, -1, 2, 0, 0, -2, 1, 1, -2, 0, 0 } },
+        .{
+            .label = .a1g,
+            .dimension = 1,
+            .characters = &[_]f64{ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 },
+        },
+        .{
+            .label = .a2g,
+            .dimension = 1,
+            .characters = &[_]f64{ 1, 1, 1, 1, -1, -1, 1, 1, 1, 1, -1, -1 },
+        },
+        .{
+            .label = .b1g,
+            .dimension = 1,
+            .characters = &[_]f64{ 1, -1, 1, -1, 1, -1, 1, -1, 1, -1, 1, -1 },
+        },
+        .{
+            .label = .b2g,
+            .dimension = 1,
+            .characters = &[_]f64{ 1, -1, 1, -1, -1, 1, 1, -1, 1, -1, -1, 1 },
+        },
+        .{
+            .label = .e1g,
+            .dimension = 2,
+            .characters = &[_]f64{ 2, 1, -1, -2, 0, 0, 2, 1, -1, -2, 0, 0 },
+        },
+        .{
+            .label = .e2g,
+            .dimension = 2,
+            .characters = &[_]f64{ 2, -1, -1, 2, 0, 0, 2, -1, -1, 2, 0, 0 },
+        },
+        .{
+            .label = .a1u,
+            .dimension = 1,
+            .characters = &[_]f64{ 1, 1, 1, 1, 1, 1, -1, -1, -1, -1, -1, -1 },
+        },
+        .{
+            .label = .a2u,
+            .dimension = 1,
+            .characters = &[_]f64{ 1, 1, 1, 1, -1, -1, -1, -1, -1, -1, 1, 1 },
+        },
+        .{
+            .label = .b1u,
+            .dimension = 1,
+            .characters = &[_]f64{ 1, -1, 1, -1, 1, -1, -1, 1, -1, 1, -1, 1 },
+        },
+        .{
+            .label = .b2u,
+            .dimension = 1,
+            .characters = &[_]f64{ 1, -1, 1, -1, -1, 1, -1, 1, -1, 1, 1, -1 },
+        },
+        .{
+            .label = .e1u,
+            .dimension = 2,
+            .characters = &[_]f64{ 2, 1, -1, -2, 0, 0, -2, -1, 1, 2, 0, 0 },
+        },
+        .{
+            .label = .e2u,
+            .dimension = 2,
+            .characters = &[_]f64{ 2, -1, -1, 2, 0, 0, -2, 1, 1, -2, 0, 0 },
+        },
     },
 };
 

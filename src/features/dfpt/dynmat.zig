@@ -60,7 +60,11 @@ fn normalizeComplex2(v0: math.Complex, v1: math.Complex) [2]math.Complex {
     };
 }
 
-fn diagonalizeRealSymmetricSmall(alloc: std.mem.Allocator, dynmat: []const f64, dim: usize) !PhononResult {
+fn diagonalizeRealSymmetricSmall(
+    alloc: std.mem.Allocator,
+    dynmat: []const f64,
+    dim: usize,
+) !PhononResult {
     if (dim == 0) {
         return .{
             .omega2 = try alloc.alloc(f64, 0),
@@ -79,7 +83,12 @@ fn diagonalizeRealSymmetricSmall(alloc: std.mem.Allocator, dynmat: []const f64, 
         const eigenvectors = try alloc.alloc(f64, 1);
         errdefer alloc.free(eigenvectors);
         eigenvectors[0] = 1.0;
-        return .{ .omega2 = omega2, .frequencies_cm1 = freq, .eigenvectors = eigenvectors, .dim = 1 };
+        return .{
+            .omega2 = omega2,
+            .frequencies_cm1 = freq,
+            .eigenvectors = eigenvectors,
+            .dim = 1,
+        };
     }
 
     const a = dynmat[0];
@@ -124,7 +133,11 @@ fn diagonalizeRealSymmetricSmall(alloc: std.mem.Allocator, dynmat: []const f64, 
     return .{ .omega2 = omega2, .frequencies_cm1 = freq, .eigenvectors = eigenvectors, .dim = 2 };
 }
 
-fn diagonalizeComplexHermitianSmall(alloc: std.mem.Allocator, dynmat_c: []const math.Complex, dim: usize) !ComplexPhononResult {
+fn diagonalizeComplexHermitianSmall(
+    alloc: std.mem.Allocator,
+    dynmat_c: []const math.Complex,
+    dim: usize,
+) !ComplexPhononResult {
     if (dim == 0) {
         return .{
             .omega2 = try alloc.alloc(f64, 0),
@@ -143,7 +156,12 @@ fn diagonalizeComplexHermitianSmall(alloc: std.mem.Allocator, dynmat_c: []const 
         const eigenvectors = try alloc.alloc(math.Complex, 1);
         errdefer alloc.free(eigenvectors);
         eigenvectors[0] = math.complex.init(1.0, 0.0);
-        return .{ .omega2 = omega2, .frequencies_cm1 = freq, .eigenvectors = eigenvectors, .dim = 1 };
+        return .{
+            .omega2 = omega2,
+            .frequencies_cm1 = freq,
+            .eigenvectors = eigenvectors,
+            .dim = 1,
+        };
     }
 
     const a = dynmat_c[0].r;
@@ -292,7 +310,11 @@ pub fn massWeightComplex(dynmat_c: []math.Complex, n_atoms: usize, masses: []con
 }
 
 /// Diagonalize a complex Hermitian dynamical matrix using LAPACK zheev.
-pub fn diagonalizeComplex(alloc: std.mem.Allocator, dynmat_c: []const math.Complex, dim: usize) !ComplexPhononResult {
+pub fn diagonalizeComplex(
+    alloc: std.mem.Allocator,
+    dynmat_c: []const math.Complex,
+    dim: usize,
+) !ComplexPhononResult {
     if (dynmat_c.len != dim * dim) return error.InvalidMatrixSize;
     if (dim <= 2) return diagonalizeComplexHermitianSmall(alloc, dynmat_c, dim);
     const dynmat_copy = try alloc.alloc(math.Complex, dynmat_c.len);
@@ -450,7 +472,8 @@ pub fn buildIndsym(
 pub fn fracRotToCart(rot: symmetry_mod.Mat3i, cell: math.Mat3) [3][3]f64 {
     // L = cell^T (columns are lattice vectors a1, a2, a3)
     // L^{-1} can be computed via recip: L^{-1} = (cell^T)^{-1}
-    // But it's easier to use: recip^T / (2π) = L^{-T}^{-1}... let's just do the multiplication directly.
+    // But it's easier to use: recip^T / (2π) = L^{-T}^{-1}...
+    // let's just do the multiplication directly.
 
     // Method: R_cart[i][j] = sum_{a,b} L[i][a] * R_frac[a][b] * L_inv[b][j]
     // where L[i][a] = cell.m[a][i] (L = cell^T)
@@ -580,16 +603,19 @@ pub fn symmetrizeDynmatComplex(
                 };
                 // q is in fractional coordinates, shift is in fractional coordinates
                 // q·shift = q_frac · shift (dot product in fractional space)
-                const arg = -two_pi * (q_frac.x * dshift.x + q_frac.y * dshift.y + q_frac.z * dshift.z);
+                const arg = -two_pi *
+                    (q_frac.x * dshift.x + q_frac.y * dshift.y + q_frac.z * dshift.z);
                 const phase = math.complex.init(@cos(arg), @sin(arg));
 
-                // D_sym(α,I; β,J) += R_cart[α][γ] × R_cart[β][δ] × D(γ,S(I); δ,S(J)) × phase
+                // D_sym(α,I; β,J) +=
+                //   R_cart[α][γ] × R_cart[β][δ] × D(γ,S(I); δ,S(J)) × phase
                 for (0..3) |alpha| {
                     for (0..3) |beta| {
                         var acc = math.complex.init(0.0, 0.0);
                         for (0..3) |gamma_idx| {
                             for (0..3) |delta| {
-                                const d_elem = dynmat[(3 * si + gamma_idx) * dim + (3 * sj + delta)];
+                                const d_idx = (3 * si + gamma_idx) * dim + (3 * sj + delta);
+                                const d_elem = dynmat[d_idx];
                                 const coeff = r_cart[alpha][gamma_idx] * r_cart[beta][delta];
                                 acc = math.complex.add(acc, math.complex.scale(d_elem, coeff));
                             }
@@ -982,7 +1008,8 @@ pub fn reconstructDynmatColumnsComplex(
                             ));
                         }
                     }
-                    dynmat[(3 * iatom + alpha) * dim + (3 * jatom + beta)] = math.complex.mul(val, phase);
+                    const out_idx = (3 * iatom + alpha) * dim + (3 * jatom + beta);
+                    dynmat[out_idx] = math.complex.mul(val, phase);
                 }
             }
         }

@@ -70,7 +70,13 @@ fn buildForceProjectors(
             var g: usize = 0;
             while (g < g_count) : (g += 1) {
                 const gmag = math.Vec3.norm(gvecs[g].kpg);
-                radial_buf[b * g_count + g] = nonlocal.radialProjector(upf.beta[b].values, upf.r, upf.rab, l_val, gmag);
+                radial_buf[b * g_count + g] = nonlocal.radialProjector(
+                    upf.beta[b].values,
+                    upf.r,
+                    upf.rab,
+                    l_val,
+                    gmag,
+                );
             }
         }
     }
@@ -168,7 +174,10 @@ pub fn nonlocalForces(
                 projectors[si] = null;
                 continue;
             }
-            const tables = if (radial_tables_list) |rtl| if (si < rtl.len) rtl[si] else null else null;
+            const tables = if (radial_tables_list) |rtl|
+                if (si < rtl.len) rtl[si] else null
+            else
+                null;
             projectors[si] = try buildForceProjectors(alloc, si, upf.*, gvecs, tables);
         }
 
@@ -255,7 +264,10 @@ pub fn nonlocalForces(
                             } else 0.0;
                             const eff = d_val - eigenvalue * q_val;
                             if (eff == 0.0) continue;
-                            sum = math.complex.add(sum, math.complex.scale(coeff[proj.m_offsets[j] + m_idx], eff));
+                            sum = math.complex.add(
+                                sum,
+                                math.complex.scale(coeff[proj.m_offsets[j] + m_idx], eff),
+                            );
                         }
                         coeff2[m_off + m_idx] = sum;
                     }
@@ -396,7 +408,18 @@ test "nonlocal force analytical vs finite difference" {
     };
 
     // Analytical forces (NCPP mode: no PAW)
-    const forces = try nonlocalForces(alloc, wf, species_entries, atoms_arr[0..], recip, volume, null, null, null, 2.0);
+    const forces = try nonlocalForces(
+        alloc,
+        wf,
+        species_entries,
+        atoms_arr[0..],
+        recip,
+        volume,
+        null,
+        null,
+        null,
+        2.0,
+    );
     defer alloc.free(forces);
 
     // Finite-difference reference
@@ -414,7 +437,13 @@ test "nonlocal force analytical vs finite difference" {
             psi: []const math.Complex,
             occ: f64,
         ) !f64 {
-            const vnl = try hamiltonian.buildNonlocalMatrix(alloc_inner, gvecs, sp, atoms_local, inv_vol);
+            const vnl = try hamiltonian.buildNonlocalMatrix(
+                alloc_inner,
+                gvecs,
+                sp,
+                atoms_local,
+                inv_vol,
+            );
             defer alloc_inner.free(vnl);
 
             var sum = math.complex.init(0.0, 0.0);
@@ -439,8 +468,24 @@ test "nonlocal force analytical vs finite difference" {
         var atoms_minus = atoms_arr;
         atoms_plus[0].position.x += delta;
         atoms_minus[0].position.x -= delta;
-        const e_plus = try nonlocalEnergyEval.eval(alloc, basis.gvecs, species_entries, atoms_plus[0..], inv_volume, coefficients, occupations[0]);
-        const e_minus = try nonlocalEnergyEval.eval(alloc, basis.gvecs, species_entries, atoms_minus[0..], inv_volume, coefficients, occupations[0]);
+        const e_plus = try nonlocalEnergyEval.eval(
+            alloc,
+            basis.gvecs,
+            species_entries,
+            atoms_plus[0..],
+            inv_volume,
+            coefficients,
+            occupations[0],
+        );
+        const e_minus = try nonlocalEnergyEval.eval(
+            alloc,
+            basis.gvecs,
+            species_entries,
+            atoms_minus[0..],
+            inv_volume,
+            coefficients,
+            occupations[0],
+        );
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
     const fy_num = blk: {
@@ -448,8 +493,24 @@ test "nonlocal force analytical vs finite difference" {
         var atoms_minus = atoms_arr;
         atoms_plus[0].position.y += delta;
         atoms_minus[0].position.y -= delta;
-        const e_plus = try nonlocalEnergyEval.eval(alloc, basis.gvecs, species_entries, atoms_plus[0..], inv_volume, coefficients, occupations[0]);
-        const e_minus = try nonlocalEnergyEval.eval(alloc, basis.gvecs, species_entries, atoms_minus[0..], inv_volume, coefficients, occupations[0]);
+        const e_plus = try nonlocalEnergyEval.eval(
+            alloc,
+            basis.gvecs,
+            species_entries,
+            atoms_plus[0..],
+            inv_volume,
+            coefficients,
+            occupations[0],
+        );
+        const e_minus = try nonlocalEnergyEval.eval(
+            alloc,
+            basis.gvecs,
+            species_entries,
+            atoms_minus[0..],
+            inv_volume,
+            coefficients,
+            occupations[0],
+        );
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
     const fz_num = blk: {
@@ -457,8 +518,24 @@ test "nonlocal force analytical vs finite difference" {
         var atoms_minus = atoms_arr;
         atoms_plus[0].position.z += delta;
         atoms_minus[0].position.z -= delta;
-        const e_plus = try nonlocalEnergyEval.eval(alloc, basis.gvecs, species_entries, atoms_plus[0..], inv_volume, coefficients, occupations[0]);
-        const e_minus = try nonlocalEnergyEval.eval(alloc, basis.gvecs, species_entries, atoms_minus[0..], inv_volume, coefficients, occupations[0]);
+        const e_plus = try nonlocalEnergyEval.eval(
+            alloc,
+            basis.gvecs,
+            species_entries,
+            atoms_plus[0..],
+            inv_volume,
+            coefficients,
+            occupations[0],
+        );
+        const e_minus = try nonlocalEnergyEval.eval(
+            alloc,
+            basis.gvecs,
+            species_entries,
+            atoms_minus[0..],
+            inv_volume,
+            coefficients,
+            occupations[0],
+        );
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
 
