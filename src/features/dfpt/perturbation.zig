@@ -164,7 +164,8 @@ pub fn buildXcPerturbation(
 
 /// Build V_xc^(1)(r) for both LDA and GGA functionals (real, γ-point version).
 /// For LDA: V_xc^(1) = f_xc × n¹
-/// For GGA/PBE: V_xc^(1) = f_nn·n¹ + f_nσ·σ¹ - 2·∇·[f_nσ·n¹·∇n₀ + f_σσ·σ¹·∇n₀ + v_σ·∇n¹]
+/// For GGA/PBE: V_xc^(1) = f_nn·n¹ + f_nσ·σ¹
+///                         - 2·∇·[f_nσ·n¹·∇n₀ + f_σσ·σ¹·∇n₀ + v_σ·∇n¹]
 ///   where σ¹ = 2·(∇n₀·∇n¹)
 pub fn buildXcPerturbationFull(
     alloc: std.mem.Allocator,
@@ -192,7 +193,8 @@ pub fn buildXcPerturbationFull(
 
     // 2. σ¹(r) = 2·Σ_α (∂n₀/∂x_α)(∂n¹/∂x_α)
     // 3. direct = f_nn·n¹ + f_nσ·σ¹
-    // 4. A_α = f_nσ·n¹·(∂n₀/∂x_α) + f_σσ·σ¹·(∂n₀/∂x_α) + v_σ·(∂n¹/∂x_α)
+    // 4. A_α = f_nσ·n¹·(∂n₀/∂x_α) + f_σσ·σ¹·(∂n₀/∂x_α)
+    //          + v_σ·(∂n¹/∂x_α)
     const ax = try alloc.alloc(f64, total);
     defer alloc.free(ax);
     const ay = try alloc.alloc(f64, total);
@@ -203,7 +205,8 @@ pub fn buildXcPerturbationFull(
     errdefer alloc.free(direct);
 
     for (0..total) |i| {
-        const sigma1 = 2.0 * (gn0_x[i] * grad1.x[i] + gn0_y[i] * grad1.y[i] + gn0_z[i] * grad1.z[i]);
+        const sigma1 = 2.0 *
+            (gn0_x[i] * grad1.x[i] + gn0_y[i] * grad1.y[i] + gn0_z[i] * grad1.z[i]);
         direct[i] = f_nn[i] * rho1_r[i] + f_ns[i] * sigma1;
 
         const fns_n1 = f_ns[i] * rho1_r[i];
@@ -285,9 +288,18 @@ pub fn buildXcPerturbationFullComplex(
         const fns_n1 = math.complex.scale(rho1_r[i], f_ns[i]);
         const fss_s1 = math.complex.scale(sigma1, f_ss[i]);
         const coeff = math.complex.add(fns_n1, fss_s1);
-        ax[i] = math.complex.add(math.complex.scale(coeff, gn0_x[i]), math.complex.scale(grad1.x[i], v_s[i]));
-        ay[i] = math.complex.add(math.complex.scale(coeff, gn0_y[i]), math.complex.scale(grad1.y[i], v_s[i]));
-        az[i] = math.complex.add(math.complex.scale(coeff, gn0_z[i]), math.complex.scale(grad1.z[i], v_s[i]));
+        ax[i] = math.complex.add(
+            math.complex.scale(coeff, gn0_x[i]),
+            math.complex.scale(grad1.x[i], v_s[i]),
+        );
+        ay[i] = math.complex.add(
+            math.complex.scale(coeff, gn0_y[i]),
+            math.complex.scale(grad1.y[i], v_s[i]),
+        );
+        az[i] = math.complex.add(
+            math.complex.scale(coeff, gn0_z[i]),
+            math.complex.scale(grad1.z[i], v_s[i]),
+        );
     }
 
     // 5. div_A = divergenceFromComplex(A_x, A_y, A_z)
@@ -405,7 +417,10 @@ fn divergenceFromComplex(
     var it = scf_mod.GVecIterator.init(grid);
     while (it.next()) |g| {
         const sum = math.complex.add(
-            math.complex.add(math.complex.scale(bx_g[g.idx], g.gvec.x), math.complex.scale(by_g[g.idx], g.gvec.y)),
+            math.complex.add(
+                math.complex.scale(bx_g[g.idx], g.gvec.x),
+                math.complex.scale(by_g[g.idx], g.gvec.y),
+            ),
             math.complex.scale(bz_g[g.idx], g.gvec.z),
         );
         div_g[g.idx] = math.complex.mul(sum, i_unit);
@@ -424,7 +439,9 @@ fn divergenceFromComplex(
 /// for an atomic displacement perturbation comes from the derivative of the
 /// structure factor exp(-i(k+G)·τ_I):
 ///
-/// V_nl^(1)|ψ⟩ = Σ_β Σ_m D_ββ' × [-i(k+G)_α × φ_βm(k+G) e^{-i(k+G)·τ} ⟨φ_β'm(k+G) e^{-i(k+G)·τ}|ψ⟩
+/// V_nl^(1)|ψ⟩ = Σ_β Σ_m D_ββ' × [
+///                 -i(k+G)_α × φ_βm(k+G) e^{-i(k+G)·τ}
+///                   × ⟨φ_β'm(k+G) e^{-i(k+G)·τ}|ψ⟩
 ///              + φ_βm(k+G) e^{-i(k+G)·τ} ⟨-i(k+G)_α × φ_β'm(k+G) e^{-i(k+G)·τ}|ψ⟩]
 ///
 /// This is symmetric: both the ket and bra projectors get the -iG_α derivative.
@@ -473,14 +490,17 @@ pub fn applyNonlocalPerturbation(
                 const m_count = entry.m_counts[b];
                 var m_idx: usize = 0;
                 while (m_idx < m_count) : (m_idx += 1) {
-                    const phi = entry.phi[(offset + m_idx) * g_count .. (offset + m_idx + 1) * g_count];
+                    const phi_start = (offset + m_idx) * g_count;
+                    const phi_end = (offset + m_idx + 1) * g_count;
+                    const phi = entry.phi[phi_start..phi_end];
                     var sum = math.complex.init(0.0, 0.0);
                     g = 0;
                     while (g < n) : (g += 1) {
                         // G_α × φ(G) × e^{iG·τ} × ψ(G)
                         // The +i factor is applied to the sum below
                         const g_alpha = gComponent(gvecs[g].kpg, direction);
-                        sum = math.complex.add(sum, math.complex.scale(work_xphase[g], phi[g] * g_alpha));
+                        const term = math.complex.scale(work_xphase[g], phi[g] * g_alpha);
+                        sum = math.complex.add(sum, term);
                     }
                     // Multiply by +i: +i × (a+bi) = (-b, a)
                     coeff[offset + m_idx] = math.complex.init(-sum.i, sum.r);
@@ -536,7 +556,9 @@ pub fn applyNonlocalPerturbation(
                 const m_count = entry.m_counts[b];
                 var m_idx: usize = 0;
                 while (m_idx < m_count) : (m_idx += 1) {
-                    const phi = entry.phi[(offset + m_idx) * g_count .. (offset + m_idx + 1) * g_count];
+                    const phi_start = (offset + m_idx) * g_count;
+                    const phi_end = (offset + m_idx + 1) * g_count;
+                    const phi = entry.phi[phi_start..phi_end];
                     var sum = math.complex.init(0.0, 0.0);
                     g = 0;
                     while (g < n) : (g += 1) {
@@ -641,7 +663,8 @@ pub fn applyNonlocalPerturbationQ(
             if (atom_idx != perturbed_atom) continue;
 
             // === Term 1: derivative on bra (k-basis side) ===
-            // Project with derivative: coeff_β = +i × Σ_G (k+G)_α × φ^k_β(G) × exp(+i(k+G)·τ) × ψ_k(G)
+            // Project with derivative:
+            //   coeff_β = +i × Σ_G (k+G)_α × φ^k_β(G) × exp(+i(k+G)·τ) × ψ_k(G)
             {
                 var b: usize = 0;
                 while (b < entry_k.beta_count) : (b += 1) {
@@ -649,15 +672,20 @@ pub fn applyNonlocalPerturbationQ(
                     const m_count = entry_k.m_counts[b];
                     var m_idx: usize = 0;
                     while (m_idx < m_count) : (m_idx += 1) {
-                        const phi = entry_k.phi[(offset + m_idx) * n_k .. (offset + m_idx + 1) * n_k];
+                        const phi_start = (offset + m_idx) * n_k;
+                        const phi_end = (offset + m_idx + 1) * n_k;
+                        const phi = entry_k.phi[phi_start..phi_end];
                         var sum = math.complex.init(0.0, 0.0);
                         for (0..n_k) |g| {
-                            const phase = math.complex.expi(math.Vec3.dot(gvecs_k[g].kpg, atom.position));
-                            const g_alpha = gComponent(gvecs_k[g].kpg, direction);
-                            sum = math.complex.add(sum, math.complex.scale(
-                                math.complex.mul(math.complex.mul(x[g], phase), math.complex.init(phi[g], 0.0)),
+                            const kpg = gvecs_k[g].kpg;
+                            const phase = math.complex.expi(math.Vec3.dot(kpg, atom.position));
+                            const g_alpha = gComponent(kpg, direction);
+                            const phi_c = math.complex.init(phi[g], 0.0);
+                            const term = math.complex.scale(
+                                math.complex.mul(math.complex.mul(x[g], phase), phi_c),
                                 g_alpha,
-                            ));
+                            );
+                            sum = math.complex.add(sum, term);
                         }
                         // Multiply by +i: +i × (a+bi) = (-b, a)
                         coeff[offset + m_idx] = math.complex.init(-sum.i, sum.r);
@@ -678,13 +706,15 @@ pub fn applyNonlocalPerturbationQ(
                             if (entry_k.l_list[j] != l_val) continue;
                             const dij = coeffs[b * entry_k.beta_count + j];
                             if (dij == 0.0) continue;
-                            sum = math.complex.add(sum, math.complex.scale(coeff[entry_k.m_offsets[j] + m_idx], dij));
+                            const c = coeff[entry_k.m_offsets[j] + m_idx];
+                            sum = math.complex.add(sum, math.complex.scale(c, dij));
                         }
                         coeff2[offset + m_idx] = sum;
                     }
                 }
 
-                // Reconstruct in k+q-basis: out(G') += (1/Ω) × exp(-i(G'+q)·τ) × Σ_β coeff2_β × φ^{kq}_β(G')
+                // Reconstruct in k+q-basis:
+                //   out(G') += (1/Ω) × exp(-i(G'+q)·τ) × Σ_β coeff2_β × φ^{kq}_β(G')
                 for (0..n_kq) |g| {
                     var accum = math.complex.init(0.0, 0.0);
                     b = 0;
@@ -694,16 +724,23 @@ pub fn applyNonlocalPerturbationQ(
                         var m_idx: usize = 0;
                         while (m_idx < m_count) : (m_idx += 1) {
                             const phi_val = entry_kq.phi[(offset + m_idx) * n_kq + g];
-                            accum = math.complex.add(accum, math.complex.scale(coeff2[offset + m_idx], phi_val));
+                            const c = coeff2[offset + m_idx];
+                            accum = math.complex.add(accum, math.complex.scale(c, phi_val));
                         }
                     }
-                    const phase_conj = math.complex.expi(-math.Vec3.dot(gvecs_kq[g].kpg, atom.position));
-                    out[g] = math.complex.add(out[g], math.complex.scale(math.complex.mul(phase_conj, accum), inv_volume));
+                    const kpg = gvecs_kq[g].kpg;
+                    const phase_conj = math.complex.expi(-math.Vec3.dot(kpg, atom.position));
+                    const term = math.complex.scale(
+                        math.complex.mul(phase_conj, accum),
+                        inv_volume,
+                    );
+                    out[g] = math.complex.add(out[g], term);
                 }
             }
 
             // === Term 2: derivative on ket (k+q-basis side) ===
-            // Project without derivative: coeff_β = Σ_G φ^k_β(G) × exp(+i(k+G)·τ) × ψ_k(G)
+            // Project without derivative:
+            //   coeff_β = Σ_G φ^k_β(G) × exp(+i(k+G)·τ) × ψ_k(G)
             {
                 var b: usize = 0;
                 while (b < entry_k.beta_count) : (b += 1) {
@@ -711,10 +748,13 @@ pub fn applyNonlocalPerturbationQ(
                     const m_count = entry_k.m_counts[b];
                     var m_idx: usize = 0;
                     while (m_idx < m_count) : (m_idx += 1) {
-                        const phi = entry_k.phi[(offset + m_idx) * n_k .. (offset + m_idx + 1) * n_k];
+                        const phi_start = (offset + m_idx) * n_k;
+                        const phi_end = (offset + m_idx + 1) * n_k;
+                        const phi = entry_k.phi[phi_start..phi_end];
                         var sum = math.complex.init(0.0, 0.0);
                         for (0..n_k) |g| {
-                            const phase = math.complex.expi(math.Vec3.dot(gvecs_k[g].kpg, atom.position));
+                            const kpg = gvecs_k[g].kpg;
+                            const phase = math.complex.expi(math.Vec3.dot(kpg, atom.position));
                             sum = math.complex.add(sum, math.complex.scale(
                                 math.complex.mul(x[g], phase),
                                 phi[g],
@@ -738,14 +778,16 @@ pub fn applyNonlocalPerturbationQ(
                             if (entry_k.l_list[j] != l_val) continue;
                             const dij = coeffs[b * entry_k.beta_count + j];
                             if (dij == 0.0) continue;
-                            sum = math.complex.add(sum, math.complex.scale(coeff[entry_k.m_offsets[j] + m_idx], dij));
+                            const c = coeff[entry_k.m_offsets[j] + m_idx];
+                            sum = math.complex.add(sum, math.complex.scale(c, dij));
                         }
                         coeff2[offset + m_idx] = sum;
                     }
                 }
 
                 // Reconstruct with ket derivative in k+q-basis:
-                // out(G') += (1/Ω) × (-i(G'+q)_α) × exp(-i(G'+q)·τ) × Σ_β coeff2_β × φ^{kq}_β(G')
+                //   out(G') += (1/Ω) × (-i(G'+q)_α) × exp(-i(G'+q)·τ)
+                //              × Σ_β coeff2_β × φ^{kq}_β(G')
                 // Note: use kpg = G'+q (NOT cart = G')
                 for (0..n_kq) |g| {
                     var accum = math.complex.init(0.0, 0.0);
@@ -756,15 +798,22 @@ pub fn applyNonlocalPerturbationQ(
                         var m_idx: usize = 0;
                         while (m_idx < m_count) : (m_idx += 1) {
                             const phi_val = entry_kq.phi[(offset + m_idx) * n_kq + g];
-                            accum = math.complex.add(accum, math.complex.scale(coeff2[offset + m_idx], phi_val));
+                            const c = coeff2[offset + m_idx];
+                            accum = math.complex.add(accum, math.complex.scale(c, phi_val));
                         }
                     }
                     // Multiply by -i(G'+q)_α
-                    const gpq_alpha = gComponent(gvecs_kq[g].kpg, direction);
+                    const kpg = gvecs_kq[g].kpg;
+                    const gpq_alpha = gComponent(kpg, direction);
                     const weighted = math.complex.scale(accum, gpq_alpha);
-                    const neg_i_weighted = math.complex.init(weighted.i, -weighted.r); // -i × (a+bi) = (b, -a)
-                    const phase_conj = math.complex.expi(-math.Vec3.dot(gvecs_kq[g].kpg, atom.position));
-                    out[g] = math.complex.add(out[g], math.complex.scale(math.complex.mul(phase_conj, neg_i_weighted), inv_volume));
+                    // -i × (a+bi) = (b, -a)
+                    const neg_i_weighted = math.complex.init(weighted.i, -weighted.r);
+                    const phase_conj = math.complex.expi(-math.Vec3.dot(kpg, atom.position));
+                    const term = math.complex.scale(
+                        math.complex.mul(phase_conj, neg_i_weighted),
+                        inv_volume,
+                    );
+                    out[g] = math.complex.add(out[g], term);
                 }
             }
         }
@@ -1011,8 +1060,20 @@ test "V_loc perturbation finite difference" {
     while (it2.next()) |g| {
         if (g.gh == 0 and g.gk == 0 and g.gl == 0) continue;
 
-        const vp = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms_plus[0..], inv_vol, local_cfg);
-        const vm = try hamiltonian.ionicLocalPotential(g.gvec, species, atoms_minus[0..], inv_vol, local_cfg);
+        const vp = try hamiltonian.ionicLocalPotential(
+            g.gvec,
+            species,
+            atoms_plus[0..],
+            inv_vol,
+            local_cfg,
+        );
+        const vm = try hamiltonian.ionicLocalPotential(
+            g.gvec,
+            species,
+            atoms_minus[0..],
+            inv_vol,
+            local_cfg,
+        );
 
         const fd_r = (vp.r - vm.r) / (2.0 * delta);
         const fd_i = (vp.i - vm.i) / (2.0 * delta);

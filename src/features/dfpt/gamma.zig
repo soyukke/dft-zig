@@ -74,7 +74,16 @@ pub fn runPhonon(
     logDfptInfo("dfpt: starting phonon calculation ({d} atoms, dim={d})\n", .{ n_atoms, dim });
 
     // Prepare ground state (PW basis, eigenvalues, wavefunctions, NLCC, etc.)
-    var prepared = try dfpt.prepareGroundState(alloc, io, cfg, scf_result, species, atoms, volume, recip);
+    var prepared = try dfpt.prepareGroundState(
+        alloc,
+        io,
+        cfg,
+        scf_result,
+        species,
+        atoms,
+        volume,
+        recip,
+    );
     defer prepared.deinit();
     const gs = prepared.gs;
 
@@ -93,9 +102,18 @@ pub fn runPhonon(
         alloc.free(sym_data.tnons_shift);
     }
     const q_zero = math.Vec3{ .x = 0, .y = 0, .z = 0 };
-    var irr_info = try dynmat_mod.findIrreducibleAtoms(alloc, symops, sym_data.indsym, n_atoms, q_zero);
+    var irr_info = try dynmat_mod.findIrreducibleAtoms(
+        alloc,
+        symops,
+        sym_data.indsym,
+        n_atoms,
+        q_zero,
+    );
     defer irr_info.deinit(alloc);
-    logDfptInfo("dfpt: {d} symops, {d}/{d} irreducible atoms\n", .{ symops.len, irr_info.n_irr_atoms, n_atoms });
+    logDfptInfo(
+        "dfpt: {d} symops, {d}/{d} irreducible atoms\n",
+        .{ symops.len, irr_info.n_irr_atoms, n_atoms },
+    );
 
     // Solve perturbations for each atom and direction
     // Store V_loc^(1)(G), ρ^(1)(G), and ρ^(1)_core(G) for dynmat construction
@@ -153,7 +171,10 @@ pub fn runPhonon(
             for (0..3) |dir| {
                 const idx = 3 * ia + dir;
                 const dir_names = [_][]const u8{ "x", "y", "z" };
-                logDfpt("dfpt: solving perturbation atom={d} dir={s} (irreducible)\n", .{ ia, dir_names[dir] });
+                logDfpt(
+                    "dfpt: solving perturbation atom={d} dir={s} (irreducible)\n",
+                    .{ ia, dir_names[dir] },
+                );
 
                 pert_results[idx] = try solvePerturbation(alloc, gs, ia, dir, dfpt_cfg);
             }
@@ -161,7 +182,10 @@ pub fn runPhonon(
     } else {
         // Parallel path — solve only irreducible perturbations concurrently
         const n_irr_perts = irr_info.n_irr_atoms * 3;
-        logDfptInfo("dfpt: using {d} threads for {d} perturbations ({d} irreducible)\n", .{ pert_thread_count, dim, n_irr_perts });
+        logDfptInfo(
+            "dfpt: using {d} threads for {d} perturbations ({d} irreducible)\n",
+            .{ pert_thread_count, dim, n_irr_perts },
+        );
 
         // Build irr_pert_indices: list of perturbation indices to solve
         const irr_pert_indices = try alloc.alloc(usize, n_irr_perts);
@@ -260,7 +284,10 @@ pub fn runPhonon(
     if (irr_info.n_irr_atoms == n_atoms) {
         try runDiagnostics(alloc, gs, pert_results, vloc1_gs, n_atoms);
     } else {
-        logDfptInfo("dfpt: skipping diagnostics (symmetry-reduced: {d}/{d} irreducible atoms)\n", .{ irr_info.n_irr_atoms, n_atoms });
+        logDfptInfo(
+            "dfpt: skipping diagnostics (symmetry-reduced: {d}/{d} irreducible atoms)\n",
+            .{ irr_info.n_irr_atoms, n_atoms },
+        );
     }
 
     // Build ionic data and rho0_g for dynmat construction
@@ -271,12 +298,33 @@ pub fn runPhonon(
     defer alloc.free(rho0_g);
 
     // Build dynamical matrix from all contributions (only irreducible columns computed)
-    const dyn = try buildGammaDynmat(alloc, gs, pert_results, vloc1_gs, rho1_core_gs, rho0_g, ionic.charges, ionic.positions, cell_bohr, recip, volume, cfg, irr_info);
+    const dyn = try buildGammaDynmat(
+        alloc,
+        gs,
+        pert_results,
+        vloc1_gs,
+        rho1_core_gs,
+        rho0_g,
+        ionic.charges,
+        ionic.positions,
+        cell_bohr,
+        recip,
+        volume,
+        cfg,
+        irr_info,
+    );
     defer alloc.free(dyn);
 
     // Reconstruct non-irreducible columns from symmetry
     if (irr_info.n_irr_atoms < n_atoms) {
-        dynmat_mod.reconstructDynmatColumnsReal(dyn, n_atoms, irr_info, symops, sym_data.indsym, cell_bohr);
+        dynmat_mod.reconstructDynmatColumnsReal(
+            dyn,
+            n_atoms,
+            irr_info,
+            symops,
+            sym_data.indsym,
+            cell_bohr,
+        );
     }
 
     // Print full Cartesian dynmat (Ry/bohr²) before ASR for comparison with ABINIT
@@ -287,7 +335,10 @@ pub fn runPhonon(
         for (0..dim) |j| {
             const jb = j / 3;
             const db = j % 3;
-            logDfpt("  D(atom{d},{d}, atom{d},{d}) = {e:.10}\n", .{ ia, da, jb, db, dyn[i * dim + j] });
+            logDfpt(
+                "  D(atom{d},{d}, atom{d},{d}) = {e:.10}\n",
+                .{ ia, da, jb, db, dyn[i * dim + j] },
+            );
         }
     }
 
@@ -480,7 +531,14 @@ pub fn solvePerturbation(
         for (0..n_occ) |n| {
             // Build RHS: -P_c × H^(1)|ψ_n^(0)⟩
             // H^(1)|ψ⟩ = V^(1)_SCF(r)|ψ(r)⟩ + V_nl^(1)|ψ⟩
-            const rhs = try applyV1Psi(alloc, gs.grid, gs.gvecs, vtot1_r, gs.wavefunctions[n], gs.apply_ctx);
+            const rhs = try applyV1Psi(
+                alloc,
+                gs.grid,
+                gs.gvecs,
+                vtot1_r,
+                gs.wavefunctions[n],
+                gs.apply_ctx,
+            );
             defer alloc.free(rhs);
 
             // Add nonlocal perturbation: V_nl^(1)|ψ⟩
@@ -539,7 +597,15 @@ pub fn solvePerturbation(
         }
 
         // Compute new ρ^(1)(r) from wavefunctions
-        const new_rho1_r = try computeRho1(alloc, gs.grid, gs.gvecs, gs.wavefunctions, psi1, n_occ, gs.apply_ctx);
+        const new_rho1_r = try computeRho1(
+            alloc,
+            gs.grid,
+            gs.gvecs,
+            gs.wavefunctions,
+            psi1,
+            n_occ,
+            gs.apply_ctx,
+        );
         defer alloc.free(new_rho1_r);
 
         // FFT ρ^(1)(r) → ρ^(1)(G)
@@ -575,7 +641,15 @@ pub fn solvePerturbation(
 
     // Recompute ρ^(1) from final ψ^(1) for consistency
     // (The mixed rho1_g might differ slightly from ρ computed from psi1)
-    const final_rho1_r = try computeRho1(alloc, gs.grid, gs.gvecs, gs.wavefunctions, psi1, n_occ, gs.apply_ctx);
+    const final_rho1_r = try computeRho1(
+        alloc,
+        gs.grid,
+        gs.gvecs,
+        gs.wavefunctions,
+        psi1,
+        n_occ,
+        gs.apply_ctx,
+    );
     defer alloc.free(final_rho1_r);
     const final_rho1_g = try scf_mod.realToReciprocal(alloc, gs.grid, final_rho1_r, false);
 
@@ -588,7 +662,10 @@ pub fn solvePerturbation(
         const di = final_rho1_g[i].i - rho1_g[i].i;
         rho1_diff += dr * dr + di * di;
     }
-    logDfpt("dfpt_scf: final |rho1_g|={e:.6} |rho1_mixed - rho1_psi1|={e:.6}\n", .{ @sqrt(rho1_norm), @sqrt(rho1_diff) });
+    logDfpt(
+        "dfpt_scf: final |rho1_g|={e:.6} |rho1_mixed - rho1_psi1|={e:.6}\n",
+        .{ @sqrt(rho1_norm), @sqrt(rho1_diff) },
+    );
 
     // Use the recomputed density (consistent with psi1)
     alloc.free(rho1_g);
@@ -882,14 +959,25 @@ fn buildGammaDynmat(
     // (full matrix, no symmetry reduction needed — cheap analytic computation)
     const ewald_dyn = try ewald2.ewaldDynmat(alloc, cell_bohr, recip, charges, positions);
     defer alloc.free(ewald_dyn);
-    logDfpt("dfpt: ewald D(0x,0x)={e:.10} D(0x,1x)={e:.10} (Ha)\n", .{ ewald_dyn[0], ewald_dyn[3] });
+    logDfpt(
+        "dfpt: ewald D(0x,0x)={e:.10} D(0x,1x)={e:.10} (Ha)\n",
+        .{ ewald_dyn[0], ewald_dyn[3] },
+    );
     for (0..dim * dim) |i| {
         dyn[i] += ewald_dyn[i] * 2.0;
     }
 
     // Self-energy (non-variational) contribution: ∫ V^(2) × ρ^(0) dr
     // (full matrix, no symmetry reduction needed — cheap analytic computation)
-    const self_dyn = try dynmat_contrib.computeSelfEnergyDynmat(alloc, grid, gs.species, gs.atoms, rho0_g, gs.local_cfg, gs.ff_tables);
+    const self_dyn = try dynmat_contrib.computeSelfEnergyDynmat(
+        alloc,
+        grid,
+        gs.species,
+        gs.atoms,
+        rho0_g,
+        gs.local_cfg,
+        gs.ff_tables,
+    );
     defer alloc.free(self_dyn);
     logDfpt("dfpt: self-energy D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n", .{ self_dyn[0], self_dyn[3] });
     for (0..dim * dim) |i| {
@@ -898,9 +986,18 @@ fn buildGammaDynmat(
 
     // Nonlocal response contribution: C_nl = 4 × Σ_n Re⟨ψ|V_nl^(1)|δψ⟩
     // (only irreducible columns j — uses pert_results[j].psi1)
-    const nl_resp_dyn = try computeNonlocalResponseDynmat(alloc, gs, pert_results, n_atoms, irr_info);
+    const nl_resp_dyn = try computeNonlocalResponseDynmat(
+        alloc,
+        gs,
+        pert_results,
+        n_atoms,
+        irr_info,
+    );
     defer alloc.free(nl_resp_dyn);
-    logDfpt("dfpt: nl-response D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n", .{ nl_resp_dyn[0], nl_resp_dyn[3] });
+    logDfpt(
+        "dfpt: nl-response D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n",
+        .{ nl_resp_dyn[0], nl_resp_dyn[3] },
+    );
     for (0..dim * dim) |i| {
         dyn[i] += nl_resp_dyn[i];
     }
@@ -908,7 +1005,10 @@ fn buildGammaDynmat(
     // Nonlocal self-energy contribution: ⟨ψ|V_nl^(2)|ψ⟩
     const nl_self_dyn = try dynmat_contrib.computeNonlocalSelfEnergyDynmat(alloc, gs, n_atoms);
     defer alloc.free(nl_self_dyn);
-    logDfpt("dfpt: nl-self-energy D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n", .{ nl_self_dyn[0], nl_self_dyn[3] });
+    logDfpt(
+        "dfpt: nl-self-energy D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n",
+        .{ nl_self_dyn[0], nl_self_dyn[3] },
+    );
     for (0..dim * dim) |i| {
         dyn[i] += nl_self_dyn[i];
     }
@@ -917,9 +1017,20 @@ fn buildGammaDynmat(
     if (gs.rho_core != null) {
         // Cross-term: ∫ f_xc × ρ^(1)_core,Iα × ρ^(1)_total,Jβ dr
         // (only irreducible columns j — uses pert_results[j].rho1_g)
-        const nlcc_cross_dyn = try computeNlccCrossDynmat(alloc, grid, gs, pert_results, rho1_core_gs, n_atoms, irr_info);
+        const nlcc_cross_dyn = try computeNlccCrossDynmat(
+            alloc,
+            grid,
+            gs,
+            pert_results,
+            rho1_core_gs,
+            n_atoms,
+            irr_info,
+        );
         defer alloc.free(nlcc_cross_dyn);
-        logDfpt("dfpt: nlcc-cross D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n", .{ nlcc_cross_dyn[0], nlcc_cross_dyn[3] });
+        logDfpt(
+            "dfpt: nlcc-cross D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n",
+            .{ nlcc_cross_dyn[0], nlcc_cross_dyn[3] },
+        );
         for (0..dim * dim) |i| {
             dyn[i] += nlcc_cross_dyn[i];
         }
@@ -932,9 +1043,19 @@ fn buildGammaDynmat(
         const vxc_g = try scf_mod.realToReciprocal(alloc, grid, vxc_r_copy, false);
         defer alloc.free(vxc_g);
 
-        const nlcc_self_dyn = try dynmat_contrib.computeNlccSelfDynmat(alloc, grid, gs.species, gs.atoms, vxc_g, gs.rho_core_tables);
+        const nlcc_self_dyn = try dynmat_contrib.computeNlccSelfDynmat(
+            alloc,
+            grid,
+            gs.species,
+            gs.atoms,
+            vxc_g,
+            gs.rho_core_tables,
+        );
         defer alloc.free(nlcc_self_dyn);
-        logDfpt("dfpt: nlcc-self D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n", .{ nlcc_self_dyn[0], nlcc_self_dyn[3] });
+        logDfpt(
+            "dfpt: nlcc-self D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n",
+            .{ nlcc_self_dyn[0], nlcc_self_dyn[3] },
+        );
         for (0..dim * dim) |i| {
             dyn[i] += nlcc_self_dyn[i];
         }
@@ -947,7 +1068,8 @@ fn buildGammaDynmat(
         const atom_positions = try alloc.alloc(math.Vec3, n_atoms);
         defer alloc.free(atom_positions);
         for (gs.atoms, 0..) |atom, idx| {
-            atomic_numbers[idx] = d3_params.atomicNumber(gs.species[atom.species_index].symbol) orelse 0;
+            const sym = gs.species[atom.species_index].symbol;
+            atomic_numbers[idx] = d3_params.atomicNumber(sym) orelse 0;
             atom_positions[idx] = atom.position;
         }
         var damping = d3_params.pbe_d3bj;
@@ -965,7 +1087,11 @@ fn buildGammaDynmat(
             cfg.vdw.cn_cutoff,
         );
         defer alloc.free(d3_dyn);
-        logDfpt("dfpt: d3-disp D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n", .{ d3_dyn[0], if (dim > 3) d3_dyn[3] else 0.0 });
+        const d3_off_diag = if (dim > 3) d3_dyn[3] else 0.0;
+        logDfpt(
+            "dfpt: d3-disp D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n",
+            .{ d3_dyn[0], d3_off_diag },
+        );
         for (0..dim * dim) |i| {
             dyn[i] += d3_dyn[i];
         }
@@ -1032,10 +1158,19 @@ fn runDiagnostics(
                     exp_norm += expected[g].r * expected[g].r + expected[g].i * expected[g].i;
                     sum_norm += sum_psi1[g].r * sum_psi1[g].r + sum_psi1[g].i * sum_psi1[g].i;
                 }
-                logDfpt("dfpt_asr: dir={d} band={d} |Σ_J ψ1|={e:.6} |expected|={e:.6} |diff|={e:.6} rel={e:.6}\n", .{
-                    dir,                                                        n, @sqrt(sum_norm), @sqrt(exp_norm), @sqrt(diff_norm),
-                    if (exp_norm > 1e-30) @sqrt(diff_norm / exp_norm) else 0.0,
-                });
+                const asr_rel = if (exp_norm > 1e-30) @sqrt(diff_norm / exp_norm) else 0.0;
+                logDfpt(
+                    "dfpt_asr: dir={d} band={d} |Σ_J ψ1|={e:.6} |expected|={e:.6}" ++
+                        " |diff|={e:.6} rel={e:.6}\n",
+                    .{
+                        dir,
+                        n,
+                        @sqrt(sum_norm),
+                        @sqrt(exp_norm),
+                        @sqrt(diff_norm),
+                        asr_rel,
+                    },
+                );
             }
         }
     }
@@ -1110,7 +1245,8 @@ fn runDiagnostics(
                     nl_out3[g] = math.complex.init(-v.i * g_d, v.r * g_d);
                 }
 
-                // Expected: Σ_J V^(1)_{nl,J}|ψ⟩ = V_nl|iGψ⟩ - iG(V_nl|ψ⟩) = nl_out2 - nl_out3
+                // Expected: Σ_J V^(1)_{nl,J}|ψ⟩ = V_nl|iGψ⟩ - iG(V_nl|ψ⟩)
+                //           = nl_out2 - nl_out3
                 var diff_norm: f64 = 0.0;
                 var lhs_norm: f64 = 0.0;
                 var rhs_norm: f64 = 0.0;
@@ -1122,10 +1258,19 @@ fn runDiagnostics(
                     lhs_norm += nl_out1[g].r * nl_out1[g].r + nl_out1[g].i * nl_out1[g].i;
                     rhs_norm += expected_g.r * expected_g.r + expected_g.i * expected_g.i;
                 }
-                logDfpt("dfpt_vnl_test: dir={d} band={d} |Σ V1_nl|ψ|={e:.6} |V_nl|iGψ⟩-iG V_nl|ψ⟩|={e:.6} |diff|={e:.6} rel={e:.6}\n", .{
-                    dir,                                                        n, @sqrt(lhs_norm), @sqrt(rhs_norm), @sqrt(diff_norm),
-                    if (rhs_norm > 1e-30) @sqrt(diff_norm / rhs_norm) else 0.0,
-                });
+                const vnl_rel = if (rhs_norm > 1e-30) @sqrt(diff_norm / rhs_norm) else 0.0;
+                logDfpt(
+                    "dfpt_vnl_test: dir={d} band={d} |Σ V1_nl|ψ|={e:.6}" ++
+                        " |V_nl|iGψ⟩-iG V_nl|ψ⟩|={e:.6} |diff|={e:.6} rel={e:.6}\n",
+                    .{
+                        dir,
+                        n,
+                        @sqrt(lhs_norm),
+                        @sqrt(rhs_norm),
+                        @sqrt(diff_norm),
+                        vnl_rel,
+                    },
+                );
             }
         }
     }
@@ -1142,21 +1287,37 @@ fn runDiagnostics(
         var d_wf_00: f64 = 0.0;
         var d_wf_03: f64 = 0.0;
         for (0..gs.n_occ) |n| {
-            const vpsi_00 = try applyV1Psi(alloc, gs.grid, gs.gvecs, vloc1_0x_r, pert_results[0].psi1[n], gs.apply_ctx);
+            const vpsi_00 = try applyV1Psi(
+                alloc,
+                gs.grid,
+                gs.gvecs,
+                vloc1_0x_r,
+                pert_results[0].psi1[n],
+                gs.apply_ctx,
+            );
             defer alloc.free(vpsi_00);
 
             var ip_00 = math.complex.init(0.0, 0.0);
             for (0..n_pw) |g| {
-                ip_00 = math.complex.add(ip_00, math.complex.mul(math.complex.conj(gs.wavefunctions[n][g]), vpsi_00[g]));
+                const conj_psi = math.complex.conj(gs.wavefunctions[n][g]);
+                ip_00 = math.complex.add(ip_00, math.complex.mul(conj_psi, vpsi_00[g]));
             }
             d_wf_00 += 4.0 * ip_00.r;
 
-            const vpsi_03 = try applyV1Psi(alloc, gs.grid, gs.gvecs, vloc1_0x_r, pert_results[3].psi1[n], gs.apply_ctx);
+            const vpsi_03 = try applyV1Psi(
+                alloc,
+                gs.grid,
+                gs.gvecs,
+                vloc1_0x_r,
+                pert_results[3].psi1[n],
+                gs.apply_ctx,
+            );
             defer alloc.free(vpsi_03);
 
             var ip_03 = math.complex.init(0.0, 0.0);
             for (0..n_pw) |g| {
-                ip_03 = math.complex.add(ip_03, math.complex.mul(math.complex.conj(gs.wavefunctions[n][g]), vpsi_03[g]));
+                const conj_psi = math.complex.conj(gs.wavefunctions[n][g]);
+                ip_03 = math.complex.add(ip_03, math.complex.mul(conj_psi, vpsi_03[g]));
             }
             d_wf_03 += 4.0 * ip_03.r;
         }
@@ -1218,7 +1379,10 @@ fn gammaPertWorkerFn(worker: *GammaPertWorker) void {
         {
             shared.log_mutex.lockUncancelable(shared.io);
             defer shared.log_mutex.unlock(shared.io);
-            logDfpt("dfpt: [thread {d}] solving perturbation atom={d} dir={s} ({d}/{d})\n", .{ worker.thread_index, ia, dir_names[dir], work_idx + 1, shared.dim });
+            logDfpt(
+                "dfpt: [thread {d}] solving perturbation atom={d} dir={s} ({d}/{d})\n",
+                .{ worker.thread_index, ia, dir_names[dir], work_idx + 1, shared.dim },
+            );
         }
 
         // Solve DFPT SCF (vloc1/rho1_core already built by caller)

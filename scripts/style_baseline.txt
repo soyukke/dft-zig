@@ -17,14 +17,11 @@ src/features/dfpt/dynmat_contrib.zig	function_too_long	1
 src/features/dfpt/electric.zig	line_too_long	20
 src/features/dfpt/electric.zig	function_too_long	2
 src/features/dfpt/ewald2.zig	function_too_long	2
-src/features/dfpt/gamma.zig	line_too_long	33
 src/features/dfpt/gamma.zig	function_too_long	4
-src/features/dfpt/perturbation.zig	line_too_long	26
 src/features/dfpt/perturbation.zig	function_too_long	3
 src/features/dfpt/phonon_dos.zig	function_too_long	1
 src/features/dfpt/phonon_q/band_direct.zig	function_too_long	1
 src/features/dfpt/phonon_q/band_ifc.zig	function_too_long	1
-src/features/dfpt/phonon_q/dynmat_build.zig	line_too_long	34
 src/features/dfpt/phonon_q/dynmat_build.zig	function_too_long	3
 src/features/dfpt/phonon_q/dynmat_elem_q.zig	line_too_long	3
 src/features/dfpt/phonon_q/kpt_dfpt.zig	function_too_long	1
@@ -133,7 +130,6 @@ src/features/scf/energy.zig	line_too_long	4
 src/features/scf/energy.zig	function_too_long	2
 src/features/scf/fft_grid.zig	line_too_long	6
 src/features/scf/fft_grid.zig	function_too_long	1
-src/features/scf/kpoint_parallel.zig	line_too_long	33
 src/features/scf/kpoint_parallel.zig	function_too_long	5
 src/features/scf/logging.zig	function_too_long	2
 src/features/scf/mixing.zig	function_too_long	3
@@ -143,7 +139,6 @@ src/features/scf/paw_scf.zig	function_too_long	2
 src/features/scf/potential.zig	line_too_long	2
 src/features/scf/potential.zig	function_too_long	2
 src/features/scf/pw_grid_map.zig	line_too_long	4
-src/features/scf/scf.zig	line_too_long	32
 src/features/scf/scf.zig	function_too_long	4
 src/features/scf/scf_spin.zig	function_too_long	2
 src/features/scf/smearing.zig	line_too_long	4
@@ -159,7 +154,6 @@ src/features/stress/local_stress.zig	function_too_long	1
 src/features/stress/nlcc_stress.zig	function_too_long	1
 src/features/stress/nonlocal_stress.zig	line_too_long	15
 src/features/stress/nonlocal_stress.zig	function_too_long	1
-src/features/stress/stress.zig	line_too_long	29
 src/features/stress/stress.zig	function_too_long	3
 src/features/stress/xc_stress.zig	function_too_long	1
 src/features/symmetry/little_group.zig	line_too_long	4
