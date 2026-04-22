@@ -65,7 +65,8 @@ pub const ScfConfig = struct {
     iterative_warmup_tol: f64,
     iterative_reuse_vectors: bool,
     kerker_q0: f64, // Kerker preconditioning parameter (0 = disabled)
-    diemac: f64, // Macroscopic dielectric constant for model preconditioner (1.0 = disabled, ~12 for Si, 1e6 for metals)
+    diemac: f64, // Macroscopic dielectric constant for model preconditioner
+    // (1.0 = disabled, ~12 for Si, 1e6 for metals)
     dielng: f64, // Thomas-Fermi screening length in Bohr for model preconditioner (default 1.0)
     pulay_history: usize, // Pulay/DIIS mixing history (0 = disabled, use linear mixing)
     pulay_start: usize, // Number of simple mixing iterations before Pulay kicks in
@@ -273,7 +274,8 @@ pub const DfptConfig = struct {
     dos_sigma: f64 = 5.0, // Phonon DOS Gaussian width (cm⁻¹)
     dos_nbin: usize = 500, // Number of frequency bins for phonon DOS
     compute_dielectric: bool = false, // Compute dielectric tensor ε∞
-    log_level: runtime_logging.Level = .info, // warn=warnings only, info=summary, debug=full diagnostics
+    log_level: runtime_logging.Level = .info,
+    // warn=warnings only, info=summary, debug=full diagnostics
 };
 
 pub const DosConfig = struct {
@@ -405,24 +407,63 @@ pub const Config = struct {
         const a3 = cell_bohr.row(2);
         const volume = a1.dot(a2.cross(a3));
         if (@abs(volume) <= 1e-12) {
-            try addIssueLiteral(alloc, &issues, .err, "cell", "a1,a2,a3", "cell has zero or near-zero volume (degenerate lattice vectors)");
+            try addIssueLiteral(
+                alloc,
+                &issues,
+                .err,
+                "cell",
+                "a1,a2,a3",
+                "cell has zero or near-zero volume (degenerate lattice vectors)",
+            );
         }
 
         // --- Pseudopotentials ---
         if (self.pseudopotentials.len == 0) {
-            try addIssueLiteral(alloc, &issues, .err, "pseudopotential", "", "at least one pseudopotential must be specified");
+            try addIssueLiteral(
+                alloc,
+                &issues,
+                .err,
+                "pseudopotential",
+                "",
+                "at least one pseudopotential must be specified",
+            );
         }
 
         // --- SCF checks ---
         if (self.scf.ecut_ry <= 0) {
-            try addIssue(alloc, &issues, .err, "scf", "ecut_ry", try std.fmt.allocPrint(alloc, "must be positive (got {d:.2})", .{self.scf.ecut_ry}));
+            try addIssue(
+                alloc,
+                &issues,
+                .err,
+                "scf",
+                "ecut_ry",
+                try std.fmt.allocPrint(alloc, "must be positive (got {d:.2})", .{self.scf.ecut_ry}),
+            );
         } else if (self.scf.ecut_ry < 5.0) {
-            try addIssue(alloc, &issues, .warning, "scf", "ecut_ry", try std.fmt.allocPrint(alloc, "{d:.1} is unusually low; typical range is 15-100 Ry", .{self.scf.ecut_ry}));
+            try addIssue(
+                alloc,
+                &issues,
+                .warning,
+                "scf",
+                "ecut_ry",
+                try std.fmt.allocPrint(
+                    alloc,
+                    "{d:.1} is unusually low; typical range is 15-100 Ry",
+                    .{self.scf.ecut_ry},
+                ),
+            );
         }
 
         for (self.scf.kmesh, 0..) |k, i| {
             if (k == 0) {
-                try addIssue(alloc, &issues, .err, "scf", "kmesh", try std.fmt.allocPrint(alloc, "dimension [{d}] must be positive", .{i}));
+                try addIssue(
+                    alloc,
+                    &issues,
+                    .err,
+                    "scf",
+                    "kmesh",
+                    try std.fmt.allocPrint(alloc, "dimension [{d}] must be positive", .{i}),
+                );
             }
         }
 
@@ -437,31 +478,96 @@ pub const Config = struct {
         if (self.scf.convergence <= 0) {
             try addIssueLiteral(alloc, &issues, .err, "scf", "convergence", "must be positive");
         } else if (self.scf.convergence > 1e-3) {
-            try addIssue(alloc, &issues, .warning, "scf", "convergence", try std.fmt.allocPrint(alloc, "{e} is loose; results may be inaccurate", .{self.scf.convergence}));
+            try addIssue(
+                alloc,
+                &issues,
+                .warning,
+                "scf",
+                "convergence",
+                try std.fmt.allocPrint(
+                    alloc,
+                    "{e} is loose; results may be inaccurate",
+                    .{self.scf.convergence},
+                ),
+            );
         }
 
         if (self.scf.mixing_beta <= 0 or self.scf.mixing_beta > 1.0) {
-            try addIssue(alloc, &issues, .err, "scf", "mixing_beta", try std.fmt.allocPrint(alloc, "must be in (0, 1] (got {d:.3})", .{self.scf.mixing_beta}));
+            try addIssue(
+                alloc,
+                &issues,
+                .err,
+                "scf",
+                "mixing_beta",
+                try std.fmt.allocPrint(
+                    alloc,
+                    "must be in (0, 1] (got {d:.3})",
+                    .{self.scf.mixing_beta},
+                ),
+            );
         } else if (self.scf.mixing_beta > 0.7) {
-            try addIssue(alloc, &issues, .warning, "scf", "mixing_beta", try std.fmt.allocPrint(alloc, "{d:.2} is high; may cause SCF oscillation", .{self.scf.mixing_beta}));
+            try addIssue(
+                alloc,
+                &issues,
+                .warning,
+                "scf",
+                "mixing_beta",
+                try std.fmt.allocPrint(
+                    alloc,
+                    "{d:.2} is high; may cause SCF oscillation",
+                    .{self.scf.mixing_beta},
+                ),
+            );
         }
 
         if (self.scf.smearing != .none and self.scf.smear_ry <= 0) {
-            try addIssueLiteral(alloc, &issues, .err, "scf", "smear_ry", "must be > 0 when smearing is enabled");
+            try addIssueLiteral(
+                alloc,
+                &issues,
+                .err,
+                "scf",
+                "smear_ry",
+                "must be > 0 when smearing is enabled",
+            );
         }
         if (self.scf.smearing == .none and self.scf.smear_ry > 0) {
-            try addIssueLiteral(alloc, &issues, .warning, "scf", "smear_ry", "is set but smearing is disabled; value will be ignored");
+            try addIssueLiteral(
+                alloc,
+                &issues,
+                .warning,
+                "scf",
+                "smear_ry",
+                "is set but smearing is disabled; value will be ignored",
+            );
         }
 
         if (self.scf.pulay_history > 0 and self.scf.pulay_start > self.scf.pulay_history) {
-            try addIssue(alloc, &issues, .err, "scf", "pulay_start", try std.fmt.allocPrint(alloc, "({d}) exceeds pulay_history ({d})", .{ self.scf.pulay_start, self.scf.pulay_history }));
+            try addIssue(
+                alloc,
+                &issues,
+                .err,
+                "scf",
+                "pulay_start",
+                try std.fmt.allocPrint(
+                    alloc,
+                    "({d}) exceeds pulay_history ({d})",
+                    .{ self.scf.pulay_start, self.scf.pulay_history },
+                ),
+            );
         }
 
         // --- Boundary + kmesh consistency ---
         if (self.boundary == .isolated) {
             for (self.scf.kmesh) |k| {
                 if (k > 1) {
-                    try addIssueLiteral(alloc, &issues, .warning, "scf", "kmesh", "isolated boundary with kmesh > [1,1,1]; only Gamma point is meaningful");
+                    try addIssueLiteral(
+                        alloc,
+                        &issues,
+                        .warning,
+                        "scf",
+                        "kmesh",
+                        "isolated boundary with kmesh > [1,1,1]; only Gamma point is meaningful",
+                    );
                     break;
                 }
             }
@@ -470,7 +576,14 @@ pub const Config = struct {
         // --- Relax checks (when enabled) ---
         if (self.relax.enabled) {
             if (!self.scf.enabled) {
-                try addIssueLiteral(alloc, &issues, .err, "relax", "", "requires scf to be enabled");
+                try addIssueLiteral(
+                    alloc,
+                    &issues,
+                    .err,
+                    "relax",
+                    "",
+                    "requires scf to be enabled",
+                );
             }
             if (self.relax.max_iter == 0) {
                 try addIssueLiteral(alloc, &issues, .err, "relax", "max_iter", "must be positive");
@@ -482,7 +595,14 @@ pub const Config = struct {
                 try addIssueLiteral(alloc, &issues, .err, "relax", "max_step", "must be positive");
             }
             if (self.relax.cell_relax and !self.scf.compute_stress) {
-                try addIssueLiteral(alloc, &issues, .warning, "relax", "cell_relax", "cell_relax is enabled but compute_stress is off; stress will be auto-enabled");
+                try addIssueLiteral(
+                    alloc,
+                    &issues,
+                    .warning,
+                    "relax",
+                    "cell_relax",
+                    "cell_relax is enabled but compute_stress is off; stress will be auto-enabled",
+                );
             }
         }
 
@@ -492,40 +612,119 @@ pub const Config = struct {
                 try addIssueLiteral(alloc, &issues, .err, "dfpt", "", "requires scf to be enabled");
             }
             if (self.scf.smearing != .none) {
-                try addIssueLiteral(alloc, &issues, .err, "dfpt", "", "DFPT is incompatible with Fermi-Dirac smearing");
+                try addIssueLiteral(
+                    alloc,
+                    &issues,
+                    .err,
+                    "dfpt",
+                    "",
+                    "DFPT is incompatible with Fermi-Dirac smearing",
+                );
             }
             if (self.scf.nspin == 2) {
-                try addIssueLiteral(alloc, &issues, .err, "dfpt", "", "spin-polarized DFPT (nspin=2) is not supported");
+                try addIssueLiteral(
+                    alloc,
+                    &issues,
+                    .err,
+                    "dfpt",
+                    "",
+                    "spin-polarized DFPT (nspin=2) is not supported",
+                );
             }
             if (self.dfpt.sternheimer_max_iter == 0) {
-                try addIssueLiteral(alloc, &issues, .err, "dfpt", "sternheimer_max_iter", "must be positive");
+                try addIssueLiteral(
+                    alloc,
+                    &issues,
+                    .err,
+                    "dfpt",
+                    "sternheimer_max_iter",
+                    "must be positive",
+                );
             }
             if (self.dfpt.sternheimer_tol <= 0) {
-                try addIssueLiteral(alloc, &issues, .err, "dfpt", "sternheimer_tol", "must be positive");
+                try addIssueLiteral(
+                    alloc,
+                    &issues,
+                    .err,
+                    "dfpt",
+                    "sternheimer_tol",
+                    "must be positive",
+                );
             }
             if (self.dfpt.scf_max_iter == 0) {
-                try addIssueLiteral(alloc, &issues, .err, "dfpt", "scf_max_iter", "must be positive");
+                try addIssueLiteral(
+                    alloc,
+                    &issues,
+                    .err,
+                    "dfpt",
+                    "scf_max_iter",
+                    "must be positive",
+                );
             }
             if (self.dfpt.scf_tol <= 0) {
                 try addIssueLiteral(alloc, &issues, .err, "dfpt", "scf_tol", "must be positive");
             }
             if (self.dfpt.mixing_beta <= 0 or self.dfpt.mixing_beta > 1.0) {
-                try addIssue(alloc, &issues, .err, "dfpt", "mixing_beta", try std.fmt.allocPrint(alloc, "must be in (0, 1] (got {d:.3})", .{self.dfpt.mixing_beta}));
+                try addIssue(
+                    alloc,
+                    &issues,
+                    .err,
+                    "dfpt",
+                    "mixing_beta",
+                    try std.fmt.allocPrint(
+                        alloc,
+                        "must be in (0, 1] (got {d:.3})",
+                        .{self.dfpt.mixing_beta},
+                    ),
+                );
             }
             if (self.dfpt.pulay_history > 0 and self.dfpt.pulay_start > self.dfpt.pulay_history) {
-                try addIssue(alloc, &issues, .err, "dfpt", "pulay_start", try std.fmt.allocPrint(alloc, "({d}) exceeds pulay_history ({d})", .{ self.dfpt.pulay_start, self.dfpt.pulay_history }));
+                try addIssue(
+                    alloc,
+                    &issues,
+                    .err,
+                    "dfpt",
+                    "pulay_start",
+                    try std.fmt.allocPrint(
+                        alloc,
+                        "({d}) exceeds pulay_history ({d})",
+                        .{ self.dfpt.pulay_start, self.dfpt.pulay_history },
+                    ),
+                );
             }
             if (self.dfpt.qgrid) |qg| {
                 for (qg, 0..) |q, i| {
                     if (q == 0) {
-                        try addIssue(alloc, &issues, .err, "dfpt", "qgrid", try std.fmt.allocPrint(alloc, "dimension [{d}] must be positive", .{i}));
+                        try addIssue(
+                            alloc,
+                            &issues,
+                            .err,
+                            "dfpt",
+                            "qgrid",
+                            try std.fmt.allocPrint(
+                                alloc,
+                                "dimension [{d}] must be positive",
+                                .{i},
+                            ),
+                        );
                     }
                 }
             }
             if (self.dfpt.dos_qmesh) |qm| {
                 for (qm, 0..) |q, i| {
                     if (q == 0) {
-                        try addIssue(alloc, &issues, .err, "dfpt", "dos_qmesh", try std.fmt.allocPrint(alloc, "dimension [{d}] must be positive", .{i}));
+                        try addIssue(
+                            alloc,
+                            &issues,
+                            .err,
+                            "dfpt",
+                            "dos_qmesh",
+                            try std.fmt.allocPrint(
+                                alloc,
+                                "dimension [{d}] must be positive",
+                                .{i},
+                            ),
+                        );
                     }
                 }
             }
@@ -539,26 +738,57 @@ pub const Config = struct {
             if (self.dos.npoints == 0) {
                 try addIssueLiteral(alloc, &issues, .err, "dos", "npoints", "must be positive");
             }
-            if (self.dos.emin != null and self.dos.emax != null and self.dos.emin.? >= self.dos.emax.?) {
-                try addIssueLiteral(alloc, &issues, .err, "dos", "emin/emax", "emin must be less than emax");
+            if (self.dos.emin != null and
+                self.dos.emax != null and
+                self.dos.emin.? >= self.dos.emax.?)
+            {
+                try addIssueLiteral(
+                    alloc,
+                    &issues,
+                    .err,
+                    "dos",
+                    "emin/emax",
+                    "emin must be less than emax",
+                );
             }
         }
 
         // --- VdW consistency ---
         if (self.vdw.enabled and self.vdw.method == .none) {
-            try addIssueLiteral(alloc, &issues, .err, "vdw", "method", "vdw enabled but method = \"none\"; set method = \"d3bj\"");
+            try addIssueLiteral(
+                alloc,
+                &issues,
+                .err,
+                "vdw",
+                "method",
+                "vdw enabled but method = \"none\"; set method = \"d3bj\"",
+            );
         }
 
         // --- Band checks ---
         if (self.band.path.len > 0 or self.band.path_string != null) {
             if (self.band.points_per_segment == 0) {
-                try addIssueLiteral(alloc, &issues, .err, "band", "points", "points must be positive");
+                try addIssueLiteral(
+                    alloc,
+                    &issues,
+                    .err,
+                    "band",
+                    "points",
+                    "points must be positive",
+                );
             }
         }
 
         // --- Spin consistency ---
         if (self.scf.nspin == 2 and self.scf.spinat == null) {
-            try addIssueLiteral(alloc, &issues, .warning, "scf", "spinat", "nspin=2 but spinat not set; calculation may converge to non-magnetic solution");
+            try addIssueLiteral(
+                alloc,
+                &issues,
+                .warning,
+                "scf",
+                "spinat",
+                "nspin=2 but spinat not set; calculation may converge to non-magnetic solution",
+            );
         }
 
         // --- Grid vs ecut consistency ---
@@ -568,19 +798,38 @@ pub const Config = struct {
             const recip = math.reciprocal(cell_bohr);
             const scale = if (self.scf.grid_scale > 0) self.scf.grid_scale else 1.0;
             const density_gmax = @max(2.0, scale) * @sqrt(self.scf.ecut_ry);
-            const raw1 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / math.Vec3.norm(recip.row(0))))) * 2 + 1;
-            const raw2 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / math.Vec3.norm(recip.row(1))))) * 2 + 1;
-            const raw3 = @as(usize, @intFromFloat(std.math.ceil(density_gmax / math.Vec3.norm(recip.row(2))))) * 2 + 1;
+            const raw1 = @as(usize, @intFromFloat(
+                std.math.ceil(density_gmax / math.Vec3.norm(recip.row(0))),
+            )) * 2 + 1;
+            const raw2 = @as(usize, @intFromFloat(
+                std.math.ceil(density_gmax / math.Vec3.norm(recip.row(1))),
+            )) * 2 + 1;
+            const raw3 = @as(usize, @intFromFloat(
+                std.math.ceil(density_gmax / math.Vec3.norm(recip.row(2))),
+            )) * 2 + 1;
             const rec1 = fft_sizing.nextFftSize(@max(raw1, 3));
             const rec2 = fft_sizing.nextFftSize(@max(raw2, 3));
             const rec3 = fft_sizing.nextFftSize(@max(raw3, 3));
             if (self.scf.grid[0] < raw1 or self.scf.grid[1] < raw2 or self.scf.grid[2] < raw3) {
-                try addIssue(alloc, &issues, .warning, "scf", "grid", try std.fmt.allocPrint(alloc, "grid [{},{},{}] is smaller than recommended [{},{},{}] for ecut_ry={d:.1}; use grid = [{},{},{}] or set grid = [0,0,0] for auto", .{
-                    self.scf.grid[0], self.scf.grid[1], self.scf.grid[2],
-                    raw1,             raw2,             raw3,
-                    self.scf.ecut_ry, rec1,             rec2,
-                    rec3,
-                }));
+                try addIssue(
+                    alloc,
+                    &issues,
+                    .warning,
+                    "scf",
+                    "grid",
+                    try std.fmt.allocPrint(
+                        alloc,
+                        "grid [{},{},{}] is smaller than recommended [{},{},{}]" ++
+                            " for ecut_ry={d:.1}; use grid = [{},{},{}]" ++
+                            " or set grid = [0,0,0] for auto",
+                        .{
+                            self.scf.grid[0], self.scf.grid[1], self.scf.grid[2],
+                            raw1,             raw2,             raw3,
+                            self.scf.ecut_ry, rec1,             rec2,
+                            rec3,
+                        },
+                    ),
+                );
             }
         }
 
@@ -588,43 +837,106 @@ pub const Config = struct {
 
         // Solver: dense is very slow for non-trivial systems
         if (self.scf.enabled and self.scf.solver == .dense) {
-            try addIssueLiteral(alloc, &issues, .hint, "scf", "solver", "solver = \"dense\" is slow for large systems; consider solver = \"iterative\" (LOBPCG)");
+            try addIssueLiteral(
+                alloc,
+                &issues,
+                .hint,
+                "scf",
+                "solver",
+                "solver = \"dense\" is slow for large systems;" ++
+                    " consider solver = \"iterative\" (LOBPCG)",
+            );
         }
 
         // FFT backend: fftw is significantly faster than pure Zig backends
         if (self.scf.enabled and self.scf.fft_backend != .fftw) {
-            try addIssueLiteral(alloc, &issues, .hint, "scf", "fft_backend", "fft_backend = \"fftw\" is recommended for production calculations");
+            try addIssueLiteral(
+                alloc,
+                &issues,
+                .hint,
+                "scf",
+                "fft_backend",
+                "fft_backend = \"fftw\" is recommended for production calculations",
+            );
         }
 
         // Dielectric preconditioner: diemac=1.0 means disabled
         if (self.scf.enabled and self.scf.diemac == 1.0 and self.scf.convergence < 1e-6) {
-            try addIssueLiteral(alloc, &issues, .hint, "scf", "diemac", "diemac = 1.0 (disabled); for tight convergence (<1e-6), set ~12 for semiconductors or ~1e6 for metals");
+            try addIssueLiteral(
+                alloc,
+                &issues,
+                .hint,
+                "scf",
+                "diemac",
+                "diemac = 1.0 (disabled); for tight convergence (<1e-6)," ++
+                    " set ~12 for semiconductors or ~1e6 for metals",
+            );
         }
 
         // Pulay/DIIS disabled
         if (self.scf.enabled and self.scf.pulay_history == 0) {
-            try addIssueLiteral(alloc, &issues, .hint, "scf", "pulay_history", "pulay_history = 0 (DIIS disabled); pulay_history = 8 with pulay_start = 4 typically improves SCF convergence");
+            try addIssueLiteral(
+                alloc,
+                &issues,
+                .hint,
+                "scf",
+                "pulay_history",
+                "pulay_history = 0 (DIIS disabled); pulay_history = 8 with pulay_start = 4" ++
+                    " typically improves SCF convergence",
+            );
         }
 
         // Density mixing is known to oscillate for large ecut
         if (self.scf.enabled and self.scf.mixing_mode == .density) {
-            try addIssueLiteral(alloc, &issues, .hint, "scf", "mixing_mode", "mixing_mode = \"density\" can oscillate at large ecut; mixing_mode = \"potential\" is recommended");
+            try addIssueLiteral(
+                alloc,
+                &issues,
+                .hint,
+                "scf",
+                "mixing_mode",
+                "mixing_mode = \"density\" can oscillate at large ecut;" ++
+                    " mixing_mode = \"potential\" is recommended",
+            );
         }
 
         // iterative_tol too tight increases per-iteration cost
         if (self.scf.enabled and self.scf.solver == .iterative and self.scf.iterative_tol < 1e-6) {
-            try addIssueLiteral(alloc, &issues, .hint, "scf", "iterative_tol", "iterative_tol < 1e-6 increases eigensolver cost per SCF iteration; 1e-4 is usually sufficient");
+            try addIssueLiteral(
+                alloc,
+                &issues,
+                .hint,
+                "scf",
+                "iterative_tol",
+                "iterative_tol < 1e-6 increases eigensolver cost per SCF iteration;" ++
+                    " 1e-4 is usually sufficient",
+            );
         }
 
         // Symmetry disabled
         if (self.scf.enabled and !self.scf.symmetry) {
-            try addIssueLiteral(alloc, &issues, .hint, "scf", "symmetry", "symmetry = false; enabling symmetry reduces k-points and speeds up the calculation");
+            try addIssueLiteral(
+                alloc,
+                &issues,
+                .hint,
+                "scf",
+                "symmetry",
+                "symmetry = false; enabling symmetry reduces k-points" ++
+                    " and speeds up the calculation",
+            );
         }
 
         // Band solver recommendation
         if (self.band.path.len > 0 or self.band.path_string != null) {
             if (self.band.solver == .dense) {
-                try addIssueLiteral(alloc, &issues, .hint, "band", "solver", "solver = \"dense\" is slow for band structure; consider solver = \"iterative\"");
+                try addIssueLiteral(
+                    alloc,
+                    &issues,
+                    .hint,
+                    "band",
+                    "solver",
+                    "solver = \"dense\" is slow for band structure;" ++
+                        " consider solver = \"iterative\"",
+                );
             }
         }
 
@@ -832,7 +1144,8 @@ pub fn load(alloc: std.mem.Allocator, io: std.Io, path: []const u8) !Config {
     var band_iterative_init_diagonal: bool = false;
     var band_kpoint_threads: usize = 0;
     var band_iterative_reuse_vectors: bool = true;
-    var band_use_symmetry: bool = false; // TODO: proper symmetry-adapted basis transformation needed
+    // TODO: proper symmetry-adapted basis transformation needed
+    var band_use_symmetry: bool = false;
     var band_lobpcg_parallel: bool = false; // k-point parallel is more efficient
     var band_path_string: ?[]u8 = null; // "auto" or "G-X-W-K-G-L" style path
     errdefer if (band_path_string) |s| alloc.free(s);
@@ -866,7 +1179,10 @@ pub fn load(alloc: std.mem.Allocator, io: std.Io, path: []const u8) !Config {
                     current_section = .dfpt_qpath;
                     current_dfpt_qpath_index = dfpt_qpath_list.items.len;
                     current_pseudo_index = null;
-                    try dfpt_qpath_list.append(alloc, .{ .label = try alloc.dupe(u8, ""), .k = .{ .x = 0, .y = 0, .z = 0 } });
+                    try dfpt_qpath_list.append(alloc, .{
+                        .label = try alloc.dupe(u8, ""),
+                        .k = .{ .x = 0, .y = 0, .z = 0 },
+                    });
                 } else if (std.mem.eql(u8, name, "pseudopotential")) {
                     current_section = .pseudopotential;
                     current_pseudo_index = pseudo_list.items.len;
@@ -1362,9 +1678,11 @@ pub fn load(alloc: std.mem.Allocator, io: std.Io, path: []const u8) !Config {
     if (!dfpt_kpoint_threads_explicit) {
         dfpt_cfg.kpoint_threads = top_threads;
     }
-    // Auto-set lobpcg_parallel: true when threads==1 (single k-point thread, LOBPCG internal parallel)
+    // Auto-set lobpcg_parallel: true when threads==1
+    // (single k-point thread, LOBPCG internal parallel)
     if (!band_lobpcg_parallel_explicit) {
-        band_lobpcg_parallel = (if (band_kpoint_threads_explicit) band_kpoint_threads else top_threads) == 1;
+        const threads_eff = if (band_kpoint_threads_explicit) band_kpoint_threads else top_threads;
+        band_lobpcg_parallel = threads_eff == 1;
     }
 
     const dfpt_qpath_slice = try dfpt_qpath_list.toOwnedSlice(alloc);
@@ -1678,7 +1996,11 @@ fn testDefaultConfig() Config {
         },
         .dos = .{},
         .output = .{},
-        .pseudopotentials = @constCast(&[_]pseudo.Spec{.{ .element = @constCast("Si"), .path = @constCast("Si.upf"), .format = .upf }}),
+        .pseudopotentials = @constCast(&[_]pseudo.Spec{.{
+            .element = @constCast("Si"),
+            .path = @constCast("Si.upf"),
+            .format = .upf,
+        }}),
     };
 }
 

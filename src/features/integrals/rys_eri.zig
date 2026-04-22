@@ -173,7 +173,8 @@ fn buildG2d(
                 // g(0, k) = c0p * g(0, k-1) + (k-1) * b01 * g(0, k-2)
                 var val = c0p[r] * g[base + (k - 1) * stride_k + 0];
                 if (k >= 2) {
-                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + 0];
+                    const g_km2_0 = g[base + (k - 2) * stride_k + 0];
+                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g_km2_0;
                 }
                 g[base + k * stride_k + 0] = val;
 
@@ -181,10 +182,12 @@ fn buildG2d(
                 {
                     var i: usize = 1;
                     while (i < dim_ij) : (i += 1) {
+                        const g_km1_im1 = g[base + (k - 1) * stride_k + i - 1];
                         val = c0p[r] * g[base + (k - 1) * stride_k + i] +
-                            @as(f64, @floatFromInt(i)) * b00[r] * g[base + (k - 1) * stride_k + i - 1];
+                            @as(f64, @floatFromInt(i)) * b00[r] * g_km1_im1;
                         if (k >= 2) {
-                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + i];
+                            const g_km2_i = g[base + (k - 2) * stride_k + i];
+                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g_km2_i;
                         }
                         g[base + k * stride_k + i] = val;
                     }
@@ -232,17 +235,20 @@ fn buildG2dWeighted(
             while (k < dim_kl) : (k += 1) {
                 var val = c0p[r] * g[base + (k - 1) * stride_k + 0];
                 if (k >= 2) {
-                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + 0];
+                    const g_km2_0 = g[base + (k - 2) * stride_k + 0];
+                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g_km2_0;
                 }
                 g[base + k * stride_k + 0] = val;
 
                 {
                     var i: usize = 1;
                     while (i < dim_ij) : (i += 1) {
+                        const g_km1_im1 = g[base + (k - 1) * stride_k + i - 1];
                         val = c0p[r] * g[base + (k - 1) * stride_k + i] +
-                            @as(f64, @floatFromInt(i)) * b00[r] * g[base + (k - 1) * stride_k + i - 1];
+                            @as(f64, @floatFromInt(i)) * b00[r] * g_km1_im1;
                         if (k >= 2) {
-                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + i];
+                            const g_km2_i = g[base + (k - 2) * stride_k + i];
+                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g_km2_i;
                         }
                         g[base + k * stride_k + i] = val;
                     }
@@ -315,7 +321,12 @@ pub fn contractedShellQuartetERI(
     for (shell_a.primitives, 0..) |pa, ip| {
         var mx: f64 = 0.0;
         for (0..na) |ic| {
-            const n_val = basis_mod.normalization(pa.alpha, cart_a[ic].x, cart_a[ic].y, cart_a[ic].z);
+            const n_val = basis_mod.normalization(
+                pa.alpha,
+                cart_a[ic].x,
+                cart_a[ic].y,
+                cart_a[ic].z,
+            );
             norm_a[ip * na + ic] = n_val;
             if (n_val > mx) mx = n_val;
         }
@@ -324,7 +335,12 @@ pub fn contractedShellQuartetERI(
     for (shell_b.primitives, 0..) |pb, ip| {
         var mx: f64 = 0.0;
         for (0..nb) |ic| {
-            const n_val = basis_mod.normalization(pb.alpha, cart_b[ic].x, cart_b[ic].y, cart_b[ic].z);
+            const n_val = basis_mod.normalization(
+                pb.alpha,
+                cart_b[ic].x,
+                cart_b[ic].y,
+                cart_b[ic].z,
+            );
             norm_b[ip * nb + ic] = n_val;
             if (n_val > mx) mx = n_val;
         }
@@ -333,7 +349,12 @@ pub fn contractedShellQuartetERI(
     for (shell_c.primitives, 0..) |pc, ip| {
         var mx: f64 = 0.0;
         for (0..nc) |ic| {
-            const n_val = basis_mod.normalization(pc.alpha, cart_c[ic].x, cart_c[ic].y, cart_c[ic].z);
+            const n_val = basis_mod.normalization(
+                pc.alpha,
+                cart_c[ic].x,
+                cart_c[ic].y,
+                cart_c[ic].z,
+            );
             norm_c[ip * nc + ic] = n_val;
             if (n_val > mx) mx = n_val;
         }
@@ -342,7 +363,12 @@ pub fn contractedShellQuartetERI(
     for (shell_d.primitives, 0..) |pd, ip| {
         var mx: f64 = 0.0;
         for (0..nd) |ic| {
-            const n_val = basis_mod.normalization(pd.alpha, cart_d[ic].x, cart_d[ic].y, cart_d[ic].z);
+            const n_val = basis_mod.normalization(
+                pd.alpha,
+                cart_d[ic].x,
+                cart_d[ic].y,
+                cart_d[ic].z,
+            );
             norm_d[ip * nd + ic] = n_val;
             if (n_val > mx) mx = n_val;
         }
@@ -414,15 +440,18 @@ pub fn contractedShellQuartetERI(
             const beta = prim_b.alpha;
             const p_val = alpha + beta;
             const mu_ab = alpha * beta / p_val;
+            const px = (alpha * shell_a.center.x + beta * shell_b.center.x) / p_val;
+            const py = (alpha * shell_a.center.y + beta * shell_b.center.y) / p_val;
+            const pz = (alpha * shell_a.center.z + beta * shell_b.center.z) / p_val;
             bra_pairs[n_bra] = .{
                 .p = p_val,
                 .inv_2p = 0.5 / p_val,
-                .px = (alpha * shell_a.center.x + beta * shell_b.center.x) / p_val,
-                .py = (alpha * shell_a.center.y + beta * shell_b.center.y) / p_val,
-                .pz = (alpha * shell_a.center.z + beta * shell_b.center.z) / p_val,
-                .pax = (alpha * shell_a.center.x + beta * shell_b.center.x) / p_val - shell_a.center.x,
-                .pay = (alpha * shell_a.center.y + beta * shell_b.center.y) / p_val - shell_a.center.y,
-                .paz = (alpha * shell_a.center.z + beta * shell_b.center.z) / p_val - shell_a.center.z,
+                .px = px,
+                .py = py,
+                .pz = pz,
+                .pax = px - shell_a.center.x,
+                .pay = py - shell_a.center.y,
+                .paz = pz - shell_a.center.z,
                 .coeff_ab = prim_a.coeff * prim_b.coeff,
                 .exp_ab = @exp(-mu_ab * r2_ab),
                 .max_norm_ab = max_norm_a[ipa] * max_norm_b[ipb],
@@ -442,15 +471,18 @@ pub fn contractedShellQuartetERI(
             const delta_val = prim_d.alpha;
             const q_val = gamma_val + delta_val;
             const mu_cd = gamma_val * delta_val / q_val;
+            const qx = (gamma_val * shell_c.center.x + delta_val * shell_d.center.x) / q_val;
+            const qy = (gamma_val * shell_c.center.y + delta_val * shell_d.center.y) / q_val;
+            const qz = (gamma_val * shell_c.center.z + delta_val * shell_d.center.z) / q_val;
             ket_pairs[n_ket] = .{
                 .q = q_val,
                 .inv_2q = 0.5 / q_val,
-                .qx = (gamma_val * shell_c.center.x + delta_val * shell_d.center.x) / q_val,
-                .qy = (gamma_val * shell_c.center.y + delta_val * shell_d.center.y) / q_val,
-                .qz = (gamma_val * shell_c.center.z + delta_val * shell_d.center.z) / q_val,
-                .qcx = (gamma_val * shell_c.center.x + delta_val * shell_d.center.x) / q_val - shell_c.center.x,
-                .qcy = (gamma_val * shell_c.center.y + delta_val * shell_d.center.y) / q_val - shell_c.center.y,
-                .qcz = (gamma_val * shell_c.center.z + delta_val * shell_d.center.z) / q_val - shell_c.center.z,
+                .qx = qx,
+                .qy = qy,
+                .qz = qz,
+                .qcx = qx - shell_c.center.x,
+                .qcy = qy - shell_c.center.y,
+                .qcz = qz - shell_c.center.z,
                 .coeff_cd = prim_c.coeff * prim_d.coeff,
                 .exp_cd = @exp(-mu_cd * r2_cd),
                 .max_norm_cd = max_norm_c[ipc] * max_norm_d[ipd],
@@ -525,9 +557,40 @@ pub fn contractedShellQuartetERI(
             }
 
             // Build 2D recurrence tables for x, y, z
-            buildG2d(nroots, dim_ij, dim_kl, &c00x, &c0px, &b10_arr, &b01_arr, &b00_arr, gx[0..g_axis_size]);
-            buildG2d(nroots, dim_ij, dim_kl, &c00y, &c0py, &b10_arr, &b01_arr, &b00_arr, gy[0..g_axis_size]);
-            buildG2dWeighted(nroots, dim_ij, dim_kl, &c00z, &c0pz, &b10_arr, &b01_arr, &b00_arr, &w_pref, gz[0..g_axis_size]);
+            buildG2d(
+                nroots,
+                dim_ij,
+                dim_kl,
+                &c00x,
+                &c0px,
+                &b10_arr,
+                &b01_arr,
+                &b00_arr,
+                gx[0..g_axis_size],
+            );
+            buildG2d(
+                nroots,
+                dim_ij,
+                dim_kl,
+                &c00y,
+                &c0py,
+                &b10_arr,
+                &b01_arr,
+                &b00_arr,
+                gy[0..g_axis_size],
+            );
+            buildG2dWeighted(
+                nroots,
+                dim_ij,
+                dim_kl,
+                &c00z,
+                &c0pz,
+                &b10_arr,
+                &b01_arr,
+                &b00_arr,
+                &w_pref,
+                gz[0..g_axis_size],
+            );
 
             // Extract ERIs using horizontal recurrence and component mapping
             // For each Cartesian component combination (ia, ib, ic, id),
@@ -628,7 +691,8 @@ pub fn contractedShellQuartetERI(
                     // Base case: d=0, ket[i][c][0] = g2d[i][c]
                     for (0..dim_ij) |i| {
                         for (0..dim_kl) |c| {
-                            ket_hr[i * ket_stride_i + c * ket_stride_c + 0] = g_axis[g2d_base + c * dim_ij + i];
+                            const dst_idx = i * ket_stride_i + c * ket_stride_c + 0;
+                            ket_hr[dst_idx] = g_axis[g2d_base + c * dim_ij + i];
                         }
                     }
                     // Recurrence: d = 1..ld
@@ -638,9 +702,11 @@ pub fn contractedShellQuartetERI(
                             const c_max = dim_kl - d;
                             for (0..dim_ij) |i| {
                                 for (0..c_max) |c| {
-                                    ket_hr[i * ket_stride_i + c * ket_stride_c + d] =
-                                        ket_hr[i * ket_stride_i + (c + 1) * ket_stride_c + (d - 1)] +
-                                        cd_val * ket_hr[i * ket_stride_i + c * ket_stride_c + (d - 1)];
+                                    const i_base = i * ket_stride_i;
+                                    const up = ket_hr[i_base + (c + 1) * ket_stride_c + (d - 1)];
+                                    const same = ket_hr[i_base + c * ket_stride_c + (d - 1)];
+                                    ket_hr[i_base + c * ket_stride_c + d] =
+                                        up + cd_val * same;
                                 }
                             }
                         }
@@ -649,7 +715,8 @@ pub fn contractedShellQuartetERI(
                     // === Step 2: Bra HR → full 4D table ===
                     // For each (c, d) pair we need (c=0..lc, d=0..ld):
                     //   Base: hr4d[a][0][c][d] = ket_hr[a][c][d]  for a = 0..la+lb
-                    //   Recurrence: hr4d[a][b][c][d] = hr4d[a+1][b-1][c][d] + AB * hr4d[a][b-1][c][d]
+                    //   Recurrence:
+                    //     hr4d[a][b][c][d] = hr4d[a+1][b-1][c][d] + AB * hr4d[a][b-1][c][d]
                     //
                     // We use a small work array per (c,d) pair to avoid storing
                     // the full intermediate dim_ij × lb_1 table.
@@ -666,7 +733,10 @@ pub fn contractedShellQuartetERI(
 
                             // Store b=0 values
                             for (0..la_1) |a| {
-                                hr4d[a * hr4d_a_stride + 0 * hr4d_b_stride + c * hr4d_c_stride + d] = work[a];
+                                const dst_idx = a * hr4d_a_stride +
+                                    0 * hr4d_b_stride +
+                                    c * hr4d_c_stride + d;
+                                hr4d[dst_idx] = work[a];
                             }
 
                             // Recurrence: b = 1..lb
@@ -680,7 +750,10 @@ pub fn contractedShellQuartetERI(
                                     }
                                     // Store needed (a = 0..la) values
                                     for (0..la_1) |a| {
-                                        hr4d[a * hr4d_a_stride + b * hr4d_b_stride + c * hr4d_c_stride + d] = work[a];
+                                        const dst_idx = a * hr4d_a_stride +
+                                            b * hr4d_b_stride +
+                                            c * hr4d_c_stride + d;
+                                        hr4d[dst_idx] = work[a];
                                     }
                                 }
                             }
@@ -706,11 +779,22 @@ pub fn contractedShellQuartetERI(
                                 const dy = cart_d[id].y;
                                 const dz = cart_d[id].z;
 
-                                const gx_val = hr4d_x[ax * hr4d_a_stride + bx * hr4d_b_stride + cx * hr4d_c_stride + dx];
-                                const gy_val = hr4d_y[ay * hr4d_a_stride + by * hr4d_b_stride + cy * hr4d_c_stride + dy];
-                                const gz_val = hr4d_z[az * hr4d_a_stride + bz * hr4d_b_stride + cz * hr4d_c_stride + dz];
+                                const gx_idx = ax * hr4d_a_stride +
+                                    bx * hr4d_b_stride +
+                                    cx * hr4d_c_stride + dx;
+                                const gy_idx = ay * hr4d_a_stride +
+                                    by * hr4d_b_stride +
+                                    cy * hr4d_c_stride + dy;
+                                const gz_idx = az * hr4d_a_stride +
+                                    bz * hr4d_b_stride +
+                                    cz * hr4d_c_stride + dz;
+                                const gx_val = hr4d_x[gx_idx];
+                                const gy_val = hr4d_y[gy_idx];
+                                const gz_val = hr4d_z[gz_idx];
 
-                                prim_eri[ia * nb * nc * nd + ib * nc * nd + ic * nd + id] += gx_val * gy_val * gz_val;
+                                const out_idx = ia * nb * nc * nd +
+                                    ib * nc * nd + ic * nd + id;
+                                prim_eri[out_idx] += gx_val * gy_val * gz_val;
                             }
                         }
                     }
@@ -727,7 +811,8 @@ pub fn contractedShellQuartetERI(
                         for (0..nd) |id| {
                             const nd_val = norm_d[ket.ipd * nd + id];
                             const idx = ia * nb * nc * nd + ib * nc * nd + ic * nd + id;
-                            output[idx] += coeff_abcd * na_val * nb_val * nc_val * nd_val * prim_eri[idx];
+                            const prod = coeff_abcd * na_val * nb_val * nc_val * nd_val;
+                            output[idx] += prod * prim_eri[idx];
                         }
                     }
                 }
@@ -806,7 +891,12 @@ pub fn contractedShellQuartetEriDeriv(
     for (shell_a.primitives, 0..) |pa, ip| {
         var mx: f64 = 0.0;
         for (0..na) |ic| {
-            const n_val = basis_mod.normalization(pa.alpha, cart_a[ic].x, cart_a[ic].y, cart_a[ic].z);
+            const n_val = basis_mod.normalization(
+                pa.alpha,
+                cart_a[ic].x,
+                cart_a[ic].y,
+                cart_a[ic].z,
+            );
             norm_a[ip * na + ic] = n_val;
             if (n_val > mx) mx = n_val;
         }
@@ -815,7 +905,12 @@ pub fn contractedShellQuartetEriDeriv(
     for (shell_b.primitives, 0..) |pb, ip| {
         var mx: f64 = 0.0;
         for (0..nb) |ic| {
-            const n_val = basis_mod.normalization(pb.alpha, cart_b[ic].x, cart_b[ic].y, cart_b[ic].z);
+            const n_val = basis_mod.normalization(
+                pb.alpha,
+                cart_b[ic].x,
+                cart_b[ic].y,
+                cart_b[ic].z,
+            );
             norm_b[ip * nb + ic] = n_val;
             if (n_val > mx) mx = n_val;
         }
@@ -824,7 +919,12 @@ pub fn contractedShellQuartetEriDeriv(
     for (shell_c.primitives, 0..) |pc, ip| {
         var mx: f64 = 0.0;
         for (0..nc) |ic| {
-            const n_val = basis_mod.normalization(pc.alpha, cart_c[ic].x, cart_c[ic].y, cart_c[ic].z);
+            const n_val = basis_mod.normalization(
+                pc.alpha,
+                cart_c[ic].x,
+                cart_c[ic].y,
+                cart_c[ic].z,
+            );
             norm_c[ip * nc + ic] = n_val;
             if (n_val > mx) mx = n_val;
         }
@@ -833,7 +933,12 @@ pub fn contractedShellQuartetEriDeriv(
     for (shell_d.primitives, 0..) |pd, ip| {
         var mx: f64 = 0.0;
         for (0..nd) |ic| {
-            const n_val = basis_mod.normalization(pd.alpha, cart_d[ic].x, cart_d[ic].y, cart_d[ic].z);
+            const n_val = basis_mod.normalization(
+                pd.alpha,
+                cart_d[ic].x,
+                cart_d[ic].y,
+                cart_d[ic].z,
+            );
             norm_d[ip * nd + ic] = n_val;
             if (n_val > mx) mx = n_val;
         }
@@ -911,16 +1016,19 @@ pub fn contractedShellQuartetEriDeriv(
             const beta = prim_b.alpha;
             const p_val = alpha + beta;
             const mu_ab = alpha * beta / p_val;
+            const px = (alpha * shell_a.center.x + beta * shell_b.center.x) / p_val;
+            const py = (alpha * shell_a.center.y + beta * shell_b.center.y) / p_val;
+            const pz = (alpha * shell_a.center.z + beta * shell_b.center.z) / p_val;
             bra_alpha_a[n_bra] = alpha;
             bra_pairs[n_bra] = .{
                 .p = p_val,
                 .inv_2p = 0.5 / p_val,
-                .px = (alpha * shell_a.center.x + beta * shell_b.center.x) / p_val,
-                .py = (alpha * shell_a.center.y + beta * shell_b.center.y) / p_val,
-                .pz = (alpha * shell_a.center.z + beta * shell_b.center.z) / p_val,
-                .pax = (alpha * shell_a.center.x + beta * shell_b.center.x) / p_val - shell_a.center.x,
-                .pay = (alpha * shell_a.center.y + beta * shell_b.center.y) / p_val - shell_a.center.y,
-                .paz = (alpha * shell_a.center.z + beta * shell_b.center.z) / p_val - shell_a.center.z,
+                .px = px,
+                .py = py,
+                .pz = pz,
+                .pax = px - shell_a.center.x,
+                .pay = py - shell_a.center.y,
+                .paz = pz - shell_a.center.z,
                 .coeff_ab = prim_a.coeff * prim_b.coeff,
                 .exp_ab = @exp(-mu_ab * r2_ab),
                 .max_norm_ab = max_norm_a[ipa] * max_norm_b[ipb],
@@ -940,15 +1048,18 @@ pub fn contractedShellQuartetEriDeriv(
             const delta_val = prim_d.alpha;
             const q_val = gamma_val + delta_val;
             const mu_cd = gamma_val * delta_val / q_val;
+            const qx = (gamma_val * shell_c.center.x + delta_val * shell_d.center.x) / q_val;
+            const qy = (gamma_val * shell_c.center.y + delta_val * shell_d.center.y) / q_val;
+            const qz = (gamma_val * shell_c.center.z + delta_val * shell_d.center.z) / q_val;
             ket_pairs[n_ket] = .{
                 .q = q_val,
                 .inv_2q = 0.5 / q_val,
-                .qx = (gamma_val * shell_c.center.x + delta_val * shell_d.center.x) / q_val,
-                .qy = (gamma_val * shell_c.center.y + delta_val * shell_d.center.y) / q_val,
-                .qz = (gamma_val * shell_c.center.z + delta_val * shell_d.center.z) / q_val,
-                .qcx = (gamma_val * shell_c.center.x + delta_val * shell_d.center.x) / q_val - shell_c.center.x,
-                .qcy = (gamma_val * shell_c.center.y + delta_val * shell_d.center.y) / q_val - shell_c.center.y,
-                .qcz = (gamma_val * shell_c.center.z + delta_val * shell_d.center.z) / q_val - shell_c.center.z,
+                .qx = qx,
+                .qy = qy,
+                .qz = qz,
+                .qcx = qx - shell_c.center.x,
+                .qcy = qy - shell_c.center.y,
+                .qcz = qz - shell_c.center.z,
                 .coeff_cd = prim_c.coeff * prim_d.coeff,
                 .exp_cd = @exp(-mu_cd * r2_cd),
                 .max_norm_cd = max_norm_c[ipc] * max_norm_d[ipd],
@@ -1052,9 +1163,40 @@ pub fn contractedShellQuartetEriDeriv(
             }
 
             // Build 2D recurrence tables with expanded dim_ij for derivative
-            buildG2d(nroots, dim_ij, dim_kl, &c00x, &c0px, &b10_arr, &b01_arr, &b00_arr, gx[0..g_axis_size]);
-            buildG2d(nroots, dim_ij, dim_kl, &c00y, &c0py, &b10_arr, &b01_arr, &b00_arr, gy[0..g_axis_size]);
-            buildG2dWeighted(nroots, dim_ij, dim_kl, &c00z, &c0pz, &b10_arr, &b01_arr, &b00_arr, &w_pref, gz[0..g_axis_size]);
+            buildG2d(
+                nroots,
+                dim_ij,
+                dim_kl,
+                &c00x,
+                &c0px,
+                &b10_arr,
+                &b01_arr,
+                &b00_arr,
+                gx[0..g_axis_size],
+            );
+            buildG2d(
+                nroots,
+                dim_ij,
+                dim_kl,
+                &c00y,
+                &c0py,
+                &b10_arr,
+                &b01_arr,
+                &b00_arr,
+                gy[0..g_axis_size],
+            );
+            buildG2dWeighted(
+                nroots,
+                dim_ij,
+                dim_kl,
+                &c00z,
+                &c0pz,
+                &b10_arr,
+                &b01_arr,
+                &b00_arr,
+                &w_pref,
+                gz[0..g_axis_size],
+            );
 
             // Zero primitive derivative buffers
             @memset(prim_deriv_x[0..total_out], 0.0);
@@ -1095,7 +1237,8 @@ pub fn contractedShellQuartetEriDeriv(
                     // === Step 1: Ket HR ===
                     for (0..dim_ij) |i| {
                         for (0..dim_kl) |c| {
-                            ket_hr[i * ket_stride_i + c * ket_stride_c + 0] = g_axis[g2d_base + c * dim_ij + i];
+                            const dst_idx = i * ket_stride_i + c * ket_stride_c + 0;
+                            ket_hr[dst_idx] = g_axis[g2d_base + c * dim_ij + i];
                         }
                     }
                     {
@@ -1104,9 +1247,11 @@ pub fn contractedShellQuartetEriDeriv(
                             const c_max = dim_kl - d;
                             for (0..dim_ij) |i| {
                                 for (0..c_max) |c| {
-                                    ket_hr[i * ket_stride_i + c * ket_stride_c + d] =
-                                        ket_hr[i * ket_stride_i + (c + 1) * ket_stride_c + (d - 1)] +
-                                        cd_val * ket_hr[i * ket_stride_i + c * ket_stride_c + (d - 1)];
+                                    const i_base = i * ket_stride_i;
+                                    const up = ket_hr[i_base + (c + 1) * ket_stride_c + (d - 1)];
+                                    const same = ket_hr[i_base + c * ket_stride_c + (d - 1)];
+                                    ket_hr[i_base + c * ket_stride_c + d] =
+                                        up + cd_val * same;
                                 }
                             }
                         }
@@ -1123,7 +1268,10 @@ pub fn contractedShellQuartetEriDeriv(
 
                             // Store b=0 values (need 0..la+1 for derivative)
                             for (0..la_1_deriv) |a| {
-                                hr4d[a * hr4d_a_stride + 0 * hr4d_b_stride + c * hr4d_c_stride + d] = work[a];
+                                const dst_idx = a * hr4d_a_stride +
+                                    0 * hr4d_b_stride +
+                                    c * hr4d_c_stride + d;
+                                hr4d[dst_idx] = work[a];
                             }
 
                             // Recurrence: b = 1..lb
@@ -1135,7 +1283,10 @@ pub fn contractedShellQuartetEriDeriv(
                                         work[a] = work[a + 1] + ab_val * work[a];
                                     }
                                     for (0..la_1_deriv) |a| {
-                                        hr4d[a * hr4d_a_stride + b * hr4d_b_stride + c * hr4d_c_stride + d] = work[a];
+                                        const dst_idx = a * hr4d_a_stride +
+                                            b * hr4d_b_stride +
+                                            c * hr4d_c_stride + d;
+                                        hr4d[dst_idx] = work[a];
                                     }
                                 }
                             }
@@ -1170,43 +1321,73 @@ pub fn contractedShellQuartetEriDeriv(
                                 const idx = ia * nb * nc * nd + ib * nc * nd + ic * nd + id;
 
                                 // Undifferentiated y,z products
-                                const gy_val = hr4d_y[ay * hr4d_a_stride + by * hr4d_b_stride + cy * hr4d_c_stride + dy];
-                                const gz_val = hr4d_z[az * hr4d_a_stride + bz * hr4d_b_stride + cz * hr4d_c_stride + dz];
+                                const gy_idx = ay * hr4d_a_stride +
+                                    by * hr4d_b_stride +
+                                    cy * hr4d_c_stride + dy;
+                                const gz_idx = az * hr4d_a_stride +
+                                    bz * hr4d_b_stride +
+                                    cz * hr4d_c_stride + dz;
+                                const gy_val = hr4d_y[gy_idx];
+                                const gz_val = hr4d_z[gz_idx];
 
                                 // x-derivative: d/dAx
                                 {
                                     // 2*alpha * (a+1_x, b, c, d)
-                                    const gx_plus = hr4d_x[(ax + 1) * hr4d_a_stride + bx * hr4d_b_stride + cx * hr4d_c_stride + dx];
+                                    const gx_plus_idx = (ax + 1) * hr4d_a_stride +
+                                        bx * hr4d_b_stride +
+                                        cx * hr4d_c_stride + dx;
+                                    const gx_plus = hr4d_x[gx_plus_idx];
                                     var dval = 2.0 * alpha_a_val * gx_plus * gy_val * gz_val;
                                     // -ax * (a-1_x, b, c, d)
                                     if (ax > 0) {
-                                        const gx_minus = hr4d_x[(ax - 1) * hr4d_a_stride + bx * hr4d_b_stride + cx * hr4d_c_stride + dx];
-                                        dval -= @as(f64, @floatFromInt(ax)) * gx_minus * gy_val * gz_val;
+                                        const gx_minus_idx = (ax - 1) * hr4d_a_stride +
+                                            bx * hr4d_b_stride +
+                                            cx * hr4d_c_stride + dx;
+                                        const gx_minus = hr4d_x[gx_minus_idx];
+                                        dval -= @as(f64, @floatFromInt(ax)) *
+                                            gx_minus * gy_val * gz_val;
                                     }
                                     prim_deriv_x[idx] += dval;
                                 }
 
                                 // Undifferentiated x,z products
-                                const gx_val = hr4d_x[ax * hr4d_a_stride + bx * hr4d_b_stride + cx * hr4d_c_stride + dx];
+                                const gx_idx = ax * hr4d_a_stride +
+                                    bx * hr4d_b_stride +
+                                    cx * hr4d_c_stride + dx;
+                                const gx_val = hr4d_x[gx_idx];
 
                                 // y-derivative: d/dAy
                                 {
-                                    const gy_plus = hr4d_y[(ay + 1) * hr4d_a_stride + by * hr4d_b_stride + cy * hr4d_c_stride + dy];
+                                    const gy_plus_idx = (ay + 1) * hr4d_a_stride +
+                                        by * hr4d_b_stride +
+                                        cy * hr4d_c_stride + dy;
+                                    const gy_plus = hr4d_y[gy_plus_idx];
                                     var dval = 2.0 * alpha_a_val * gy_plus * gx_val * gz_val;
                                     if (ay > 0) {
-                                        const gy_minus = hr4d_y[(ay - 1) * hr4d_a_stride + by * hr4d_b_stride + cy * hr4d_c_stride + dy];
-                                        dval -= @as(f64, @floatFromInt(ay)) * gy_minus * gx_val * gz_val;
+                                        const gy_minus_idx = (ay - 1) * hr4d_a_stride +
+                                            by * hr4d_b_stride +
+                                            cy * hr4d_c_stride + dy;
+                                        const gy_minus = hr4d_y[gy_minus_idx];
+                                        dval -= @as(f64, @floatFromInt(ay)) *
+                                            gy_minus * gx_val * gz_val;
                                     }
                                     prim_deriv_y[idx] += dval;
                                 }
 
                                 // z-derivative: d/dAz
                                 {
-                                    const gz_plus = hr4d_z[(az + 1) * hr4d_a_stride + bz * hr4d_b_stride + cz * hr4d_c_stride + dz];
+                                    const gz_plus_idx = (az + 1) * hr4d_a_stride +
+                                        bz * hr4d_b_stride +
+                                        cz * hr4d_c_stride + dz;
+                                    const gz_plus = hr4d_z[gz_plus_idx];
                                     var dval = 2.0 * alpha_a_val * gz_plus * gx_val * gy_val;
                                     if (az > 0) {
-                                        const gz_minus = hr4d_z[(az - 1) * hr4d_a_stride + bz * hr4d_b_stride + cz * hr4d_c_stride + dz];
-                                        dval -= @as(f64, @floatFromInt(az)) * gz_minus * gx_val * gy_val;
+                                        const gz_minus_idx = (az - 1) * hr4d_a_stride +
+                                            bz * hr4d_b_stride +
+                                            cz * hr4d_c_stride + dz;
+                                        const gz_minus = hr4d_z[gz_minus_idx];
+                                        dval -= @as(f64, @floatFromInt(az)) *
+                                            gz_minus * gx_val * gy_val;
                                     }
                                     prim_deriv_z[idx] += dval;
                                 }
@@ -1440,7 +1621,15 @@ test "rys ERI deriv vs FD: (ss|ss) case" {
     var dx_buf: [1]f64 = undefined;
     var dy_buf: [1]f64 = undefined;
     var dz_buf: [1]f64 = undefined;
-    _ = contractedShellQuartetEriDeriv(shell_a, shell_b, shell_a, shell_b, &dx_buf, &dy_buf, &dz_buf);
+    _ = contractedShellQuartetEriDeriv(
+        shell_a,
+        shell_b,
+        shell_a,
+        shell_b,
+        &dx_buf,
+        &dy_buf,
+        &dz_buf,
+    );
 
     // Finite difference for each direction
     const dirs = [3][3]f64{
@@ -1499,7 +1688,15 @@ test "rys ERI deriv vs FD: (sp|sp) case" {
     var dx_arr: [9]f64 = undefined;
     var dy_arr: [9]f64 = undefined;
     var dz_arr: [9]f64 = undefined;
-    _ = contractedShellQuartetEriDeriv(shell_s, shell_p, shell_s, shell_p, &dx_arr, &dy_arr, &dz_arr);
+    _ = contractedShellQuartetEriDeriv(
+        shell_s,
+        shell_p,
+        shell_s,
+        shell_p,
+        &dx_arr,
+        &dy_arr,
+        &dz_arr,
+    );
 
     // FD in z-direction for center A (shell_s center)
     const shell_s_p = ContractedShell{
@@ -1552,7 +1749,15 @@ test "rys ERI deriv vs FD: (pp|pp) case" {
     var dx_arr: [81]f64 = undefined;
     var dy_arr: [81]f64 = undefined;
     var dz_arr: [81]f64 = undefined;
-    _ = contractedShellQuartetEriDeriv(shell_p1, shell_p2, shell_p1, shell_p2, &dx_arr, &dy_arr, &dz_arr);
+    _ = contractedShellQuartetEriDeriv(
+        shell_p1,
+        shell_p2,
+        shell_p1,
+        shell_p2,
+        &dx_arr,
+        &dy_arr,
+        &dz_arr,
+    );
 
     // FD in y-direction for center A (shell_p1 center)
     const shell_p1_p = ContractedShell{
@@ -1612,7 +1817,15 @@ test "rys ERI deriv vs FD: (sd|ps) mixed case" {
     var dx_arr: [18]f64 = undefined;
     var dy_arr: [18]f64 = undefined;
     var dz_arr: [18]f64 = undefined;
-    _ = contractedShellQuartetEriDeriv(shell_s, shell_d, shell_p, shell_s, &dx_arr, &dy_arr, &dz_arr);
+    _ = contractedShellQuartetEriDeriv(
+        shell_s,
+        shell_d,
+        shell_p,
+        shell_s,
+        &dx_arr,
+        &dy_arr,
+        &dz_arr,
+    );
 
     // FD in x-direction for center A (shell_s center)
     const shell_s_p = ContractedShell{

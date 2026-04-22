@@ -70,7 +70,9 @@ fn solveKpointsForSpin(
     const nocc = nocc_base + @max(4, nocc_base / 5);
     const is_paw_spin = scf_mod.hasPaw(species);
     const has_qij = scf_mod.hasQij(species) and !is_paw_spin;
-    const use_iterative_config = (cfg.scf.solver == .iterative or cfg.scf.solver == .cg or cfg.scf.solver == .auto) and !has_qij;
+    const use_iterative_config = (cfg.scf.solver == .iterative or
+        cfg.scf.solver == .cg or
+        cfg.scf.solver == .auto) and !has_qij;
     const nonlocal_enabled = cfg.scf.enable_nonlocal and scf_mod.hasNonlocal(species);
 
     var local_r: ?[]f64 = null;
@@ -211,7 +213,18 @@ pub fn runSpinPolarizedLoop(
     }
 
     // Build initial potentials
-    const spin_potentials = try potential_mod.buildPotentialGridSpin(alloc, grid, rho_up, rho_down, common.rho_core, cfg.scf.use_rfft, cfg.scf.xc, null, null, common.coulomb_r_cut);
+    const spin_potentials = try potential_mod.buildPotentialGridSpin(
+        alloc,
+        grid,
+        rho_up,
+        rho_down,
+        common.rho_core,
+        cfg.scf.use_rfft,
+        cfg.scf.xc,
+        null,
+        null,
+        common.coulomb_r_cut,
+    );
     var potential_up = spin_potentials.up;
     errdefer potential_up.deinit(alloc);
     var potential_down = spin_potentials.down;
@@ -283,17 +296,44 @@ pub fn runSpinPolarizedLoop(
         @memset(rho_out_down, 0.0);
 
         // Solve spin-up and spin-down channels
-        var shared_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
+        var shared_fft_plan = try fft.Fft3dPlan.initWithBackend(
+            alloc,
+            io,
+            grid.nx,
+            grid.ny,
+            grid.nz,
+            cfg.scf.fft_backend,
+        );
         defer shared_fft_plan.deinit(alloc);
 
-        var result_up = try solveKpointsForSpin(alloc, io, cfg, common, potential_up, kpoint_cache_up, apply_caches_up, iterations, shared_fft_plan);
+        var result_up = try solveKpointsForSpin(
+            alloc,
+            io,
+            cfg,
+            common,
+            potential_up,
+            kpoint_cache_up,
+            apply_caches_up,
+            iterations,
+            shared_fft_plan,
+        );
         var eigen_data_up = result_up.eigen_data;
         defer {
             for (eigen_data_up[0..result_up.filled]) |*entry| entry.deinit(alloc);
             alloc.free(eigen_data_up);
         }
 
-        var result_down = try solveKpointsForSpin(alloc, io, cfg, common, potential_down, kpoint_cache_down, apply_caches_down, iterations, shared_fft_plan);
+        var result_down = try solveKpointsForSpin(
+            alloc,
+            io,
+            cfg,
+            common,
+            potential_down,
+            kpoint_cache_down,
+            apply_caches_down,
+            iterations,
+            shared_fft_plan,
+        );
         var eigen_data_down = result_down.eigen_data;
         defer {
             for (eigen_data_down[0..result_down.filled]) |*entry| entry.deinit(alloc);
@@ -304,9 +344,43 @@ pub fn runSpinPolarizedLoop(
         if (iterations == 0 and common.is_paw) {
             if (common.paw_tabs) |tabs| {
                 // Bootstrap D_ij with spin-specific potentials
-                try paw_scf.updatePawDij(alloc, grid, common.ionic, potential_up, tabs, species, atoms, apply_caches_up, ecutrho_scf, &common.paw_rhoij.?, cfg.scf.xc, cfg.scf.symmetry, &common.paw_gaunt.?, true, null, 1.0);
+                try paw_scf.updatePawDij(
+                    alloc,
+                    grid,
+                    common.ionic,
+                    potential_up,
+                    tabs,
+                    species,
+                    atoms,
+                    apply_caches_up,
+                    ecutrho_scf,
+                    &common.paw_rhoij.?,
+                    cfg.scf.xc,
+                    cfg.scf.symmetry,
+                    &common.paw_gaunt.?,
+                    true,
+                    null,
+                    1.0,
+                );
                 // Bootstrap down channel with potential_down (after first band solve creates ctx)
-                try paw_scf.updatePawDij(alloc, grid, common.ionic, potential_down, tabs, species, atoms, apply_caches_down, ecutrho_scf, &common.paw_rhoij.?, cfg.scf.xc, cfg.scf.symmetry, &common.paw_gaunt.?, true, null, 1.0);
+                try paw_scf.updatePawDij(
+                    alloc,
+                    grid,
+                    common.ionic,
+                    potential_down,
+                    tabs,
+                    species,
+                    atoms,
+                    apply_caches_down,
+                    ecutrho_scf,
+                    &common.paw_rhoij.?,
+                    cfg.scf.xc,
+                    cfg.scf.symmetry,
+                    &common.paw_gaunt.?,
+                    true,
+                    null,
+                    1.0,
+                );
                 // Re-solve with bootstrapped D_ij
                 for (kpoint_cache_up) |*cache| cache.deinit();
                 for (kpoint_cache_up) |*cache| cache.* = .{};
@@ -314,12 +388,32 @@ pub fn runSpinPolarizedLoop(
                 for (kpoint_cache_down) |*cache| cache.* = .{};
                 for (eigen_data_up[0..result_up.filled]) |*entry| entry.deinit(alloc);
                 alloc.free(eigen_data_up);
-                const ru = try solveKpointsForSpin(alloc, io, cfg, common, potential_up, kpoint_cache_up, apply_caches_up, iterations, shared_fft_plan);
+                const ru = try solveKpointsForSpin(
+                    alloc,
+                    io,
+                    cfg,
+                    common,
+                    potential_up,
+                    kpoint_cache_up,
+                    apply_caches_up,
+                    iterations,
+                    shared_fft_plan,
+                );
                 result_up = ru;
                 eigen_data_up = result_up.eigen_data;
                 for (eigen_data_down[0..result_down.filled]) |*entry| entry.deinit(alloc);
                 alloc.free(eigen_data_down);
-                const rd = try solveKpointsForSpin(alloc, io, cfg, common, potential_down, kpoint_cache_down, apply_caches_down, iterations, shared_fft_plan);
+                const rd = try solveKpointsForSpin(
+                    alloc,
+                    io,
+                    cfg,
+                    common,
+                    potential_down,
+                    kpoint_cache_down,
+                    apply_caches_down,
+                    iterations,
+                    shared_fft_plan,
+                );
                 result_down = rd;
                 eigen_data_down = result_down.eigen_data;
             }
@@ -331,11 +425,32 @@ pub fn runSpinPolarizedLoop(
         const ne_up_target = (nelec + m_total) / 2.0;
         const ne_down_target = (nelec - m_total) / 2.0;
         const mu_up = if (use_fsm)
-            findFermiLevelSpin(ne_up_target, cfg.scf.smear_ry, cfg.scf.smearing, eigen_data_up[0..result_up.filled], null, 1.0)
+            findFermiLevelSpin(
+                ne_up_target,
+                cfg.scf.smear_ry,
+                cfg.scf.smearing,
+                eigen_data_up[0..result_up.filled],
+                null,
+                1.0,
+            )
         else
-            findFermiLevelSpin(nelec, cfg.scf.smear_ry, cfg.scf.smearing, eigen_data_up[0..result_up.filled], eigen_data_down[0..result_down.filled], 1.0);
+            findFermiLevelSpin(
+                nelec,
+                cfg.scf.smear_ry,
+                cfg.scf.smearing,
+                eigen_data_up[0..result_up.filled],
+                eigen_data_down[0..result_down.filled],
+                1.0,
+            );
         const mu_down = if (use_fsm)
-            findFermiLevelSpin(ne_down_target, cfg.scf.smear_ry, cfg.scf.smearing, eigen_data_down[0..result_down.filled], null, 1.0)
+            findFermiLevelSpin(
+                ne_down_target,
+                cfg.scf.smear_ry,
+                cfg.scf.smearing,
+                eigen_data_down[0..result_down.filled],
+                null,
+                1.0,
+            )
         else
             mu_up;
         const mu = mu_up; // Use up channel Fermi level as reference
@@ -429,10 +544,22 @@ pub fn runSpinPolarizedLoop(
 
         // PAW: filter density to ecutrho sphere and build augmented density
         if (common.is_paw) {
-            const filt_up = try potential_mod.filterDensityToEcutrho(alloc, grid, rho_out_up, ecutrho_scf, cfg.scf.use_rfft);
+            const filt_up = try potential_mod.filterDensityToEcutrho(
+                alloc,
+                grid,
+                rho_out_up,
+                ecutrho_scf,
+                cfg.scf.use_rfft,
+            );
             defer alloc.free(filt_up);
             @memcpy(rho_out_up, filt_up);
-            const filt_down = try potential_mod.filterDensityToEcutrho(alloc, grid, rho_out_down, ecutrho_scf, cfg.scf.use_rfft);
+            const filt_down = try potential_mod.filterDensityToEcutrho(
+                alloc,
+                grid,
+                rho_out_down,
+                ecutrho_scf,
+                cfg.scf.use_rfft,
+            );
             defer alloc.free(filt_down);
             @memcpy(rho_out_down, filt_down);
         }
@@ -448,7 +575,16 @@ pub fn runSpinPolarizedLoop(
                 const n_hat = try alloc.alloc(f64, grid_count);
                 defer alloc.free(n_hat);
                 @memset(n_hat, 0.0);
-                try paw_scf.addPawCompensationCharge(alloc, grid, n_hat, prij, common.paw_tabs.?, atoms, ecutrho_scf, &common.paw_gaunt.?);
+                try paw_scf.addPawCompensationCharge(
+                    alloc,
+                    grid,
+                    n_hat,
+                    prij,
+                    common.paw_tabs.?,
+                    atoms,
+                    ecutrho_scf,
+                    &common.paw_gaunt.?,
+                );
                 // Split n̂ equally between up and down
                 const aug_up = try alloc.alloc(f64, grid_count);
                 const aug_down = try alloc.alloc(f64, grid_count);
@@ -464,7 +600,18 @@ pub fn runSpinPolarizedLoop(
         // Build new spin potentials (use augmented density for PAW)
         const pot_rho_up = rho_aug_up orelse rho_out_up;
         const pot_rho_down = rho_aug_down orelse rho_out_down;
-        const new_potentials = try potential_mod.buildPotentialGridSpin(alloc, grid, pot_rho_up, pot_rho_down, common.rho_core, cfg.scf.use_rfft, cfg.scf.xc, null, null, common.coulomb_r_cut);
+        const new_potentials = try potential_mod.buildPotentialGridSpin(
+            alloc,
+            grid,
+            pot_rho_up,
+            pot_rho_down,
+            common.rho_core,
+            cfg.scf.use_rfft,
+            cfg.scf.xc,
+            null,
+            null,
+            common.coulomb_r_cut,
+        );
         var pot_out_up = new_potentials.up;
         var pot_out_down = new_potentials.down;
         var keep_pot_out = false;
@@ -480,8 +627,14 @@ pub fn runSpinPolarizedLoop(
             const nvals = potential_up.values.len;
             var sum_sq: f64 = 0.0;
             for (0..nvals) |idx| {
-                const diff_up = math.complex.sub(pot_out_up.values[idx], potential_up.values[idx]);
-                const diff_down = math.complex.sub(pot_out_down.values[idx], potential_down.values[idx]);
+                const diff_up = math.complex.sub(
+                    pot_out_up.values[idx],
+                    potential_up.values[idx],
+                );
+                const diff_down = math.complex.sub(
+                    pot_out_down.values[idx],
+                    potential_down.values[idx],
+                );
                 sum_sq += diff_up.r * diff_up.r + diff_up.i * diff_up.i;
                 sum_sq += diff_down.r * diff_down.r + diff_down.i * diff_down.i;
             }
@@ -507,9 +660,22 @@ pub fn runSpinPolarizedLoop(
             .potential => last_potential_residual,
         };
 
-        try common.log.writeIter(iterations, diff, last_potential_residual, last_band_energy, last_nonlocal_energy);
+        try common.log.writeIter(
+            iterations,
+            diff,
+            last_potential_residual,
+            last_band_energy,
+            last_nonlocal_energy,
+        );
         if (!cfg.scf.quiet) {
-            try logProgress(io, iterations, diff, last_potential_residual, last_band_energy, last_nonlocal_energy);
+            try logProgress(
+                io,
+                iterations,
+                diff,
+                last_potential_residual,
+                last_band_energy,
+                last_nonlocal_energy,
+            );
         }
 
         if (conv_value < cfg.scf.convergence) {
@@ -533,30 +699,50 @@ pub fn runSpinPolarizedLoop(
             const n_f64 = n_complex * 2;
             // Mix up
             const v_in_up: []f64 = @as([*]f64, @ptrCast(potential_up.values.ptr))[0..n_f64];
-            const v_out_up_f: []const f64 = @as([*]const f64, @ptrCast(pot_out_up.values.ptr))[0..n_f64];
+            const v_out_up_f: []const f64 =
+                @as([*]const f64, @ptrCast(pot_out_up.values.ptr))[0..n_f64];
             // Mix down
             const v_in_down: []f64 = @as([*]f64, @ptrCast(potential_down.values.ptr))[0..n_f64];
-            const v_out_down_f: []const f64 = @as([*]const f64, @ptrCast(pot_out_down.values.ptr))[0..n_f64];
+            const v_out_down_f: []const f64 =
+                @as([*]const f64, @ptrCast(pot_out_down.values.ptr))[0..n_f64];
 
             // Concatenate for Pulay
             if (common.pulay_mixer != null and iterations >= cfg.scf.pulay_start) {
                 // Compute complex residual for up and down, concatenated
                 const residual_concat = try alloc.alloc(f64, n_f64 * 2);
                 // Ownership transfers to mixer via mixWithResidual — no defer free
+                const pot_out_up_f: [*]const f64 = @ptrCast(pot_out_up.values.ptr);
+                const pot_out_down_f: [*]const f64 = @ptrCast(pot_out_down.values.ptr);
                 for (0..n_f64) |i| {
-                    residual_concat[i] = @as([*]const f64, @ptrCast(pot_out_up.values.ptr))[i] - v_in_up[i];
+                    residual_concat[i] = pot_out_up_f[i] - v_in_up[i];
                 }
                 for (0..n_f64) |i| {
-                    residual_concat[n_f64 + i] = @as([*]const f64, @ptrCast(pot_out_down.values.ptr))[i] - v_in_down[i];
+                    residual_concat[n_f64 + i] = pot_out_down_f[i] - v_in_down[i];
                 }
 
                 // Apply model dielectric preconditioner if enabled
                 if (cfg.scf.diemac > 1.0) {
                     // Reinterpret as Complex slices and precondition each spin channel
-                    const res_up_c: []math.Complex = @as([*]math.Complex, @ptrCast(@alignCast(residual_concat.ptr)))[0..n_complex];
-                    const res_down_c: []math.Complex = @as([*]math.Complex, @ptrCast(@alignCast(residual_concat[n_f64..].ptr)))[0..n_complex];
-                    mixing.applyModelDielectricPreconditioner(grid, res_up_c, cfg.scf.diemac, cfg.scf.dielng);
-                    mixing.applyModelDielectricPreconditioner(grid, res_down_c, cfg.scf.diemac, cfg.scf.dielng);
+                    const res_up_c: []math.Complex = @as(
+                        [*]math.Complex,
+                        @ptrCast(@alignCast(residual_concat.ptr)),
+                    )[0..n_complex];
+                    const res_down_c: []math.Complex = @as(
+                        [*]math.Complex,
+                        @ptrCast(@alignCast(residual_concat[n_f64..].ptr)),
+                    )[0..n_complex];
+                    mixing.applyModelDielectricPreconditioner(
+                        grid,
+                        res_up_c,
+                        cfg.scf.diemac,
+                        cfg.scf.dielng,
+                    );
+                    mixing.applyModelDielectricPreconditioner(
+                        grid,
+                        res_down_c,
+                        cfg.scf.diemac,
+                        cfg.scf.dielng,
+                    );
                 }
 
                 // Concatenate v_in for Pulay
@@ -565,7 +751,11 @@ pub fn runSpinPolarizedLoop(
                 @memcpy(concat_in[0..n_f64], v_in_up);
                 @memcpy(concat_in[n_f64..], v_in_down);
 
-                try common.pulay_mixer.?.mixWithResidual(concat_in, residual_concat, cfg.scf.mixing_beta);
+                try common.pulay_mixer.?.mixWithResidual(
+                    concat_in,
+                    residual_concat,
+                    cfg.scf.mixing_beta,
+                );
                 @memcpy(v_in_up, concat_in[0..n_f64]);
                 @memcpy(v_in_down, concat_in[n_f64..]);
             } else {
@@ -586,8 +776,24 @@ pub fn runSpinPolarizedLoop(
                 // PAW spin: Kerker density mixing with small beta for stability
                 const paw_beta: f64 = 0.05;
                 const paw_q0: f64 = 1.5;
-                try mixDensityKerker(alloc, grid, rho_up, rho_out_up, paw_beta, paw_q0, cfg.scf.use_rfft);
-                try mixDensityKerker(alloc, grid, rho_down, rho_out_down, paw_beta, paw_q0, cfg.scf.use_rfft);
+                try mixDensityKerker(
+                    alloc,
+                    grid,
+                    rho_up,
+                    rho_out_up,
+                    paw_beta,
+                    paw_q0,
+                    cfg.scf.use_rfft,
+                );
+                try mixDensityKerker(
+                    alloc,
+                    grid,
+                    rho_down,
+                    rho_out_down,
+                    paw_beta,
+                    paw_q0,
+                    cfg.scf.use_rfft,
+                );
             } else if (common.pulay_mixer != null and iterations >= cfg.scf.pulay_start) {
                 const concat_in = try alloc.alloc(f64, grid_count * 2);
                 defer alloc.free(concat_in);
@@ -612,7 +818,16 @@ pub fn runSpinPolarizedLoop(
                 const n_hat_dm = try alloc.alloc(f64, grid_count);
                 defer alloc.free(n_hat_dm);
                 @memset(n_hat_dm, 0.0);
-                try paw_scf.addPawCompensationCharge(alloc, grid, n_hat_dm, &common.paw_rhoij.?, common.paw_tabs.?, atoms, ecutrho_scf, &common.paw_gaunt.?);
+                try paw_scf.addPawCompensationCharge(
+                    alloc,
+                    grid,
+                    n_hat_dm,
+                    &common.paw_rhoij.?,
+                    common.paw_tabs.?,
+                    atoms,
+                    ecutrho_scf,
+                    &common.paw_gaunt.?,
+                );
                 const dm_aug_up = try alloc.alloc(f64, grid_count);
                 defer alloc.free(dm_aug_up);
                 const dm_aug_down = try alloc.alloc(f64, grid_count);
@@ -621,11 +836,33 @@ pub fn runSpinPolarizedLoop(
                     dm_aug_up[gi] = rho_up[gi] + n_hat_dm[gi] * 0.5;
                     dm_aug_down[gi] = rho_down[gi] + n_hat_dm[gi] * 0.5;
                 }
-                const rebuilt = try potential_mod.buildPotentialGridSpin(alloc, grid, dm_aug_up, dm_aug_down, common.rho_core, cfg.scf.use_rfft, cfg.scf.xc, null, null, common.coulomb_r_cut);
+                const rebuilt = try potential_mod.buildPotentialGridSpin(
+                    alloc,
+                    grid,
+                    dm_aug_up,
+                    dm_aug_down,
+                    common.rho_core,
+                    cfg.scf.use_rfft,
+                    cfg.scf.xc,
+                    null,
+                    null,
+                    common.coulomb_r_cut,
+                );
                 potential_up = rebuilt.up;
                 potential_down = rebuilt.down;
             } else {
-                const rebuilt = try potential_mod.buildPotentialGridSpin(alloc, grid, rho_up, rho_down, common.rho_core, cfg.scf.use_rfft, cfg.scf.xc, null, null, common.coulomb_r_cut);
+                const rebuilt = try potential_mod.buildPotentialGridSpin(
+                    alloc,
+                    grid,
+                    rho_up,
+                    rho_down,
+                    common.rho_core,
+                    cfg.scf.use_rfft,
+                    cfg.scf.xc,
+                    null,
+                    null,
+                    common.coulomb_r_cut,
+                );
                 potential_up = rebuilt.up;
                 potential_down = rebuilt.down;
             }
@@ -640,14 +877,82 @@ pub fn runSpinPolarizedLoop(
 
                 // Compute new D_ij with spin D^xc
                 if (paw_rhoij_up) |*rij_up| {
-                    try paw_scf.updatePawDij(alloc, grid, common.ionic, potential_up, tabs, species, atoms, apply_caches_up, ecutrho_scf, &common.paw_rhoij.?, cfg.scf.xc, cfg.scf.symmetry, &common.paw_gaunt.?, false, rij_up, dij_mix_beta);
+                    try paw_scf.updatePawDij(
+                        alloc,
+                        grid,
+                        common.ionic,
+                        potential_up,
+                        tabs,
+                        species,
+                        atoms,
+                        apply_caches_up,
+                        ecutrho_scf,
+                        &common.paw_rhoij.?,
+                        cfg.scf.xc,
+                        cfg.scf.symmetry,
+                        &common.paw_gaunt.?,
+                        false,
+                        rij_up,
+                        dij_mix_beta,
+                    );
                 } else {
-                    try paw_scf.updatePawDij(alloc, grid, common.ionic, potential_up, tabs, species, atoms, apply_caches_up, ecutrho_scf, &common.paw_rhoij.?, cfg.scf.xc, cfg.scf.symmetry, &common.paw_gaunt.?, false, null, dij_mix_beta);
+                    try paw_scf.updatePawDij(
+                        alloc,
+                        grid,
+                        common.ionic,
+                        potential_up,
+                        tabs,
+                        species,
+                        atoms,
+                        apply_caches_up,
+                        ecutrho_scf,
+                        &common.paw_rhoij.?,
+                        cfg.scf.xc,
+                        cfg.scf.symmetry,
+                        &common.paw_gaunt.?,
+                        false,
+                        null,
+                        dij_mix_beta,
+                    );
                 }
                 if (paw_rhoij_down) |*rij_down| {
-                    try paw_scf.updatePawDij(alloc, grid, common.ionic, potential_down, tabs, species, atoms, apply_caches_down, ecutrho_scf, &common.paw_rhoij.?, cfg.scf.xc, cfg.scf.symmetry, &common.paw_gaunt.?, false, rij_down, dij_mix_beta);
+                    try paw_scf.updatePawDij(
+                        alloc,
+                        grid,
+                        common.ionic,
+                        potential_down,
+                        tabs,
+                        species,
+                        atoms,
+                        apply_caches_down,
+                        ecutrho_scf,
+                        &common.paw_rhoij.?,
+                        cfg.scf.xc,
+                        cfg.scf.symmetry,
+                        &common.paw_gaunt.?,
+                        false,
+                        rij_down,
+                        dij_mix_beta,
+                    );
                 } else {
-                    try paw_scf.updatePawDij(alloc, grid, common.ionic, potential_down, tabs, species, atoms, apply_caches_down, ecutrho_scf, &common.paw_rhoij.?, cfg.scf.xc, cfg.scf.symmetry, &common.paw_gaunt.?, false, null, dij_mix_beta);
+                    try paw_scf.updatePawDij(
+                        alloc,
+                        grid,
+                        common.ionic,
+                        potential_down,
+                        tabs,
+                        species,
+                        atoms,
+                        apply_caches_down,
+                        ecutrho_scf,
+                        &common.paw_rhoij.?,
+                        cfg.scf.xc,
+                        cfg.scf.symmetry,
+                        &common.paw_gaunt.?,
+                        false,
+                        null,
+                        dij_mix_beta,
+                    );
                 }
             }
         }
@@ -680,7 +985,16 @@ pub fn runSpinPolarizedLoop(
             const n_hat = try alloc.alloc(f64, grid_count);
             defer alloc.free(n_hat);
             @memset(n_hat, 0.0);
-            try paw_scf.addPawCompensationCharge(alloc, grid, n_hat, prij, common.paw_tabs.?, atoms, ecutrho_scf, &common.paw_gaunt.?);
+            try paw_scf.addPawCompensationCharge(
+                alloc,
+                grid,
+                n_hat,
+                prij,
+                common.paw_tabs.?,
+                atoms,
+                ecutrho_scf,
+                &common.paw_gaunt.?,
+            );
             // Subtract back rho=0 contribution to get pure n̂
             // (addPawCompensationCharge adds n̂ to rho, but we passed zeros)
             // rho_aug = rho + n̂/2 for each spin (n̂ split equally for non-magnetic)
@@ -691,9 +1005,21 @@ pub fn runSpinPolarizedLoop(
                 aug_down[i] = rho_down[i] + n_hat[i] * 0.5;
             }
             // Filter to ecutrho sphere
-            const filt_up = try potential_mod.filterDensityToEcutrho(alloc, grid, aug_up, ecutrho_scf, cfg.scf.use_rfft);
+            const filt_up = try potential_mod.filterDensityToEcutrho(
+                alloc,
+                grid,
+                aug_up,
+                ecutrho_scf,
+                cfg.scf.use_rfft,
+            );
             alloc.free(aug_up);
-            const filt_down = try potential_mod.filterDensityToEcutrho(alloc, grid, aug_down, ecutrho_scf, cfg.scf.use_rfft);
+            const filt_down = try potential_mod.filterDensityToEcutrho(
+                alloc,
+                grid,
+                aug_down,
+                ecutrho_scf,
+                cfg.scf.use_rfft,
+            );
             alloc.free(aug_down);
             rho_aug_up_for_energy = filt_up;
             rho_aug_down_for_energy = filt_down;
@@ -1008,7 +1334,15 @@ pub fn runSpinPolarizedLoop(
         // Store V_xc in real space for NLCC force
         const pot_rho_up_final = rho_aug_up_for_energy orelse rho_up;
         const pot_rho_down_final = rho_aug_down_for_energy orelse rho_down;
-        const vxc_spin = try xc_fields_mod.computeXcFieldsSpin(alloc, grid, pot_rho_up_final, pot_rho_down_final, common.rho_core, cfg.scf.use_rfft, cfg.scf.xc);
+        const vxc_spin = try xc_fields_mod.computeXcFieldsSpin(
+            alloc,
+            grid,
+            pot_rho_up_final,
+            pot_rho_down_final,
+            common.rho_core,
+            cfg.scf.use_rfft,
+            cfg.scf.xc,
+        );
         vxc_r_up_result = vxc_spin.vxc_up;
         vxc_r_down_result = vxc_spin.vxc_down;
         alloc.free(vxc_spin.exc);

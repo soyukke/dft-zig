@@ -9,7 +9,6 @@
 src/features/band/band.zig	line_too_long	26
 src/features/band/band.zig	function_too_long	2
 src/features/basis/basis631g_2dfp.zig	function_too_long	1
-src/features/config/config.zig	line_too_long	47
 src/features/config/config.zig	function_too_long	3
 src/features/dfpt/atomic_data.zig	function_too_long	1
 src/features/dfpt/dfpt.zig	function_too_long	1
@@ -64,7 +63,6 @@ src/features/gto_scf/gradient.zig	function_too_long	6
 src/features/gto_scf/gto_scf.zig	line_too_long	6
 src/features/gto_scf/gto_scf.zig	debug_print	38
 src/features/gto_scf/gto_scf.zig	function_too_long	2
-src/features/gto_scf/kohn_sham.zig	line_too_long	36
 src/features/gto_scf/kohn_sham.zig	debug_print	13
 src/features/gto_scf/kohn_sham.zig	function_too_long	5
 src/features/gto_scf/molecule.zig	line_too_long	1
@@ -80,7 +78,6 @@ src/features/integrals/libcint.zig	line_too_long	28
 src/features/integrals/libcint.zig	function_too_long	4
 src/features/integrals/nuclear.zig	line_too_long	1
 src/features/integrals/obara_saika.zig	function_too_long	8
-src/features/integrals/rys_eri.zig	line_too_long	64
 src/features/integrals/rys_eri.zig	function_too_long	2
 src/features/integrals/rys_roots.zig	line_too_long	2
 src/features/integrals/rys_roots.zig	function_too_long	1
@@ -129,7 +126,6 @@ src/features/relax/relax.zig	line_too_long	27
 src/features/relax/relax.zig	function_too_long	4
 src/features/runtime/logging.zig	line_too_long	1
 src/features/runtime/logging.zig	debug_print	1
-src/features/scf/apply.zig	line_too_long	38
 src/features/scf/apply.zig	function_too_long	8
 src/features/scf/band_solver.zig	line_too_long	10
 src/features/scf/band_solver.zig	function_too_long	1
@@ -149,7 +145,6 @@ src/features/scf/potential.zig	function_too_long	2
 src/features/scf/pw_grid_map.zig	line_too_long	4
 src/features/scf/scf.zig	line_too_long	32
 src/features/scf/scf.zig	function_too_long	4
-src/features/scf/scf_spin.zig	line_too_long	41
 src/features/scf/scf_spin.zig	function_too_long	2
 src/features/scf/smearing.zig	line_too_long	4
 src/features/scf/smearing.zig	function_too_long	1

@@ -158,7 +158,8 @@ pub const BasisOnGrid = struct {
 
 /// Evaluate a single contracted Cartesian Gaussian basis function at point r.
 ///
-///   phi(r) = sum_i c_i * N(alpha_i, ax, ay, az) * (x-Cx)^ax * (y-Cy)^ay * (z-Cz)^az * exp(-alpha_i * |r-C|^2)
+///   phi(r) = sum_i c_i * N(alpha_i, ax, ay, az)
+///            * (x-Cx)^ax * (y-Cy)^ay * (z-Cz)^az * exp(-alpha_i * |r-C|^2)
 ///
 /// Also returns the gradient (dphi/dx, dphi/dy, dphi/dz).
 pub fn evalBasisFunction(
@@ -180,9 +181,18 @@ pub fn evalBasisFunction(
     const angular = x_pow * y_pow * z_pow;
 
     // d(angular)/dx = ax * x^(ax-1) * y^ay * z^az, etc.
-    const dang_dx = if (ang.x > 0) @as(f64, @floatFromInt(ang.x)) * intPow(dx_c, ang.x - 1) * y_pow * z_pow else 0.0;
-    const dang_dy = if (ang.y > 0) x_pow * @as(f64, @floatFromInt(ang.y)) * intPow(dy_c, ang.y - 1) * z_pow else 0.0;
-    const dang_dz = if (ang.z > 0) x_pow * y_pow * @as(f64, @floatFromInt(ang.z)) * intPow(dz_c, ang.z - 1) else 0.0;
+    const dang_dx = if (ang.x > 0)
+        @as(f64, @floatFromInt(ang.x)) * intPow(dx_c, ang.x - 1) * y_pow * z_pow
+    else
+        0.0;
+    const dang_dy = if (ang.y > 0)
+        x_pow * @as(f64, @floatFromInt(ang.y)) * intPow(dy_c, ang.y - 1) * z_pow
+    else
+        0.0;
+    const dang_dz = if (ang.z > 0)
+        x_pow * y_pow * @as(f64, @floatFromInt(ang.z)) * intPow(dz_c, ang.z - 1)
+    else
+        0.0;
 
     var val: f64 = 0.0;
     var grad_x: f64 = 0.0;
@@ -279,7 +289,9 @@ pub fn evalBasisFunctionWithHessian(
             if (i == j) {
                 // d²A/dx_i²
                 if (angs[i] >= 2) {
-                    var prod: f64 = @as(f64, @floatFromInt(angs[i])) * @as(f64, @floatFromInt(angs[i] - 1));
+                    const ai_f = @as(f64, @floatFromInt(angs[i]));
+                    const aim1_f = @as(f64, @floatFromInt(angs[i] - 1));
+                    var prod: f64 = ai_f * aim1_f;
                     prod *= intPow(coords[i], angs[i] - 2);
                     for (0..3) |k| {
                         if (k != i) prod *= pows[k];
@@ -292,8 +304,10 @@ pub fn evalBasisFunctionWithHessian(
                 // d²A/dx_i dx_j  (i != j)
                 // = (a_i * x_i^(a_i-1)) * (a_j * x_j^(a_j-1)) * product_{k != i,j} x_k^a_k
                 if (angs[i] > 0 and angs[j] > 0) {
-                    var prod: f64 = @as(f64, @floatFromInt(angs[i])) * intPow(coords[i], angs[i] - 1);
-                    prod *= @as(f64, @floatFromInt(angs[j])) * intPow(coords[j], angs[j] - 1);
+                    const ai_f = @as(f64, @floatFromInt(angs[i]));
+                    const aj_f = @as(f64, @floatFromInt(angs[j]));
+                    var prod: f64 = ai_f * intPow(coords[i], angs[i] - 1);
+                    prod *= aj_f * intPow(coords[j], angs[j] - 1);
                     for (0..3) |k| {
                         if (k != i and k != j) prod *= pows[k];
                     }
@@ -333,8 +347,10 @@ pub fn evalBasisFunctionWithHessian(
             for (i..3) |j| {
                 const delta_ij: f64 = if (i == j) 1.0 else 0.0;
                 // d²G/dxi dxj / G = -2α δ_ij + 4α² xi xj
-                const d2_gaussian = a2 * delta_ij + 4.0 * prim.alpha * prim.alpha * coords[i] * coords[j];
-                const h_val = d2ang[i][j] + dang[i] * a2 * coords[j] + dang[j] * a2 * coords[i] + angular * d2_gaussian;
+                const alpha2 = prim.alpha * prim.alpha;
+                const d2_gaussian = a2 * delta_ij + 4.0 * alpha2 * coords[i] * coords[j];
+                const h_val = d2ang[i][j] + dang[i] * a2 * coords[j] +
+                    dang[j] * a2 * coords[i] + angular * d2_gaussian;
                 hess[i][j] += c_n_g * h_val;
             }
         }
@@ -445,7 +461,8 @@ pub fn evaluateBasisOnGrid(
                 const ang = cart[ic];
                 const n_prim = shell.primitives.len;
                 for (shell.primitives, 0..) |prim, ip| {
-                    cn_flat[pair_off + ip] = prim.coeff * basis_mod.normalization(prim.alpha, ang.x, ang.y, ang.z);
+                    const norm_val = basis_mod.normalization(prim.alpha, ang.x, ang.y, ang.z);
+                    cn_flat[pair_off + ip] = prim.coeff * norm_val;
                     alpha_flat[pair_off + ip] = prim.alpha;
                 }
                 basis_info[mu] = .{
@@ -487,9 +504,18 @@ pub fn evaluateBasisOnGrid(
             const angular = x_pow * y_pow * z_pow;
 
             // Angular derivatives
-            const dang_dx = if (bi.ax > 0) @as(f64, @floatFromInt(bi.ax)) * intPow(dx_c, bi.ax - 1) * y_pow * z_pow else 0.0;
-            const dang_dy = if (bi.ay > 0) x_pow * @as(f64, @floatFromInt(bi.ay)) * intPow(dy_c, bi.ay - 1) * z_pow else 0.0;
-            const dang_dz = if (bi.az > 0) x_pow * y_pow * @as(f64, @floatFromInt(bi.az)) * intPow(dz_c, bi.az - 1) else 0.0;
+            const dang_dx = if (bi.ax > 0)
+                @as(f64, @floatFromInt(bi.ax)) * intPow(dx_c, bi.ax - 1) * y_pow * z_pow
+            else
+                0.0;
+            const dang_dy = if (bi.ay > 0)
+                x_pow * @as(f64, @floatFromInt(bi.ay)) * intPow(dy_c, bi.ay - 1) * z_pow
+            else
+                0.0;
+            const dang_dz = if (bi.az > 0)
+                x_pow * y_pow * @as(f64, @floatFromInt(bi.az)) * intPow(dz_c, bi.az - 1)
+            else
+                0.0;
 
             // Contract primitives using precomputed coeff*norm
             var val: f64 = 0.0;
@@ -796,7 +822,11 @@ pub fn runKohnShamScf(
 
     // Step 1: Build one-electron integrals
     var timer = std.Io.Clock.Timestamp.now(io, .awake);
-    logging.verbose(params.verbose, "  [KS] Step 1: Building one-electron integrals (n={d}, libcint={})...\n", .{ n, params.use_libcint });
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 1: Building one-electron integrals (n={d}, libcint={})...\n",
+        .{ n, params.use_libcint },
+    );
 
     // Initialize libcint data if enabled
     // Convert Vec3 positions to [3]f64 arrays for libcint
@@ -808,7 +838,12 @@ pub fn runKohnShamScf(
 
     var cint_data_storage: ?libcint.LibcintData = null;
     if (params.use_libcint) {
-        cint_data_storage = libcint.LibcintData.init(alloc, shells, nuc_pos_flat, nuc_charges) catch null;
+        cint_data_storage = libcint.LibcintData.init(
+            alloc,
+            shells,
+            nuc_pos_flat,
+            nuc_charges,
+        ) catch null;
     }
     defer {
         if (cint_data_storage) |*cd| cd.deinit(alloc);
@@ -832,7 +867,11 @@ pub fn runKohnShamScf(
     else
         try obara_saika.buildNuclearMatrix(alloc, shells, nuc_positions, nuc_charges);
     defer alloc.free(v_mat);
-    logging.verbose(params.verbose, "  [KS] Step 1: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 1: Done. ({d:.2}s)\n",
+        .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9},
+    );
 
     const h_core = try alloc.alloc(f64, n * n);
     defer alloc.free(h_core);
@@ -842,20 +881,32 @@ pub fn runKohnShamScf(
 
     // Step 2: Build ERI table or Schwarz table
     timer = std.Io.Clock.Timestamp.now(io, .awake);
-    logging.verbose(params.verbose, "  [KS] Step 2: Building Schwarz/ERI table (direct={}, libcint={})...\n", .{ params.use_direct_scf, use_libcint_actual });
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 2: Building Schwarz/ERI table (direct={}, libcint={})...\n",
+        .{ params.use_direct_scf, use_libcint_actual },
+    );
     var eri_table: ?obara_saika.GeneralEriTable = null;
     var schwarz_table: ?fock.SchwarzTable = null;
     var jk_builder: ?libcint.LibcintJKBuilder = null;
     if (use_libcint_actual) {
         // libcint path: build LibcintJKBuilder once (CINTOpt + Schwarz table).
         // Reused across all SCF iterations.
-        jk_builder = try libcint.LibcintJKBuilder.init(alloc, cint_data_storage.?, params.schwarz_threshold);
+        jk_builder = try libcint.LibcintJKBuilder.init(
+            alloc,
+            cint_data_storage.?,
+            params.schwarz_threshold,
+        );
     } else if (params.use_direct_scf) {
         schwarz_table = try fock.buildSchwarzTable(alloc, shells);
     } else {
         eri_table = try obara_saika.buildEriTable(alloc, shells);
     }
-    logging.verbose(params.verbose, "  [KS] Step 2: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 2: Done. ({d:.2}s)\n",
+        .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9},
+    );
     defer {
         if (eri_table) |*et| et.deinit(alloc);
         if (schwarz_table) |*st| st.deinit(alloc);
@@ -866,7 +917,11 @@ pub fn runKohnShamScf(
     var df_context: ?DensityFittingContext = null;
     if (params.use_density_fitting) {
         timer = std.Io.Clock.Timestamp.now(io, .awake);
-        logging.verbose(params.verbose, "  [KS] Step 2b: Building density fitting context...\n", .{});
+        logging.verbose(
+            params.verbose,
+            "  [KS] Step 2b: Building density fitting context...\n",
+            .{},
+        );
 
         var aux_buf_to_free: ?[]ContractedShell = null;
         const aux_shells = if (params.aux_shells) |as| as else blk: {
@@ -893,7 +948,13 @@ pub fn runKohnShamScf(
             alloc.free(buf);
         }
 
-        logging.verbose(params.verbose, "  [KS] Step 2b: Done (n_aux={d}). ({d:.2}s)\n", .{ df_context.?.n_aux, @as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9 });
+        const step2b_ns = @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
+        const step2b_secs = @as(f64, @floatFromInt(step2b_ns)) / 1e9;
+        logging.verbose(
+            params.verbose,
+            "  [KS] Step 2b: Done (n_aux={d}). ({d:.2}s)\n",
+            .{ df_context.?.n_aux, step2b_secs },
+        );
     }
     defer if (df_context) |*dfc| dfc.deinit();
 
@@ -922,24 +983,49 @@ pub fn runKohnShamScf(
     };
 
     timer = std.Io.Clock.Timestamp.now(io, .awake);
-    logging.verbose(params.verbose, "  [KS] Step 3: Building molecular grid ({d} radial, {d} angular)...\n", .{ params.n_radial, params.n_angular });
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 3: Building molecular grid ({d} radial, {d} angular)...\n",
+        .{ params.n_radial, params.n_angular },
+    );
     const grid_points = try becke.buildMolecularGrid(alloc, atoms, grid_config);
     defer alloc.free(grid_points);
-    logging.verbose(params.verbose, "  [KS] Step 3: Done ({d} grid points). ({d:.2}s)\n", .{ grid_points.len, @as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9 });
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 3: Done ({d} grid points). ({d:.2}s)\n",
+        .{
+            grid_points.len,
+            @as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9,
+        },
+    );
 
     // Step 4: Pre-evaluate basis functions on grid
     timer = std.Io.Clock.Timestamp.now(io, .awake);
-    logging.verbose(params.verbose, "  [KS] Step 4: Pre-evaluating basis functions on grid...\n", .{});
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 4: Pre-evaluating basis functions on grid...\n",
+        .{},
+    );
     var bog = try evaluateBasisOnGrid(alloc, shells, grid_points);
     defer bog.deinit(alloc);
-    logging.verbose(params.verbose, "  [KS] Step 4: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 4: Done. ({d:.2}s)\n",
+        .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9},
+    );
 
     // Step 5: Initial guess — diagonalize H_core
     timer = std.Io.Clock.Timestamp.now(io, .awake);
     logging.verbose(params.verbose, "  [KS] Step 5: Initial guess (diagonalize H_core)...\n", .{});
     var eigen = try solveRoothaanHall(alloc, n, h_core, s_mat);
     if (params.verbose) {
-        logging.verbose(true, "  [KS] Step 5: Done. ({d:.2}s)\n", .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9});
+        const step5_ns = @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
+        const step5_secs = @as(f64, @floatFromInt(step5_ns)) / 1e9;
+        logging.verbose(
+            true,
+            "  [KS] Step 5: Done. ({d:.2}s)\n",
+            .{step5_secs},
+        );
         // Print initial orbital eigenvalues for comparison with PySCF
         logging.verbose(true, "  [KS] Initial orbital eigenvalues (ALL {d}):\n", .{n});
         for (0..n) |i| {
@@ -958,7 +1044,8 @@ pub fn runKohnShamScf(
         logging.verbose(true, "  [KS] S matrix eigenvalues:\n", .{});
         logging.verbose(true, "    min = {e:20.12}\n", .{s_eigen.values[0]});
         logging.verbose(true, "    max = {e:20.12}\n", .{s_eigen.values[n - 1]});
-        logging.verbose(true, "    condition number = {e:10.3}\n", .{s_eigen.values[n - 1] / s_eigen.values[0]});
+        const cond_num = s_eigen.values[n - 1] / s_eigen.values[0];
+        logging.verbose(true, "    condition number = {e:10.3}\n", .{cond_num});
         // Print first few and last few
         for (0..@min(n, 5)) |i| {
             logging.verbose(true, "    [{d:2}] {e:20.12}\n", .{ i, s_eigen.values[i] });
@@ -994,14 +1081,21 @@ pub fn runKohnShamScf(
     defer alloc.free(xc_work_buf);
 
     // DIIS
-    var diis: ?GtoDiis = if (params.use_diis) GtoDiis.init(alloc, n, params.diis_max_vectors) else null;
+    var diis: ?GtoDiis = if (params.use_diis)
+        GtoDiis.init(alloc, n, params.diis_max_vectors)
+    else
+        null;
     defer if (diis) |*d| d.deinit();
 
     const f_diis = if (params.use_diis) try alloc.alloc(f64, n * n) else null;
     defer if (f_diis) |buf| alloc.free(buf);
 
     // Step 6: SCF loop
-    logging.verbose(params.verbose, "  [KS] Step 6: Starting SCF loop (max_iter={d})...\n", .{params.max_iter});
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 6: Starting SCF loop (max_iter={d})...\n",
+        .{params.max_iter},
+    );
     var e_total: f64 = 0.0;
     var e_old: f64 = 0.0;
     var converged = false;
@@ -1034,7 +1128,15 @@ pub fn runKohnShamScf(
                 @memset(k_mat, 0.0);
             }
         } else if (params.use_direct_scf) {
-            fock.buildJKDirect(n, p_mat, shells, &schwarz_table.?, params.schwarz_threshold, j_mat, k_mat);
+            fock.buildJKDirect(
+                n,
+                p_mat,
+                shells,
+                &schwarz_table.?,
+                params.schwarz_threshold,
+                j_mat,
+                k_mat,
+            );
             if (hf_frac == 0.0) {
                 @memset(k_mat, 0.0);
             }
@@ -1127,9 +1229,18 @@ pub fn runKohnShamScf(
         const rms_p = density_matrix.densityRmsDiff(n, p_mat, p_old);
 
         if (params.verbose) {
-            logging.verbose(true, "  SCF iter {d:3}: E = {d:20.12}  dE = {e:10.3}  dP = {e:10.3}\n", .{ iter, e_total, delta_e, rms_p });
+            logging.verbose(
+                true,
+                "  SCF iter {d:3}: E = {d:20.12}  dE = {e:10.3}  dP = {e:10.3}\n",
+                .{ iter, e_total, delta_e, rms_p },
+            );
             if (iter == 0) {
-                logging.verbose(true, "    E_1e = {d:20.12}  E_J = {d:20.12}  E_K = {d:20.12}  E_XC = {d:20.12}  V_nn = {d:20.12}\n", .{ e_1e, e_j, e_k, e_xc, v_nn });
+                logging.verbose(
+                    true,
+                    "    E_1e = {d:20.12}  E_J = {d:20.12}  E_K = {d:20.12}" ++
+                        "  E_XC = {d:20.12}  V_nn = {d:20.12}\n",
+                    .{ e_1e, e_j, e_k, e_xc, v_nn },
+                );
                 // Print Tr(P), Tr(P*S)
                 var tr_p: f64 = 0.0;
                 var tr_ps: f64 = 0.0;
@@ -1139,7 +1250,11 @@ pub fn runKohnShamScf(
                         tr_ps += p_mat[imu * n + inu] * s_mat[imu * n + inu];
                     }
                 }
-                logging.verbose(true, "    Tr(P) = {d:20.12}  Tr(P*S) = {d:20.12}\n", .{ tr_p, tr_ps });
+                logging.verbose(
+                    true,
+                    "    Tr(P) = {d:20.12}  Tr(P*S) = {d:20.12}\n",
+                    .{ tr_p, tr_ps },
+                );
             }
         }
 
@@ -1194,7 +1309,15 @@ pub fn runKohnShamScf(
                 @memset(k_mat, 0.0);
             }
         } else if (params.use_direct_scf) {
-            fock.buildJKDirect(n, p_mat, shells, &schwarz_table.?, params.schwarz_threshold, j_mat, k_mat);
+            fock.buildJKDirect(
+                n,
+                p_mat,
+                shells,
+                &schwarz_table.?,
+                params.schwarz_threshold,
+                j_mat,
+                k_mat,
+            );
             if (hf_frac == 0.0) {
                 @memset(k_mat, 0.0);
             }
@@ -1472,7 +1595,14 @@ test "density integration equals n_electrons (H2O STO-3G RHF)" {
     };
 
     // First get converged RHF density
-    var rhf_result = try gto_scf.runGeneralRhfScf(alloc, &shells, &nuc_positions, &nuc_charges, 10, .{});
+    var rhf_result = try gto_scf.runGeneralRhfScf(
+        alloc,
+        &shells,
+        &nuc_positions,
+        &nuc_charges,
+        10,
+        .{},
+    );
     defer rhf_result.deinit(alloc);
 
     const n = obara_saika.totalBasisFunctions(&shells);
@@ -1498,7 +1628,13 @@ test "density integration equals n_electrons (H2O STO-3G RHF)" {
     defer bog.deinit(alloc);
 
     // Compute density on grid
-    const dens = try computeDensityOnGrid(alloc, n, grid_points.len, rhf_result.density_matrix, bog);
+    const dens = try computeDensityOnGrid(
+        alloc,
+        n,
+        grid_points.len,
+        rhf_result.density_matrix,
+        bog,
+    );
     defer {
         alloc.free(dens.rho);
         alloc.free(dens.grad_x);
@@ -1541,12 +1677,20 @@ test "KS-DFT H2O STO-3G LDA (SVWN)" {
         .{ .center = nuc_positions[2], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    var result = try runKohnShamScf(alloc, std.testing.io, &shells, &nuc_positions, &nuc_charges, 10, .{
-        .xc_functional = .lda_svwn,
-        .n_radial = 99,
-        .n_angular = 590,
-        .prune = false,
-    });
+    var result = try runKohnShamScf(
+        alloc,
+        std.testing.io,
+        &shells,
+        &nuc_positions,
+        &nuc_charges,
+        10,
+        .{
+            .xc_functional = .lda_svwn,
+            .n_radial = 99,
+            .n_angular = 590,
+            .prune = false,
+        },
+    );
     defer result.deinit(alloc);
 
     std.debug.print("\nH2O STO-3G KS-DFT LDA (SVWN):\n", .{});

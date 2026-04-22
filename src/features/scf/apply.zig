@@ -46,14 +46,34 @@ pub const ApplyWorkspace = struct {
     fft_plan: ?fft.Fft3dPlan,
     alloc: std.mem.Allocator,
 
-    pub fn init(alloc: std.mem.Allocator, io: std.Io, grid: Grid, n_gvecs: usize, max_m_total: usize, fft_backend: fft.FftBackend) !ApplyWorkspace {
+    pub fn init(
+        alloc: std.mem.Allocator,
+        io: std.Io,
+        grid: Grid,
+        n_gvecs: usize,
+        max_m_total: usize,
+        fft_backend: fft.FftBackend,
+    ) !ApplyWorkspace {
         // Create new FFT plan
-        const fft_plan: ?fft.Fft3dPlan = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, fft_backend);
+        const fft_plan: ?fft.Fft3dPlan = try fft.Fft3dPlan.initWithBackend(
+            alloc,
+            io,
+            grid.nx,
+            grid.ny,
+            grid.nz,
+            fft_backend,
+        );
         return initWithPlan(alloc, grid, n_gvecs, max_m_total, fft_plan);
     }
 
     /// Initialize with an existing FFT plan (avoids mutex contention in parallel execution)
-    pub fn initWithPlan(alloc: std.mem.Allocator, grid: Grid, n_gvecs: usize, max_m_total: usize, fft_plan: ?fft.Fft3dPlan) !ApplyWorkspace {
+    pub fn initWithPlan(
+        alloc: std.mem.Allocator,
+        grid: Grid,
+        n_gvecs: usize,
+        max_m_total: usize,
+        fft_plan: ?fft.Fft3dPlan,
+    ) !ApplyWorkspace {
         const grid_total = grid.count();
         const work_recip = try alloc.alloc(math.Complex, grid_total);
         errdefer alloc.free(work_recip);
@@ -67,9 +87,15 @@ pub const ApplyWorkspace = struct {
         errdefer alloc.free(work_phase);
         const work_xphase = try alloc.alloc(math.Complex, n_gvecs);
         errdefer alloc.free(work_xphase);
-        const work_coeff = if (max_m_total > 0) try alloc.alloc(math.Complex, max_m_total) else &[_]math.Complex{};
+        const work_coeff = if (max_m_total > 0)
+            try alloc.alloc(math.Complex, max_m_total)
+        else
+            &[_]math.Complex{};
         errdefer if (max_m_total > 0) alloc.free(work_coeff);
-        const work_coeff2 = if (max_m_total > 0) try alloc.alloc(math.Complex, max_m_total) else &[_]math.Complex{};
+        const work_coeff2 = if (max_m_total > 0)
+            try alloc.alloc(math.Complex, max_m_total)
+        else
+            &[_]math.Complex{};
         errdefer if (max_m_total > 0) alloc.free(work_coeff2);
 
         return .{
@@ -176,7 +202,22 @@ pub const ApplyContext = struct {
         fft_index_map: ?[]const usize,
         fft_backend: fft.FftBackend,
     ) !ApplyContext {
-        return initWithWorkspaces(alloc, io, grid, gvecs, local_r, vnl, species, atoms, inv_volume, enable_nonlocal, profile, fft_index_map, fft_backend, 1);
+        return initWithWorkspaces(
+            alloc,
+            io,
+            grid,
+            gvecs,
+            local_r,
+            vnl,
+            species,
+            atoms,
+            inv_volume,
+            enable_nonlocal,
+            profile,
+            fft_index_map,
+            fft_backend,
+            1,
+        );
     }
 
     /// Initialize with pre-created FFT plan (avoids mutex contention in parallel execution)
@@ -216,7 +257,13 @@ pub const ApplyContext = struct {
             alloc.free(workspaces);
         }
         // Use initWithPlan to avoid creating another FFT plan
-        workspaces[0] = try ApplyWorkspace.initWithPlan(alloc, grid, gvecs.len, max_m_total, existing_plan);
+        workspaces[0] = try ApplyWorkspace.initWithPlan(
+            alloc,
+            grid,
+            gvecs.len,
+            max_m_total,
+            existing_plan,
+        );
 
         const ws_in_use = try alloc.alloc(std.atomic.Value(u8), 1);
         errdefer alloc.free(ws_in_use);
@@ -275,7 +322,13 @@ pub const ApplyContext = struct {
         const max_m_total = if (cached_nonlocal) |ctx| ctx.max_m_total else 0;
         const workspaces = try alloc.alloc(ApplyWorkspace, 1);
         errdefer alloc.free(workspaces);
-        workspaces[0] = try ApplyWorkspace.initWithPlan(alloc, grid, gvecs.len, max_m_total, fft_plan);
+        workspaces[0] = try ApplyWorkspace.initWithPlan(
+            alloc,
+            grid,
+            gvecs.len,
+            max_m_total,
+            fft_plan,
+        );
 
         const ws_in_use = try alloc.alloc(std.atomic.Value(u8), 1);
         errdefer alloc.free(ws_in_use);
@@ -342,7 +395,14 @@ pub const ApplyContext = struct {
             try map.buildFftIndices(alloc, idx_map);
         }
 
-        var plan = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, fft_backend);
+        var plan = try fft.Fft3dPlan.initWithBackend(
+            alloc,
+            io,
+            grid.nx,
+            grid.ny,
+            grid.nz,
+            fft_backend,
+        );
         errdefer plan.deinit(alloc);
 
         const max_m_total = if (nonlocal_ctx) |ctx| ctx.max_m_total else 0;
@@ -350,14 +410,21 @@ pub const ApplyContext = struct {
         const workspaces = try alloc.alloc(ApplyWorkspace, ws_count);
         errdefer {
             for (workspaces) |*ws| {
-                ws.deinitWithoutPlan(alloc); // Don't free shared FFT plan (freed by errdefer on plan)
+                // Don't free shared FFT plan (freed by errdefer on plan)
+                ws.deinitWithoutPlan(alloc);
             }
             alloc.free(workspaces);
         }
         var i: usize = 0;
         while (i < ws_count) : (i += 1) {
             // Use shared FFT plan to avoid leaking per-workspace plans
-            workspaces[i] = try ApplyWorkspace.initWithPlan(alloc, grid, gvecs.len, max_m_total, plan);
+            workspaces[i] = try ApplyWorkspace.initWithPlan(
+                alloc,
+                grid,
+                gvecs.len,
+                max_m_total,
+                plan,
+            );
         }
 
         const ws_in_use = try alloc.alloc(std.atomic.Value(u8), ws_count);
@@ -410,7 +477,8 @@ pub const ApplyContext = struct {
             if (self.fft_plan) |*plan| plan.deinit(alloc);
         }
         for (self.workspaces) |*ws| {
-            ws.deinitWithoutPlan(alloc); // Don't free workspace's plan (shared with context)
+            // Don't free workspace's plan (shared with context)
+            ws.deinitWithoutPlan(alloc);
         }
         if (self.workspaces.len > 0) alloc.free(self.workspaces);
         if (self.ws_in_use.len > 0) alloc.free(self.ws_in_use);
@@ -440,7 +508,12 @@ pub const ApplyContext = struct {
 };
 
 /// Apply Hamiltonian using pre-allocated workspace (no allocation during call)
-fn applyHamiltonianWithWorkspace(ctx: *ApplyContext, ws: *ApplyWorkspace, x: []const math.Complex, y: []math.Complex) !void {
+fn applyHamiltonianWithWorkspace(
+    ctx: *ApplyContext,
+    ws: *ApplyWorkspace,
+    x: []const math.Complex,
+    y: []math.Complex,
+) !void {
     const n = ctx.gvecs.len;
     if (x.len != n or y.len != n) return error.InvalidMatrixSize;
 
@@ -455,7 +528,15 @@ fn applyHamiltonianWithWorkspace(ctx: *ApplyContext, ws: *ApplyWorkspace, x: []c
     // Local potential: y += V_local * x
     const local_start = if (ctx.profile != null) profileStart(ctx.io) else null;
     const plan_ptr: ?*fft.Fft3dPlan = if (ws.fft_plan != null) @constCast(&ws.fft_plan.?) else null;
-    try applyLocalPotentialSafe(ctx, x, ws.work_vec, ws.work_recip, ws.work_real, ws.work_recip_out, plan_ptr);
+    try applyLocalPotentialSafe(
+        ctx,
+        x,
+        ws.work_vec,
+        ws.work_recip,
+        ws.work_real,
+        ws.work_recip_out,
+        plan_ptr,
+    );
     if (ctx.profile) |p| profileAdd(ctx.io, &p.apply_local_ns, local_start);
     i = 0;
     while (i < n) : (i += 1) {
@@ -465,7 +546,15 @@ fn applyHamiltonianWithWorkspace(ctx: *ApplyContext, ws: *ApplyWorkspace, x: []c
     // Nonlocal potential: y += V_nl * x
     if (ctx.nonlocal_ctx != null) {
         const nonlocal_start = if (ctx.profile != null) profileStart(ctx.io) else null;
-        try applyNonlocalPotentialSafe(ctx, x, ws.work_vec, ws.work_phase, ws.work_xphase, ws.work_coeff, ws.work_coeff2);
+        try applyNonlocalPotentialSafe(
+            ctx,
+            x,
+            ws.work_vec,
+            ws.work_phase,
+            ws.work_xphase,
+            ws.work_coeff,
+            ws.work_coeff2,
+        );
         if (ctx.profile) |p| profileAdd(ctx.io, &p.apply_nonlocal_ns, nonlocal_start);
         i = 0;
         while (i < n) : (i += 1) {
@@ -529,7 +618,6 @@ pub fn checkHamiltonianApply(
         .zig, // Use default Zig FFT for testing
     );
     defer ctx.deinit(alloc);
-
     const n = gvecs.len;
     const x = try alloc.alloc(math.Complex, n);
     const y_apply = try alloc.alloc(math.Complex, n);
@@ -537,20 +625,17 @@ pub fn checkHamiltonianApply(
     defer alloc.free(x);
     defer alloc.free(y_apply);
     defer alloc.free(y_dense);
-
     var i: usize = 0;
     while (i < n) : (i += 1) {
         const fi = @as(f64, @floatFromInt(i + 1));
         x[i] = math.complex.init(std.math.sin(fi), std.math.cos(fi));
     }
-
     try applyHamiltonian(&ctx, x, y_apply);
-
-    const local_cfg = local_potential.LocalPotentialConfig.init(.short_range, 0.0);
-    const h = try hamiltonian.buildHamiltonian(alloc, gvecs, species, atoms, inv_volume, local_cfg, potential);
+    const cfg = local_potential.LocalPotentialConfig.init(.short_range, 0.0);
+    const h = try hamiltonian
+        .buildHamiltonian(alloc, gvecs, species, atoms, inv_volume, cfg, potential);
     defer alloc.free(h);
     applyDenseMatrix(n, h, x, y_dense);
-
     var max_abs: f64 = 0.0;
     var max_diff: f64 = 0.0;
     i = 0;
@@ -562,13 +647,21 @@ pub fn checkHamiltonianApply(
         if (diff > max_diff) max_diff = diff;
         if (abs_val > max_abs) max_abs = abs_val;
     }
-
     const rel = if (max_abs > 0.0) max_diff / max_abs else 0.0;
     const logger = runtime_logging.stderr(io, .info);
-    try logger.print(.info, "scf: apply_check max_abs={d:.6} max_diff={d:.6} rel={d:.6}\n", .{ max_abs, max_diff, rel });
+    try logger.print(
+        .info,
+        "scf: apply_check max_abs={d:.6} max_diff={d:.6} rel={d:.6}\n",
+        .{ max_abs, max_diff, rel },
+    );
 }
 
-fn applyDenseMatrix(n: usize, mat: []const math.Complex, x: []const math.Complex, out: []math.Complex) void {
+fn applyDenseMatrix(
+    n: usize,
+    mat: []const math.Complex,
+    x: []const math.Complex,
+    out: []math.Complex,
+) void {
     @memset(out, math.complex.init(0.0, 0.0));
     var i: usize = 0;
     while (i < n) : (i += 1) {
@@ -584,22 +677,52 @@ fn applyLocalPotential(ctx: *ApplyContext, x: []const math.Complex, out: []math.
     ctx.map.scatter(x, ctx.work_recip);
     const plan_ptr = if (ctx.fft_plan) |*p| p else null;
     if (ctx.fft_index_map) |map| {
-        try fftReciprocalToComplexInPlaceMapped(ctx.alloc, ctx.grid, map, ctx.work_recip, ctx.work_real, plan_ptr);
+        try fftReciprocalToComplexInPlaceMapped(
+            ctx.alloc,
+            ctx.grid,
+            map,
+            ctx.work_recip,
+            ctx.work_real,
+            plan_ptr,
+        );
     } else {
-        try fftReciprocalToComplexInPlace(ctx.alloc, ctx.grid, ctx.work_recip, ctx.work_real, plan_ptr);
+        try fftReciprocalToComplexInPlace(
+            ctx.alloc,
+            ctx.grid,
+            ctx.work_recip,
+            ctx.work_real,
+            plan_ptr,
+        );
     }
     for (ctx.work_real, 0..) |*v, i| {
         v.* = math.complex.scale(v.*, ctx.local_r[i]);
     }
     if (ctx.fft_index_map) |map| {
-        try fftComplexToReciprocalInPlaceMapped(ctx.alloc, ctx.grid, map, ctx.work_real, ctx.work_recip_out, plan_ptr);
+        try fftComplexToReciprocalInPlaceMapped(
+            ctx.alloc,
+            ctx.grid,
+            map,
+            ctx.work_real,
+            ctx.work_recip_out,
+            plan_ptr,
+        );
     } else {
-        try fftComplexToReciprocalInPlace(ctx.alloc, ctx.grid, ctx.work_real, ctx.work_recip_out, plan_ptr);
+        try fftComplexToReciprocalInPlace(
+            ctx.alloc,
+            ctx.grid,
+            ctx.work_real,
+            ctx.work_recip_out,
+            plan_ptr,
+        );
     }
     ctx.map.gather(ctx.work_recip_out, out);
 }
 
-pub fn applyNonlocalPotential(ctx: *ApplyContext, x: []const math.Complex, out: []math.Complex) !void {
+pub fn applyNonlocalPotential(
+    ctx: *ApplyContext,
+    x: []const math.Complex,
+    out: []math.Complex,
+) !void {
     const nl = ctx.nonlocal_ctx orelse {
         @memset(out, math.complex.init(0.0, 0.0));
         return;
@@ -635,7 +758,8 @@ pub fn applyNonlocalPotential(ctx: *ApplyContext, x: []const math.Complex, out: 
                 const m_count = entry.m_counts[b];
                 var m_idx: usize = 0;
                 while (m_idx < m_count) : (m_idx += 1) {
-                    const phi = entry.phi[(offset + m_idx) * g_count .. (offset + m_idx + 1) * g_count];
+                    const phi_start = (offset + m_idx) * g_count;
+                    const phi = entry.phi[phi_start .. phi_start + g_count];
                     var sum = math.complex.init(0.0, 0.0);
                     g = 0;
                     while (g < n) : (g += 1) {
@@ -720,56 +844,55 @@ fn applyLocalPotentialSafe(
         // Fused path: scatter/gather directly in FFT order, skip full-grid remap
         const total: f64 = @floatFromInt(ctx.grid.count());
         const inv_scale = 1.0 / total;
-
         // Scatter PW -> FFT order with iFFT scaling
         const t_scatter = if (ctx.profile != null) profileStart(ctx.io) else null;
         ctx.map.scatterFft(x, work_real, total);
         if (ctx.profile) |p| profileAdd(ctx.io, &p.local_scatter_ns, t_scatter);
-
         // iFFT in-place
         const t_ifft = if (ctx.profile != null) profileStart(ctx.io) else null;
         if (plan) |p| {
             try fft.fft3dInverseInPlacePlan(p, work_real);
         } else {
-            try fft.fft3dInverseInPlace(ctx.alloc, work_real, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz);
+            const g = ctx.grid;
+            try fft.fft3dInverseInPlace(ctx.alloc, work_real, g.nx, g.ny, g.nz);
         }
         if (ctx.profile) |p| profileAdd(ctx.io, &p.local_ifft_ns, t_ifft);
-
         // V(r) * psi(r)
         const t_vmul = if (ctx.profile != null) profileStart(ctx.io) else null;
         for (work_real, 0..) |*v, i| {
             v.* = math.complex.scale(v.*, ctx.local_r[i]);
         }
         if (ctx.profile) |p| profileAdd(ctx.io, &p.local_vmul_ns, t_vmul);
-
         // FFT in-place
         const t_fft = if (ctx.profile != null) profileStart(ctx.io) else null;
         if (plan) |p| {
             try fft.fft3dForwardInPlacePlan(p, work_real);
         } else {
-            try fft.fft3dForwardInPlace(ctx.alloc, work_real, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz);
+            const g = ctx.grid;
+            try fft.fft3dForwardInPlace(ctx.alloc, work_real, g.nx, g.ny, g.nz);
         }
         if (ctx.profile) |p| profileAdd(ctx.io, &p.local_fft_ns, t_fft);
-
         // Gather FFT order -> PW with FFT scaling
         const t_gather = if (ctx.profile != null) profileStart(ctx.io) else null;
         ctx.map.gatherFft(work_real, out, inv_scale);
         if (ctx.profile) |p| profileAdd(ctx.io, &p.local_gather_ns, t_gather);
     } else {
         // Original path with full-grid remap
+        const a = ctx.alloc;
+        const g = ctx.grid;
         ctx.map.scatter(x, work_recip);
         if (ctx.fft_index_map) |map| {
-            try fftReciprocalToComplexInPlaceMapped(ctx.alloc, ctx.grid, map, work_recip, work_real, plan);
+            try fftReciprocalToComplexInPlaceMapped(a, g, map, work_recip, work_real, plan);
         } else {
-            try fftReciprocalToComplexInPlace(ctx.alloc, ctx.grid, work_recip, work_real, plan);
+            try fftReciprocalToComplexInPlace(a, g, work_recip, work_real, plan);
         }
         for (work_real, 0..) |*v, i| {
             v.* = math.complex.scale(v.*, ctx.local_r[i]);
         }
         if (ctx.fft_index_map) |map| {
-            try fftComplexToReciprocalInPlaceMapped(ctx.alloc, ctx.grid, map, work_real, work_recip_out, plan);
+            try fftComplexToReciprocalInPlaceMapped(a, g, map, work_real, work_recip_out, plan);
         } else {
-            try fftComplexToReciprocalInPlace(ctx.alloc, ctx.grid, work_real, work_recip_out, plan);
+            try fftComplexToReciprocalInPlace(a, g, work_real, work_recip_out, plan);
         }
         ctx.map.gather(work_recip_out, out);
     }
@@ -819,7 +942,8 @@ fn applyNonlocalPotentialSafe(
                 const m_count = entry.m_counts[b];
                 var m_idx: usize = 0;
                 while (m_idx < m_count) : (m_idx += 1) {
-                    const phi = entry.phi[(offset + m_idx) * g_count .. (offset + m_idx + 1) * g_count];
+                    const phi_start = (offset + m_idx) * g_count;
+                    const phi = entry.phi[phi_start .. phi_start + g_count];
                     var sum = math.complex.init(0.0, 0.0);
                     g = 0;
                     while (g < n) : (g += 1) {
@@ -895,12 +1019,28 @@ pub fn applyOverlap(ctx_ptr: *anyopaque, x: []const math.Complex, y: []math.Comp
     if (ctx.acquireWorkspace()) |ws_idx| {
         defer ctx.releaseWorkspace(ws_idx);
         const ws = &ctx.workspaces[ws_idx];
-        try applyOverlapSafe(ctx, x, y, ws.work_phase, ws.work_xphase, ws.work_coeff, ws.work_coeff2);
+        try applyOverlapSafe(
+            ctx,
+            x,
+            y,
+            ws.work_phase,
+            ws.work_xphase,
+            ws.work_coeff,
+            ws.work_coeff2,
+        );
     } else {
         ctx.ws_mutex.lockUncancelable(ctx.io);
         defer ctx.ws_mutex.unlock(ctx.io);
         const ws = &ctx.workspaces[0];
-        try applyOverlapSafe(ctx, x, y, ws.work_phase, ws.work_xphase, ws.work_coeff, ws.work_coeff2);
+        try applyOverlapSafe(
+            ctx,
+            x,
+            y,
+            ws.work_phase,
+            ws.work_xphase,
+            ws.work_coeff,
+            ws.work_coeff2,
+        );
     }
 }
 
@@ -950,7 +1090,8 @@ fn applyOverlapSafe(
                 const m_count = entry.m_counts[b];
                 var m_idx: usize = 0;
                 while (m_idx < m_count) : (m_idx += 1) {
-                    const phi = entry.phi[(offset + m_idx) * g_count .. (offset + m_idx + 1) * g_count];
+                    const phi_start = (offset + m_idx) * g_count;
+                    const phi = entry.phi[phi_start .. phi_start + g_count];
                     var sum = math.complex.init(0.0, 0.0);
                     g = 0;
                     while (g < n) : (g += 1) {
@@ -1211,7 +1352,8 @@ fn applyNonlocalBatched(
                     const out_r = (ph_conj.r * re - ph_conj.i * im) * inv_vol;
                     const out_i = (ph_conj.r * im + ph_conj.i * re) * inv_vol;
                     const idx = col * n_pw + g;
-                    out_batch[idx] = math.complex.add(out_batch[idx], math.complex.init(out_r, out_i));
+                    const add_val = math.complex.init(out_r, out_i);
+                    out_batch[idx] = math.complex.add(out_batch[idx], add_val);
                 }
             }
         }
@@ -1248,8 +1390,19 @@ pub fn applyHamiltonianBatched(
         if (ctx.acquireWorkspace()) |ws_idx| {
             defer ctx.releaseWorkspace(ws_idx);
             const ws = &ctx.workspaces[ws_idx];
-            const plan_ptr: ?*fft.Fft3dPlan = if (ws.fft_plan != null) @constCast(&ws.fft_plan.?) else null;
-            try applyLocalPotentialSafe(ctx, x, ws.work_vec, ws.work_recip, ws.work_real, ws.work_recip_out, plan_ptr);
+            const plan_ptr: ?*fft.Fft3dPlan = if (ws.fft_plan != null)
+                @constCast(&ws.fft_plan.?)
+            else
+                null;
+            try applyLocalPotentialSafe(
+                ctx,
+                x,
+                ws.work_vec,
+                ws.work_recip,
+                ws.work_real,
+                ws.work_recip_out,
+                plan_ptr,
+            );
             for (0..n_pw) |g| {
                 y[g] = math.complex.add(y[g], ws.work_vec[g]);
             }
@@ -1257,8 +1410,19 @@ pub fn applyHamiltonianBatched(
             ctx.ws_mutex.lockUncancelable(ctx.io);
             defer ctx.ws_mutex.unlock(ctx.io);
             const ws = &ctx.workspaces[0];
-            const plan_ptr: ?*fft.Fft3dPlan = if (ws.fft_plan != null) @constCast(&ws.fft_plan.?) else null;
-            try applyLocalPotentialSafe(ctx, x, ws.work_vec, ws.work_recip, ws.work_real, ws.work_recip_out, plan_ptr);
+            const plan_ptr: ?*fft.Fft3dPlan = if (ws.fft_plan != null)
+                @constCast(&ws.fft_plan.?)
+            else
+                null;
+            try applyLocalPotentialSafe(
+                ctx,
+                x,
+                ws.work_vec,
+                ws.work_recip,
+                ws.work_real,
+                ws.work_recip_out,
+                plan_ptr,
+            );
             for (0..n_pw) |g| {
                 y[g] = math.complex.add(y[g], ws.work_vec[g]);
             }
@@ -1351,7 +1515,8 @@ pub fn accumulatePawRhoIJ(
                 const m_count = entry.m_counts[b];
                 var m_idx: usize = 0;
                 while (m_idx < m_count) : (m_idx += 1) {
-                    const phi = entry.phi[(offset + m_idx) * g_count .. (offset + m_idx + 1) * g_count];
+                    const phi_start = (offset + m_idx) * g_count;
+                    const phi = entry.phi[phi_start .. phi_start + g_count];
                     var sum = math.complex.init(0.0, 0.0);
                     g = 0;
                     while (g < n) : (g += 1) {
@@ -1370,7 +1535,8 @@ pub fn accumulatePawRhoIJ(
                 var jm: usize = 0;
                 while (jm < entry.m_total) : (jm += 1) {
                     const cj = work_coeff[jm];
-                    rhoij.values[atom_idx][im * mt + jm] += effective_weight * (ci.r * cj.r + ci.i * cj.i);
+                    const rho_val = ci.r * cj.r + ci.i * cj.i;
+                    rhoij.values[atom_idx][im * mt + jm] += effective_weight * rho_val;
                 }
             }
         }
