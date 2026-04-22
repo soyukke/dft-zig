@@ -111,7 +111,13 @@ pub fn run(
     }
 
     // Initialize optimizer
-    var opt = try optimizer.Optimizer.init(alloc, cfg.relax.algorithm, n_atoms, initial_atoms, cell);
+    var opt = try optimizer.Optimizer.init(
+        alloc,
+        cfg.relax.algorithm,
+        n_atoms,
+        initial_atoms,
+        cell,
+    );
     defer opt.deinit(alloc);
 
     // Trajectory storage
@@ -180,7 +186,13 @@ pub fn run(
             force_radial_tables_buf[si] = .{ .tables = &[_]nonlocal_mod.RadialTable{} };
             continue;
         }
-        force_radial_tables_buf[si] = try nonlocal_mod.RadialTableSet.init(alloc, upf.beta, upf.r, upf.rab, g_max);
+        force_radial_tables_buf[si] = try nonlocal_mod.RadialTableSet.init(
+            alloc,
+            upf.beta,
+            upf.r,
+            upf.rab,
+            g_max,
+        );
     }
     defer {
         for (force_radial_tables_buf) |*t| {
@@ -214,8 +226,16 @@ pub fn run(
     var rho_atom_tables_buf = try alloc.alloc(form_factor_mod.RadialFormFactorTable, species.len);
     var rho_core_tables_buf = try alloc.alloc(form_factor_mod.RadialFormFactorTable, species.len);
     for (species, 0..) |entry, si| {
-        rho_atom_tables_buf[si] = try form_factor_mod.RadialFormFactorTable.initRhoAtom(alloc, entry.upf.*, ff_q_max);
-        rho_core_tables_buf[si] = try form_factor_mod.RadialFormFactorTable.initRhoCore(alloc, entry.upf.*, ff_q_max);
+        rho_atom_tables_buf[si] = try form_factor_mod.RadialFormFactorTable.initRhoAtom(
+            alloc,
+            entry.upf.*,
+            ff_q_max,
+        );
+        rho_core_tables_buf[si] = try form_factor_mod.RadialFormFactorTable.initRhoCore(
+            alloc,
+            entry.upf.*,
+            ff_q_max,
+        );
     }
     defer {
         for (rho_atom_tables_buf) |*t| t.deinit(alloc);
@@ -284,7 +304,9 @@ pub fn run(
 
         // Backtracking line search: reject step if energy increased
         // Disabled for vc-relax: cell changes invalidate caches causing energy jumps
-        if (!cfg.relax.cell_relax and final_energy > prev_energy and saved_positions != null and saved_displacement != null) {
+        const energy_increased = final_energy > prev_energy;
+        const have_saved_step = saved_positions != null and saved_displacement != null;
+        if (!cfg.relax.cell_relax and energy_increased and have_saved_step) {
             backtrack_count += 1;
             try logBacktrack(io, backtrack_count, final_energy, prev_energy);
 
@@ -333,15 +355,25 @@ pub fn run(
         };
 
         // Get rho_g from density (need to FFT)
-        const rho_g = try densityToReciprocal(alloc, io, grid, scf_result.density, cfg.scf.fft_backend);
+        const rho_g = try densityToReciprocal(
+            alloc,
+            io,
+            grid,
+            scf_result.density,
+            cfg.scf.fft_backend,
+        );
         defer alloc.free(rho_g);
 
-        const coulomb_r_cut: ?f64 = if (cfg.boundary == .isolated) coulomb_mod.cutoffRadius(current_cell) else null;
+        const coulomb_r_cut: ?f64 = if (cfg.boundary == .isolated)
+            coulomb_mod.cutoffRadius(current_cell)
+        else
+            null;
 
         // For spin-polarized NLCC force, compute averaged V_xc
         var vxc_avg: ?[]f64 = null;
         defer if (vxc_avg) |v| alloc.free(v);
-        const vxc_for_force: ?[]const f64 = if (scf_result.vxc_r_up != null and scf_result.vxc_r_down != null) blk: {
+        const have_spin_vxc = scf_result.vxc_r_up != null and scf_result.vxc_r_down != null;
+        const vxc_for_force: ?[]const f64 = if (have_spin_vxc) blk: {
             const up = scf_result.vxc_r_up.?;
             const down = scf_result.vxc_r_down.?;
             vxc_avg = try alloc.alloc(f64, up.len);
@@ -361,7 +393,8 @@ pub fn run(
             const s = @as([]const []const f64, rij);
             break :blk s;
         } else null;
-        const paw_tabs_slice: ?[]const paw_mod.PawTab = if (scf_result.paw_tabs) |tabs| tabs else null;
+        const paw_tabs_slice: ?[]const paw_mod.PawTab =
+            if (scf_result.paw_tabs) |tabs| tabs else null;
         var force_terms = try forces_mod.computeForces(
             alloc,
             io,
@@ -428,12 +461,20 @@ pub fn run(
         // Relax step timing profile (unbuffered write to avoid buffer corruption)
         {
             const step_cpu_end = timing_mod.Timing.getCpuTimeUs();
-            const scf_ms = @as(f64, @floatFromInt(@as(u64, @intCast(scf_start.durationTo(scf_end).raw.nanoseconds)))) / 1_000_000.0;
-            const force_ms = @as(f64, @floatFromInt(@as(u64, @intCast(force_start.durationTo(force_end).raw.nanoseconds)))) / 1_000_000.0;
-            const step_ms = @as(f64, @floatFromInt(@as(u64, @intCast(relax_step_start.untilNow(io).raw.nanoseconds)))) / 1_000_000.0;
+            const scf_ns = scf_start.durationTo(scf_end).raw.nanoseconds;
+            const force_ns = force_start.durationTo(force_end).raw.nanoseconds;
+            const step_ns = relax_step_start.untilNow(io).raw.nanoseconds;
+            const scf_ms = @as(f64, @floatFromInt(@as(u64, @intCast(scf_ns)))) / 1_000_000.0;
+            const force_ms = @as(f64, @floatFromInt(@as(u64, @intCast(force_ns)))) / 1_000_000.0;
+            const step_ms = @as(f64, @floatFromInt(@as(u64, @intCast(step_ns)))) / 1_000_000.0;
             const cpu_ms = @as(f64, @floatFromInt(step_cpu_end - relax_step_cpu_start)) / 1_000.0;
             var tbuf: [512]u8 = undefined;
-            const msg = std.fmt.bufPrint(&tbuf, "relax_step_profile iter={d} scf_iters={d} scf_ms={d:.1} force_ms={d:.1} wall_ms={d:.1} cpu_ms={d:.1}\n", .{ iter, scf_result.iterations, scf_ms, force_ms, step_ms, cpu_ms }) catch "";
+            const msg = std.fmt.bufPrint(
+                &tbuf,
+                "relax_step_profile iter={d} scf_iters={d} scf_ms={d:.1}" ++
+                    " force_ms={d:.1} wall_ms={d:.1} cpu_ms={d:.1}\n",
+                .{ iter, scf_result.iterations, scf_ms, force_ms, step_ms, cpu_ms },
+            ) catch "";
             std.Io.File.stderr().writeStreamingAll(io, msg) catch {};
         }
 
@@ -442,7 +483,13 @@ pub fn run(
         var max_stress_gpa: f64 = 0.0;
         var cached_stress_total: ?stress_mod.Stress3x3 = null;
         if (cfg.relax.cell_relax) {
-            const stress_terms = try stress_mod.computeStressFromScf(alloc, io, &scf_result, relax_cfg, &step_model);
+            const stress_terms = try stress_mod.computeStressFromScf(
+                alloc,
+                io,
+                &scf_result,
+                relax_cfg,
+                &step_model,
+            );
             // Symmetrize stress using original symmetry (even though k-points are not reduced)
             var sym_total = stress_terms.total;
             if (cfg.scf.symmetry) {
@@ -456,7 +503,8 @@ pub fn run(
             // Subtract target pressure from diagonal (Pulay stress compensation)
             const ry_bohr3_to_gpa = 14710.507;
             if (cfg.relax.target_pressure != 0.0) {
-                const p_offset = -cfg.relax.target_pressure / ry_bohr3_to_gpa; // convert GPa to Ry/Bohr³
+                // convert GPa to Ry/Bohr³
+                const p_offset = -cfg.relax.target_pressure / ry_bohr3_to_gpa;
                 for (0..3) |aa| sym_total[aa][aa] += p_offset;
             }
             cached_stress_total = sym_total;
@@ -558,7 +606,14 @@ pub fn run(
 
         // vc-relax: update cell based on stress tensor (skip if stress already converged)
         if (cfg.relax.cell_relax and !stress_converged) {
-            try updateCellFromStress(&current_cell, &current_recip, &current_volume, cached_stress_total.?, atoms, cfg.relax.cell_step);
+            try updateCellFromStress(
+                &current_cell,
+                &current_recip,
+                &current_volume,
+                cached_stress_total.?,
+                atoms,
+                cfg.relax.cell_step,
+            );
             relax_cfg.cell = current_cell;
 
             // Invalidate ALL caches that depend on cell (k-points, FFT grids, density)
@@ -816,7 +871,11 @@ fn logWarn(io: std.Io, msg: []const u8) !void {
 fn logRelaxIter(io: std.Io, iter: usize, energy: ?f64, max_force: ?f64) !void {
     const logger = runtime_logging.stderr(io, .info);
     if (energy != null and max_force != null) {
-        try logger.print(.info, "relax iter={d} energy={d:.8} max_force={d:.6}\n", .{ iter + 1, energy.?, max_force.? });
+        try logger.print(
+            .info,
+            "relax iter={d} energy={d:.8} max_force={d:.6}\n",
+            .{ iter + 1, energy.?, max_force.? },
+        );
     } else {
         try logger.print(.info, "relax iter={d} starting...\n", .{iter + 1});
     }
@@ -824,23 +883,49 @@ fn logRelaxIter(io: std.Io, iter: usize, energy: ?f64, max_force: ?f64) !void {
 
 fn logRelaxConverged(io: std.Io, iter: usize, energy: f64, max_force: f64) !void {
     const logger = runtime_logging.stderr(io, .info);
-    try logger.print(.info, "relax CONVERGED after {d} iterations, energy={d:.8} Ry, max_force={d:.6} Ry/Bohr\n", .{ iter + 1, energy, max_force });
+    try logger.print(
+        .info,
+        "relax CONVERGED after {d} iterations, energy={d:.8} Ry," ++
+            " max_force={d:.6} Ry/Bohr\n",
+        .{ iter + 1, energy, max_force },
+    );
 }
 
 fn logBacktrack(io: std.Io, count: usize, new_energy: f64, prev_energy_val: f64) !void {
     const scale = std.math.pow(f64, 0.5, @as(f64, @floatFromInt(count)));
     const logger = runtime_logging.stderr(io, .info);
-    try logger.print(.info, "relax BACKTRACK #{d}: E={d:.8} > E_prev={d:.8} (dE={d:.6}), scale={d:.4}\n", .{ count, new_energy, prev_energy_val, new_energy - prev_energy_val, scale });
+    try logger.print(
+        .info,
+        "relax BACKTRACK #{d}: E={d:.8} > E_prev={d:.8}" ++
+            " (dE={d:.6}), scale={d:.4}\n",
+        .{ count, new_energy, prev_energy_val, new_energy - prev_energy_val, scale },
+    );
 }
 
-fn logVcRelaxIter(io: std.Io, iter: usize, pressure_gpa: f64, max_stress_gpa: f64, volume: f64) !void {
+fn logVcRelaxIter(
+    io: std.Io,
+    iter: usize,
+    pressure_gpa: f64,
+    max_stress_gpa: f64,
+    volume: f64,
+) !void {
     const logger = runtime_logging.stderr(io, .info);
-    try logger.print(.info, "vc-relax iter={d} P={d:.2} GPa  max_stress={d:.4} GPa  vol={d:.4} Bohr³\n", .{ iter, pressure_gpa, max_stress_gpa, volume });
+    try logger.print(
+        .info,
+        "vc-relax iter={d} P={d:.2} GPa  max_stress={d:.4} GPa" ++
+            "  vol={d:.4} Bohr³\n",
+        .{ iter, pressure_gpa, max_stress_gpa, volume },
+    );
 }
 
 fn logRelaxNotConverged(io: std.Io, iter: usize, energy: f64, max_force: f64) !void {
     const logger = runtime_logging.stderr(io, .info);
-    try logger.print(.info, "relax NOT CONVERGED after {d} iterations, energy={d:.8} Ry, max_force={d:.6} Ry/Bohr\n", .{ iter, energy, max_force });
+    try logger.print(
+        .info,
+        "relax NOT CONVERGED after {d} iterations, energy={d:.8} Ry," ++
+            " max_force={d:.6} Ry/Bohr\n",
+        .{ iter, energy, max_force },
+    );
 }
 
 /// Write relaxation results to output files.
@@ -909,7 +994,10 @@ pub fn writeOutput(
         for (result.final_forces, 0..) |f, i| {
             const symbol = species[result.final_atoms[i].species_index].symbol;
             const mag = math.Vec3.norm(f);
-            try out.print("{d},{s},{d:.10},{d:.10},{d:.10},{d:.10}\n", .{ i, symbol, f.x, f.y, f.z, mag });
+            try out.print(
+                "{d},{s},{d:.10},{d:.10},{d:.10},{d:.10}\n",
+                .{ i, symbol, f.x, f.y, f.z, mag },
+            );
         }
         try out.flush();
     }
@@ -963,14 +1051,19 @@ pub fn writeTrajectoryXyz(
         try out.print("{d}\n", .{n_atoms});
 
         // Extended XYZ comment line with lattice, energy, properties
-        try out.print("Lattice=\"{d:.8} {d:.8} {d:.8} {d:.8} {d:.8} {d:.8} {d:.8} {d:.8} {d:.8}\" ", .{
-            c.m[0][0], c.m[0][1], c.m[0][2],
-            c.m[1][0], c.m[1][1], c.m[1][2],
-            c.m[2][0], c.m[2][1], c.m[2][2],
-        });
+        try out.print(
+            "Lattice=\"{d:.8} {d:.8} {d:.8} {d:.8} {d:.8} {d:.8}" ++
+                " {d:.8} {d:.8} {d:.8}\" ",
+            .{
+                c.m[0][0], c.m[0][1], c.m[0][2],
+                c.m[1][0], c.m[1][1], c.m[1][2],
+                c.m[2][0], c.m[2][1], c.m[2][2],
+            },
+        );
         try out.print("Properties=species:S:1:pos:R:3:forces:R:3 ", .{});
         try out.print("energy={d:.10} ", .{step.energy * 13.6057}); // eV
-        try out.print("max_force={d:.10} ", .{step.max_force * 13.6057 / 0.529177}); // eV/Angstrom
+        // eV/Angstrom
+        try out.print("max_force={d:.10} ", .{step.max_force * 13.6057 / 0.529177});
         try out.print("iter={d} ", .{iter + 1});
         try out.print("pbc=\"T T T\"\n", .{});
 
@@ -986,7 +1079,10 @@ pub fn writeTrajectoryXyz(
             const fx = step.forces[i].x * force_scale;
             const fy = step.forces[i].y * force_scale;
             const fz = step.forces[i].z * force_scale;
-            try out.print("{s} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10}\n", .{ sym, x, y, z, fx, fy, fz });
+            try out.print(
+                "{s} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10}\n",
+                .{ sym, x, y, z, fx, fy, fz },
+            );
         }
         try out.flush();
     }
@@ -995,11 +1091,15 @@ pub fn writeTrajectoryXyz(
     {
         const n_atoms = result.final_atoms.len;
         try out.print("{d}\n", .{n_atoms});
-        try out.print("Lattice=\"{d:.8} {d:.8} {d:.8} {d:.8} {d:.8} {d:.8} {d:.8} {d:.8} {d:.8}\" ", .{
-            c.m[0][0], c.m[0][1], c.m[0][2],
-            c.m[1][0], c.m[1][1], c.m[1][2],
-            c.m[2][0], c.m[2][1], c.m[2][2],
-        });
+        try out.print(
+            "Lattice=\"{d:.8} {d:.8} {d:.8} {d:.8} {d:.8} {d:.8}" ++
+                " {d:.8} {d:.8} {d:.8}\" ",
+            .{
+                c.m[0][0], c.m[0][1], c.m[0][2],
+                c.m[1][0], c.m[1][1], c.m[1][2],
+                c.m[2][0], c.m[2][1], c.m[2][2],
+            },
+        );
         try out.print("Properties=species:S:1:pos:R:3:forces:R:3 ", .{});
         try out.print("energy={d:.10} ", .{result.final_energy * 13.6057});
         try out.print("converged={s} ", .{if (result.converged) "true" else "false"});
@@ -1019,7 +1119,10 @@ pub fn writeTrajectoryXyz(
                 fy = result.final_forces[i].y * force_scale;
                 fz = result.final_forces[i].z * force_scale;
             }
-            try out.print("{s} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10}\n", .{ sym, x, y, z, fx, fy, fz });
+            try out.print(
+                "{s} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10}\n",
+                .{ sym, x, y, z, fx, fy, fz },
+            );
         }
         try out.flush();
     }

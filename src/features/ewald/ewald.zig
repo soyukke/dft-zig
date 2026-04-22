@@ -42,14 +42,22 @@ pub fn ionIonEnergy(
 
     const defaults = defaultParams(cell);
     const tol = if (params) |p| if (p.tol > 0.0) p.tol else defaults.tol else defaults.tol;
-    const alpha = if (params) |p| if (p.alpha > 0.0) p.alpha else defaults.alpha else defaults.alpha;
+    const alpha = if (params) |p|
+        if (p.alpha > 0.0) p.alpha else defaults.alpha
+    else
+        defaults.alpha;
     const rcut = if (params) |p| if (p.rcut > 0.0) p.rcut else defaults.rcut else defaults.rcut;
     const gcut = if (params) |p| if (p.gcut > 0.0) p.gcut else defaults.gcut else defaults.gcut;
 
     const quiet = if (params) |p| p.quiet else false;
     if (!quiet and @abs(qsum) > 1e-6) {
         const logger = runtime_logging.stderr(io, .warn);
-        try logger.print(.warn, "ewald: non-neutral ionic charge {d:.6}, applying neutralizing background\n", .{qsum});
+        try logger.print(
+            .warn,
+            "ewald: non-neutral ionic charge {d:.6}," ++
+                " applying neutralizing background\n",
+            .{qsum},
+        );
     }
 
     const auto = autoCuts(alpha, tol);
@@ -76,11 +84,17 @@ pub fn ionIonEnergy(
                     var n3i: i32 = -n3;
                     while (n3i <= n3) : (n3i += 1) {
                         if (i == j and n1i == 0 and n2i == 0 and n3i == 0) continue;
+                        const a1_scaled = math.Vec3.scale(a1, @as(f64, @floatFromInt(n1i)));
+                        const a2_scaled = math.Vec3.scale(a2, @as(f64, @floatFromInt(n2i)));
+                        const a3_scaled = math.Vec3.scale(a3, @as(f64, @floatFromInt(n3i)));
                         const rvec = math.Vec3.add(
-                            math.Vec3.add(math.Vec3.scale(a1, @as(f64, @floatFromInt(n1i))), math.Vec3.scale(a2, @as(f64, @floatFromInt(n2i)))),
-                            math.Vec3.scale(a3, @as(f64, @floatFromInt(n3i))),
+                            math.Vec3.add(a1_scaled, a2_scaled),
+                            a3_scaled,
                         );
-                        const delta = math.Vec3.add(math.Vec3.sub(positions[i], positions[j]), rvec);
+                        const delta = math.Vec3.add(
+                            math.Vec3.sub(positions[i], positions[j]),
+                            rvec,
+                        );
                         const r = math.Vec3.norm(delta);
                         if (r > rcut_final or r <= 1e-12) continue;
                         real_sum += charges[i] * charges[j] * erfcValue(alpha * r) / r;
@@ -99,9 +113,12 @@ pub fn ionIonEnergy(
             var l: i32 = -g3;
             while (l <= g3) : (l += 1) {
                 if (h == 0 and k == 0 and l == 0) continue;
+                const b1_scaled = math.Vec3.scale(b1, @as(f64, @floatFromInt(h)));
+                const b2_scaled = math.Vec3.scale(b2, @as(f64, @floatFromInt(k)));
+                const b3_scaled = math.Vec3.scale(b3, @as(f64, @floatFromInt(l)));
                 const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(h))), math.Vec3.scale(b2, @as(f64, @floatFromInt(k)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(l))),
+                    math.Vec3.add(b1_scaled, b2_scaled),
+                    b3_scaled,
                 );
                 const g2val = math.Vec3.dot(gvec, gvec);
                 if (g2val > gcut_final * gcut_final) continue;
@@ -136,11 +153,20 @@ pub fn ionIonEnergy(
 
 /// Build default Ewald parameters.
 fn defaultParams(cell: math.Mat3) Params {
-    const lmin = @min(@min(math.Vec3.norm(cell.row(0)), math.Vec3.norm(cell.row(1))), math.Vec3.norm(cell.row(2)));
+    const n0 = math.Vec3.norm(cell.row(0));
+    const n1 = math.Vec3.norm(cell.row(1));
+    const n2 = math.Vec3.norm(cell.row(2));
+    const lmin = @min(@min(n0, n1), n2);
     const alpha = 5.0 / lmin;
     const tol = 1e-8;
     const cuts = autoCuts(alpha, tol);
-    return Params{ .alpha = alpha, .rcut = cuts.rcut, .gcut = cuts.gcut, .tol = tol, .quiet = false };
+    return Params{
+        .alpha = alpha,
+        .rcut = cuts.rcut,
+        .gcut = cuts.gcut,
+        .tol = tol,
+        .quiet = false,
+    };
 }
 
 const Cuts = struct {
@@ -187,7 +213,10 @@ pub fn ionIonForces(
 
     const defaults = defaultParams(cell);
     const tol = if (params) |p| if (p.tol > 0.0) p.tol else defaults.tol else defaults.tol;
-    const alpha = if (params) |p| if (p.alpha > 0.0) p.alpha else defaults.alpha else defaults.alpha;
+    const alpha = if (params) |p|
+        if (p.alpha > 0.0) p.alpha else defaults.alpha
+    else
+        defaults.alpha;
     const rcut = if (params) |p| if (p.rcut > 0.0) p.rcut else defaults.rcut else defaults.rcut;
     const gcut = if (params) |p| if (p.gcut > 0.0) p.gcut else defaults.gcut else defaults.gcut;
 
@@ -227,12 +256,18 @@ pub fn ionIonForces(
                     var n3i: i32 = -n3;
                     while (n3i <= n3) : (n3i += 1) {
                         if (i == j and n1i == 0 and n2i == 0 and n3i == 0) continue;
+                        const a1_scaled = math.Vec3.scale(a1, @as(f64, @floatFromInt(n1i)));
+                        const a2_scaled = math.Vec3.scale(a2, @as(f64, @floatFromInt(n2i)));
+                        const a3_scaled = math.Vec3.scale(a3, @as(f64, @floatFromInt(n3i)));
                         const rvec = math.Vec3.add(
-                            math.Vec3.add(math.Vec3.scale(a1, @as(f64, @floatFromInt(n1i))), math.Vec3.scale(a2, @as(f64, @floatFromInt(n2i)))),
-                            math.Vec3.scale(a3, @as(f64, @floatFromInt(n3i))),
+                            math.Vec3.add(a1_scaled, a2_scaled),
+                            a3_scaled,
                         );
                         // r = R_i - R_j + n (vector from j to i, including lattice translation)
-                        const delta = math.Vec3.add(math.Vec3.sub(positions[i], positions[j]), rvec);
+                        const delta = math.Vec3.add(
+                            math.Vec3.sub(positions[i], positions[j]),
+                            rvec,
+                        );
                         const r = math.Vec3.norm(delta);
                         if (r > rcut_final or r <= 1e-12) continue;
 
@@ -241,8 +276,11 @@ pub fn ionIonForces(
                         const erfc_ar = erfcValue(ar);
                         const exp_ar2 = std.math.exp(-alpha_sq * r * r);
 
-                        // Force magnitude: Z_i Z_j × [erfc(αr)/r² + 2α/√π × exp(-α²r²)/r]
-                        const force_mag = charges[i] * charges[j] * (erfc_ar * r_inv * r_inv + two_alpha_sqrtpi * exp_ar2 * r_inv);
+                        // Force magnitude:
+                        //   Z_i Z_j × [erfc(αr)/r² + 2α/√π × exp(-α²r²)/r]
+                        const bracket = erfc_ar * r_inv * r_inv +
+                            two_alpha_sqrtpi * exp_ar2 * r_inv;
+                        const force_mag = charges[i] * charges[j] * bracket;
 
                         // Force direction: r/|r| (pointing from j to i)
                         const force_vec = math.Vec3.scale(delta, force_mag * r_inv);
@@ -259,8 +297,10 @@ pub fn ionIonForces(
     // E_recip = (2π/V) Σ_{G≠0} exp(-G²/4α²)/G² × |S(G)|²
     // where S(G) = Σ_j Z_j exp(i G·R_j)
     // F_recip(i) = -d/dR_i E_recip
-    //            = -(4π/V) × Z_i × Σ_{G≠0} [exp(-G²/4α²)/G²] × G × Im[S(G)* exp(i G·R_i)]
-    //            = -(4π/V) × Z_i × Σ_{G≠0} [exp(-G²/4α²)/G²] × G × [S_r sin(G·R_i) - S_i cos(G·R_i)]
+    //   = -(4π/V) × Z_i × Σ_{G≠0} [exp(-G²/4α²)/G²] × G
+    //       × Im[S(G)* exp(i G·R_i)]
+    //   = -(4π/V) × Z_i × Σ_{G≠0} [exp(-G²/4α²)/G²] × G
+    //       × [S_r sin(G·R_i) - S_i cos(G·R_i)]
     const four_pi_over_v = 4.0 * std.math.pi / volume;
     const inv_4alpha2 = 1.0 / (4.0 * alpha_sq);
 
@@ -271,9 +311,12 @@ pub fn ionIonForces(
             var l: i32 = -g3;
             while (l <= g3) : (l += 1) {
                 if (h == 0 and k == 0 and l == 0) continue;
+                const b1_scaled = math.Vec3.scale(b1, @as(f64, @floatFromInt(h)));
+                const b2_scaled = math.Vec3.scale(b2, @as(f64, @floatFromInt(k)));
+                const b3_scaled = math.Vec3.scale(b3, @as(f64, @floatFromInt(l)));
                 const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(h))), math.Vec3.scale(b2, @as(f64, @floatFromInt(k)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(l))),
+                    math.Vec3.add(b1_scaled, b2_scaled),
+                    b3_scaled,
                 );
                 const g2val = math.Vec3.dot(gvec, gvec);
                 if (g2val > gcut_final * gcut_final) continue;
@@ -347,7 +390,10 @@ pub fn ionIonStress(
 
     const defaults = defaultParams(cell);
     const tol = if (params) |p| if (p.tol > 0.0) p.tol else defaults.tol else defaults.tol;
-    const alpha = if (params) |p| if (p.alpha > 0.0) p.alpha else defaults.alpha else defaults.alpha;
+    const alpha = if (params) |p|
+        if (p.alpha > 0.0) p.alpha else defaults.alpha
+    else
+        defaults.alpha;
     const rcut = if (params) |p| if (p.rcut > 0.0) p.rcut else defaults.rcut else defaults.rcut;
     const gcut = if (params) |p| if (p.gcut > 0.0) p.gcut else defaults.gcut else defaults.gcut;
 
@@ -381,11 +427,17 @@ pub fn ionIonStress(
                     var n3i: i32 = -n3;
                     while (n3i <= n3) : (n3i += 1) {
                         if (i == j and n1i == 0 and n2i == 0 and n3i == 0) continue;
+                        const a1_scaled = math.Vec3.scale(a1, @as(f64, @floatFromInt(n1i)));
+                        const a2_scaled = math.Vec3.scale(a2, @as(f64, @floatFromInt(n2i)));
+                        const a3_scaled = math.Vec3.scale(a3, @as(f64, @floatFromInt(n3i)));
                         const rvec = math.Vec3.add(
-                            math.Vec3.add(math.Vec3.scale(a1, @as(f64, @floatFromInt(n1i))), math.Vec3.scale(a2, @as(f64, @floatFromInt(n2i)))),
-                            math.Vec3.scale(a3, @as(f64, @floatFromInt(n3i))),
+                            math.Vec3.add(a1_scaled, a2_scaled),
+                            a3_scaled,
                         );
-                        const delta = math.Vec3.add(math.Vec3.sub(positions[i], positions[j]), rvec);
+                        const delta = math.Vec3.add(
+                            math.Vec3.sub(positions[i], positions[j]),
+                            rvec,
+                        );
                         const r2 = math.Vec3.dot(delta, delta);
                         const r = @sqrt(r2);
                         if (r > rcut_final or r <= 1e-12) continue;
@@ -394,9 +446,12 @@ pub fn ionIonStress(
                         const erfc_ar = erfcValue(ar);
                         const exp_ar2 = std.math.exp(-alpha_sq * r2);
                         // d/dr [erfc(αr)/r] = -erfc(αr)/r² - (2α/√π)exp(-α²r²)/r
-                        // σ_αβ += Z_iZ_j × [erfc(αr)/r³ + (2α/√π)exp(-α²r²)/r² + (4α³/√π)exp(-α²r²)] × r_αr_β
+                        // σ_αβ += Z_iZ_j × [erfc(αr)/r³ + (2α/√π)exp(-α²r²)/r²
+                        //                   + (4α³/√π)exp(-α²r²)] × r_αr_β
                         // Simplified: coeff × r_αr_β / r²
-                        const coeff = charges[i] * charges[j] * (erfc_ar / (r2 * r) + two_alpha_sqrtpi * exp_ar2 / r2);
+                        const bracket = erfc_ar / (r2 * r) +
+                            two_alpha_sqrtpi * exp_ar2 / r2;
+                        const coeff = charges[i] * charges[j] * bracket;
 
                         const rv = [3]f64{ delta.x, delta.y, delta.z };
                         for (0..3) |a| {
@@ -423,9 +478,12 @@ pub fn ionIonStress(
             var l: i32 = -g3_max;
             while (l <= g3_max) : (l += 1) {
                 if (h == 0 and k == 0 and l == 0) continue;
+                const b1_scaled = math.Vec3.scale(b1, @as(f64, @floatFromInt(h)));
+                const b2_scaled = math.Vec3.scale(b2, @as(f64, @floatFromInt(k)));
+                const b3_scaled = math.Vec3.scale(b3, @as(f64, @floatFromInt(l)));
                 const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(h))), math.Vec3.scale(b2, @as(f64, @floatFromInt(k)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(l))),
+                    math.Vec3.add(b1_scaled, b2_scaled),
+                    b3_scaled,
                 );
                 const g2val = math.Vec3.dot(gvec, gvec);
                 if (g2val > gcut_final * gcut_final) continue;
@@ -449,7 +507,9 @@ pub fn ionIonStress(
 
                 for (0..3) |a| {
                     for (a..3) |b| {
-                        sigma[a][b] += prefactor * (-@as(f64, if (a == b) 1.0 else 0.0) + 2.0 * gv[a] * gv[b] * gg_factor);
+                        const diag: f64 = if (a == b) 1.0 else 0.0;
+                        const tensor_term = 2.0 * gv[a] * gv[b] * gg_factor;
+                        sigma[a][b] += prefactor * (-diag + tensor_term);
                     }
                 }
             }

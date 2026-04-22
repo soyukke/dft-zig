@@ -6,7 +6,6 @@
 # running: just lint-update-baseline
 #
 # Format: <path>\t<rule>\t<count>
-src/features/band/band.zig	line_too_long	26
 src/features/band/band.zig	function_too_long	2
 src/features/basis/basis631g_2dfp.zig	function_too_long	1
 src/features/config/config.zig	function_too_long	3
@@ -32,12 +31,10 @@ src/features/dfpt/phonon_q/solver_multik.zig	function_too_long	2
 src/features/dfpt/phonon_q/solver_single.zig	function_too_long	1
 src/features/dfpt/sternheimer.zig	function_too_long	1
 src/features/dft/cube.zig	function_too_long	1
-src/features/dft/dft.zig	line_too_long	23
 src/features/dft/dft.zig	function_too_long	2
 src/features/dft/output.zig	line_too_long	14
 src/features/dft/term.zig	line_too_long	6
 src/features/dos/pdos.zig	function_too_long	1
-src/features/ewald/ewald.zig	line_too_long	20
 src/features/ewald/ewald.zig	function_too_long	3
 src/features/fft/fft.zig	function_too_long	1
 src/features/forces/forces.zig	line_too_long	20
@@ -71,7 +68,6 @@ src/features/gto_scf/vibrational.zig	function_too_long	3
 src/features/hamiltonian/hamiltonian.zig	line_too_long	2
 src/features/integrals/eri_df.zig	line_too_long	18
 src/features/integrals/eri_df.zig	function_too_long	2
-src/features/integrals/libcint.zig	line_too_long	28
 src/features/integrals/libcint.zig	function_too_long	4
 src/features/integrals/nuclear.zig	line_too_long	1
 src/features/integrals/obara_saika.zig	function_too_long	8
@@ -119,7 +115,6 @@ src/features/pseudopotential/nonlocal.zig	line_too_long	3
 src/features/pseudopotential/pseudopotential.zig	line_too_long	3
 src/features/pseudopotential/pseudopotential.zig	function_too_long	2
 src/features/relax/optimizer.zig	line_too_long	2
-src/features/relax/relax.zig	line_too_long	27
 src/features/relax/relax.zig	function_too_long	4
 src/features/runtime/logging.zig	line_too_long	1
 src/features/runtime/logging.zig	debug_print	1
@@ -165,7 +160,6 @@ src/features/symmetry/symmetry.zig	function_too_long	2
 src/features/symmetry/symmetry_basis.zig	function_too_long	2
 src/features/symmetry/wavefunction_rotation.zig	line_too_long	3
 src/features/symmetry/wavefunction_rotation.zig	function_too_long	1
-src/features/vdw/d3.zig	line_too_long	18
 src/features/vdw/d3.zig	function_too_long	3
 src/features/xc/xc.zig	line_too_long	16
 src/features/xc/xc.zig	function_too_long	1
@@ -194,5 +188,4 @@ src/lib/linalg/benchmark.zig	debug_print	9
 src/lib/linalg/blas.zig	line_too_long	1
 src/main.zig	line_too_long	2
 src/test_support.zig	debug_print	2
-src/tests.zig	line_too_long	26
 src/tests.zig	debug_print	2

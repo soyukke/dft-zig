@@ -51,17 +51,112 @@ const CINTIntegralFn = if (enable_libcint) *const fn (
 
 /// Extern declarations for the libcint integral functions we use.
 const cint_fns = if (enable_libcint) struct {
-    extern fn int1e_ovlp_cart(out: [*]f64, dims: ?[*]c_int, shls: [*]c_int, atm: [*]c_int, natm: c_int, bas: [*]c_int, nbas: c_int, env: [*]f64, opt: ?*c.CINTOpt, cache: ?[*]f64) callconv(.c) c_int;
-    extern fn int1e_kin_cart(out: [*]f64, dims: ?[*]c_int, shls: [*]c_int, atm: [*]c_int, natm: c_int, bas: [*]c_int, nbas: c_int, env: [*]f64, opt: ?*c.CINTOpt, cache: ?[*]f64) callconv(.c) c_int;
-    extern fn int1e_nuc_cart(out: [*]f64, dims: ?[*]c_int, shls: [*]c_int, atm: [*]c_int, natm: c_int, bas: [*]c_int, nbas: c_int, env: [*]f64, opt: ?*c.CINTOpt, cache: ?[*]f64) callconv(.c) c_int;
-    extern fn int2e_cart(out: [*]f64, dims: ?[*]c_int, shls: [*]c_int, atm: [*]c_int, natm: c_int, bas: [*]c_int, nbas: c_int, env: [*]f64, opt: ?*c.CINTOpt, cache: ?[*]f64) callconv(.c) c_int;
-    extern fn int1e_ipovlp_cart(out: [*]f64, dims: ?[*]c_int, shls: [*]c_int, atm: [*]c_int, natm: c_int, bas: [*]c_int, nbas: c_int, env: [*]f64, opt: ?*c.CINTOpt, cache: ?[*]f64) callconv(.c) c_int;
-    extern fn int1e_ipkin_cart(out: [*]f64, dims: ?[*]c_int, shls: [*]c_int, atm: [*]c_int, natm: c_int, bas: [*]c_int, nbas: c_int, env: [*]f64, opt: ?*c.CINTOpt, cache: ?[*]f64) callconv(.c) c_int;
-    extern fn int1e_ipnuc_cart(out: [*]f64, dims: ?[*]c_int, shls: [*]c_int, atm: [*]c_int, natm: c_int, bas: [*]c_int, nbas: c_int, env: [*]f64, opt: ?*c.CINTOpt, cache: ?[*]f64) callconv(.c) c_int;
-    extern fn int2e_ip1_cart(out: [*]f64, dims: ?[*]c_int, shls: [*]c_int, atm: [*]c_int, natm: c_int, bas: [*]c_int, nbas: c_int, env: [*]f64, opt: ?*c.CINTOpt, cache: ?[*]f64) callconv(.c) c_int;
+    extern fn int1e_ovlp_cart(
+        out: [*]f64,
+        dims: ?[*]c_int,
+        shls: [*]c_int,
+        atm: [*]c_int,
+        natm: c_int,
+        bas: [*]c_int,
+        nbas: c_int,
+        env: [*]f64,
+        opt: ?*c.CINTOpt,
+        cache: ?[*]f64,
+    ) callconv(.c) c_int;
+    extern fn int1e_kin_cart(
+        out: [*]f64,
+        dims: ?[*]c_int,
+        shls: [*]c_int,
+        atm: [*]c_int,
+        natm: c_int,
+        bas: [*]c_int,
+        nbas: c_int,
+        env: [*]f64,
+        opt: ?*c.CINTOpt,
+        cache: ?[*]f64,
+    ) callconv(.c) c_int;
+    extern fn int1e_nuc_cart(
+        out: [*]f64,
+        dims: ?[*]c_int,
+        shls: [*]c_int,
+        atm: [*]c_int,
+        natm: c_int,
+        bas: [*]c_int,
+        nbas: c_int,
+        env: [*]f64,
+        opt: ?*c.CINTOpt,
+        cache: ?[*]f64,
+    ) callconv(.c) c_int;
+    extern fn int2e_cart(
+        out: [*]f64,
+        dims: ?[*]c_int,
+        shls: [*]c_int,
+        atm: [*]c_int,
+        natm: c_int,
+        bas: [*]c_int,
+        nbas: c_int,
+        env: [*]f64,
+        opt: ?*c.CINTOpt,
+        cache: ?[*]f64,
+    ) callconv(.c) c_int;
+    extern fn int1e_ipovlp_cart(
+        out: [*]f64,
+        dims: ?[*]c_int,
+        shls: [*]c_int,
+        atm: [*]c_int,
+        natm: c_int,
+        bas: [*]c_int,
+        nbas: c_int,
+        env: [*]f64,
+        opt: ?*c.CINTOpt,
+        cache: ?[*]f64,
+    ) callconv(.c) c_int;
+    extern fn int1e_ipkin_cart(
+        out: [*]f64,
+        dims: ?[*]c_int,
+        shls: [*]c_int,
+        atm: [*]c_int,
+        natm: c_int,
+        bas: [*]c_int,
+        nbas: c_int,
+        env: [*]f64,
+        opt: ?*c.CINTOpt,
+        cache: ?[*]f64,
+    ) callconv(.c) c_int;
+    extern fn int1e_ipnuc_cart(
+        out: [*]f64,
+        dims: ?[*]c_int,
+        shls: [*]c_int,
+        atm: [*]c_int,
+        natm: c_int,
+        bas: [*]c_int,
+        nbas: c_int,
+        env: [*]f64,
+        opt: ?*c.CINTOpt,
+        cache: ?[*]f64,
+    ) callconv(.c) c_int;
+    extern fn int2e_ip1_cart(
+        out: [*]f64,
+        dims: ?[*]c_int,
+        shls: [*]c_int,
+        atm: [*]c_int,
+        natm: c_int,
+        bas: [*]c_int,
+        nbas: c_int,
+        env: [*]f64,
+        opt: ?*c.CINTOpt,
+        cache: ?[*]f64,
+    ) callconv(.c) c_int;
 
     // Optimizer functions
-    extern fn cint2e_cart_optimizer(opt: *?*c.CINTOpt, atm: [*]c_int, natm: c_int, bas: [*]c_int, nbas: c_int, env: [*]f64) callconv(.c) void;
+    extern fn cint2e_cart_optimizer(
+        opt: *?*c.CINTOpt,
+        atm: [*]c_int,
+        natm: c_int,
+        bas: [*]c_int,
+        nbas: c_int,
+        env: [*]f64,
+    ) callconv(.c) void;
     extern fn CINTdel_optimizer(opt: *?*c.CINTOpt) callconv(.c) void;
 } else struct {};
 
@@ -297,7 +392,10 @@ fn cartNormFactor(ax: u32, ay: u32, az: u32) f64 {
             df_2l1 *= @as(f64, @floatFromInt(k));
         }
     }
-    const df_cart = basis_mod.doubleFactorial(ax) * basis_mod.doubleFactorial(ay) * basis_mod.doubleFactorial(az);
+    const df_x = basis_mod.doubleFactorial(ax);
+    const df_y = basis_mod.doubleFactorial(ay);
+    const df_z = basis_mod.doubleFactorial(az);
+    const df_cart = df_x * df_y * df_z;
     return @sqrt(df_2l1 / (4.0 * std.math.pi * df_cart));
 }
 
@@ -420,7 +518,8 @@ fn buildOneElectronMatrix(
             for (0..ni) |ii| {
                 for (0..nj) |jj| {
                     // libcint output: column-major within shell block
-                    mat[(oi + ii) * n + (oj + jj)] = buf[jj * ni + ii] * cart_norms[oi + ii] * cart_norms[oj + jj];
+                    const norm_ij = cart_norms[oi + ii] * cart_norms[oj + jj];
+                    mat[(oi + ii) * n + (oj + jj)] = buf[jj * ni + ii] * norm_ij;
                 }
             }
         }
@@ -514,10 +613,14 @@ pub fn buildEriTensor(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
                     shls[2] = sk;
                     shls[3] = sl;
 
-                    const ni = basis_mod.numCartesian(@intCast(data.bas[@as(usize, @intCast(si)) * BAS_SLOTS + ANG_OF]));
-                    const nj = basis_mod.numCartesian(@intCast(data.bas[@as(usize, @intCast(sj)) * BAS_SLOTS + ANG_OF]));
-                    const nk = basis_mod.numCartesian(@intCast(data.bas[@as(usize, @intCast(sk)) * BAS_SLOTS + ANG_OF]));
-                    const nl = basis_mod.numCartesian(@intCast(data.bas[@as(usize, @intCast(sl)) * BAS_SLOTS + ANG_OF]));
+                    const li = data.bas[@as(usize, @intCast(si)) * BAS_SLOTS + ANG_OF];
+                    const lj = data.bas[@as(usize, @intCast(sj)) * BAS_SLOTS + ANG_OF];
+                    const lk = data.bas[@as(usize, @intCast(sk)) * BAS_SLOTS + ANG_OF];
+                    const ll_ang = data.bas[@as(usize, @intCast(sl)) * BAS_SLOTS + ANG_OF];
+                    const ni = basis_mod.numCartesian(@intCast(li));
+                    const nj = basis_mod.numCartesian(@intCast(lj));
+                    const nk = basis_mod.numCartesian(@intCast(lk));
+                    const nl = basis_mod.numCartesian(@intCast(ll_ang));
 
                     _ = cint_fns.int2e_cart(
                         &buf,
@@ -543,14 +646,18 @@ pub fn buildEriTensor(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
                         for (0..nj) |jj| {
                             for (0..nk) |kk| {
                                 for (0..nl) |ll| {
-                                    // libcint index: col-major: buf[i + j*ni + k*ni*nj + l*ni*nj*nk]
+                                    // libcint index: col-major:
+                                    //   buf[i + j*ni + k*ni*nj + l*ni*nj*nk]
                                     const cidx = ii + jj * ni + kk * ni * nj + ll * ni * nj * nk;
                                     const mu = oi + ii;
                                     const nu = oj + jj;
                                     const lam = ok + kk;
                                     const sig = ol + ll;
-                                    const norm = cart_norms[mu] * cart_norms[nu] * cart_norms[lam] * cart_norms[sig];
-                                    eri[mu * n * n * n + nu * n * n + lam * n + sig] = buf[cidx] * norm;
+                                    const norm_mn = cart_norms[mu] * cart_norms[nu];
+                                    const norm_ls = cart_norms[lam] * cart_norms[sig];
+                                    const norm = norm_mn * norm_ls;
+                                    const eri_idx = mu * n * n * n + nu * n * n + lam * n + sig;
+                                    eri[eri_idx] = buf[cidx] * norm;
                                 }
                             }
                         }
@@ -647,7 +754,8 @@ fn buildOneElectronGradient(
                 for (0..ni) |ii| {
                     for (0..nj) |jj| {
                         const cidx = d * block_size + jj * ni + ii;
-                        mats[d][(oi + ii) * n + (oj + jj)] = buf[cidx] * cart_norms[oi + ii] * cart_norms[oj + jj];
+                        const norm_ij = cart_norms[oi + ii] * cart_norms[oj + jj];
+                        mats[d][(oi + ii) * n + (oj + jj)] = buf[cidx] * norm_ij;
                     }
                 }
             }
@@ -731,7 +839,11 @@ pub const LibcintJKBuilder = struct {
     n: usize,
     schwarz_threshold: f64,
 
-    pub fn init(alloc: std.mem.Allocator, data: LibcintData, schwarz_threshold: f64) !LibcintJKBuilder {
+    pub fn init(
+        alloc: std.mem.Allocator,
+        data: LibcintData,
+        schwarz_threshold: f64,
+    ) !LibcintJKBuilder {
         if (!enable_libcint) return error.LibcintNotAvailable;
 
         const nbas: usize = @intCast(data.nbas);
@@ -917,6 +1029,8 @@ pub const LibcintJKBuilder = struct {
                         const abcd_same = (ab_pair == cd_pair);
 
                         // Distribute ERIs with 8-fold symmetry
+                        const na_nb = na * nb;
+                        const na_nb_nc = na_nb * nc;
                         for (0..na) |ia| {
                             const mu = off_a + ia;
                             for (0..nb) |ib| {
@@ -926,8 +1040,10 @@ pub const LibcintJKBuilder = struct {
                                     for (0..nd) |id_d| {
                                         const sig = off_d + id_d;
 
-                                        const cidx = ia + ib * na + ic * na * nb + id_d * na * nb * nc;
-                                        const eri = buf[cidx] * cart_norms[mu] * cart_norms[nu] * cart_norms[lam] * cart_norms[sig];
+                                        const cidx = ia + ib * na + ic * na_nb + id_d * na_nb_nc;
+                                        const norm_mn = cart_norms[mu] * cart_norms[nu];
+                                        const norm_ls = cart_norms[lam] * cart_norms[sig];
+                                        const eri = buf[cidx] * norm_mn * norm_ls;
 
                                         // 1. (mu,nu | lam,sig)
                                         j_matrix[mu * n + nu] += density[lam * n + sig] * eri;
@@ -941,14 +1057,18 @@ pub const LibcintJKBuilder = struct {
 
                                         // 3. (mu,nu | sig,lam)
                                         if (!cd_same) {
-                                            j_matrix[mu * n + nu] += density[sig * n + lam] * eri;
-                                            k_matrix[mu * n + sig] += density[nu * n + lam] * eri;
+                                            const d_sl = density[sig * n + lam];
+                                            const d_nl = density[nu * n + lam];
+                                            j_matrix[mu * n + nu] += d_sl * eri;
+                                            k_matrix[mu * n + sig] += d_nl * eri;
                                         }
 
                                         // 4. (nu,mu | sig,lam)
                                         if (!ab_same and !cd_same) {
-                                            j_matrix[nu * n + mu] += density[sig * n + lam] * eri;
-                                            k_matrix[nu * n + sig] += density[mu * n + lam] * eri;
+                                            const d_sl = density[sig * n + lam];
+                                            const d_ml = density[mu * n + lam];
+                                            j_matrix[nu * n + mu] += d_sl * eri;
+                                            k_matrix[nu * n + sig] += d_ml * eri;
                                         }
 
                                         // 5-8. bra-ket exchange
@@ -957,18 +1077,24 @@ pub const LibcintJKBuilder = struct {
                                             k_matrix[lam * n + mu] += density[sig * n + nu] * eri;
 
                                             if (!cd_same) {
-                                                j_matrix[sig * n + lam] += density[mu * n + nu] * eri;
-                                                k_matrix[sig * n + mu] += density[lam * n + nu] * eri;
+                                                const d_mn = density[mu * n + nu];
+                                                const d_ln = density[lam * n + nu];
+                                                j_matrix[sig * n + lam] += d_mn * eri;
+                                                k_matrix[sig * n + mu] += d_ln * eri;
                                             }
 
                                             if (!ab_same) {
-                                                j_matrix[lam * n + sig] += density[nu * n + mu] * eri;
-                                                k_matrix[lam * n + nu] += density[sig * n + mu] * eri;
+                                                const d_nm = density[nu * n + mu];
+                                                const d_sm = density[sig * n + mu];
+                                                j_matrix[lam * n + sig] += d_nm * eri;
+                                                k_matrix[lam * n + nu] += d_sm * eri;
                                             }
 
                                             if (!ab_same and !cd_same) {
-                                                j_matrix[sig * n + lam] += density[nu * n + mu] * eri;
-                                                k_matrix[sig * n + nu] += density[lam * n + mu] * eri;
+                                                const d_nm = density[nu * n + mu];
+                                                const d_lm = density[lam * n + mu];
+                                                j_matrix[sig * n + lam] += d_nm * eri;
+                                                k_matrix[sig * n + nu] += d_lm * eri;
                                             }
                                         }
                                     }

@@ -173,7 +173,9 @@ pub fn computeEnergy(
                         // Double counting factor: 0.5 for A==B with L≠0, 1.0 for A<B
                         const factor: f64 = if (ia == ib) 0.5 else 1.0;
 
-                        energy -= factor * (damping.s6 * c6 / (r6 + f6) + damping.s8 * c8 / (r8 + f8));
+                        const e6 = damping.s6 * c6 / (r6 + f6);
+                        const e8 = damping.s8 * c8 / (r8 + f8);
+                        energy -= factor * (e6 + e8);
                     }
                 }
             }
@@ -244,7 +246,8 @@ pub fn computeForces(
                         const f6 = r0 * r0 * r0 * r0 * r0 * r0;
                         const f8 = f6 * r0 * r0;
 
-                        // dE/dR = s6 * 6*C6*R^4*R_vec / (R^6 + f^6)^2 + s8 * 8*C8*R^6*R_vec / (R^8 + f^8)^2
+                        // dE/dR = s6 * 6*C6*R^4*R_vec / (R^6 + f^6)^2
+                        //       + s8 * 8*C8*R^6*R_vec / (R^8 + f^8)^2
                         const denom6 = r6 + f6;
                         const denom8 = r8 + f8;
                         const grad_scale = damping.s6 * 6.0 * c6 * r2 * r2 / (denom6 * denom6) +
@@ -252,18 +255,25 @@ pub fn computeForces(
 
                         const factor: f64 = if (ia == ib) 0.5 else 1.0;
 
-                        // Force = -dE/dR_A, where dE/dR_A = -grad_scale * R_vec (for attractive E = -C/R^n)
-                        // Actually: E = -C/(R^n + f^n), dE/dR = n*C*R^(n-2)*R_vec/(R^n+f^n)^2
-                        // F_A = -dE/dR_A = -dE/dR * dR/dR_A = dE/dR * R_vec/R ... wait, let me be careful.
+                        // Force = -dE/dR_A, where dE/dR_A = -grad_scale * R_vec
+                        // (for attractive E = -C/R^n).
+                        // Actually: E = -C/(R^n + f^n),
+                        //   dE/dR = n*C*R^(n-2)*R_vec/(R^n+f^n)^2
+                        // F_A = -dE/dR_A = -dE/dR * dR/dR_A = dE/dR * R_vec/R
+                        // ... wait, let me be careful.
                         // R_vec = R_B - R_A, so dR_vec/dR_A = -I, dR/dR_A = -R_vec/R
                         // dE/dR_A = (dE/dR) * (dR/dR_A) = (dE/dR) * (-R_hat)
                         // F_A = -dE/dR_A = (dE/dR) * R_hat = grad_scale * R_vec / R
                         // But actually we need to be more careful:
-                        // E = -s6*C6/(R^6+f^6) => dE/d(R²) = s6*C6*3*R^4/(R^6+f^6)^2 ... let me use R_alpha
+                        // E = -s6*C6/(R^6+f^6) => dE/d(R²) = s6*C6*3*R^4/(R^6+f^6)^2
+                        // ... let me use R_alpha
                         // dE/dR_alpha = dE/dR * R_alpha/R
                         // dE/dR = s6*6*C6*R^5/(R^6+f^6)^2 + s8*8*C8*R^7/(R^8+f^8)^2
-                        // So dE/dR * R_alpha/R = (s6*6*C6*R^4/(R^6+f^6)^2 + s8*8*C8*R^6/(R^8+f^8)^2) * R_alpha
-                        // F_A_alpha = -dE/dR_A_alpha = (dE/dR) * R_alpha/R = grad_scale * r_vec_alpha
+                        // So dE/dR * R_alpha/R
+                        //   = (s6*6*C6*R^4/(R^6+f^6)^2
+                        //      + s8*8*C8*R^6/(R^8+f^8)^2) * R_alpha
+                        // F_A_alpha = -dE/dR_A_alpha = (dE/dR) * R_alpha/R
+                        //           = grad_scale * r_vec_alpha
                         // (since R_vec = R_B - R_A, dR/d(R_A_alpha) = -R_alpha/R)
                         // Actually F_A = -dE/dR_A = -(dE/dR * (-R_hat)) = dE/dR * R_hat
 
@@ -463,24 +473,33 @@ pub fn computeDynmatQ(
         }
     }
 
-    // Diagonal blocks: ASR  D_q(Iα, Iβ) = -Σ_{J,L≠(I,0)} D(Iα, Jβ; L) (no phase for self-term)
+    // Diagonal blocks: ASR
+    //   D_q(Iα, Iβ) = -Σ_{J,L≠(I,0)} D(Iα, Jβ; L)  (no phase for self-term)
     // More precisely, we need the real-space sum for the diagonal:
     // D_q(Iα,Iβ) = -Σ_{J,L≠(I,0)} D(Iα,Jβ;L) × exp(iq·L) ... wait, actually
-    // The standard approach: D_q(Iα,Iβ) is computed as sum over all (J,L)≠(I,0) just like off-diag.
+    // The standard approach: D_q(Iα,Iβ) is computed as sum over all (J,L)≠(I,0)
+    // just like off-diag.
     // But for the Γ point limit, we enforce ASR.
-    // For q≠0, the off-diagonal already correctly represents the dynamical matrix via Fourier transform.
-    // We should NOT separately enforce ASR at q≠0; the lattice sum handles it naturally.
+    // For q≠0, the off-diagonal already correctly represents the dynamical
+    // matrix via Fourier transform.
+    // We should NOT separately enforce ASR at q≠0; the lattice sum handles it
+    // naturally.
     // However, the diagonal self-interaction at L=0 is excluded above.
-    // Actually, for q≠0, D_q(Iα,Iβ) receives contributions from D(Iα,Iβ;L) for L≠0 (which we computed)
-    // plus the "on-site" term which is the negative sum of all off-diagonal real-space force constants.
+    // Actually, for q≠0, D_q(Iα,Iβ) receives contributions from D(Iα,Iβ;L) for
+    // L≠0 (which we computed)
+    // plus the "on-site" term which is the negative sum of all off-diagonal
+    // real-space force constants.
     // This on-site term is:
     // D(Iα,Iβ;L=0) = -Σ_{(J,L)≠(I,0)} D(Iα,Jβ;L)  (no phase factor here)
     //
     // So D_q(Iα,Iβ) = D(Iα,Iβ;L=0)*exp(iq·0) + Σ_{L≠0} D(Iα,Iβ;L)*exp(iq·L)
-    //                = [-Σ_{(J,L)≠(I,0)} D(Iα,Jβ;L)] + [already accumulated from ib==ia, L≠0 above]
+    //   = [-Σ_{(J,L)≠(I,0)} D(Iα,Jβ;L)]
+    //     + [already accumulated from ib==ia, L≠0 above]
     //
-    // The terms with ib==ia, L≠0 have already been added to the diagonal with their phase factors.
-    // We need to add the on-site self-term = -Σ_{(J,L)≠(I,0)} hess_real (no phase).
+    // The terms with ib==ia, L≠0 have already been added to the diagonal with
+    // their phase factors.
+    // We need to add the on-site self-term = -Σ_{(J,L)≠(I,0)} hess_real
+    // (no phase).
     // But wait, we also need to subtract the ib==ia, L≠0 terms without phase that were
     // implicitly part of the diagonal sum. Let me think again...
     //
@@ -560,18 +579,28 @@ pub fn computeDynmatQ(
 /// Compute the pairwise Hessian d²E_pair/dR_Iα dR_Jβ for a single pair (I, J+L).
 /// This is the second derivative of E = -s6*C6/(R^6+f^6) - s8*C8/(R^8+f^8)
 /// with respect to the positions of atoms I and J.
-/// For the (I,J) off-diagonal block: d²E/dR_Iα dR_Jβ = -d²E/dR_Iα dR_Iβ (by translation symmetry)
+/// For the (I,J) off-diagonal block: d²E/dR_Iα dR_Jβ = -d²E/dR_Iα dR_Iβ
+/// (by translation symmetry).
 /// Actually: d²E/dR_Iα dR_Jβ is what we compute directly.
 /// R_vec = R_J + L - R_I, so dR_vec_α/dR_Jβ = δ_αβ, dR_vec_α/dR_Iβ = -δ_αβ
-/// d²E/dR_Iα dR_Jβ = Σ_γδ (d²E/dR_γ dR_δ)(dR_γ/dR_Iα)(dR_δ/dR_Jβ) = d²E/dR_α dR_β * (-1)(+1) = -d²E/dRα dRβ
+/// d²E/dR_Iα dR_Jβ = Σ_γδ (d²E/dR_γ dR_δ)(dR_γ/dR_Iα)(dR_δ/dR_Jβ)
+///   = d²E/dR_α dR_β * (-1)(+1) = -d²E/dRα dRβ
 /// Wait, let me re-derive carefully.
 /// E depends on R_vec = R_J - R_I. So:
 /// dE/dR_Iα = -dE/dR_α (chain rule with R_vec_α = R_Jα - R_Iα)
 /// dE/dR_Jβ = +dE/dR_β
 /// d²E/dR_Iα dR_Jβ = -d²E/dR_α dR_β
 ///
-/// For the Hessian in real space we need d²E/(dR_Iα)(dR_Jβ) which goes into the dynmat.
-fn pairwiseHessian(r_vec: math.Vec3, r2: f64, c6: f64, c8: f64, r0: f64, damping: params.DampingParams) [3][3]f64 {
+/// For the Hessian in real space we need d²E/(dR_Iα)(dR_Jβ) which goes into
+/// the dynmat.
+fn pairwiseHessian(
+    r_vec: math.Vec3,
+    r2: f64,
+    c6: f64,
+    c8: f64,
+    r0: f64,
+    damping: params.DampingParams,
+) [3][3]f64 {
     const r = @sqrt(r2);
     const r4 = r2 * r2;
     const r6 = r4 * r2;
@@ -590,22 +619,26 @@ fn pairwiseHessian(r_vec: math.Vec3, r2: f64, c6: f64, c8: f64, r0: f64, damping
     //
     // For E(R) = -C/(R^n + f^n):
     // dE/dR = n*C*R^(n-1)/(R^n+f^n)^2
-    // d²E/dR² = n*C*[(n-1)*R^(n-2)*(R^n+f^n)^2 - R^(n-1)*2*(R^n+f^n)*n*R^(n-1)] / (R^n+f^n)^4
+    // d²E/dR² = n*C*[(n-1)*R^(n-2)*(R^n+f^n)^2
+    //                 - R^(n-1)*2*(R^n+f^n)*n*R^(n-1)] / (R^n+f^n)^4
     //         = n*C*R^(n-2)/(R^n+f^n)^2 * [(n-1) - 2*n*R^n/(R^n+f^n)]
     //
-    // Hessian: d²E/dR_α dR_β = (d²E/dR² - (1/R)*dE/dR) * R_α*R_β/R² + (1/R)*dE/dR * δ_αβ
+    // Hessian: d²E/dR_α dR_β
+    //   = (d²E/dR² - (1/R)*dE/dR) * R_α*R_β/R² + (1/R)*dE/dR * δ_αβ
     //
     // For the off-diagonal dynmat block: d²E/(dR_Iα)(dR_Jβ) = -d²E/dR_α dR_β
 
     // C6 term
     const n6: f64 = 6.0;
     const de6_dr = n6 * damping.s6 * c6 * pow_f64(r2, 2.5) / (denom6 * denom6);
-    const d2e6_dr2 = n6 * damping.s6 * c6 * pow_f64(r2, 2.0) / (denom6 * denom6) * ((n6 - 1.0) - 2.0 * n6 * r6 / denom6);
+    const d2e6_prefactor = n6 * damping.s6 * c6 * pow_f64(r2, 2.0) / (denom6 * denom6);
+    const d2e6_dr2 = d2e6_prefactor * ((n6 - 1.0) - 2.0 * n6 * r6 / denom6);
 
     // C8 term
     const n8: f64 = 8.0;
     const de8_dr = n8 * damping.s8 * c8 * pow_f64(r2, 3.5) / (denom8 * denom8);
-    const d2e8_dr2 = n8 * damping.s8 * c8 * pow_f64(r2, 3.0) / (denom8 * denom8) * ((n8 - 1.0) - 2.0 * n8 * r8 / denom8);
+    const d2e8_prefactor = n8 * damping.s8 * c8 * pow_f64(r2, 3.0) / (denom8 * denom8);
+    const d2e8_dr2 = d2e8_prefactor * ((n8 - 1.0) - 2.0 * n8 * r8 / denom8);
 
     const de_dr = de6_dr + de8_dr;
     const d2e_dr2 = d2e6_dr2 + d2e8_dr2;
@@ -713,7 +746,13 @@ test "coordination number - H2 molecule" {
         .{ .x = 0.0, .y = 0.0, .z = 100.0 },
     );
 
-    const cn = try computeCoordinationNumbers(alloc, &atomic_numbers, &positions, cell, default_cn_cutoff);
+    const cn = try computeCoordinationNumbers(
+        alloc,
+        &atomic_numbers,
+        &positions,
+        cell,
+        default_cn_cutoff,
+    );
     defer alloc.free(cn);
 
     // Each H should have CN ≈ 1.0
@@ -752,7 +791,15 @@ test "energy - H2 molecule" {
         .{ .x = 0.0, .y = 0.0, .z = 100.0 },
     );
 
-    const energy = try computeEnergy(alloc, &atomic_numbers, &positions, cell, params.pbe_d3bj, default_cutoff, default_cn_cutoff);
+    const energy = try computeEnergy(
+        alloc,
+        &atomic_numbers,
+        &positions,
+        cell,
+        params.pbe_d3bj,
+        default_cutoff,
+        default_cn_cutoff,
+    );
 
     // Energy should be negative (attractive)
     try testing.expect(energy < 0.0);
@@ -775,7 +822,15 @@ test "forces - H2 molecule sum to zero" {
         .{ .x = 0.0, .y = 0.0, .z = 100.0 },
     );
 
-    const forces = try computeForces(alloc, &atomic_numbers, &positions, cell, params.pbe_d3bj, default_cutoff, default_cn_cutoff);
+    const forces = try computeForces(
+        alloc,
+        &atomic_numbers,
+        &positions,
+        cell,
+        params.pbe_d3bj,
+        default_cutoff,
+        default_cn_cutoff,
+    );
     defer alloc.free(forces);
 
     // Forces should sum to zero (Newton's third law)
@@ -806,7 +861,15 @@ test "dynmat - H2 molecule acoustic sum rule" {
         .{ .x = 0.0, .y = 0.0, .z = 100.0 },
     );
 
-    const dyn = try computeDynmat(alloc, &atomic_numbers, &positions, cell, params.pbe_d3bj, default_cutoff, default_cn_cutoff);
+    const dyn = try computeDynmat(
+        alloc,
+        &atomic_numbers,
+        &positions,
+        cell,
+        params.pbe_d3bj,
+        default_cutoff,
+        default_cn_cutoff,
+    );
     defer alloc.free(dyn);
 
     // Check ASR: sum over J for each (Iα, β) should be zero

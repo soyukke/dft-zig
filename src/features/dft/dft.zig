@@ -49,7 +49,10 @@ const ActiveStructure = struct {
 };
 
 fn cellVolume(cell_bohr: math.Mat3) f64 {
-    return @abs(math.Vec3.dot(cell_bohr.row(0), math.Vec3.cross(cell_bohr.row(1), cell_bohr.row(2))));
+    const a1 = cell_bohr.row(0);
+    const a2 = cell_bohr.row(1);
+    const a3 = cell_bohr.row(2);
+    return @abs(math.Vec3.dot(a1, math.Vec3.cross(a2, a3)));
 }
 
 fn selectActiveStructure(
@@ -112,7 +115,16 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
     if (cfg.relax.enabled) {
         const relax_start_ns = nowNs(io);
         try logStep(io, "step: structure relaxation start");
-        relax_result = try relax.run(alloc, io, cfg, species, atom_data, cell_bohr, recip, volume_bohr);
+        relax_result = try relax.run(
+            alloc,
+            io,
+            cfg,
+            species,
+            atom_data,
+            cell_bohr,
+            recip,
+            volume_bohr,
+        );
 
         // Write relaxation output files
         const bohr_to_ang = 0.529177; // 1 Bohr = 0.529177 Angstrom
@@ -123,7 +135,13 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         timing.relax_ns = elapsedNs(io, relax_start_ns);
     }
 
-    const active = selectActiveStructure(atom_data, cell_bohr, recip, volume_bohr, if (relax_result) |*rr| rr else null);
+    const active = selectActiveStructure(
+        atom_data,
+        cell_bohr,
+        recip,
+        volume_bohr,
+        if (relax_result) |*rr| rr else null,
+    );
     const cell_ang = active.cell_bohr.scale(math.unitsScaleToAngstrom(.bohr));
 
     try logStep(io, "step: generate k-path");
@@ -143,7 +161,8 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
 
     // Skip post-relax SCF if we have the converged potential from relax
     const have_relax_potential = if (relax_result) |rr| rr.final_potential != null else false;
-    const needs_reference = cfg.scf.reference_json != null or cfg.scf.compare_reference_json != null;
+    const needs_reference = cfg.scf.reference_json != null or
+        cfg.scf.compare_reference_json != null;
 
     const active_model = model_mod.Model{
         .species = species,
@@ -160,7 +179,10 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         // density and kpoint_cache are borrowed (scf.run copies internally)
         // apply_caches ownership is transferred to scf.run
         const init_density: ?[]const f64 = if (relax_result) |rr| rr.final_density else null;
-        const init_kpoint_cache: ?[]scf.KpointCache = if (relax_result) |rr| rr.final_kpoint_cache else null;
+        const init_kpoint_cache: ?[]scf.KpointCache = if (relax_result) |rr|
+            rr.final_kpoint_cache
+        else
+            null;
         var init_apply_caches: ?[]scf.KpointApplyCache = null;
         if (relax_result) |*rr| {
             init_apply_caches = rr.final_apply_caches;
@@ -185,7 +207,13 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         if (scf_result) |*result| {
             try logStep(io, "step: stress tensor start");
             const stress = @import("../stress/stress.zig");
-            const stress_terms = try stress.computeStressFromScf(alloc, io, result, cfg, &active_model);
+            const stress_terms = try stress.computeStressFromScf(
+                alloc,
+                io,
+                result,
+                cfg,
+                &active_model,
+            );
             _ = stress_terms;
             try logStep(io, "step: stress tensor done");
         }
@@ -206,10 +234,21 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                     cfg.scf.nspin,
                 );
                 defer dos_result.deinit(alloc);
-                const dos_fermi = if (std.math.isNan(result.fermi_level)) wf_data.fermi_level else result.fermi_level;
+                const dos_fermi = if (std.math.isNan(result.fermi_level))
+                    wf_data.fermi_level
+                else
+                    result.fermi_level;
                 if (result.wavefunctions_down) |wf_down| {
                     try dos.writeDosCSVNamed(io, out_dir, dos_result, dos_fermi, "dos_up.csv");
-                    var dos_down = try dos.computeDos(alloc, wf_down, cfg.dos.sigma, cfg.dos.npoints, cfg.dos.emin, cfg.dos.emax, 2);
+                    var dos_down = try dos.computeDos(
+                        alloc,
+                        wf_down,
+                        cfg.dos.sigma,
+                        cfg.dos.npoints,
+                        cfg.dos.emin,
+                        cfg.dos.emax,
+                        2,
+                    );
                     defer dos_down.deinit(alloc);
                     try dos.writeDosCSVNamed(io, out_dir, dos_down, dos_fermi, "dos_down.csv");
                 } else {
@@ -259,7 +298,11 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         }
     }
 
-    if (cfg.scf.reference_json != null or cfg.scf.compare_reference_json != null or cfg.scf.comparison_json != null or cfg.scf.compare_tolerance_json != null) {
+    if (cfg.scf.reference_json != null or
+        cfg.scf.compare_reference_json != null or
+        cfg.scf.comparison_json != null or
+        cfg.scf.compare_tolerance_json != null)
+    {
         if (scf_result == null) return error.ScfDisabled;
     }
 
@@ -268,7 +311,12 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
             try linear_scaling.writeReferenceFromScfResult(io, out_dir, path, result);
         }
         if (cfg.scf.compare_reference_json) |ref_path| {
-            var reference = try linear_scaling.readReferenceJson(io, alloc, std.Io.Dir.cwd(), ref_path);
+            var reference = try linear_scaling.readReferenceJson(
+                io,
+                alloc,
+                std.Io.Dir.cwd(),
+                ref_path,
+            );
             defer reference.deinit(alloc);
             const report = try linear_scaling.compareReferenceToScfResult(&reference, result);
             if (cfg.scf.comparison_json) |out_path| {
@@ -277,9 +325,19 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                 return error.MissingComparisonOutput;
             }
             if (cfg.scf.compare_tolerance_json) |tol_path| {
-                const tol_content = try cwd.readFileAlloc(io, tol_path, alloc, .limited(1024 * 1024));
+                const tol_content = try cwd.readFileAlloc(
+                    io,
+                    tol_path,
+                    alloc,
+                    .limited(1024 * 1024),
+                );
                 defer alloc.free(tol_content);
-                var parsed_tol = try std.json.parseFromSlice(linear_scaling.ScfTolerance, alloc, tol_content, .{});
+                var parsed_tol = try std.json.parseFromSlice(
+                    linear_scaling.ScfTolerance,
+                    alloc,
+                    tol_content,
+                    .{},
+                );
                 defer parsed_tol.deinit();
                 const tol_result = linear_scaling.withinScfTolerance(report, parsed_tol.value);
                 if (!tol_result.all) {
@@ -300,7 +358,14 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
                 var band_result = if (cfg.dfpt.qgrid != null)
                     try dfpt_mod.runPhononBandIFC(alloc, io, cfg, result, &active_model)
                 else
-                    try dfpt_mod.runPhononBand(alloc, io, cfg, result, &active_model, cfg.dfpt.qpath_npoints);
+                    try dfpt_mod.runPhononBand(
+                        alloc,
+                        io,
+                        cfg,
+                        result,
+                        &active_model,
+                        cfg.dfpt.qpath_npoints,
+                    );
                 defer band_result.deinit(alloc);
 
                 // Write phonon band CSV
@@ -355,7 +420,13 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
 
     try logStep(io, "step: write outputs");
     try output.writeRunInfo(io, out_dir, cfg, atoms, cell_ang);
-    try output.writeAtomsFromAtomData(io, out_dir, active.atoms, species, math.unitsScaleToAngstrom(.bohr));
+    try output.writeAtomsFromAtomData(
+        io,
+        out_dir,
+        active.atoms,
+        species,
+        math.unitsScaleToAngstrom(.bohr),
+    );
     try output.writeKpoints(io, out_dir, kpoints);
     try output.writePseudopotentials(io, out_dir, pseudo_data);
 
@@ -364,7 +435,18 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         try logStep(io, "step: band energies");
         const band_paw_tabs: ?[]const paw_mod.PawTab = if (scf_result) |r| r.paw_tabs else null;
         const band_paw_dij: ?[]const []const f64 = if (scf_result) |r| r.paw_dij else null;
-        try band.writeBandEnergies(alloc, io, out_dir, cfg, kpoints, &active_model, extra_potential, extra_potential_down, band_paw_tabs, band_paw_dij);
+        try band.writeBandEnergies(
+            alloc,
+            io,
+            out_dir,
+            cfg,
+            kpoints,
+            &active_model,
+            extra_potential,
+            extra_potential_down,
+            band_paw_tabs,
+            band_paw_dij,
+        );
         timing.band_ns = elapsedNs(io, band_start_ns);
     }
 
@@ -377,7 +459,11 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
 }
 
 /// Load pseudopotentials from config list.
-fn loadPseudopotentials(alloc: std.mem.Allocator, io: std.Io, specs: []pseudo.Spec) ![]pseudo.Parsed {
+fn loadPseudopotentials(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    specs: []pseudo.Spec,
+) ![]pseudo.Parsed {
     if (specs.len == 0) {
         return &[_]pseudo.Parsed{};
     }
@@ -548,7 +634,13 @@ test "selectActiveStructure prefers latest relax geometry and cell" {
         .final_volume = 8.0,
     };
 
-    const active = selectActiveStructure(initial_atoms[0..], initial_cell, initial_recip, 1.0, &relax_result);
+    const active = selectActiveStructure(
+        initial_atoms[0..],
+        initial_cell,
+        initial_recip,
+        1.0,
+        &relax_result,
+    );
 
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), active.cell_bohr.m[0][0], 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, final_recip.m[0][0]), active.recip.m[0][0], 1e-12);
@@ -610,19 +702,51 @@ test "post-relax outputs use active cell and active atoms" {
         .final_volume = 24.0,
     };
 
-    const active = selectActiveStructure(initial_atom_data[0..], initial_cell, initial_recip, 125.0, &relax_result);
+    const active = selectActiveStructure(
+        initial_atom_data[0..],
+        initial_cell,
+        initial_recip,
+        125.0,
+        &relax_result,
+    );
     const cell_ang = active.cell_bohr.scale(math.unitsScaleToAngstrom(.bohr));
 
     try output.writeRunInfo(io, tmp.dir, cfg, input_atoms[0..], cell_ang);
-    try output.writeAtomsFromAtomData(io, tmp.dir, active.atoms, species[0..], math.unitsScaleToAngstrom(.bohr));
+    try output.writeAtomsFromAtomData(
+        io,
+        tmp.dir,
+        active.atoms,
+        species[0..],
+        math.unitsScaleToAngstrom(.bohr),
+    );
 
     const run_info = try tmp.dir.readFileAlloc(io, "run_info.txt", alloc, .limited(1024 * 1024));
     defer alloc.free(run_info);
     const atoms_csv = try tmp.dir.readFileAlloc(io, "atoms.csv", alloc, .limited(1024 * 1024));
     defer alloc.free(atoms_csv);
 
-    try std.testing.expect(std.mem.indexOf(u8, run_info, "cell_angstrom = [[1.05835442, 0.00000000, 0.00000000], [0.00000000, 1.58753163, 0.00000000], [0.00000000, 0.00000000, 2.11670884]]\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, run_info, "cell_angstrom = [[2.64588605, 0.00000000, 0.00000000], [0.00000000, 2.64588605, 0.00000000], [0.00000000, 0.00000000, 2.64588605]]\n") == null);
-    try std.testing.expect(std.mem.indexOf(u8, atoms_csv, "Si,1.05835442,1.58753163,2.11670884\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, atoms_csv, "Si,0.52917721,0.52917721,0.52917721\n") == null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        run_info,
+        "cell_angstrom = [[1.05835442, 0.00000000, 0.00000000]," ++
+            " [0.00000000, 1.58753163, 0.00000000]," ++
+            " [0.00000000, 0.00000000, 2.11670884]]\n",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        run_info,
+        "cell_angstrom = [[2.64588605, 0.00000000, 0.00000000]," ++
+            " [0.00000000, 2.64588605, 0.00000000]," ++
+            " [0.00000000, 0.00000000, 2.64588605]]\n",
+    ) == null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        atoms_csv,
+        "Si,1.05835442,1.58753163,2.11670884\n",
+    ) != null);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        atoms_csv,
+        "Si,0.52917721,0.52917721,0.52917721\n",
+    ) == null);
 }
