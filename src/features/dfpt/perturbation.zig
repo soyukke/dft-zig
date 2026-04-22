@@ -197,10 +197,13 @@ pub fn buildXcPerturbationFull(
     //          + v_σ·(∂n¹/∂x_α)
     const ax = try alloc.alloc(f64, total);
     defer alloc.free(ax);
+
     const ay = try alloc.alloc(f64, total);
     defer alloc.free(ay);
+
     const az = try alloc.alloc(f64, total);
     defer alloc.free(az);
+
     const direct = try alloc.alloc(f64, total);
     errdefer alloc.free(direct);
 
@@ -258,10 +261,13 @@ pub fn buildXcPerturbationFullComplex(
     // Compute all terms
     const ax = try alloc.alloc(math.Complex, total);
     defer alloc.free(ax);
+
     const ay = try alloc.alloc(math.Complex, total);
     defer alloc.free(ay);
+
     const az = try alloc.alloc(math.Complex, total);
     defer alloc.free(az);
+
     const result = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(result);
 
@@ -337,9 +343,11 @@ fn gradientFromComplex(
     // FFT complex real-space → reciprocal
     const values_r_copy = try alloc.alloc(math.Complex, total);
     defer alloc.free(values_r_copy);
+
     @memcpy(values_r_copy, values_r);
     const values_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(values_g);
+
     try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, values_r_copy, values_g, null);
 
     const gx_g = try alloc.alloc(math.Complex, total);
@@ -390,23 +398,29 @@ fn divergenceFromComplex(
     // FFT each component to reciprocal space
     const bx_copy = try alloc.alloc(math.Complex, total);
     defer alloc.free(bx_copy);
+
     @memcpy(bx_copy, bx);
     const bx_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(bx_g);
+
     try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, bx_copy, bx_g, null);
 
     const by_copy = try alloc.alloc(math.Complex, total);
     defer alloc.free(by_copy);
+
     @memcpy(by_copy, by);
     const by_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(by_g);
+
     try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, by_copy, by_g, null);
 
     const bz_copy = try alloc.alloc(math.Complex, total);
     defer alloc.free(bz_copy);
+
     @memcpy(bz_copy, bz);
     const bz_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(bz_g);
+
     try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, bz_copy, bz_g, null);
 
     const div_g = try alloc.alloc(math.Complex, total);
@@ -431,6 +445,275 @@ fn divergenceFromComplex(
     try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, div_g, div_r, null);
     alloc.free(div_g);
     return div_r;
+}
+
+fn applyNonlocalDijCoefficients(
+    entry: anytype,
+    coeffs: []const f64,
+    coeff: []const math.Complex,
+    coeff2: []math.Complex,
+) void {
+    var b: usize = 0;
+    while (b < entry.beta_count) : (b += 1) {
+        const l_val = entry.l_list[b];
+        const offset = entry.m_offsets[b];
+        const m_count = entry.m_counts[b];
+        var m_idx: usize = 0;
+        while (m_idx < m_count) : (m_idx += 1) {
+            var sum = math.complex.init(0.0, 0.0);
+            var j: usize = 0;
+            while (j < entry.beta_count) : (j += 1) {
+                if (entry.l_list[j] != l_val) continue;
+                const dij = coeffs[b * entry.beta_count + j];
+                if (dij == 0.0) continue;
+                const c = coeff[entry.m_offsets[j] + m_idx];
+                sum = math.complex.add(sum, math.complex.scale(c, dij));
+            }
+            coeff2[offset + m_idx] = sum;
+        }
+    }
+}
+
+fn fillGammaPhaseProducts(
+    gvecs: []const plane_wave.GVector,
+    atom_position: math.Vec3,
+    x: []const math.Complex,
+    work_phase: []math.Complex,
+    work_xphase: []math.Complex,
+) void {
+    for (0..gvecs.len) |g| {
+        const phase = math.complex.expi(math.Vec3.dot(gvecs[g].cart, atom_position));
+        work_phase[g] = phase;
+        work_xphase[g] = math.complex.mul(x[g], phase);
+    }
+}
+
+fn projectGammaDerivativeBra(
+    entry: anytype,
+    gvecs: []const plane_wave.GVector,
+    direction: usize,
+    work_xphase: []const math.Complex,
+    coeff: []math.Complex,
+) void {
+    var b: usize = 0;
+    while (b < entry.beta_count) : (b += 1) {
+        const offset = entry.m_offsets[b];
+        const m_count = entry.m_counts[b];
+        var m_idx: usize = 0;
+        while (m_idx < m_count) : (m_idx += 1) {
+            const phi_start = (offset + m_idx) * entry.g_count;
+            const phi = entry.phi[phi_start .. phi_start + entry.g_count];
+            var sum = math.complex.init(0.0, 0.0);
+            for (0..gvecs.len) |g| {
+                const g_alpha = gComponent(gvecs[g].kpg, direction);
+                const term = math.complex.scale(work_xphase[g], phi[g] * g_alpha);
+                sum = math.complex.add(sum, term);
+            }
+            coeff[offset + m_idx] = math.complex.init(-sum.i, sum.r);
+        }
+    }
+}
+
+fn projectGammaBra(
+    entry: anytype,
+    work_xphase: []const math.Complex,
+    coeff: []math.Complex,
+) void {
+    var b: usize = 0;
+    while (b < entry.beta_count) : (b += 1) {
+        const offset = entry.m_offsets[b];
+        const m_count = entry.m_counts[b];
+        var m_idx: usize = 0;
+        while (m_idx < m_count) : (m_idx += 1) {
+            const phi_start = (offset + m_idx) * entry.g_count;
+            const phi = entry.phi[phi_start .. phi_start + entry.g_count];
+            var sum = math.complex.init(0.0, 0.0);
+            for (0..work_xphase.len) |g| {
+                sum = math.complex.add(sum, math.complex.scale(work_xphase[g], phi[g]));
+            }
+            coeff[offset + m_idx] = sum;
+        }
+    }
+}
+
+fn reconstructGammaBraDerivative(
+    entry: anytype,
+    work_phase: []const math.Complex,
+    coeff2: []const math.Complex,
+    inv_volume: f64,
+    out: []math.Complex,
+) void {
+    for (0..out.len) |g| {
+        var accum = math.complex.init(0.0, 0.0);
+        var b: usize = 0;
+        while (b < entry.beta_count) : (b += 1) {
+            const offset = entry.m_offsets[b];
+            const m_count = entry.m_counts[b];
+            var m_idx: usize = 0;
+            while (m_idx < m_count) : (m_idx += 1) {
+                const phi_val = entry.phi[(offset + m_idx) * entry.g_count + g];
+                const c = coeff2[offset + m_idx];
+                accum = math.complex.add(accum, math.complex.scale(c, phi_val));
+            }
+        }
+        const phase_conj = math.complex.conj(work_phase[g]);
+        const add = math.complex.mul(phase_conj, accum);
+        out[g] = math.complex.add(out[g], math.complex.scale(add, inv_volume));
+    }
+}
+
+fn reconstructGammaKetDerivative(
+    entry: anytype,
+    gvecs: []const plane_wave.GVector,
+    direction: usize,
+    work_phase: []const math.Complex,
+    coeff2: []const math.Complex,
+    inv_volume: f64,
+    out: []math.Complex,
+) void {
+    for (0..out.len) |g| {
+        var accum = math.complex.init(0.0, 0.0);
+        var b: usize = 0;
+        while (b < entry.beta_count) : (b += 1) {
+            const offset = entry.m_offsets[b];
+            const m_count = entry.m_counts[b];
+            var m_idx: usize = 0;
+            while (m_idx < m_count) : (m_idx += 1) {
+                const phi_val = entry.phi[(offset + m_idx) * entry.g_count + g];
+                const c = coeff2[offset + m_idx];
+                const g_alpha = gComponent(gvecs[g].kpg, direction);
+                const weighted = math.complex.scale(c, phi_val * g_alpha);
+                accum = math.complex.add(accum, math.complex.init(weighted.i, -weighted.r));
+            }
+        }
+        const phase_conj = math.complex.conj(work_phase[g]);
+        const add = math.complex.mul(phase_conj, accum);
+        out[g] = math.complex.add(out[g], math.complex.scale(add, inv_volume));
+    }
+}
+
+fn projectQDerivativeBra(
+    entry: anytype,
+    gvecs: []const plane_wave.GVector,
+    atom_position: math.Vec3,
+    direction: usize,
+    x: []const math.Complex,
+    coeff: []math.Complex,
+) void {
+    var b: usize = 0;
+    while (b < entry.beta_count) : (b += 1) {
+        const offset = entry.m_offsets[b];
+        const m_count = entry.m_counts[b];
+        var m_idx: usize = 0;
+        while (m_idx < m_count) : (m_idx += 1) {
+            const phi_start = (offset + m_idx) * gvecs.len;
+            const phi = entry.phi[phi_start .. phi_start + gvecs.len];
+            var sum = math.complex.init(0.0, 0.0);
+            for (0..gvecs.len) |g| {
+                const kpg = gvecs[g].kpg;
+                const phase = math.complex.expi(math.Vec3.dot(kpg, atom_position));
+                const g_alpha = gComponent(kpg, direction);
+                const term = math.complex.scale(
+                    math.complex.mul(
+                        math.complex.mul(x[g], phase),
+                        math.complex.init(phi[g], 0.0),
+                    ),
+                    g_alpha,
+                );
+                sum = math.complex.add(sum, term);
+            }
+            coeff[offset + m_idx] = math.complex.init(-sum.i, sum.r);
+        }
+    }
+}
+
+fn projectQBra(
+    entry: anytype,
+    gvecs: []const plane_wave.GVector,
+    atom_position: math.Vec3,
+    x: []const math.Complex,
+    coeff: []math.Complex,
+) void {
+    var b: usize = 0;
+    while (b < entry.beta_count) : (b += 1) {
+        const offset = entry.m_offsets[b];
+        const m_count = entry.m_counts[b];
+        var m_idx: usize = 0;
+        while (m_idx < m_count) : (m_idx += 1) {
+            const phi_start = (offset + m_idx) * gvecs.len;
+            const phi = entry.phi[phi_start .. phi_start + gvecs.len];
+            var sum = math.complex.init(0.0, 0.0);
+            for (0..gvecs.len) |g| {
+                const phase = math.complex.expi(math.Vec3.dot(gvecs[g].kpg, atom_position));
+                sum = math.complex.add(sum, math.complex.scale(
+                    math.complex.mul(x[g], phase),
+                    phi[g],
+                ));
+            }
+            coeff[offset + m_idx] = sum;
+        }
+    }
+}
+
+fn reconstructQBraDerivative(
+    entry: anytype,
+    gvecs: []const plane_wave.GVector,
+    atom_position: math.Vec3,
+    coeff2: []const math.Complex,
+    inv_volume: f64,
+    out: []math.Complex,
+) void {
+    for (0..gvecs.len) |g| {
+        var accum = math.complex.init(0.0, 0.0);
+        var b: usize = 0;
+        while (b < entry.beta_count) : (b += 1) {
+            const offset = entry.m_offsets[b];
+            const m_count = entry.m_counts[b];
+            var m_idx: usize = 0;
+            while (m_idx < m_count) : (m_idx += 1) {
+                const phi_val = entry.phi[(offset + m_idx) * gvecs.len + g];
+                const c = coeff2[offset + m_idx];
+                accum = math.complex.add(accum, math.complex.scale(c, phi_val));
+            }
+        }
+        const phase_conj = math.complex.expi(-math.Vec3.dot(gvecs[g].kpg, atom_position));
+        const term = math.complex.scale(math.complex.mul(phase_conj, accum), inv_volume);
+        out[g] = math.complex.add(out[g], term);
+    }
+}
+
+fn reconstructQKetDerivative(
+    entry: anytype,
+    gvecs: []const plane_wave.GVector,
+    atom_position: math.Vec3,
+    direction: usize,
+    coeff2: []const math.Complex,
+    inv_volume: f64,
+    out: []math.Complex,
+) void {
+    for (0..gvecs.len) |g| {
+        var accum = math.complex.init(0.0, 0.0);
+        var b: usize = 0;
+        while (b < entry.beta_count) : (b += 1) {
+            const offset = entry.m_offsets[b];
+            const m_count = entry.m_counts[b];
+            var m_idx: usize = 0;
+            while (m_idx < m_count) : (m_idx += 1) {
+                const phi_val = entry.phi[(offset + m_idx) * gvecs.len + g];
+                const c = coeff2[offset + m_idx];
+                accum = math.complex.add(accum, math.complex.scale(c, phi_val));
+            }
+        }
+        const gpq_alpha = gComponent(gvecs[g].kpg, direction);
+        const weighted = math.complex.scale(accum, gpq_alpha);
+        const neg_i_weighted = math.complex.init(weighted.i, -weighted.r);
+        const phase_conj = math.complex.expi(-math.Vec3.dot(gvecs[g].kpg, atom_position));
+        const term = math.complex.scale(
+            math.complex.mul(phase_conj, neg_i_weighted),
+            inv_volume,
+        );
+        out[g] = math.complex.add(out[g], term);
+    }
 }
 
 /// Apply V_nl^(1)|ψ⟩ for atom displacement perturbation.
@@ -473,146 +756,22 @@ pub fn applyNonlocalPerturbation(
         for (atoms, 0..) |atom, atom_idx| {
             if (atom.species_index != entry.species_index) continue;
             if (atom_idx != perturbed_atom) continue;
+            fillGammaPhaseProducts(gvecs, atom.position, x, work_phase, work_xphase);
+            projectGammaDerivativeBra(entry, gvecs, direction, work_xphase, coeff);
+            applyNonlocalDijCoefficients(entry, coeffs, coeff, coeff2);
+            reconstructGammaBraDerivative(entry, work_phase, coeff2, inv_volume, out);
 
-            // Compute phase and -iG_α weighted products
-            var g: usize = 0;
-            while (g < n) : (g += 1) {
-                const phase = math.complex.expi(math.Vec3.dot(gvecs[g].cart, atom.position));
-                work_phase[g] = phase;
-                work_xphase[g] = math.complex.mul(x[g], phase);
-            }
-
-            // Term 1: derivative on bra: ⟨-iG_α φ|ψ⟩ × D × |φ⟩
-            // Compute ⟨-iG_α φ × e^{-iG·τ}|ψ⟩
-            var b: usize = 0;
-            while (b < entry.beta_count) : (b += 1) {
-                const offset = entry.m_offsets[b];
-                const m_count = entry.m_counts[b];
-                var m_idx: usize = 0;
-                while (m_idx < m_count) : (m_idx += 1) {
-                    const phi_start = (offset + m_idx) * g_count;
-                    const phi_end = (offset + m_idx + 1) * g_count;
-                    const phi = entry.phi[phi_start..phi_end];
-                    var sum = math.complex.init(0.0, 0.0);
-                    g = 0;
-                    while (g < n) : (g += 1) {
-                        // G_α × φ(G) × e^{iG·τ} × ψ(G)
-                        // The +i factor is applied to the sum below
-                        const g_alpha = gComponent(gvecs[g].kpg, direction);
-                        const term = math.complex.scale(work_xphase[g], phi[g] * g_alpha);
-                        sum = math.complex.add(sum, term);
-                    }
-                    // Multiply by +i: +i × (a+bi) = (-b, a)
-                    coeff[offset + m_idx] = math.complex.init(-sum.i, sum.r);
-                }
-            }
-
-            // Apply D matrix
-            b = 0;
-            while (b < entry.beta_count) : (b += 1) {
-                const l_val = entry.l_list[b];
-                const offset = entry.m_offsets[b];
-                const m_count = entry.m_counts[b];
-                var m_idx: usize = 0;
-                while (m_idx < m_count) : (m_idx += 1) {
-                    var sum = math.complex.init(0.0, 0.0);
-                    var j: usize = 0;
-                    while (j < entry.beta_count) : (j += 1) {
-                        if (entry.l_list[j] != l_val) continue;
-                        const dij = coeffs[b * entry.beta_count + j];
-                        if (dij == 0.0) continue;
-                        const c = coeff[entry.m_offsets[j] + m_idx];
-                        sum = math.complex.add(sum, math.complex.scale(c, dij));
-                    }
-                    coeff2[offset + m_idx] = sum;
-                }
-            }
-
-            // Accumulate: |φ⟩ × D × ⟨-iG_α φ|ψ⟩ × e^{-iG·τ}
-            g = 0;
-            while (g < n) : (g += 1) {
-                var accum = math.complex.init(0.0, 0.0);
-                b = 0;
-                while (b < entry.beta_count) : (b += 1) {
-                    const offset = entry.m_offsets[b];
-                    const m_count = entry.m_counts[b];
-                    var m_idx: usize = 0;
-                    while (m_idx < m_count) : (m_idx += 1) {
-                        const phi_val = entry.phi[(offset + m_idx) * g_count + g];
-                        const c = coeff2[offset + m_idx];
-                        accum = math.complex.add(accum, math.complex.scale(c, phi_val));
-                    }
-                }
-                const phase_conj = math.complex.conj(work_phase[g]);
-                const add = math.complex.mul(phase_conj, accum);
-                out[g] = math.complex.add(out[g], math.complex.scale(add, inv_volume));
-            }
-
-            // Term 2: derivative on ket: ⟨φ|ψ⟩ × D × |-iG_α φ⟩
-            // Compute ⟨φ × e^{iG·τ}|ψ⟩ (standard, no derivative)
-            b = 0;
-            while (b < entry.beta_count) : (b += 1) {
-                const offset = entry.m_offsets[b];
-                const m_count = entry.m_counts[b];
-                var m_idx: usize = 0;
-                while (m_idx < m_count) : (m_idx += 1) {
-                    const phi_start = (offset + m_idx) * g_count;
-                    const phi_end = (offset + m_idx + 1) * g_count;
-                    const phi = entry.phi[phi_start..phi_end];
-                    var sum = math.complex.init(0.0, 0.0);
-                    g = 0;
-                    while (g < n) : (g += 1) {
-                        sum = math.complex.add(sum, math.complex.scale(work_xphase[g], phi[g]));
-                    }
-                    coeff[offset + m_idx] = sum;
-                }
-            }
-
-            // Apply D matrix
-            b = 0;
-            while (b < entry.beta_count) : (b += 1) {
-                const l_val = entry.l_list[b];
-                const offset = entry.m_offsets[b];
-                const m_count = entry.m_counts[b];
-                var m_idx: usize = 0;
-                while (m_idx < m_count) : (m_idx += 1) {
-                    var sum = math.complex.init(0.0, 0.0);
-                    var j: usize = 0;
-                    while (j < entry.beta_count) : (j += 1) {
-                        if (entry.l_list[j] != l_val) continue;
-                        const dij = coeffs[b * entry.beta_count + j];
-                        if (dij == 0.0) continue;
-                        const c = coeff[entry.m_offsets[j] + m_idx];
-                        sum = math.complex.add(sum, math.complex.scale(c, dij));
-                    }
-                    coeff2[offset + m_idx] = sum;
-                }
-            }
-
-            // Accumulate: |-iG_α φ⟩ × D × ⟨φ|ψ⟩ × e^{-iG·τ}
-            g = 0;
-            while (g < n) : (g += 1) {
-                var accum = math.complex.init(0.0, 0.0);
-                b = 0;
-                while (b < entry.beta_count) : (b += 1) {
-                    const offset = entry.m_offsets[b];
-                    const m_count = entry.m_counts[b];
-                    var m_idx: usize = 0;
-                    while (m_idx < m_count) : (m_idx += 1) {
-                        const phi_val = entry.phi[(offset + m_idx) * g_count + g];
-                        const c = coeff2[offset + m_idx];
-                        // -iG_α × φ(G): apply -iG_α weight to the ket
-                        const g_alpha = gComponent(gvecs[g].kpg, direction);
-                        // -i × g_alpha × phi_val × c
-                        const weighted = math.complex.scale(c, phi_val * g_alpha);
-                        // multiply by -i
-                        accum = math.complex.add(accum, math.complex.init(weighted.i, -weighted.r));
-                    }
-                }
-                const phase_conj = math.complex.conj(work_phase[g]);
-                const add = math.complex.mul(phase_conj, accum);
-                out[g] = math.complex.add(out[g], math.complex.scale(add, inv_volume));
-            }
+            projectGammaBra(entry, work_xphase, coeff);
+            applyNonlocalDijCoefficients(entry, coeffs, coeff, coeff2);
+            reconstructGammaKetDerivative(
+                entry,
+                gvecs,
+                direction,
+                work_phase,
+                coeff2,
+                inv_volume,
+                out,
+            );
         }
     }
 }
@@ -638,16 +797,14 @@ pub fn applyNonlocalPerturbationQ(
     x: []const math.Complex,
     out: []math.Complex,
 ) !void {
-    const n_k = gvecs_k.len;
-    const n_kq = gvecs_kq.len;
     @memset(out, math.complex.init(0.0, 0.0));
 
     for (nl_ctx_k.species, 0..) |entry_k, sp_idx| {
-        if (entry_k.g_count != n_k) continue;
+        if (entry_k.g_count != gvecs_k.len) continue;
         if (entry_k.m_total == 0) continue;
 
         const entry_kq = nl_ctx_kq.species[sp_idx];
-        if (entry_kq.g_count != n_kq) continue;
+        if (entry_kq.g_count != gvecs_kq.len) continue;
 
         const coeffs = entry_k.coeffs;
         const m_total = entry_k.m_total;
@@ -655,167 +812,28 @@ pub fn applyNonlocalPerturbationQ(
         // Work buffers
         const coeff = try alloc.alloc(math.Complex, m_total);
         defer alloc.free(coeff);
+
         const coeff2 = try alloc.alloc(math.Complex, m_total);
         defer alloc.free(coeff2);
 
         for (atoms, 0..) |atom, atom_idx| {
             if (atom.species_index != entry_k.species_index) continue;
             if (atom_idx != perturbed_atom) continue;
+            projectQDerivativeBra(entry_k, gvecs_k, atom.position, direction, x, coeff);
+            applyNonlocalDijCoefficients(entry_k, coeffs, coeff, coeff2);
+            reconstructQBraDerivative(entry_kq, gvecs_kq, atom.position, coeff2, inv_volume, out);
 
-            // === Term 1: derivative on bra (k-basis side) ===
-            // Project with derivative:
-            //   coeff_β = +i × Σ_G (k+G)_α × φ^k_β(G) × exp(+i(k+G)·τ) × ψ_k(G)
-            {
-                var b: usize = 0;
-                while (b < entry_k.beta_count) : (b += 1) {
-                    const offset = entry_k.m_offsets[b];
-                    const m_count = entry_k.m_counts[b];
-                    var m_idx: usize = 0;
-                    while (m_idx < m_count) : (m_idx += 1) {
-                        const phi_start = (offset + m_idx) * n_k;
-                        const phi_end = (offset + m_idx + 1) * n_k;
-                        const phi = entry_k.phi[phi_start..phi_end];
-                        var sum = math.complex.init(0.0, 0.0);
-                        for (0..n_k) |g| {
-                            const kpg = gvecs_k[g].kpg;
-                            const phase = math.complex.expi(math.Vec3.dot(kpg, atom.position));
-                            const g_alpha = gComponent(kpg, direction);
-                            const phi_c = math.complex.init(phi[g], 0.0);
-                            const term = math.complex.scale(
-                                math.complex.mul(math.complex.mul(x[g], phase), phi_c),
-                                g_alpha,
-                            );
-                            sum = math.complex.add(sum, term);
-                        }
-                        // Multiply by +i: +i × (a+bi) = (-b, a)
-                        coeff[offset + m_idx] = math.complex.init(-sum.i, sum.r);
-                    }
-                }
-
-                // Apply D matrix
-                b = 0;
-                while (b < entry_k.beta_count) : (b += 1) {
-                    const l_val = entry_k.l_list[b];
-                    const offset = entry_k.m_offsets[b];
-                    const m_count = entry_k.m_counts[b];
-                    var m_idx: usize = 0;
-                    while (m_idx < m_count) : (m_idx += 1) {
-                        var sum = math.complex.init(0.0, 0.0);
-                        var j: usize = 0;
-                        while (j < entry_k.beta_count) : (j += 1) {
-                            if (entry_k.l_list[j] != l_val) continue;
-                            const dij = coeffs[b * entry_k.beta_count + j];
-                            if (dij == 0.0) continue;
-                            const c = coeff[entry_k.m_offsets[j] + m_idx];
-                            sum = math.complex.add(sum, math.complex.scale(c, dij));
-                        }
-                        coeff2[offset + m_idx] = sum;
-                    }
-                }
-
-                // Reconstruct in k+q-basis:
-                //   out(G') += (1/Ω) × exp(-i(G'+q)·τ) × Σ_β coeff2_β × φ^{kq}_β(G')
-                for (0..n_kq) |g| {
-                    var accum = math.complex.init(0.0, 0.0);
-                    b = 0;
-                    while (b < entry_kq.beta_count) : (b += 1) {
-                        const offset = entry_kq.m_offsets[b];
-                        const m_count = entry_kq.m_counts[b];
-                        var m_idx: usize = 0;
-                        while (m_idx < m_count) : (m_idx += 1) {
-                            const phi_val = entry_kq.phi[(offset + m_idx) * n_kq + g];
-                            const c = coeff2[offset + m_idx];
-                            accum = math.complex.add(accum, math.complex.scale(c, phi_val));
-                        }
-                    }
-                    const kpg = gvecs_kq[g].kpg;
-                    const phase_conj = math.complex.expi(-math.Vec3.dot(kpg, atom.position));
-                    const term = math.complex.scale(
-                        math.complex.mul(phase_conj, accum),
-                        inv_volume,
-                    );
-                    out[g] = math.complex.add(out[g], term);
-                }
-            }
-
-            // === Term 2: derivative on ket (k+q-basis side) ===
-            // Project without derivative:
-            //   coeff_β = Σ_G φ^k_β(G) × exp(+i(k+G)·τ) × ψ_k(G)
-            {
-                var b: usize = 0;
-                while (b < entry_k.beta_count) : (b += 1) {
-                    const offset = entry_k.m_offsets[b];
-                    const m_count = entry_k.m_counts[b];
-                    var m_idx: usize = 0;
-                    while (m_idx < m_count) : (m_idx += 1) {
-                        const phi_start = (offset + m_idx) * n_k;
-                        const phi_end = (offset + m_idx + 1) * n_k;
-                        const phi = entry_k.phi[phi_start..phi_end];
-                        var sum = math.complex.init(0.0, 0.0);
-                        for (0..n_k) |g| {
-                            const kpg = gvecs_k[g].kpg;
-                            const phase = math.complex.expi(math.Vec3.dot(kpg, atom.position));
-                            sum = math.complex.add(sum, math.complex.scale(
-                                math.complex.mul(x[g], phase),
-                                phi[g],
-                            ));
-                        }
-                        coeff[offset + m_idx] = sum;
-                    }
-                }
-
-                // Apply D matrix
-                b = 0;
-                while (b < entry_k.beta_count) : (b += 1) {
-                    const l_val = entry_k.l_list[b];
-                    const offset = entry_k.m_offsets[b];
-                    const m_count = entry_k.m_counts[b];
-                    var m_idx: usize = 0;
-                    while (m_idx < m_count) : (m_idx += 1) {
-                        var sum = math.complex.init(0.0, 0.0);
-                        var j: usize = 0;
-                        while (j < entry_k.beta_count) : (j += 1) {
-                            if (entry_k.l_list[j] != l_val) continue;
-                            const dij = coeffs[b * entry_k.beta_count + j];
-                            if (dij == 0.0) continue;
-                            const c = coeff[entry_k.m_offsets[j] + m_idx];
-                            sum = math.complex.add(sum, math.complex.scale(c, dij));
-                        }
-                        coeff2[offset + m_idx] = sum;
-                    }
-                }
-
-                // Reconstruct with ket derivative in k+q-basis:
-                //   out(G') += (1/Ω) × (-i(G'+q)_α) × exp(-i(G'+q)·τ)
-                //              × Σ_β coeff2_β × φ^{kq}_β(G')
-                // Note: use kpg = G'+q (NOT cart = G')
-                for (0..n_kq) |g| {
-                    var accum = math.complex.init(0.0, 0.0);
-                    b = 0;
-                    while (b < entry_kq.beta_count) : (b += 1) {
-                        const offset = entry_kq.m_offsets[b];
-                        const m_count = entry_kq.m_counts[b];
-                        var m_idx: usize = 0;
-                        while (m_idx < m_count) : (m_idx += 1) {
-                            const phi_val = entry_kq.phi[(offset + m_idx) * n_kq + g];
-                            const c = coeff2[offset + m_idx];
-                            accum = math.complex.add(accum, math.complex.scale(c, phi_val));
-                        }
-                    }
-                    // Multiply by -i(G'+q)_α
-                    const kpg = gvecs_kq[g].kpg;
-                    const gpq_alpha = gComponent(kpg, direction);
-                    const weighted = math.complex.scale(accum, gpq_alpha);
-                    // -i × (a+bi) = (b, -a)
-                    const neg_i_weighted = math.complex.init(weighted.i, -weighted.r);
-                    const phase_conj = math.complex.expi(-math.Vec3.dot(kpg, atom.position));
-                    const term = math.complex.scale(
-                        math.complex.mul(phase_conj, neg_i_weighted),
-                        inv_volume,
-                    );
-                    out[g] = math.complex.add(out[g], term);
-                }
-            }
+            projectQBra(entry_k, gvecs_k, atom.position, x, coeff);
+            applyNonlocalDijCoefficients(entry_k, coeffs, coeff, coeff2);
+            reconstructQKetDerivative(
+                entry_kq,
+                gvecs_kq,
+                atom.position,
+                direction,
+                coeff2,
+                inv_volume,
+                out,
+            );
         }
     }
 }
@@ -1154,6 +1172,7 @@ test "V_xc perturbation" {
     const n = 8;
     const fxc_r = try alloc.alloc(f64, n);
     defer alloc.free(fxc_r);
+
     const rho1_r = try alloc.alloc(f64, n);
     defer alloc.free(rho1_r);
 
