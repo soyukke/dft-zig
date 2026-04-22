@@ -112,7 +112,10 @@ test "contracted overlap derivative vs FD (p-type)" {
         const s_p = obara_saika.contractedOverlap(shell_a_p, ang_a, shell_b, ang_b);
         const s_m = obara_saika.contractedOverlap(shell_a_m, ang_a, shell_b, ang_b);
         const fd = (s_p - s_m) / (2.0 * delta);
-        std.debug.print("  contracted dS/d{s}(p_y, s): analytical={d:20.12} fd={d:20.12} diff={e:12.4}\n", .{ labels[i], analytical[i], fd, @abs(analytical[i] - fd) });
+        std.debug.print(
+            "  contracted dS/d{s}(p_y, s): analytical={d:20.12} fd={d:20.12} diff={e:12.4}\n",
+            .{ labels[i], analytical[i], fd, @abs(analytical[i] - fd) },
+        );
         try testing.expectApproxEqAbs(fd, analytical[i], tol);
     }
 }
@@ -147,7 +150,10 @@ test "contracted kinetic derivative vs FD (p-type)" {
         const t_p = obara_saika.contractedKinetic(shell_a_p, ang_a, shell_b, ang_b);
         const t_m = obara_saika.contractedKinetic(shell_a_m, ang_a, shell_b, ang_b);
         const fd = (t_p - t_m) / (2.0 * delta);
-        std.debug.print("  contracted dT/d{s}(p_y, s): analytical={d:20.12} fd={d:20.12} diff={e:12.4}\n", .{ labels[i], analytical[i], fd, @abs(analytical[i] - fd) });
+        std.debug.print(
+            "  contracted dT/d{s}(p_y, s): analytical={d:20.12} fd={d:20.12} diff={e:12.4}\n",
+            .{ labels[i], analytical[i], fd, @abs(analytical[i] - fd) },
+        );
         try testing.expectApproxEqAbs(fd, analytical[i], tol);
     }
 }
@@ -181,10 +187,27 @@ test "contracted nuclear derivative vs FD (p-type)" {
         const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
         const shell_a_p = ContractedShell{ .center = ca_p, .l = 1, .primitives = &sto3g.O_2p };
         const shell_a_m = ContractedShell{ .center = ca_m, .l = 1, .primitives = &sto3g.O_2p };
-        const v_p = obara_saika.contractedTotalNuclearAttraction(shell_a_p, ang_a, shell_b, ang_b, &[_]Vec3{nuc_pos}, &[_]f64{nuc_charge});
-        const v_m = obara_saika.contractedTotalNuclearAttraction(shell_a_m, ang_a, shell_b, ang_b, &[_]Vec3{nuc_pos}, &[_]f64{nuc_charge});
+        const v_p = obara_saika.contractedTotalNuclearAttraction(
+            shell_a_p,
+            ang_a,
+            shell_b,
+            ang_b,
+            &[_]Vec3{nuc_pos},
+            &[_]f64{nuc_charge},
+        );
+        const v_m = obara_saika.contractedTotalNuclearAttraction(
+            shell_a_m,
+            ang_a,
+            shell_b,
+            ang_b,
+            &[_]Vec3{nuc_pos},
+            &[_]f64{nuc_charge},
+        );
         const fd = (v_p - v_m) / (2.0 * delta);
-        std.debug.print("  contracted dV/d{s}(p_y, s): analytical={d:20.12} fd={d:20.12} diff={e:12.4}\n", .{ labels[i], analytical[i], fd, @abs(analytical[i] - fd) });
+        std.debug.print(
+            "  contracted dV/d{s}(p_y, s): analytical={d:20.12} fd={d:20.12} diff={e:12.4}\n",
+            .{ labels[i], analytical[i], fd, @abs(analytical[i] - fd) },
+        );
         try testing.expectApproxEqAbs(fd, analytical[i], tol);
     }
 }
@@ -212,7 +235,9 @@ pub fn buildEnergyWeightedDensity(
             var sum: f64 = 0.0;
             for (0..n_occ) |i| {
                 // Column-major: C_{mu,i} = mo_coefficients[i*n + mu]
-                sum += orbital_energies[i] * mo_coefficients[i * n + mu] * mo_coefficients[i * n + nu];
+                const c_mu = mo_coefficients[i * n + mu];
+                const c_nu = mo_coefficients[i * n + nu];
+                sum += orbital_energies[i] * c_mu * c_nu;
             }
             w[mu * n + nu] = 2.0 * sum;
         }
@@ -262,11 +287,25 @@ fn primOverlapDeriv(
     // x-derivative
     {
         const a_plus = AngularMomentum{ .x = ang_a.x + 1, .y = ang_a.y, .z = ang_a.z };
-        const s_plus = obara_saika.primitiveOverlap(alpha_a, center_a, a_plus, alpha_b, center_b, ang_b);
+        const s_plus = obara_saika.primitiveOverlap(
+            alpha_a,
+            center_a,
+            a_plus,
+            alpha_b,
+            center_b,
+            ang_b,
+        );
         result[0] = 2.0 * alpha_a * s_plus;
         if (ang_a.x > 0) {
             const a_minus = AngularMomentum{ .x = ang_a.x - 1, .y = ang_a.y, .z = ang_a.z };
-            const s_minus = obara_saika.primitiveOverlap(alpha_a, center_a, a_minus, alpha_b, center_b, ang_b);
+            const s_minus = obara_saika.primitiveOverlap(
+                alpha_a,
+                center_a,
+                a_minus,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
             result[0] -= @as(f64, @floatFromInt(ang_a.x)) * s_minus;
         }
     }
@@ -274,11 +313,25 @@ fn primOverlapDeriv(
     // y-derivative
     {
         const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y + 1, .z = ang_a.z };
-        const s_plus = obara_saika.primitiveOverlap(alpha_a, center_a, a_plus, alpha_b, center_b, ang_b);
+        const s_plus = obara_saika.primitiveOverlap(
+            alpha_a,
+            center_a,
+            a_plus,
+            alpha_b,
+            center_b,
+            ang_b,
+        );
         result[1] = 2.0 * alpha_a * s_plus;
         if (ang_a.y > 0) {
             const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y - 1, .z = ang_a.z };
-            const s_minus = obara_saika.primitiveOverlap(alpha_a, center_a, a_minus, alpha_b, center_b, ang_b);
+            const s_minus = obara_saika.primitiveOverlap(
+                alpha_a,
+                center_a,
+                a_minus,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
             result[1] -= @as(f64, @floatFromInt(ang_a.y)) * s_minus;
         }
     }
@@ -286,11 +339,25 @@ fn primOverlapDeriv(
     // z-derivative
     {
         const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z + 1 };
-        const s_plus = obara_saika.primitiveOverlap(alpha_a, center_a, a_plus, alpha_b, center_b, ang_b);
+        const s_plus = obara_saika.primitiveOverlap(
+            alpha_a,
+            center_a,
+            a_plus,
+            alpha_b,
+            center_b,
+            ang_b,
+        );
         result[2] = 2.0 * alpha_a * s_plus;
         if (ang_a.z > 0) {
             const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z - 1 };
-            const s_minus = obara_saika.primitiveOverlap(alpha_a, center_a, a_minus, alpha_b, center_b, ang_b);
+            const s_minus = obara_saika.primitiveOverlap(
+                alpha_a,
+                center_a,
+                a_minus,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
             result[2] -= @as(f64, @floatFromInt(ang_a.z)) * s_minus;
         }
     }
@@ -313,11 +380,25 @@ fn primKineticDeriv(
     // x-derivative
     {
         const a_plus = AngularMomentum{ .x = ang_a.x + 1, .y = ang_a.y, .z = ang_a.z };
-        const t_plus = obara_saika.primitiveKinetic(alpha_a, center_a, a_plus, alpha_b, center_b, ang_b);
+        const t_plus = obara_saika.primitiveKinetic(
+            alpha_a,
+            center_a,
+            a_plus,
+            alpha_b,
+            center_b,
+            ang_b,
+        );
         result[0] = 2.0 * alpha_a * t_plus;
         if (ang_a.x > 0) {
             const a_minus = AngularMomentum{ .x = ang_a.x - 1, .y = ang_a.y, .z = ang_a.z };
-            const t_minus = obara_saika.primitiveKinetic(alpha_a, center_a, a_minus, alpha_b, center_b, ang_b);
+            const t_minus = obara_saika.primitiveKinetic(
+                alpha_a,
+                center_a,
+                a_minus,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
             result[0] -= @as(f64, @floatFromInt(ang_a.x)) * t_minus;
         }
     }
@@ -325,11 +406,25 @@ fn primKineticDeriv(
     // y-derivative
     {
         const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y + 1, .z = ang_a.z };
-        const t_plus = obara_saika.primitiveKinetic(alpha_a, center_a, a_plus, alpha_b, center_b, ang_b);
+        const t_plus = obara_saika.primitiveKinetic(
+            alpha_a,
+            center_a,
+            a_plus,
+            alpha_b,
+            center_b,
+            ang_b,
+        );
         result[1] = 2.0 * alpha_a * t_plus;
         if (ang_a.y > 0) {
             const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y - 1, .z = ang_a.z };
-            const t_minus = obara_saika.primitiveKinetic(alpha_a, center_a, a_minus, alpha_b, center_b, ang_b);
+            const t_minus = obara_saika.primitiveKinetic(
+                alpha_a,
+                center_a,
+                a_minus,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
             result[1] -= @as(f64, @floatFromInt(ang_a.y)) * t_minus;
         }
     }
@@ -337,11 +432,25 @@ fn primKineticDeriv(
     // z-derivative
     {
         const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z + 1 };
-        const t_plus = obara_saika.primitiveKinetic(alpha_a, center_a, a_plus, alpha_b, center_b, ang_b);
+        const t_plus = obara_saika.primitiveKinetic(
+            alpha_a,
+            center_a,
+            a_plus,
+            alpha_b,
+            center_b,
+            ang_b,
+        );
         result[2] = 2.0 * alpha_a * t_plus;
         if (ang_a.z > 0) {
             const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z - 1 };
-            const t_minus = obara_saika.primitiveKinetic(alpha_a, center_a, a_minus, alpha_b, center_b, ang_b);
+            const t_minus = obara_saika.primitiveKinetic(
+                alpha_a,
+                center_a,
+                a_minus,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
             result[2] -= @as(f64, @floatFromInt(ang_a.z)) * t_minus;
         }
     }
@@ -366,11 +475,29 @@ fn primNuclearDeriv(
     // x-derivative
     {
         const a_plus = AngularMomentum{ .x = ang_a.x + 1, .y = ang_a.y, .z = ang_a.z };
-        const v_plus = obara_saika.primitiveNuclearAttraction(alpha_a, center_a, a_plus, alpha_b, center_b, ang_b, nuc_pos, nuc_charge);
+        const v_plus = obara_saika.primitiveNuclearAttraction(
+            alpha_a,
+            center_a,
+            a_plus,
+            alpha_b,
+            center_b,
+            ang_b,
+            nuc_pos,
+            nuc_charge,
+        );
         result[0] = 2.0 * alpha_a * v_plus;
         if (ang_a.x > 0) {
             const a_minus = AngularMomentum{ .x = ang_a.x - 1, .y = ang_a.y, .z = ang_a.z };
-            const v_minus = obara_saika.primitiveNuclearAttraction(alpha_a, center_a, a_minus, alpha_b, center_b, ang_b, nuc_pos, nuc_charge);
+            const v_minus = obara_saika.primitiveNuclearAttraction(
+                alpha_a,
+                center_a,
+                a_minus,
+                alpha_b,
+                center_b,
+                ang_b,
+                nuc_pos,
+                nuc_charge,
+            );
             result[0] -= @as(f64, @floatFromInt(ang_a.x)) * v_minus;
         }
     }
@@ -378,11 +505,29 @@ fn primNuclearDeriv(
     // y-derivative
     {
         const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y + 1, .z = ang_a.z };
-        const v_plus = obara_saika.primitiveNuclearAttraction(alpha_a, center_a, a_plus, alpha_b, center_b, ang_b, nuc_pos, nuc_charge);
+        const v_plus = obara_saika.primitiveNuclearAttraction(
+            alpha_a,
+            center_a,
+            a_plus,
+            alpha_b,
+            center_b,
+            ang_b,
+            nuc_pos,
+            nuc_charge,
+        );
         result[1] = 2.0 * alpha_a * v_plus;
         if (ang_a.y > 0) {
             const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y - 1, .z = ang_a.z };
-            const v_minus = obara_saika.primitiveNuclearAttraction(alpha_a, center_a, a_minus, alpha_b, center_b, ang_b, nuc_pos, nuc_charge);
+            const v_minus = obara_saika.primitiveNuclearAttraction(
+                alpha_a,
+                center_a,
+                a_minus,
+                alpha_b,
+                center_b,
+                ang_b,
+                nuc_pos,
+                nuc_charge,
+            );
             result[1] -= @as(f64, @floatFromInt(ang_a.y)) * v_minus;
         }
     }
@@ -390,11 +535,29 @@ fn primNuclearDeriv(
     // z-derivative
     {
         const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z + 1 };
-        const v_plus = obara_saika.primitiveNuclearAttraction(alpha_a, center_a, a_plus, alpha_b, center_b, ang_b, nuc_pos, nuc_charge);
+        const v_plus = obara_saika.primitiveNuclearAttraction(
+            alpha_a,
+            center_a,
+            a_plus,
+            alpha_b,
+            center_b,
+            ang_b,
+            nuc_pos,
+            nuc_charge,
+        );
         result[2] = 2.0 * alpha_a * v_plus;
         if (ang_a.z > 0) {
             const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z - 1 };
-            const v_minus = obara_saika.primitiveNuclearAttraction(alpha_a, center_a, a_minus, alpha_b, center_b, ang_b, nuc_pos, nuc_charge);
+            const v_minus = obara_saika.primitiveNuclearAttraction(
+                alpha_a,
+                center_a,
+                a_minus,
+                alpha_b,
+                center_b,
+                ang_b,
+                nuc_pos,
+                nuc_charge,
+            );
             result[2] -= @as(f64, @floatFromInt(ang_a.z)) * v_minus;
         }
     }
@@ -425,11 +588,37 @@ fn primEriDeriv(
     // x-derivative
     {
         const a_plus = AngularMomentum{ .x = ang_a.x + 1, .y = ang_a.y, .z = ang_a.z };
-        const eri_plus = obara_saika.primitiveERI(alpha_a, center_a, a_plus, alpha_b, center_b, ang_b, alpha_c, center_c, ang_c, alpha_d, center_d, ang_d);
+        const eri_plus = obara_saika.primitiveERI(
+            alpha_a,
+            center_a,
+            a_plus,
+            alpha_b,
+            center_b,
+            ang_b,
+            alpha_c,
+            center_c,
+            ang_c,
+            alpha_d,
+            center_d,
+            ang_d,
+        );
         result[0] = 2.0 * alpha_a * eri_plus;
         if (ang_a.x > 0) {
             const a_minus = AngularMomentum{ .x = ang_a.x - 1, .y = ang_a.y, .z = ang_a.z };
-            const eri_minus = obara_saika.primitiveERI(alpha_a, center_a, a_minus, alpha_b, center_b, ang_b, alpha_c, center_c, ang_c, alpha_d, center_d, ang_d);
+            const eri_minus = obara_saika.primitiveERI(
+                alpha_a,
+                center_a,
+                a_minus,
+                alpha_b,
+                center_b,
+                ang_b,
+                alpha_c,
+                center_c,
+                ang_c,
+                alpha_d,
+                center_d,
+                ang_d,
+            );
             result[0] -= @as(f64, @floatFromInt(ang_a.x)) * eri_minus;
         }
     }
@@ -437,11 +626,37 @@ fn primEriDeriv(
     // y-derivative
     {
         const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y + 1, .z = ang_a.z };
-        const eri_plus = obara_saika.primitiveERI(alpha_a, center_a, a_plus, alpha_b, center_b, ang_b, alpha_c, center_c, ang_c, alpha_d, center_d, ang_d);
+        const eri_plus = obara_saika.primitiveERI(
+            alpha_a,
+            center_a,
+            a_plus,
+            alpha_b,
+            center_b,
+            ang_b,
+            alpha_c,
+            center_c,
+            ang_c,
+            alpha_d,
+            center_d,
+            ang_d,
+        );
         result[1] = 2.0 * alpha_a * eri_plus;
         if (ang_a.y > 0) {
             const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y - 1, .z = ang_a.z };
-            const eri_minus = obara_saika.primitiveERI(alpha_a, center_a, a_minus, alpha_b, center_b, ang_b, alpha_c, center_c, ang_c, alpha_d, center_d, ang_d);
+            const eri_minus = obara_saika.primitiveERI(
+                alpha_a,
+                center_a,
+                a_minus,
+                alpha_b,
+                center_b,
+                ang_b,
+                alpha_c,
+                center_c,
+                ang_c,
+                alpha_d,
+                center_d,
+                ang_d,
+            );
             result[1] -= @as(f64, @floatFromInt(ang_a.y)) * eri_minus;
         }
     }
@@ -449,11 +664,37 @@ fn primEriDeriv(
     // z-derivative
     {
         const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z + 1 };
-        const eri_plus = obara_saika.primitiveERI(alpha_a, center_a, a_plus, alpha_b, center_b, ang_b, alpha_c, center_c, ang_c, alpha_d, center_d, ang_d);
+        const eri_plus = obara_saika.primitiveERI(
+            alpha_a,
+            center_a,
+            a_plus,
+            alpha_b,
+            center_b,
+            ang_b,
+            alpha_c,
+            center_c,
+            ang_c,
+            alpha_d,
+            center_d,
+            ang_d,
+        );
         result[2] = 2.0 * alpha_a * eri_plus;
         if (ang_a.z > 0) {
             const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z - 1 };
-            const eri_minus = obara_saika.primitiveERI(alpha_a, center_a, a_minus, alpha_b, center_b, ang_b, alpha_c, center_c, ang_c, alpha_d, center_d, ang_d);
+            const eri_minus = obara_saika.primitiveERI(
+                alpha_a,
+                center_a,
+                a_minus,
+                alpha_b,
+                center_b,
+                ang_b,
+                alpha_c,
+                center_c,
+                ang_c,
+                alpha_d,
+                center_d,
+                ang_d,
+            );
             result[2] -= @as(f64, @floatFromInt(ang_a.z)) * eri_minus;
         }
     }
@@ -477,7 +718,14 @@ fn contractedOverlapDeriv(
         const norm_a = basis_mod.normalization(prim_a.alpha, ang_a.x, ang_a.y, ang_a.z);
         for (shell_b.primitives) |prim_b| {
             const norm_b = basis_mod.normalization(prim_b.alpha, ang_b.x, ang_b.y, ang_b.z);
-            const d = primOverlapDeriv(prim_a.alpha, shell_a.center, ang_a, prim_b.alpha, shell_b.center, ang_b);
+            const d = primOverlapDeriv(
+                prim_a.alpha,
+                shell_a.center,
+                ang_a,
+                prim_b.alpha,
+                shell_b.center,
+                ang_b,
+            );
             const coeff = prim_a.coeff * prim_b.coeff * norm_a * norm_b;
             result[0] += coeff * d[0];
             result[1] += coeff * d[1];
@@ -499,7 +747,14 @@ fn contractedKineticDeriv(
         const norm_a = basis_mod.normalization(prim_a.alpha, ang_a.x, ang_a.y, ang_a.z);
         for (shell_b.primitives) |prim_b| {
             const norm_b = basis_mod.normalization(prim_b.alpha, ang_b.x, ang_b.y, ang_b.z);
-            const d = primKineticDeriv(prim_a.alpha, shell_a.center, ang_a, prim_b.alpha, shell_b.center, ang_b);
+            const d = primKineticDeriv(
+                prim_a.alpha,
+                shell_a.center,
+                ang_a,
+                prim_b.alpha,
+                shell_b.center,
+                ang_b,
+            );
             const coeff = prim_a.coeff * prim_b.coeff * norm_a * norm_b;
             result[0] += coeff * d[0];
             result[1] += coeff * d[1];
@@ -523,7 +778,16 @@ fn contractedNuclearDeriv(
         const norm_a = basis_mod.normalization(prim_a.alpha, ang_a.x, ang_a.y, ang_a.z);
         for (shell_b.primitives) |prim_b| {
             const norm_b = basis_mod.normalization(prim_b.alpha, ang_b.x, ang_b.y, ang_b.z);
-            const d = primNuclearDeriv(prim_a.alpha, shell_a.center, ang_a, prim_b.alpha, shell_b.center, ang_b, nuc_pos, nuc_charge);
+            const d = primNuclearDeriv(
+                prim_a.alpha,
+                shell_a.center,
+                ang_a,
+                prim_b.alpha,
+                shell_b.center,
+                ang_b,
+                nuc_pos,
+                nuc_charge,
+            );
             const coeff = prim_a.coeff * prim_b.coeff * norm_a * norm_b;
             result[0] += coeff * d[0];
             result[1] += coeff * d[1];
@@ -567,7 +831,9 @@ fn contractedEriDeriv(
                         shell_d.center,
                         ang_d,
                     );
-                    const coeff = prim_a.coeff * prim_b.coeff * prim_c.coeff * prim_d.coeff * norm_a * norm_b * norm_c * norm_d;
+                    const coeff_prim = prim_a.coeff * prim_b.coeff * prim_c.coeff * prim_d.coeff;
+                    const coeff_norm = norm_a * norm_b * norm_c * norm_d;
+                    const coeff = coeff_prim * coeff_norm;
                     result[0] += coeff * d[0];
                     result[1] += coeff * d[1];
                     result[2] += coeff * d[2];
@@ -679,7 +945,13 @@ pub fn computeRhfGradient(
     defer alloc.free(shell_atom_map);
 
     // Build energy-weighted density matrix
-    const w_mat = try buildEnergyWeightedDensity(alloc, n, n_occ, orbital_energies, mo_coefficients);
+    const w_mat = try buildEnergyWeightedDensity(
+        alloc,
+        n,
+        n_occ,
+        orbital_energies,
+        mo_coefficients,
+    );
     defer alloc.free(w_mat);
 
     // Nuclear repulsion gradient
@@ -747,14 +1019,28 @@ pub fn computeRhfGradient(
             // --- Nuclear attraction derivative ---
             for (0..n_atoms) |c| {
                 // Basis derivative: 2 * P * dV_C/d(center_mu) to atom_a
-                const dv_dA = contractedNuclearDeriv(mu_shell, mu_info.ang, nu_shell, nu_info.ang, nuc_positions[c], nuc_charges[c]);
+                const dv_dA = contractedNuclearDeriv(
+                    mu_shell,
+                    mu_info.ang,
+                    nu_shell,
+                    nu_info.ang,
+                    nuc_positions[c],
+                    nuc_charges[c],
+                );
                 grad[atom_a].x += 2.0 * p_val * dv_dA[0];
                 grad[atom_a].y += 2.0 * p_val * dv_dA[1];
                 grad[atom_a].z += 2.0 * p_val * dv_dA[2];
 
                 // Hellmann-Feynman: dV_C/dR_C = -(dV_C/d(center_mu) + dV_C/d(center_nu))
                 // dV_C/d(center_nu) is obtained by swapping mu and nu:
-                const dv_dB = contractedNuclearDeriv(nu_shell, nu_info.ang, mu_shell, mu_info.ang, nuc_positions[c], nuc_charges[c]);
+                const dv_dB = contractedNuclearDeriv(
+                    nu_shell,
+                    nu_info.ang,
+                    mu_shell,
+                    mu_info.ang,
+                    nuc_positions[c],
+                    nuc_charges[c],
+                );
                 grad[c].x -= p_val * (dv_dA[0] + dv_dB[0]);
                 grad[c].y -= p_val * (dv_dA[1] + dv_dB[1]);
                 grad[c].z -= p_val * (dv_dA[2] + dv_dB[2]);
@@ -860,10 +1146,13 @@ pub fn computeRhfGradient(
                                     const sig = off_d + id_d;
 
                                     // RHF Gamma
-                                    const gamma_r = p_mu_nu * p_mat[p_lam_sig_base + sig] - 0.5 * p_mu_lam * p_mat[nu * n + sig];
+                                    const coulomb_term = p_mu_nu * p_mat[p_lam_sig_base + sig];
+                                    const exchange_term = 0.5 * p_mu_lam * p_mat[nu * n + sig];
+                                    const gamma_r = coulomb_term - exchange_term;
                                     if (@abs(gamma_r) < 1e-15) continue;
 
-                                    const idx = ia * nb_s * nc_s * nd_s + ib * nc_s * nd_s + ic * nd_s + id_d;
+                                    const idx = ia * nb_s * nc_s * nd_s +
+                                        ib * nc_s * nd_s + ic * nd_s + id_d;
                                     // First-center × 2 factor
                                     grad[atom_sa].x += 2.0 * gamma_r * batch_dx_rhf[idx];
                                     grad[atom_sa].y += 2.0 * gamma_r * batch_dy_rhf[idx];
@@ -892,7 +1181,8 @@ pub fn computeRhfGradient(
 ///   2. An additional XC grid-based gradient term is added.
 ///
 /// For LDA (v_sigma = 0):
-///   dE_xc/dR_A = -2 * sum_{mu on A, nu} sum_g w_g * P_{mu,nu} * v_xc(r_g) * grad(phi_mu(r_g)) * phi_nu(r_g)
+///   dE_xc/dR_A = -2 * sum_{mu on A, nu} sum_g w_g * P_{mu,nu}
+///                  * v_xc(r_g) * grad(phi_mu(r_g)) * phi_nu(r_g)
 ///
 /// For GGA (v_sigma != 0, e.g. B3LYP):
 ///   Additional terms involving second derivatives of basis functions and grad(rho) dot products.
@@ -927,7 +1217,13 @@ pub fn computeKsDftGradient(
     defer alloc.free(shell_atom_map);
 
     // Build energy-weighted density matrix
-    const w_mat = try buildEnergyWeightedDensity(alloc, n, n_occ, orbital_energies, mo_coefficients);
+    const w_mat = try buildEnergyWeightedDensity(
+        alloc,
+        n,
+        n_occ,
+        orbital_energies,
+        mo_coefficients,
+    );
     defer alloc.free(w_mat);
 
     // Nuclear repulsion gradient
@@ -973,13 +1269,27 @@ pub fn computeKsDftGradient(
             // --- Nuclear attraction derivative ---
             for (0..n_atoms) |c| {
                 // Basis derivative: 2 * P * dV_C/d(center_mu) to atom_a
-                const dv_dA = contractedNuclearDeriv(mu_shell, mu_info.ang, nu_shell, nu_info.ang, nuc_positions[c], nuc_charges[c]);
+                const dv_dA = contractedNuclearDeriv(
+                    mu_shell,
+                    mu_info.ang,
+                    nu_shell,
+                    nu_info.ang,
+                    nuc_positions[c],
+                    nuc_charges[c],
+                );
                 grad[atom_a].x += 2.0 * p_val * dv_dA[0];
                 grad[atom_a].y += 2.0 * p_val * dv_dA[1];
                 grad[atom_a].z += 2.0 * p_val * dv_dA[2];
 
                 // Hellmann-Feynman: dV_C/dR_C
-                const dv_dB = contractedNuclearDeriv(nu_shell, nu_info.ang, mu_shell, mu_info.ang, nuc_positions[c], nuc_charges[c]);
+                const dv_dB = contractedNuclearDeriv(
+                    nu_shell,
+                    nu_info.ang,
+                    mu_shell,
+                    mu_info.ang,
+                    nuc_positions[c],
+                    nuc_charges[c],
+                );
                 grad[c].x -= p_val * (dv_dA[0] + dv_dB[0]);
                 grad[c].y -= p_val * (dv_dA[1] + dv_dB[1]);
                 grad[c].z -= p_val * (dv_dA[2] + dv_dB[2]);
@@ -1083,10 +1393,14 @@ pub fn computeKsDftGradient(
                                     const sig = off_d + id_d;
 
                                     // KS-DFT Gamma
-                                    const gamma = p_mu_nu * p_mat[p_lam_sig_base + sig] - hf_frac * 0.5 * p_mu_lam * p_mat[nu * n + sig];
+                                    const coulomb_term = p_mu_nu * p_mat[p_lam_sig_base + sig];
+                                    const exchange_term =
+                                        hf_frac * 0.5 * p_mu_lam * p_mat[nu * n + sig];
+                                    const gamma = coulomb_term - exchange_term;
                                     if (@abs(gamma) < 1e-15) continue;
 
-                                    const idx = ia * nb_s * nc_s * nd_s + ib * nc_s * nd_s + ic * nd_s + id_d;
+                                    const idx = ia * nb_s * nc_s * nd_s +
+                                        ib * nc_s * nd_s + ic * nd_s + id_d;
                                     // First-center x 2 factor
                                     grad[atom_sa].x += 2.0 * gamma * batch_dx[idx];
                                     grad[atom_sa].y += 2.0 * gamma * batch_dy[idx];
@@ -1107,7 +1421,8 @@ pub fn computeKsDftGradient(
     // For LDA:
     //   dE_xc/dR_A = sum_g w_g * v_xc(r_g) * d(rho)/dR_A(r_g)
     //
-    // where d(rho)/dR_A = sum_{mu,nu} P_{mu,nu} * [d(phi_mu)/dR_A * phi_nu + phi_mu * d(phi_nu)/dR_A]
+    // where d(rho)/dR_A = sum_{mu,nu} P_{mu,nu}
+    //   * [d(phi_mu)/dR_A * phi_nu + phi_mu * d(phi_nu)/dR_A]
     //
     // Since d(phi_mu)/dR_A = -d(phi_mu)/dr when mu is centered on atom A (else 0),
     // we get (using "first-center" approach):
@@ -1168,7 +1483,8 @@ pub fn computeKsDftGradient(
             }
         }
 
-        // Pre-compute P * phi for each grid point: p_phi[g * n + mu] = sum_nu P[mu,nu] * phi[g*n+nu]
+        // Pre-compute P * phi for each grid point:
+        //   p_phi[g * n + mu] = sum_nu P[mu,nu] * phi[g*n+nu]
         const p_phi = try alloc.alloc(f64, n_grid * n);
         defer alloc.free(p_phi);
 
@@ -1197,7 +1513,8 @@ pub fn computeKsDftGradient(
         //     Part 1: -4 * w * v_sigma * [sum_i grad_rho_i * (P*dphi_i)_mu] * dphi_mu/dx
         //     Part 2: -4 * w * v_sigma * [sum_i grad_rho_i * (P*phi)_mu] * d²phi_mu/(dx dx_i)
 
-        // Pre-compute P * dphi for GGA: p_dphi_{x,y,z}[g * n + mu] = sum_nu P[mu,nu] * dphi_{x,y,z}[g*n+nu]
+        // Pre-compute P * dphi for GGA:
+        //   p_dphi_{x,y,z}[g * n + mu] = sum_nu P[mu,nu] * dphi_{x,y,z}[g*n+nu]
         var p_dphi_x: ?[]f64 = null;
         var p_dphi_y: ?[]f64 = null;
         var p_dphi_z: ?[]f64 = null;
@@ -1340,8 +1657,18 @@ test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
 
     // Build molecular grid for DFT
     const atoms = [_]becke.Atom{
-        .{ .x = nuc_positions[0].x, .y = nuc_positions[0].y, .z = nuc_positions[0].z, .z_number = 1 },
-        .{ .x = nuc_positions[1].x, .y = nuc_positions[1].y, .z = nuc_positions[1].z, .z_number = 1 },
+        .{
+            .x = nuc_positions[0].x,
+            .y = nuc_positions[0].y,
+            .z = nuc_positions[0].z,
+            .z_number = 1,
+        },
+        .{
+            .x = nuc_positions[1].x,
+            .y = nuc_positions[1].y,
+            .z = nuc_positions[1].z,
+            .z_number = 1,
+        },
     };
     const grid_config = becke.GridConfig{
         .n_radial = 50,
@@ -1418,9 +1745,25 @@ test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
         .{ .center = pos_m[1], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    var ks_p = try kohn_sham.runKohnShamScf(alloc, io, &shells_p, &pos_p, &nuc_charges, 2, ks_params);
+    var ks_p = try kohn_sham.runKohnShamScf(
+        alloc,
+        io,
+        &shells_p,
+        &pos_p,
+        &nuc_charges,
+        2,
+        ks_params,
+    );
     defer ks_p.deinit(alloc);
-    var ks_m = try kohn_sham.runKohnShamScf(alloc, io, &shells_m, &pos_m, &nuc_charges, 2, ks_params);
+    var ks_m = try kohn_sham.runKohnShamScf(
+        alloc,
+        io,
+        &shells_m,
+        &pos_m,
+        &nuc_charges,
+        2,
+        ks_params,
+    );
     defer ks_m.deinit(alloc);
 
     const num_grad_x = (ks_p.total_energy - ks_m.total_energy) / (2.0 * delta);
@@ -1464,9 +1807,24 @@ test "KS-DFT LDA gradient H2O STO-3G vs PySCF" {
 
     // Build molecular grid for DFT
     const atoms = [_]becke.Atom{
-        .{ .x = nuc_positions[0].x, .y = nuc_positions[0].y, .z = nuc_positions[0].z, .z_number = 8 },
-        .{ .x = nuc_positions[1].x, .y = nuc_positions[1].y, .z = nuc_positions[1].z, .z_number = 1 },
-        .{ .x = nuc_positions[2].x, .y = nuc_positions[2].y, .z = nuc_positions[2].z, .z_number = 1 },
+        .{
+            .x = nuc_positions[0].x,
+            .y = nuc_positions[0].y,
+            .z = nuc_positions[0].z,
+            .z_number = 8,
+        },
+        .{
+            .x = nuc_positions[1].x,
+            .y = nuc_positions[1].y,
+            .z = nuc_positions[1].z,
+            .z_number = 1,
+        },
+        .{
+            .x = nuc_positions[2].x,
+            .y = nuc_positions[2].y,
+            .z = nuc_positions[2].z,
+            .z_number = 1,
+        },
     };
     const grid_config = becke.GridConfig{
         .n_radial = 50,
@@ -1581,8 +1939,18 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
 
     // Build molecular grid for DFT
     const atoms = [_]becke.Atom{
-        .{ .x = nuc_positions[0].x, .y = nuc_positions[0].y, .z = nuc_positions[0].z, .z_number = 1 },
-        .{ .x = nuc_positions[1].x, .y = nuc_positions[1].y, .z = nuc_positions[1].z, .z_number = 1 },
+        .{
+            .x = nuc_positions[0].x,
+            .y = nuc_positions[0].y,
+            .z = nuc_positions[0].z,
+            .z_number = 1,
+        },
+        .{
+            .x = nuc_positions[1].x,
+            .y = nuc_positions[1].y,
+            .z = nuc_positions[1].z,
+            .z_number = 1,
+        },
     };
     const grid_config = becke.GridConfig{
         .n_radial = 50,
@@ -1659,9 +2027,25 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
         .{ .center = pos_m[1], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    var ks_p = try kohn_sham.runKohnShamScf(alloc, io, &shells_p, &pos_p, &nuc_charges, 2, ks_params);
+    var ks_p = try kohn_sham.runKohnShamScf(
+        alloc,
+        io,
+        &shells_p,
+        &pos_p,
+        &nuc_charges,
+        2,
+        ks_params,
+    );
     defer ks_p.deinit(alloc);
-    var ks_m = try kohn_sham.runKohnShamScf(alloc, io, &shells_m, &pos_m, &nuc_charges, 2, ks_params);
+    var ks_m = try kohn_sham.runKohnShamScf(
+        alloc,
+        io,
+        &shells_m,
+        &pos_m,
+        &nuc_charges,
+        2,
+        ks_params,
+    );
     defer ks_m.deinit(alloc);
 
     const num_grad_x = (ks_p.total_energy - ks_m.total_energy) / (2.0 * delta);
@@ -1707,9 +2091,24 @@ test "KS-DFT B3LYP gradient H2O STO-3G vs PySCF" {
 
     // Build Becke grid
     const becke_atoms = [_]becke.Atom{
-        .{ .x = nuc_positions[0].x, .y = nuc_positions[0].y, .z = nuc_positions[0].z, .z_number = atomic_numbers[0] },
-        .{ .x = nuc_positions[1].x, .y = nuc_positions[1].y, .z = nuc_positions[1].z, .z_number = atomic_numbers[1] },
-        .{ .x = nuc_positions[2].x, .y = nuc_positions[2].y, .z = nuc_positions[2].z, .z_number = atomic_numbers[2] },
+        .{
+            .x = nuc_positions[0].x,
+            .y = nuc_positions[0].y,
+            .z = nuc_positions[0].z,
+            .z_number = atomic_numbers[0],
+        },
+        .{
+            .x = nuc_positions[1].x,
+            .y = nuc_positions[1].y,
+            .z = nuc_positions[1].z,
+            .z_number = atomic_numbers[1],
+        },
+        .{
+            .x = nuc_positions[2].x,
+            .y = nuc_positions[2].y,
+            .z = nuc_positions[2].z,
+            .z_number = atomic_numbers[2],
+        },
     };
     const grid_config = becke.GridConfig{
         .n_radial = 80,
@@ -1728,7 +2127,15 @@ test "KS-DFT B3LYP gradient H2O STO-3G vs PySCF" {
         .density_threshold = 1e-8,
     };
 
-    var ks_result = try kohn_sham.runKohnShamScf(alloc, io, &shells, &nuc_positions, &nuc_charges, 10, ks_params);
+    var ks_result = try kohn_sham.runKohnShamScf(
+        alloc,
+        io,
+        &shells,
+        &nuc_positions,
+        &nuc_charges,
+        10,
+        ks_params,
+    );
     defer ks_result.deinit(alloc);
     try testing.expect(ks_result.converged);
 
@@ -2042,10 +2449,32 @@ test "primitive overlap derivative vs FD" {
             .{ .x = 0.0, .y = 0.0, .z = delta },
         };
         for (dirs, 0..) |d, i| {
-            const ca_p = Vec3{ .x = center_a.x + d.x, .y = center_a.y + d.y, .z = center_a.z + d.z };
-            const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
-            const s_p = obara_saika.primitiveOverlap(alpha_a, ca_p, ang_a, alpha_b, center_b, ang_b);
-            const s_m = obara_saika.primitiveOverlap(alpha_a, ca_m, ang_a, alpha_b, center_b, ang_b);
+            const ca_p = Vec3{
+                .x = center_a.x + d.x,
+                .y = center_a.y + d.y,
+                .z = center_a.z + d.z,
+            };
+            const ca_m = Vec3{
+                .x = center_a.x - d.x,
+                .y = center_a.y - d.y,
+                .z = center_a.z - d.z,
+            };
+            const s_p = obara_saika.primitiveOverlap(
+                alpha_a,
+                ca_p,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
+            const s_m = obara_saika.primitiveOverlap(
+                alpha_a,
+                ca_m,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
             const fd = (s_p - s_m) / (2.0 * delta);
             try testing.expectApproxEqAbs(fd, analytical[i], tol);
         }
@@ -2064,10 +2493,32 @@ test "primitive overlap derivative vs FD" {
             .{ .x = 0.0, .y = 0.0, .z = delta },
         };
         for (dirs, 0..) |d, i| {
-            const ca_p = Vec3{ .x = center_a.x + d.x, .y = center_a.y + d.y, .z = center_a.z + d.z };
-            const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
-            const s_p = obara_saika.primitiveOverlap(alpha_a, ca_p, ang_a, alpha_b, center_b, ang_b);
-            const s_m = obara_saika.primitiveOverlap(alpha_a, ca_m, ang_a, alpha_b, center_b, ang_b);
+            const ca_p = Vec3{
+                .x = center_a.x + d.x,
+                .y = center_a.y + d.y,
+                .z = center_a.z + d.z,
+            };
+            const ca_m = Vec3{
+                .x = center_a.x - d.x,
+                .y = center_a.y - d.y,
+                .z = center_a.z - d.z,
+            };
+            const s_p = obara_saika.primitiveOverlap(
+                alpha_a,
+                ca_p,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
+            const s_m = obara_saika.primitiveOverlap(
+                alpha_a,
+                ca_m,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
             const fd = (s_p - s_m) / (2.0 * delta);
             try testing.expectApproxEqAbs(fd, analytical[i], tol);
         }
@@ -2086,10 +2537,32 @@ test "primitive overlap derivative vs FD" {
             .{ .x = 0.0, .y = 0.0, .z = delta },
         };
         for (dirs, 0..) |d, i| {
-            const ca_p = Vec3{ .x = center_a.x + d.x, .y = center_a.y + d.y, .z = center_a.z + d.z };
-            const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
-            const s_p = obara_saika.primitiveOverlap(alpha_a, ca_p, ang_a, alpha_b, center_b, ang_b);
-            const s_m = obara_saika.primitiveOverlap(alpha_a, ca_m, ang_a, alpha_b, center_b, ang_b);
+            const ca_p = Vec3{
+                .x = center_a.x + d.x,
+                .y = center_a.y + d.y,
+                .z = center_a.z + d.z,
+            };
+            const ca_m = Vec3{
+                .x = center_a.x - d.x,
+                .y = center_a.y - d.y,
+                .z = center_a.z - d.z,
+            };
+            const s_p = obara_saika.primitiveOverlap(
+                alpha_a,
+                ca_p,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
+            const s_m = obara_saika.primitiveOverlap(
+                alpha_a,
+                ca_m,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
             const fd = (s_p - s_m) / (2.0 * delta);
             try testing.expectApproxEqAbs(fd, analytical[i], tol);
         }
@@ -2119,10 +2592,32 @@ test "primitive kinetic derivative vs FD" {
             .{ .x = 0.0, .y = 0.0, .z = delta },
         };
         for (dirs, 0..) |d, i| {
-            const ca_p = Vec3{ .x = center_a.x + d.x, .y = center_a.y + d.y, .z = center_a.z + d.z };
-            const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
-            const t_p = obara_saika.primitiveKinetic(alpha_a, ca_p, ang_a, alpha_b, center_b, ang_b);
-            const t_m = obara_saika.primitiveKinetic(alpha_a, ca_m, ang_a, alpha_b, center_b, ang_b);
+            const ca_p = Vec3{
+                .x = center_a.x + d.x,
+                .y = center_a.y + d.y,
+                .z = center_a.z + d.z,
+            };
+            const ca_m = Vec3{
+                .x = center_a.x - d.x,
+                .y = center_a.y - d.y,
+                .z = center_a.z - d.z,
+            };
+            const t_p = obara_saika.primitiveKinetic(
+                alpha_a,
+                ca_p,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
+            const t_m = obara_saika.primitiveKinetic(
+                alpha_a,
+                ca_m,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
             const fd = (t_p - t_m) / (2.0 * delta);
             try testing.expectApproxEqAbs(fd, analytical[i], tol);
         }
@@ -2141,10 +2636,32 @@ test "primitive kinetic derivative vs FD" {
             .{ .x = 0.0, .y = 0.0, .z = delta },
         };
         for (dirs, 0..) |d, i| {
-            const ca_p = Vec3{ .x = center_a.x + d.x, .y = center_a.y + d.y, .z = center_a.z + d.z };
-            const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
-            const t_p = obara_saika.primitiveKinetic(alpha_a, ca_p, ang_a, alpha_b, center_b, ang_b);
-            const t_m = obara_saika.primitiveKinetic(alpha_a, ca_m, ang_a, alpha_b, center_b, ang_b);
+            const ca_p = Vec3{
+                .x = center_a.x + d.x,
+                .y = center_a.y + d.y,
+                .z = center_a.z + d.z,
+            };
+            const ca_m = Vec3{
+                .x = center_a.x - d.x,
+                .y = center_a.y - d.y,
+                .z = center_a.z - d.z,
+            };
+            const t_p = obara_saika.primitiveKinetic(
+                alpha_a,
+                ca_p,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
+            const t_m = obara_saika.primitiveKinetic(
+                alpha_a,
+                ca_m,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
             const fd = (t_p - t_m) / (2.0 * delta);
             try testing.expectApproxEqAbs(fd, analytical[i], tol);
         }
@@ -2163,10 +2680,32 @@ test "primitive kinetic derivative vs FD" {
             .{ .x = 0.0, .y = 0.0, .z = delta },
         };
         for (dirs, 0..) |d, i| {
-            const ca_p = Vec3{ .x = center_a.x + d.x, .y = center_a.y + d.y, .z = center_a.z + d.z };
-            const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
-            const t_p = obara_saika.primitiveKinetic(alpha_a, ca_p, ang_a, alpha_b, center_b, ang_b);
-            const t_m = obara_saika.primitiveKinetic(alpha_a, ca_m, ang_a, alpha_b, center_b, ang_b);
+            const ca_p = Vec3{
+                .x = center_a.x + d.x,
+                .y = center_a.y + d.y,
+                .z = center_a.z + d.z,
+            };
+            const ca_m = Vec3{
+                .x = center_a.x - d.x,
+                .y = center_a.y - d.y,
+                .z = center_a.z - d.z,
+            };
+            const t_p = obara_saika.primitiveKinetic(
+                alpha_a,
+                ca_p,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
+            const t_m = obara_saika.primitiveKinetic(
+                alpha_a,
+                ca_m,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+            );
             const fd = (t_p - t_m) / (2.0 * delta);
             try testing.expectApproxEqAbs(fd, analytical[i], tol);
         }
@@ -2190,7 +2729,16 @@ test "primitive nuclear derivative vs FD" {
         const ang_a = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
         const ang_b = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
-        const analytical = primNuclearDeriv(alpha_a, center_a, ang_a, alpha_b, center_b, ang_b, nuc_pos, nuc_charge);
+        const analytical = primNuclearDeriv(
+            alpha_a,
+            center_a,
+            ang_a,
+            alpha_b,
+            center_b,
+            ang_b,
+            nuc_pos,
+            nuc_charge,
+        );
 
         const dirs = [3]Vec3{
             .{ .x = delta, .y = 0.0, .z = 0.0 },
@@ -2198,10 +2746,36 @@ test "primitive nuclear derivative vs FD" {
             .{ .x = 0.0, .y = 0.0, .z = delta },
         };
         for (dirs, 0..) |d, i| {
-            const ca_p = Vec3{ .x = center_a.x + d.x, .y = center_a.y + d.y, .z = center_a.z + d.z };
-            const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
-            const v_p = obara_saika.primitiveNuclearAttraction(alpha_a, ca_p, ang_a, alpha_b, center_b, ang_b, nuc_pos, nuc_charge);
-            const v_m = obara_saika.primitiveNuclearAttraction(alpha_a, ca_m, ang_a, alpha_b, center_b, ang_b, nuc_pos, nuc_charge);
+            const ca_p = Vec3{
+                .x = center_a.x + d.x,
+                .y = center_a.y + d.y,
+                .z = center_a.z + d.z,
+            };
+            const ca_m = Vec3{
+                .x = center_a.x - d.x,
+                .y = center_a.y - d.y,
+                .z = center_a.z - d.z,
+            };
+            const v_p = obara_saika.primitiveNuclearAttraction(
+                alpha_a,
+                ca_p,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+                nuc_pos,
+                nuc_charge,
+            );
+            const v_m = obara_saika.primitiveNuclearAttraction(
+                alpha_a,
+                ca_m,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+                nuc_pos,
+                nuc_charge,
+            );
             const fd = (v_p - v_m) / (2.0 * delta);
             try testing.expectApproxEqAbs(fd, analytical[i], tol);
         }
@@ -2212,7 +2786,16 @@ test "primitive nuclear derivative vs FD" {
         const ang_a = AngularMomentum{ .x = 0, .y = 1, .z = 0 };
         const ang_b = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
-        const analytical = primNuclearDeriv(alpha_a, center_a, ang_a, alpha_b, center_b, ang_b, nuc_pos, nuc_charge);
+        const analytical = primNuclearDeriv(
+            alpha_a,
+            center_a,
+            ang_a,
+            alpha_b,
+            center_b,
+            ang_b,
+            nuc_pos,
+            nuc_charge,
+        );
 
         const dirs = [3]Vec3{
             .{ .x = delta, .y = 0.0, .z = 0.0 },
@@ -2220,10 +2803,36 @@ test "primitive nuclear derivative vs FD" {
             .{ .x = 0.0, .y = 0.0, .z = delta },
         };
         for (dirs, 0..) |d, i| {
-            const ca_p = Vec3{ .x = center_a.x + d.x, .y = center_a.y + d.y, .z = center_a.z + d.z };
-            const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
-            const v_p = obara_saika.primitiveNuclearAttraction(alpha_a, ca_p, ang_a, alpha_b, center_b, ang_b, nuc_pos, nuc_charge);
-            const v_m = obara_saika.primitiveNuclearAttraction(alpha_a, ca_m, ang_a, alpha_b, center_b, ang_b, nuc_pos, nuc_charge);
+            const ca_p = Vec3{
+                .x = center_a.x + d.x,
+                .y = center_a.y + d.y,
+                .z = center_a.z + d.z,
+            };
+            const ca_m = Vec3{
+                .x = center_a.x - d.x,
+                .y = center_a.y - d.y,
+                .z = center_a.z - d.z,
+            };
+            const v_p = obara_saika.primitiveNuclearAttraction(
+                alpha_a,
+                ca_p,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+                nuc_pos,
+                nuc_charge,
+            );
+            const v_m = obara_saika.primitiveNuclearAttraction(
+                alpha_a,
+                ca_m,
+                ang_a,
+                alpha_b,
+                center_b,
+                ang_b,
+                nuc_pos,
+                nuc_charge,
+            );
             const fd = (v_p - v_m) / (2.0 * delta);
             try testing.expectApproxEqAbs(fd, analytical[i], tol);
         }

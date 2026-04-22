@@ -511,16 +511,133 @@ fn nuclearAux3D(
     if (bx > 0) {
         // Horizontal transfer: Θ_{a,b} = Θ_{a+1_i,b-1_i} + (Ai-Bi) Θ_{a,b-1_i}
         // PA = P - A, PB = P - B, so A - B = PB - PA.
-        return nuclearAux3D(ax + 1, ay, az, bx - 1, by, bz, m, pa_x, pa_y, pa_z, pb_x, pb_y, pb_z, cp_x, cp_y, cp_z, inv_2p, boys) +
-            (pb_x - pa_x) * nuclearAux3D(ax, ay, az, bx - 1, by, bz, m, pa_x, pa_y, pa_z, pb_x, pb_y, pb_z, cp_x, cp_y, cp_z, inv_2p, boys);
+        const t1 = nuclearAux3D(
+            ax + 1,
+            ay,
+            az,
+            bx - 1,
+            by,
+            bz,
+            m,
+            pa_x,
+            pa_y,
+            pa_z,
+            pb_x,
+            pb_y,
+            pb_z,
+            cp_x,
+            cp_y,
+            cp_z,
+            inv_2p,
+            boys,
+        );
+        const t2 = nuclearAux3D(
+            ax,
+            ay,
+            az,
+            bx - 1,
+            by,
+            bz,
+            m,
+            pa_x,
+            pa_y,
+            pa_z,
+            pb_x,
+            pb_y,
+            pb_z,
+            cp_x,
+            cp_y,
+            cp_z,
+            inv_2p,
+            boys,
+        );
+        return t1 + (pb_x - pa_x) * t2;
     }
     if (by > 0) {
-        return nuclearAux3D(ax, ay + 1, az, bx, by - 1, bz, m, pa_x, pa_y, pa_z, pb_x, pb_y, pb_z, cp_x, cp_y, cp_z, inv_2p, boys) +
-            (pb_y - pa_y) * nuclearAux3D(ax, ay, az, bx, by - 1, bz, m, pa_x, pa_y, pa_z, pb_x, pb_y, pb_z, cp_x, cp_y, cp_z, inv_2p, boys);
+        const t1 = nuclearAux3D(
+            ax,
+            ay + 1,
+            az,
+            bx,
+            by - 1,
+            bz,
+            m,
+            pa_x,
+            pa_y,
+            pa_z,
+            pb_x,
+            pb_y,
+            pb_z,
+            cp_x,
+            cp_y,
+            cp_z,
+            inv_2p,
+            boys,
+        );
+        const t2 = nuclearAux3D(
+            ax,
+            ay,
+            az,
+            bx,
+            by - 1,
+            bz,
+            m,
+            pa_x,
+            pa_y,
+            pa_z,
+            pb_x,
+            pb_y,
+            pb_z,
+            cp_x,
+            cp_y,
+            cp_z,
+            inv_2p,
+            boys,
+        );
+        return t1 + (pb_y - pa_y) * t2;
     }
     if (bz > 0) {
-        return nuclearAux3D(ax, ay, az + 1, bx, by, bz - 1, m, pa_x, pa_y, pa_z, pb_x, pb_y, pb_z, cp_x, cp_y, cp_z, inv_2p, boys) +
-            (pb_z - pa_z) * nuclearAux3D(ax, ay, az, bx, by, bz - 1, m, pa_x, pa_y, pa_z, pb_x, pb_y, pb_z, cp_x, cp_y, cp_z, inv_2p, boys);
+        const t1 = nuclearAux3D(
+            ax,
+            ay,
+            az + 1,
+            bx,
+            by,
+            bz - 1,
+            m,
+            pa_x,
+            pa_y,
+            pa_z,
+            pb_x,
+            pb_y,
+            pb_z,
+            cp_x,
+            cp_y,
+            cp_z,
+            inv_2p,
+            boys,
+        );
+        const t2 = nuclearAux3D(
+            ax,
+            ay,
+            az,
+            bx,
+            by,
+            bz - 1,
+            m,
+            pa_x,
+            pa_y,
+            pa_z,
+            pb_x,
+            pb_y,
+            pb_z,
+            cp_x,
+            cp_y,
+            cp_z,
+            inv_2p,
+            boys,
+        );
+        return t1 + (pb_z - pa_z) * t2;
     }
 
     // Step 2: b = (0,0,0), use vertical recurrence on a
@@ -553,34 +670,199 @@ fn nuclearAuxVertical(
     // Choose axis to decrement: pick one with nonzero angular momentum
     if (ax > 0) {
         // Θ^(m)_{ax,ay,az,0} via x-axis recurrence from (ax-1)
-        var result = pa_x * nuclearAuxVertical(ax - 1, ay, az, m, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys);
-        result += cp_x * nuclearAuxVertical(ax - 1, ay, az, m + 1, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys);
+        const t_m0 = nuclearAuxVertical(
+            ax - 1,
+            ay,
+            az,
+            m,
+            pa_x,
+            pa_y,
+            pa_z,
+            cp_x,
+            cp_y,
+            cp_z,
+            inv_2p,
+            boys,
+        );
+        const t_m1 = nuclearAuxVertical(
+            ax - 1,
+            ay,
+            az,
+            m + 1,
+            pa_x,
+            pa_y,
+            pa_z,
+            cp_x,
+            cp_y,
+            cp_z,
+            inv_2p,
+            boys,
+        );
+        var result = pa_x * t_m0;
+        result += cp_x * t_m1;
         if (ax >= 2) {
             const ai = @as(f64, @floatFromInt(ax - 1));
-            result += ai * inv_2p * (nuclearAuxVertical(ax - 2, ay, az, m, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys) -
-                nuclearAuxVertical(ax - 2, ay, az, m + 1, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys));
+            const t2_m0 = nuclearAuxVertical(
+                ax - 2,
+                ay,
+                az,
+                m,
+                pa_x,
+                pa_y,
+                pa_z,
+                cp_x,
+                cp_y,
+                cp_z,
+                inv_2p,
+                boys,
+            );
+            const t2_m1 = nuclearAuxVertical(
+                ax - 2,
+                ay,
+                az,
+                m + 1,
+                pa_x,
+                pa_y,
+                pa_z,
+                cp_x,
+                cp_y,
+                cp_z,
+                inv_2p,
+                boys,
+            );
+            result += ai * inv_2p * (t2_m0 - t2_m1);
         }
         return result;
     }
 
     if (ay > 0) {
-        var result = pa_y * nuclearAuxVertical(ax, ay - 1, az, m, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys);
-        result += cp_y * nuclearAuxVertical(ax, ay - 1, az, m + 1, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys);
+        const t_m0 = nuclearAuxVertical(
+            ax,
+            ay - 1,
+            az,
+            m,
+            pa_x,
+            pa_y,
+            pa_z,
+            cp_x,
+            cp_y,
+            cp_z,
+            inv_2p,
+            boys,
+        );
+        const t_m1 = nuclearAuxVertical(
+            ax,
+            ay - 1,
+            az,
+            m + 1,
+            pa_x,
+            pa_y,
+            pa_z,
+            cp_x,
+            cp_y,
+            cp_z,
+            inv_2p,
+            boys,
+        );
+        var result = pa_y * t_m0;
+        result += cp_y * t_m1;
         if (ay >= 2) {
             const ai = @as(f64, @floatFromInt(ay - 1));
-            result += ai * inv_2p * (nuclearAuxVertical(ax, ay - 2, az, m, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys) -
-                nuclearAuxVertical(ax, ay - 2, az, m + 1, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys));
+            const t2_m0 = nuclearAuxVertical(
+                ax,
+                ay - 2,
+                az,
+                m,
+                pa_x,
+                pa_y,
+                pa_z,
+                cp_x,
+                cp_y,
+                cp_z,
+                inv_2p,
+                boys,
+            );
+            const t2_m1 = nuclearAuxVertical(
+                ax,
+                ay - 2,
+                az,
+                m + 1,
+                pa_x,
+                pa_y,
+                pa_z,
+                cp_x,
+                cp_y,
+                cp_z,
+                inv_2p,
+                boys,
+            );
+            result += ai * inv_2p * (t2_m0 - t2_m1);
         }
         return result;
     }
 
     // az > 0
-    var result = pa_z * nuclearAuxVertical(ax, ay, az - 1, m, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys);
-    result += cp_z * nuclearAuxVertical(ax, ay, az - 1, m + 1, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys);
+    const t_m0 = nuclearAuxVertical(
+        ax,
+        ay,
+        az - 1,
+        m,
+        pa_x,
+        pa_y,
+        pa_z,
+        cp_x,
+        cp_y,
+        cp_z,
+        inv_2p,
+        boys,
+    );
+    const t_m1 = nuclearAuxVertical(
+        ax,
+        ay,
+        az - 1,
+        m + 1,
+        pa_x,
+        pa_y,
+        pa_z,
+        cp_x,
+        cp_y,
+        cp_z,
+        inv_2p,
+        boys,
+    );
+    var result = pa_z * t_m0;
+    result += cp_z * t_m1;
     if (az >= 2) {
         const ai = @as(f64, @floatFromInt(az - 1));
-        result += ai * inv_2p * (nuclearAuxVertical(ax, ay, az - 2, m, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys) -
-            nuclearAuxVertical(ax, ay, az - 2, m + 1, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys));
+        const t2_m0 = nuclearAuxVertical(
+            ax,
+            ay,
+            az - 2,
+            m,
+            pa_x,
+            pa_y,
+            pa_z,
+            cp_x,
+            cp_y,
+            cp_z,
+            inv_2p,
+            boys,
+        );
+        const t2_m1 = nuclearAuxVertical(
+            ax,
+            ay,
+            az - 2,
+            m + 1,
+            pa_x,
+            pa_y,
+            pa_z,
+            cp_x,
+            cp_y,
+            cp_z,
+            inv_2p,
+            boys,
+        );
+        result += ai * inv_2p * (t2_m0 - t2_m1);
     }
     return result;
 }
@@ -629,7 +911,14 @@ pub fn contractedTotalNuclearAttraction(
 ) f64 {
     var result: f64 = 0.0;
     for (nuc_positions, 0..) |pos, i| {
-        result += contractedNuclearAttraction(shell_a, a_cart, shell_b, b_cart, pos, nuc_charges[i]);
+        result += contractedNuclearAttraction(
+            shell_a,
+            a_cart,
+            shell_b,
+            b_cart,
+            pos,
+            nuc_charges[i],
+        );
     }
     return result;
 }
@@ -726,7 +1015,8 @@ pub fn primitiveERI(
     const mu_cd = gamma * delta / q;
 
     const exp_factor = @exp(-mu_ab * r2_ab - mu_cd * r2_cd);
-    const prefactor = 2.0 * std.math.pow(f64, std.math.pi, 2.5) / (p * q * @sqrt(p + q)) * exp_factor;
+    const two_pi_2p5 = 2.0 * std.math.pow(f64, std.math.pi, 2.5);
+    const prefactor = two_pi_2p5 / (p * q * @sqrt(p + q)) * exp_factor;
 
     // Boys function argument
     const arg = rho * r2_pq;
@@ -802,7 +1092,25 @@ pub fn primitiveERI(
     const MAX_STACK_THETA: usize = 256 * 1024; // 256K entries = 2MB
     if (theta_size > MAX_STACK_THETA) {
         // Fall back to recursive implementation for very large angular momentum.
-        return primitiveERIRecursive(a, b, c_am, d_am, &boys, pa, qc, wp, wq, ab, cd, inv_2p, inv_2q, inv_2pq, rho_over_p, rho_over_q) * prefactor;
+        const fallback = primitiveERIRecursive(
+            a,
+            b,
+            c_am,
+            d_am,
+            &boys,
+            pa,
+            qc,
+            wp,
+            wq,
+            ab,
+            cd,
+            inv_2p,
+            inv_2q,
+            inv_2pq,
+            rho_over_p,
+            rho_over_q,
+        );
+        return fallback * prefactor;
     }
 
     var theta: [MAX_STACK_THETA]f64 = undefined;
@@ -845,11 +1153,16 @@ pub fn primitiveERI(
                 const c_dec_idx = cx_d * c_stride_x + cy_d * c_stride_y + cz_d * c_stride_z;
 
                 // c_dec[axis] value (after decrement)
-                const ci_after: f64 = @floatFromInt(if (axis == 0) cx_d else if (axis == 1) cy_d else cz_d);
+                const ci_after: f64 = @floatFromInt(
+                    if (axis == 0) cx_d else if (axis == 1) cy_d else cz_d,
+                );
+
+                const base_dec = a_idx * c_size * m_stride + c_dec_idx * m_stride;
+                const base_out = a_idx * c_size * m_stride + c_idx * m_stride;
 
                 for (0..m_max + 1 - lc_total) |m| {
-                    var val = qc[axis] * theta[a_idx * c_size * m_stride + c_dec_idx * m_stride + m] +
-                        wq[axis] * theta[a_idx * c_size * m_stride + c_dec_idx * m_stride + m + 1];
+                    var val = qc[axis] * theta[base_dec + m] +
+                        wq[axis] * theta[base_dec + m + 1];
 
                     if (ci_after >= 1.0) {
                         // c_dec2 = c_dec - e_{axis}
@@ -857,13 +1170,15 @@ pub fn primitiveERI(
                         var cy_d2 = cy_d;
                         var cz_d2 = cz_d;
                         if (axis == 0) cx_d2 -= 1 else if (axis == 1) cy_d2 -= 1 else cz_d2 -= 1;
-                        const c_dec2_idx = cx_d2 * c_stride_x + cy_d2 * c_stride_y + cz_d2 * c_stride_z;
+                        const c_dec2_idx =
+                            cx_d2 * c_stride_x + cy_d2 * c_stride_y + cz_d2 * c_stride_z;
+                        const base_dec2 = a_idx * c_size * m_stride + c_dec2_idx * m_stride;
 
-                        val += ci_after * inv_2q * (theta[a_idx * c_size * m_stride + c_dec2_idx * m_stride + m] -
-                            rho_over_q * theta[a_idx * c_size * m_stride + c_dec2_idx * m_stride + m + 1]);
+                        val += ci_after * inv_2q * (theta[base_dec2 + m] -
+                            rho_over_q * theta[base_dec2 + m + 1]);
                     }
 
-                    theta[a_idx * c_size * m_stride + c_idx * m_stride + m] = val;
+                    theta[base_out + m] = val;
                 }
 
                 if (cy == 0) break;
@@ -903,7 +1218,9 @@ pub fn primitiveERI(
                 if (axis == 0) ax_d -= 1 else if (axis == 1) ay_d -= 1 else az_d -= 1;
                 const a_dec_idx = ax_d * a_stride_x + ay_d * a_stride_y + az_d * a_stride_z;
 
-                const ai_after: f64 = @floatFromInt(if (axis == 0) ax_d else if (axis == 1) ay_d else az_d);
+                const ai_after: f64 = @floatFromInt(
+                    if (axis == 0) ax_d else if (axis == 1) ay_d else az_d,
+                );
 
                 // For all c indices with cx+cy+cz <= Lc
                 for (0..Lc + 1) |lc_total| {
@@ -912,37 +1229,56 @@ pub fn primitiveERI(
                         var cy2: usize = lc_total - cx2;
                         while (true) {
                             const cz2: usize = lc_total - cx2 - cy2;
-                            const c_idx = cx2 * c_stride_x + cy2 * c_stride_y + cz2 * c_stride_z;
+                            const c_idx =
+                                cx2 * c_stride_x + cy2 * c_stride_y + cz2 * c_stride_z;
+
+                            const base_dec = a_dec_idx * c_size * m_stride + c_idx * m_stride;
+                            const base_out = a_idx * c_size * m_stride + c_idx * m_stride;
 
                             const m_limit = m_max + 1 - la_total - lc_total;
                             for (0..m_limit) |m| {
-                                var val = pa[axis] * theta[a_dec_idx * c_size * m_stride + c_idx * m_stride + m] +
-                                    wp[axis] * theta[a_dec_idx * c_size * m_stride + c_idx * m_stride + m + 1];
+                                var val = pa[axis] * theta[base_dec + m] +
+                                    wp[axis] * theta[base_dec + m + 1];
 
                                 if (ai_after >= 1.0) {
                                     var ax_d2 = ax_d;
                                     var ay_d2 = ay_d;
                                     var az_d2 = az_d;
-                                    if (axis == 0) ax_d2 -= 1 else if (axis == 1) ay_d2 -= 1 else az_d2 -= 1;
-                                    const a_dec2_idx = ax_d2 * a_stride_x + ay_d2 * a_stride_y + az_d2 * a_stride_z;
+                                    if (axis == 0)
+                                        ax_d2 -= 1
+                                    else if (axis == 1) ay_d2 -= 1 else az_d2 -= 1;
+                                    const a_dec2_idx = ax_d2 * a_stride_x +
+                                        ay_d2 * a_stride_y +
+                                        az_d2 * a_stride_z;
+                                    const base_dec2 =
+                                        a_dec2_idx * c_size * m_stride + c_idx * m_stride;
 
-                                    val += ai_after * inv_2p * (theta[a_dec2_idx * c_size * m_stride + c_idx * m_stride + m] -
-                                        rho_over_p * theta[a_dec2_idx * c_size * m_stride + c_idx * m_stride + m + 1]);
+                                    val += ai_after * inv_2p * (theta[base_dec2 + m] -
+                                        rho_over_p * theta[base_dec2 + m + 1]);
                                 }
 
                                 // Coupling term: c_i/(2(p+q)) [a_dec,0|c-1_i,0]^(m+1)
-                                const ci_val: f64 = @floatFromInt(if (axis == 0) cx2 else if (axis == 1) cy2 else cz2);
+                                const ci_val: f64 = @floatFromInt(
+                                    if (axis == 0) cx2 else if (axis == 1) cy2 else cz2,
+                                );
                                 if (ci_val >= 1.0) {
                                     var cx2_d = cx2;
                                     var cy2_d = cy2;
                                     var cz2_d = cz2;
-                                    if (axis == 0) cx2_d -= 1 else if (axis == 1) cy2_d -= 1 else cz2_d -= 1;
-                                    const c_dec_idx = cx2_d * c_stride_x + cy2_d * c_stride_y + cz2_d * c_stride_z;
+                                    if (axis == 0)
+                                        cx2_d -= 1
+                                    else if (axis == 1) cy2_d -= 1 else cz2_d -= 1;
+                                    const c_dec_idx = cx2_d * c_stride_x +
+                                        cy2_d * c_stride_y +
+                                        cz2_d * c_stride_z;
+                                    const coupling_base =
+                                        a_dec_idx * c_size * m_stride + c_dec_idx * m_stride;
+                                    const coupling_idx = coupling_base + m + 1;
 
-                                    val += ci_val * inv_2pq * theta[a_dec_idx * c_size * m_stride + c_dec_idx * m_stride + m + 1];
+                                    val += ci_val * inv_2pq * theta[coupling_idx];
                                 }
 
-                                theta[a_idx * c_size * m_stride + c_idx * m_stride + m] = val;
+                                theta[base_out + m] = val;
                             }
 
                             if (cy2 == 0) break;
@@ -1023,8 +1359,37 @@ fn eriHorizontal(
             d_dec[i] -= 1;
             var c_inc = c_arr;
             c_inc[i] += 1;
-            return eriHorizontal(a_arr, b_arr, c_inc, d_dec, theta, a_stride_x, a_stride_y, c_size, c_stride_x, c_stride_y, m_stride, ab, cd_vec) +
-                cd_vec[i] * eriHorizontal(a_arr, b_arr, c_arr, d_dec, theta, a_stride_x, a_stride_y, c_size, c_stride_x, c_stride_y, m_stride, ab, cd_vec);
+            const t1 = eriHorizontal(
+                a_arr,
+                b_arr,
+                c_inc,
+                d_dec,
+                theta,
+                a_stride_x,
+                a_stride_y,
+                c_size,
+                c_stride_x,
+                c_stride_y,
+                m_stride,
+                ab,
+                cd_vec,
+            );
+            const t2 = eriHorizontal(
+                a_arr,
+                b_arr,
+                c_arr,
+                d_dec,
+                theta,
+                a_stride_x,
+                a_stride_y,
+                c_size,
+                c_stride_x,
+                c_stride_y,
+                m_stride,
+                ab,
+                cd_vec,
+            );
+            return t1 + cd_vec[i] * t2;
         }
     }
 
@@ -1035,14 +1400,47 @@ fn eriHorizontal(
             b_dec[i] -= 1;
             var a_inc = a_arr;
             a_inc[i] += 1;
-            return eriHorizontal(a_inc, b_dec, c_arr, d_arr, theta, a_stride_x, a_stride_y, c_size, c_stride_x, c_stride_y, m_stride, ab, cd_vec) +
-                ab[i] * eriHorizontal(a_arr, b_dec, c_arr, d_arr, theta, a_stride_x, a_stride_y, c_size, c_stride_x, c_stride_y, m_stride, ab, cd_vec);
+            const t1 = eriHorizontal(
+                a_inc,
+                b_dec,
+                c_arr,
+                d_arr,
+                theta,
+                a_stride_x,
+                a_stride_y,
+                c_size,
+                c_stride_x,
+                c_stride_y,
+                m_stride,
+                ab,
+                cd_vec,
+            );
+            const t2 = eriHorizontal(
+                a_arr,
+                b_dec,
+                c_arr,
+                d_arr,
+                theta,
+                a_stride_x,
+                a_stride_y,
+                c_size,
+                c_stride_x,
+                c_stride_y,
+                m_stride,
+                ab,
+                cd_vec,
+            );
+            return t1 + ab[i] * t2;
         }
     }
 
     // b = d = (0,0,0): look up from theta table at m=0
-    const a_idx = @as(usize, a_arr[0]) * a_stride_x + @as(usize, a_arr[1]) * a_stride_y + @as(usize, a_arr[2]);
-    const c_idx = @as(usize, c_arr[0]) * c_stride_x + @as(usize, c_arr[1]) * c_stride_y + @as(usize, c_arr[2]);
+    const a_idx = @as(usize, a_arr[0]) * a_stride_x +
+        @as(usize, a_arr[1]) * a_stride_y +
+        @as(usize, a_arr[2]);
+    const c_idx = @as(usize, c_arr[0]) * c_stride_x +
+        @as(usize, c_arr[1]) * c_stride_y +
+        @as(usize, c_arr[2]);
     return theta[a_idx * c_size * m_stride + c_idx * m_stride + 0];
 }
 
@@ -1256,9 +1654,13 @@ pub fn contractedERI(
                     const q_val = pc.alpha + pd.alpha;
                     const mu_cd = pc.alpha * pd.alpha / q_val;
                     const exp_factor = exp_ab * @exp(-mu_cd * r2_cd);
-                    const prefactor_bound = 2.0 * std.math.pow(f64, std.math.pi, 2.5) / (p_val * q_val * @sqrt(p_val + q_val)) * exp_factor;
+                    const two_pi_2p5 = 2.0 * std.math.pow(f64, std.math.pi, 2.5);
+                    const prefactor_bound =
+                        two_pi_2p5 / (p_val * q_val * @sqrt(p_val + q_val)) * exp_factor;
                     const coeff_product = pa.coeff * pb.coeff * pc.coeff * pd.coeff;
-                    if (@abs(coeff_product) * na * nb * nc * nd * prefactor_bound < prim_screen_threshold) continue;
+                    const norm_product = na * nb * nc * nd;
+                    if (@abs(coeff_product) * norm_product * prefactor_bound <
+                        prim_screen_threshold) continue;
 
                     const prim = primitiveERI(
                         pa.alpha,
@@ -1288,7 +1690,8 @@ pub fn contractedERI(
 // ============================================================================
 
 /// Pre-computed normalization constants for all primitives × all Cartesian components in a shell.
-/// norm_table[ip * num_cart + ic] = normalization(prim[ip].alpha, cart[ic].x, cart[ic].y, cart[ic].z)
+/// norm_table[ip * num_cart + ic] =
+///   normalization(prim[ip].alpha, cart[ic].x, cart[ic].y, cart[ic].z)
 const MAX_PRIM: usize = 16; // max primitives per shell
 const MAX_CART_BATCH: usize = 15; // max Cartesian components (f-type = 10, d-type = 6)
 const MAX_NORM_TABLE: usize = MAX_PRIM * MAX_CART_BATCH; // 240
@@ -1348,7 +1751,8 @@ pub fn contractedShellQuartetERI(
     for (shell_a.primitives, 0..) |pa, ip| {
         var mx: f64 = 0.0;
         for (0..na) |ic| {
-            const n_val = basis_mod.normalization(pa.alpha, cart_a[ic].x, cart_a[ic].y, cart_a[ic].z);
+            const ca = cart_a[ic];
+            const n_val = basis_mod.normalization(pa.alpha, ca.x, ca.y, ca.z);
             norm_a[ip * na + ic] = n_val;
             if (n_val > mx) mx = n_val;
         }
@@ -1357,7 +1761,8 @@ pub fn contractedShellQuartetERI(
     for (shell_b.primitives, 0..) |pb, ip| {
         var mx: f64 = 0.0;
         for (0..nb) |ic| {
-            const n_val = basis_mod.normalization(pb.alpha, cart_b[ic].x, cart_b[ic].y, cart_b[ic].z);
+            const cb = cart_b[ic];
+            const n_val = basis_mod.normalization(pb.alpha, cb.x, cb.y, cb.z);
             norm_b[ip * nb + ic] = n_val;
             if (n_val > mx) mx = n_val;
         }
@@ -1366,7 +1771,8 @@ pub fn contractedShellQuartetERI(
     for (shell_c.primitives, 0..) |pc, ip| {
         var mx: f64 = 0.0;
         for (0..nc) |ic| {
-            const n_val = basis_mod.normalization(pc.alpha, cart_c[ic].x, cart_c[ic].y, cart_c[ic].z);
+            const cc = cart_c[ic];
+            const n_val = basis_mod.normalization(pc.alpha, cc.x, cc.y, cc.z);
             norm_c[ip * nc + ic] = n_val;
             if (n_val > mx) mx = n_val;
         }
@@ -1375,7 +1781,8 @@ pub fn contractedShellQuartetERI(
     for (shell_d.primitives, 0..) |pd, ip| {
         var mx: f64 = 0.0;
         for (0..nd) |ic| {
-            const n_val = basis_mod.normalization(pd.alpha, cart_d[ic].x, cart_d[ic].y, cart_d[ic].z);
+            const cd_el = cart_d[ic];
+            const n_val = basis_mod.normalization(pd.alpha, cd_el.x, cd_el.y, cd_el.z);
             norm_d[ip * nd + ic] = n_val;
             if (n_val > mx) mx = n_val;
         }
@@ -1447,7 +1854,9 @@ pub fn contractedShellQuartetERI(
     const r2_cd = math.Vec3.dot(diff_cd, diff_cd);
 
     // Primitive screening threshold: skip quartets with negligible contribution.
-    // The contribution scales as prefactor * coeff * norm ~ exp(-mu_ab*r2_ab - mu_cd*r2_cd) * pi^2.5 / (p*q*sqrt(p+q))
+    // The contribution scales as
+    //   prefactor * coeff * norm
+    //     ~ exp(-mu_ab*r2_ab - mu_cd*r2_cd) * pi^2.5 / (p*q*sqrt(p+q))
     // We use a conservative threshold on the exponential decay factor.
     const prim_screen_threshold: f64 = 1e-15;
 
@@ -1493,9 +1902,13 @@ pub fn contractedShellQuartetERI(
 
                     // Upper bound: prefactor ~ 2 * pi^2.5 / (p*q*sqrt(p+q)) * exp_factor
                     // Include max normalization constants for accurate screening
-                    const prefactor_bound = 2.0 * std.math.pow(f64, std.math.pi, 2.5) / (p_val * q_val * @sqrt(p_val + q_val)) * exp_factor;
-                    const max_norm_product = max_norm_a[ipa] * max_norm_b[ipb] * max_norm_c[ipc] * max_norm_d[ipd];
-                    if (@abs(coeff_abcd) * max_norm_product * prefactor_bound < prim_screen_threshold) continue;
+                    const two_pi_2p5 = 2.0 * std.math.pow(f64, std.math.pi, 2.5);
+                    const prefactor_bound =
+                        two_pi_2p5 / (p_val * q_val * @sqrt(p_val + q_val)) * exp_factor;
+                    const max_norm_product = max_norm_a[ipa] * max_norm_b[ipb] *
+                        max_norm_c[ipc] * max_norm_d[ipd];
+                    if (@abs(coeff_abcd) * max_norm_product * prefactor_bound <
+                        prim_screen_threshold) continue;
 
                     const rho = p_val * q_val / (p_val + q_val);
                     const prefactor = prefactor_bound; // Same expression, already computed
@@ -1523,9 +1936,21 @@ pub fn contractedShellQuartetERI(
                     boys_mod.boysBatch(@as(u32, @intCast(m_max)), arg, &boys);
 
                     // Intermediate vectors
-                    const qc = [3]f64{ q_center.x - shell_c.center.x, q_center.y - shell_c.center.y, q_center.z - shell_c.center.z };
-                    const wp = [3]f64{ w_center.x - p_center.x, w_center.y - p_center.y, w_center.z - p_center.z };
-                    const wq = [3]f64{ w_center.x - q_center.x, w_center.y - q_center.y, w_center.z - q_center.z };
+                    const qc = [3]f64{
+                        q_center.x - shell_c.center.x,
+                        q_center.y - shell_c.center.y,
+                        q_center.z - shell_c.center.z,
+                    };
+                    const wp = [3]f64{
+                        w_center.x - p_center.x,
+                        w_center.y - p_center.y,
+                        w_center.z - p_center.z,
+                    };
+                    const wq = [3]f64{
+                        w_center.x - q_center.x,
+                        w_center.y - q_center.y,
+                        w_center.z - q_center.z,
+                    };
 
                     const inv_2q = 0.5 / q_val;
                     const inv_2pq = 0.5 / (p_val + q_val);
@@ -1564,26 +1989,43 @@ pub fn contractedShellQuartetERI(
                                 var cx_d = cx;
                                 var cy_d = cy;
                                 var cz_d = cz;
-                                if (axis == 0) cx_d -= 1 else if (axis == 1) cy_d -= 1 else cz_d -= 1;
-                                const c_dec_idx = cx_d * c_stride_x + cy_d * c_stride_y + cz_d * c_stride_z;
-                                const ci_after: f64 = @floatFromInt(if (axis == 0) cx_d else if (axis == 1) cy_d else cz_d);
+                                if (axis == 0)
+                                    cx_d -= 1
+                                else if (axis == 1) cy_d -= 1 else cz_d -= 1;
+                                const c_dec_idx = cx_d * c_stride_x +
+                                    cy_d * c_stride_y +
+                                    cz_d * c_stride_z;
+                                const ci_after: f64 = @floatFromInt(
+                                    if (axis == 0) cx_d else if (axis == 1) cy_d else cz_d,
+                                );
+
+                                const base_dec =
+                                    a_idx * c_size * m_stride + c_dec_idx * m_stride;
+                                const base_out =
+                                    a_idx * c_size * m_stride + c_idx * m_stride;
 
                                 for (0..m_max + 1 - lc_total) |m| {
-                                    var val = qc[axis] * theta[a_idx * c_size * m_stride + c_dec_idx * m_stride + m] +
-                                        wq[axis] * theta[a_idx * c_size * m_stride + c_dec_idx * m_stride + m + 1];
+                                    var val = qc[axis] * theta[base_dec + m] +
+                                        wq[axis] * theta[base_dec + m + 1];
 
                                     if (ci_after >= 1.0) {
                                         var cx_d2 = cx_d;
                                         var cy_d2 = cy_d;
                                         var cz_d2 = cz_d;
-                                        if (axis == 0) cx_d2 -= 1 else if (axis == 1) cy_d2 -= 1 else cz_d2 -= 1;
-                                        const c_dec2_idx = cx_d2 * c_stride_x + cy_d2 * c_stride_y + cz_d2 * c_stride_z;
+                                        if (axis == 0)
+                                            cx_d2 -= 1
+                                        else if (axis == 1) cy_d2 -= 1 else cz_d2 -= 1;
+                                        const c_dec2_idx = cx_d2 * c_stride_x +
+                                            cy_d2 * c_stride_y +
+                                            cz_d2 * c_stride_z;
+                                        const base_dec2 = a_idx * c_size * m_stride +
+                                            c_dec2_idx * m_stride;
 
-                                        val += ci_after * inv_2q * (theta[a_idx * c_size * m_stride + c_dec2_idx * m_stride + m] -
-                                            rho_over_q * theta[a_idx * c_size * m_stride + c_dec2_idx * m_stride + m + 1]);
+                                        val += ci_after * inv_2q * (theta[base_dec2 + m] -
+                                            rho_over_q * theta[base_dec2 + m + 1]);
                                     }
 
-                                    theta[a_idx * c_size * m_stride + c_idx * m_stride + m] = val;
+                                    theta[base_out + m] = val;
                                 }
 
                                 if (cy == 0) break;
@@ -1615,9 +2057,15 @@ pub fn contractedShellQuartetERI(
                                 var ax_d = ax;
                                 var ay_d = ay;
                                 var az_d = az;
-                                if (axis == 0) ax_d -= 1 else if (axis == 1) ay_d -= 1 else az_d -= 1;
-                                const a_dec_idx = ax_d * a_stride_x + ay_d * a_stride_y + az_d * a_stride_z;
-                                const ai_after: f64 = @floatFromInt(if (axis == 0) ax_d else if (axis == 1) ay_d else az_d);
+                                if (axis == 0)
+                                    ax_d -= 1
+                                else if (axis == 1) ay_d -= 1 else az_d -= 1;
+                                const a_dec_idx = ax_d * a_stride_x +
+                                    ay_d * a_stride_y +
+                                    az_d * a_stride_z;
+                                const ai_after: f64 = @floatFromInt(
+                                    if (axis == 0) ax_d else if (axis == 1) ay_d else az_d,
+                                );
 
                                 for (0..Lc + 1) |lc_total| {
                                     var cx2: usize = lc_total;
@@ -1625,36 +2073,63 @@ pub fn contractedShellQuartetERI(
                                         var cy2: usize = lc_total - cx2;
                                         while (true) {
                                             const cz2: usize = lc_total - cx2 - cy2;
-                                            const c_idx = cx2 * c_stride_x + cy2 * c_stride_y + cz2 * c_stride_z;
+                                            const c_idx = cx2 * c_stride_x +
+                                                cy2 * c_stride_y +
+                                                cz2 * c_stride_z;
+
+                                            const base_dec = a_dec_idx * c_size * m_stride +
+                                                c_idx * m_stride;
+                                            const base_out = a_idx * c_size * m_stride +
+                                                c_idx * m_stride;
 
                                             const m_limit = m_max + 1 - la_total - lc_total;
                                             for (0..m_limit) |m| {
-                                                var val = pa_vec[axis] * theta[a_dec_idx * c_size * m_stride + c_idx * m_stride + m] +
-                                                    wp[axis] * theta[a_dec_idx * c_size * m_stride + c_idx * m_stride + m + 1];
+                                                var val = pa_vec[axis] * theta[base_dec + m] +
+                                                    wp[axis] * theta[base_dec + m + 1];
 
                                                 if (ai_after >= 1.0) {
                                                     var ax_d2 = ax_d;
                                                     var ay_d2 = ay_d;
                                                     var az_d2 = az_d;
-                                                    if (axis == 0) ax_d2 -= 1 else if (axis == 1) ay_d2 -= 1 else az_d2 -= 1;
-                                                    const a_dec2_idx = ax_d2 * a_stride_x + ay_d2 * a_stride_y + az_d2 * a_stride_z;
+                                                    if (axis == 0)
+                                                        ax_d2 -= 1
+                                                    else if (axis == 1) ay_d2 -= 1 else az_d2 -= 1;
+                                                    const a_dec2_idx = ax_d2 * a_stride_x +
+                                                        ay_d2 * a_stride_y +
+                                                        az_d2 * a_stride_z;
+                                                    const base_dec2 =
+                                                        a_dec2_idx * c_size * m_stride +
+                                                        c_idx * m_stride;
 
-                                                    val += ai_after * inv_2p * (theta[a_dec2_idx * c_size * m_stride + c_idx * m_stride + m] -
-                                                        rho_over_p * theta[a_dec2_idx * c_size * m_stride + c_idx * m_stride + m + 1]);
+                                                    val += ai_after * inv_2p *
+                                                        (theta[base_dec2 + m] -
+                                                            rho_over_p * theta[base_dec2 + m + 1]);
                                                 }
 
-                                                const ci_val: f64 = @floatFromInt(if (axis == 0) cx2 else if (axis == 1) cy2 else cz2);
+                                                const ci_val: f64 = @floatFromInt(
+                                                    if (axis == 0)
+                                                        cx2
+                                                    else if (axis == 1) cy2 else cz2,
+                                                );
                                                 if (ci_val >= 1.0) {
                                                     var cx2_d = cx2;
                                                     var cy2_d = cy2;
                                                     var cz2_d = cz2;
-                                                    if (axis == 0) cx2_d -= 1 else if (axis == 1) cy2_d -= 1 else cz2_d -= 1;
-                                                    const c_dec_idx = cx2_d * c_stride_x + cy2_d * c_stride_y + cz2_d * c_stride_z;
+                                                    if (axis == 0)
+                                                        cx2_d -= 1
+                                                    else if (axis == 1) cy2_d -= 1 else cz2_d -= 1;
+                                                    const c_dec_idx = cx2_d * c_stride_x +
+                                                        cy2_d * c_stride_y +
+                                                        cz2_d * c_stride_z;
+                                                    const coupling_base =
+                                                        a_dec_idx * c_size * m_stride +
+                                                        c_dec_idx * m_stride;
 
-                                                    val += ci_val * inv_2pq * theta[a_dec_idx * c_size * m_stride + c_dec_idx * m_stride + m + 1];
+                                                    val += ci_val * inv_2pq *
+                                                        theta[coupling_base + m + 1];
                                                 }
 
-                                                theta[a_idx * c_size * m_stride + c_idx * m_stride + m] = val;
+                                                theta[base_out + m] = val;
                                             }
 
                                             if (cy2 == 0) break;
@@ -1962,7 +2437,9 @@ pub fn buildEriTable(
 
                                     const kl = triangularIndex(k, l);
 
-                                    const val = eri_buf[ia * nb * nc * nd + ib * nc * nd + ic * nd + id];
+                                    const buf_idx =
+                                        ia * nb * nc * nd + ib * nc * nd + ic * nd + id;
+                                    const val = eri_buf[buf_idx];
                                     // Use max/min to store at the canonical index (ij>=kl)
                                     const big = @max(ij, kl);
                                     const small = @min(ij, kl);
@@ -2176,13 +2653,31 @@ test "OS ERI ssss matches old implementation" {
     const s_cart = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
     // (aa|aa)
-    const eri_os = contractedERI(shell_a, s_cart, shell_a, s_cart, shell_a, s_cart, shell_a, s_cart);
+    const eri_os = contractedERI(
+        shell_a,
+        s_cart,
+        shell_a,
+        s_cart,
+        shell_a,
+        s_cart,
+        shell_a,
+        s_cart,
+    );
     const eri_old_mod = @import("eri.zig");
     const eri_old = eri_old_mod.eriSSSS(shell_a, shell_a, shell_a, shell_a);
     try testing.expectApproxEqAbs(eri_old, eri_os, 1e-10);
 
     // (ab|ab)
-    const eri_os2 = contractedERI(shell_a, s_cart, shell_b, s_cart, shell_a, s_cart, shell_b, s_cart);
+    const eri_os2 = contractedERI(
+        shell_a,
+        s_cart,
+        shell_b,
+        s_cart,
+        shell_a,
+        s_cart,
+        shell_b,
+        s_cart,
+    );
     const eri_old2 = eri_old_mod.eriSSSS(shell_a, shell_b, shell_a, shell_b);
     try testing.expectApproxEqAbs(eri_old2, eri_os2, 1e-10);
 }

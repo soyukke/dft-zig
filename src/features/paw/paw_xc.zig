@@ -139,7 +139,10 @@ pub fn computePawEhOnsiteMultiL(
 ) !f64 {
     const nbeta = paw.number_of_proj;
     const n_mesh_full = @min(r.len, rab.len);
-    const n_mesh = if (paw.cutoff_r_index > 0) @min(n_mesh_full, paw.cutoff_r_index) else n_mesh_full;
+    const n_mesh = if (paw.cutoff_r_index > 0)
+        @min(n_mesh_full, paw.cutoff_r_index)
+    else
+        n_mesh_full;
     if (n_mesh > 4096) return error.MeshTooLarge;
 
     const lmax_aug = gaunt_table.lmax_aug;
@@ -260,7 +263,8 @@ pub fn computePawEhOnsiteMultiL(
 
 /// Compute multi-L on-site Hartree D_ij for one PAW atom.
 ///
-/// D^H_{im,jm} = Σ_{LM} G(li,mi,lj,mj,L,M) × ∫ [V^AE_{LM} u^AE_i u^AE_j - V^PS_{LM} (u^PS_i u^PS_j + Q^L)] dr
+/// D^H_{im,jm} = Σ_{LM} G(li,mi,lj,mj,L,M)
+///             × ∫ [V^AE_{LM} u^AE_i u^AE_j - V^PS_{LM} (u^PS_i u^PS_j + Q^L)] dr
 /// Output is m-resolved: dij_h[im*mt + jm].
 pub fn computePawDijHartreeMultiL(
     alloc: std.mem.Allocator,
@@ -275,7 +279,10 @@ pub fn computePawDijHartreeMultiL(
 ) !void {
     const nbeta = paw.number_of_proj;
     const n_mesh_full = @min(r.len, rab.len);
-    const n_mesh = if (paw.cutoff_r_index > 0) @min(n_mesh_full, paw.cutoff_r_index) else n_mesh_full;
+    const n_mesh = if (paw.cutoff_r_index > 0)
+        @min(n_mesh_full, paw.cutoff_r_index)
+    else
+        n_mesh_full;
     if (n_mesh > 4096) return error.MeshTooLarge;
 
     const lmax_aug = gaunt_table.lmax_aug;
@@ -393,7 +400,8 @@ pub fn computePawDijHartreeMultiL(
         }
     }
 
-    // Compute D^H_{im,jm} = Σ_{LM} G(li,mi,lj,mj,L,M) × ∫ [V^AE × u^AE_i u^AE_j - V^PS × (u^PS_i u^PS_j + Q^L)] dr
+    // Compute D^H_{im,jm} = Σ_{LM} G(li,mi,lj,mj,L,M)
+    //                     × ∫ [V^AE × u^AE_i u^AE_j - V^PS × (u^PS_i u^PS_j + Q^L)] dr
     @memset(dij_h, 0.0);
     for (0..nbeta) |i| {
         const li: usize = @intCast(paw.ae_wfc[i].l);
@@ -680,7 +688,10 @@ pub fn computePawDijXcAngular(
 ) !void {
     const nbeta = paw.number_of_proj;
     const n_mesh_full = @min(r.len, rab.len);
-    const n_mesh = if (paw.cutoff_r_index > 0) @min(n_mesh_full, paw.cutoff_r_index) else n_mesh_full;
+    const n_mesh = if (paw.cutoff_r_index > 0)
+        @min(n_mesh_full, paw.cutoff_r_index)
+    else
+        n_mesh_full;
     const grid = lebedev.getLebedevGrid(N_ANG);
     const n_ang = grid.len;
     const n_ij = nbeta * nbeta;
@@ -812,8 +823,20 @@ pub fn computePawDijXcAngular(
                 const big_m: i32 = @as(i32, @intCast(bm_idx)) - bl_i32;
                 const lm_idx = big_l * big_l + bm_idx;
                 const flat = alpha_idx * n_lm_aug + lm_idx;
-                ylm_aug_at[flat] = nonlocal.realSphericalHarmonic(bl_i32, big_m, leb_pt.x, leb_pt.y, leb_pt.z);
-                grad_ylm_aug_at[flat] = surfGradYlmGeneral(bl_i32, big_m, leb_pt.x, leb_pt.y, leb_pt.z);
+                ylm_aug_at[flat] = nonlocal.realSphericalHarmonic(
+                    bl_i32,
+                    big_m,
+                    leb_pt.x,
+                    leb_pt.y,
+                    leb_pt.z,
+                );
+                grad_ylm_aug_at[flat] = surfGradYlmGeneral(
+                    bl_i32,
+                    big_m,
+                    leb_pt.x,
+                    leb_pt.y,
+                    leb_pt.z,
+                );
             }
         }
     }
@@ -923,21 +946,34 @@ pub fn computePawDijXcAngular(
                         const l_max = @min(li_u + lj_u, lmax_aug);
                         var big_l = l_min;
                         while (big_l <= l_max) : (big_l += 1) {
-                            const aug_vals = aug_r2[i * nbeta * n_l_aug + j * n_l_aug + big_l] orelse continue;
+                            const aug_idx = i * nbeta * n_l_aug + j * n_l_aug + big_l;
+                            const aug_vals = aug_r2[aug_idx] orelse continue;
                             const bl_i32: i32 = @intCast(big_l);
                             var big_m: i32 = -bl_i32;
                             while (big_m <= bl_i32) : (big_m += 1) {
-                                const gaunt_val = gaunt_table.get(li_u, mi_val, lj_u, mj_val, big_l, big_m);
+                                const gaunt_val = gaunt_table.get(
+                                    li_u,
+                                    mi_val,
+                                    lj_u,
+                                    mj_val,
+                                    big_l,
+                                    big_m,
+                                );
                                 if (@abs(gaunt_val) < 1e-30) continue;
-                                const lm_aug = big_l * big_l + @as(usize, @intCast(@as(i64, @intCast(big_l)) + big_m));
+                                const lm_signed = @as(i64, @intCast(big_l)) + big_m;
+                                const lm_offset: usize = @intCast(lm_signed);
+                                const lm_aug = big_l * big_l + lm_offset;
                                 const ylm_a = ylm_aug_at[alpha * n_lm_aug + lm_aug];
                                 const gylm_a = grad_ylm_aug_at[alpha * n_lm_aug + lm_aug];
                                 const aug_coeff = rij * gaunt_val * ylm_a;
                                 for (0..n_mesh) |k| {
                                     rho_ps[k] += aug_coeff * aug_vals[k];
-                                    grad_s_rho_ps[k][0] += rij * gaunt_val * gylm_a[0] * aug_vals[k];
-                                    grad_s_rho_ps[k][1] += rij * gaunt_val * gylm_a[1] * aug_vals[k];
-                                    grad_s_rho_ps[k][2] += rij * gaunt_val * gylm_a[2] * aug_vals[k];
+                                    grad_s_rho_ps[k][0] +=
+                                        rij * gaunt_val * gylm_a[0] * aug_vals[k];
+                                    grad_s_rho_ps[k][1] +=
+                                        rij * gaunt_val * gylm_a[1] * aug_vals[k];
+                                    grad_s_rho_ps[k][2] +=
+                                        rij * gaunt_val * gylm_a[2] * aug_vals[k];
                                 }
                             }
                         }
@@ -1001,8 +1037,10 @@ pub fn computePawDijXcAngular(
                     const eval_ps = xc.evalPoint(xc_func, n_ps, sigma_ps);
 
                     // Radial integral: (df/dn)f_ij + 2(df/dσ)(∂ρ/∂r)f_ij'
-                    const ae_vxc_rad = eval_ae.df_dn * ae_f[k] + 2.0 * eval_ae.df_dg2 * drho_ae[k] * ae_df[k];
-                    const ps_vxc_rad = eval_ps.df_dn * ps_f[k] + 2.0 * eval_ps.df_dg2 * drho_ps[k] * ps_df[k];
+                    const ae_vxc_rad = eval_ae.df_dn * ae_f[k] +
+                        2.0 * eval_ae.df_dg2 * drho_ae[k] * ae_df[k];
+                    const ps_vxc_rad = eval_ps.df_dn * ps_f[k] +
+                        2.0 * eval_ps.df_dg2 * drho_ps[k] * ps_df[k];
                     sum_rad += (ae_vxc_rad - ps_vxc_rad) * r2 * wk;
 
                     // Angular integral: 2(df/dσ)(∇_Sρ)_d × f_ij × dr
@@ -1017,14 +1055,16 @@ pub fn computePawDijXcAngular(
                 angular_integrals[alpha * n_ij + i * nbeta + j] = sum_ang;
 
                 // Augmentation integrals: D^PS_aug uses Q̂^L as additional basis function
-                // I^aug_rad_{ij,L} = ∫ [df/dn × Q̂^L/r² + 2(df/dσ)(∂ρ/∂r) d(Q̂^L/r²)/dr] r² dr
+                // I^aug_rad_{ij,L} =
+                //     ∫ [df/dn × Q̂^L/r² + 2(df/dσ)(∂ρ/∂r) d(Q̂^L/r²)/dr] r² dr
                 // I^aug_ang_{ij,L}[d] = ∫ [2(df/dσ)(∇_Sρ)_d × Q̂^L/r²] dr
                 // Note: these use PS eval (not AE-PS), and are SUBTRACTED in D_ij.
                 for (0..n_l_aug) |big_l| {
                     const aug_flat = i * nbeta * n_l_aug + j * n_l_aug + big_l;
                     const aug_f = aug_r2[aug_flat] orelse {
-                        aug_rad_integrals[(alpha * n_ij + i * nbeta + j) * n_l_aug + big_l] = 0.0;
-                        aug_ang_integrals[(alpha * n_ij + i * nbeta + j) * n_l_aug + big_l] = .{ 0.0, 0.0, 0.0 };
+                        const out_idx = (alpha * n_ij + i * nbeta + j) * n_l_aug + big_l;
+                        aug_rad_integrals[out_idx] = 0.0;
+                        aug_ang_integrals[out_idx] = .{ 0.0, 0.0, 0.0 };
                         continue;
                     };
                     const aug_df = daug_r2[aug_flat].?;
@@ -1041,7 +1081,8 @@ pub fn computePawDijXcAngular(
                             if (r2 > 1e-20) ang_sq_ps / r2 else 0.0;
                         const eval_ps = xc.evalPoint(xc_func, n_ps, sigma_ps);
 
-                        a_rad += (eval_ps.df_dn * aug_f[k] + 2.0 * eval_ps.df_dg2 * drho_ps[k] * aug_df[k]) * r2 * wk;
+                        a_rad += (eval_ps.df_dn * aug_f[k] +
+                            2.0 * eval_ps.df_dg2 * drho_ps[k] * aug_df[k]) * r2 * wk;
                         for (0..3) |d| {
                             a_ang[d] += 2.0 * eval_ps.df_dg2 * grad_s_rho_ps[k][d] * aug_f[k] * wk;
                         }
@@ -1102,9 +1143,18 @@ pub fn computePawDijXcAngular(
                             const bl_i32: i32 = @intCast(big_l);
                             var big_m: i32 = -bl_i32;
                             while (big_m <= bl_i32) : (big_m += 1) {
-                                const gaunt_val = gaunt_table.get(li_u, mi_val, lj_u, mj_val, big_l, big_m);
+                                const gaunt_val = gaunt_table.get(
+                                    li_u,
+                                    mi_val,
+                                    lj_u,
+                                    mj_val,
+                                    big_l,
+                                    big_m,
+                                );
                                 if (@abs(gaunt_val) < 1e-30) continue;
-                                const lm_aug = big_l * big_l + @as(usize, @intCast(@as(i64, @intCast(big_l)) + big_m));
+                                const lm_signed = @as(i64, @intCast(big_l)) + big_m;
+                                const lm_offset: usize = @intCast(lm_signed);
+                                const lm_aug = big_l * big_l + lm_offset;
                                 const ylm_a = ylm_aug_at[alpha * n_lm_aug + lm_aug];
                                 const gylm_a = grad_ylm_aug_at[alpha * n_lm_aug + lm_aug];
                                 // Subtract PS augmentation contribution
@@ -1145,7 +1195,10 @@ pub fn computePawExcOnsiteAngular(
 ) !f64 {
     const nbeta = paw.number_of_proj;
     const n_mesh_full = @min(r.len, rab.len);
-    const n_mesh = if (paw.cutoff_r_index > 0) @min(n_mesh_full, paw.cutoff_r_index) else n_mesh_full;
+    const n_mesh = if (paw.cutoff_r_index > 0)
+        @min(n_mesh_full, paw.cutoff_r_index)
+    else
+        n_mesh_full;
     const grid = lebedev.getLebedevGrid(N_ANG);
     const n_ang = grid.len;
     const four_pi = 4.0 * std.math.pi;
@@ -1254,8 +1307,20 @@ pub fn computePawExcOnsiteAngular(
                 const big_m: i32 = @as(i32, @intCast(bm_idx)) - bl_i32;
                 const lm_idx = big_l * big_l + bm_idx;
                 const flat = alpha_idx * n_lm_aug + lm_idx;
-                ylm_aug_at[flat] = nonlocal.realSphericalHarmonic(bl_i32, big_m, leb_pt.x, leb_pt.y, leb_pt.z);
-                grad_ylm_aug_at[flat] = surfGradYlmGeneral(bl_i32, big_m, leb_pt.x, leb_pt.y, leb_pt.z);
+                ylm_aug_at[flat] = nonlocal.realSphericalHarmonic(
+                    bl_i32,
+                    big_m,
+                    leb_pt.x,
+                    leb_pt.y,
+                    leb_pt.z,
+                );
+                grad_ylm_aug_at[flat] = surfGradYlmGeneral(
+                    bl_i32,
+                    big_m,
+                    leb_pt.x,
+                    leb_pt.y,
+                    leb_pt.z,
+                );
             }
         }
     }
@@ -1357,21 +1422,34 @@ pub fn computePawExcOnsiteAngular(
                         const l_max = @min(li_u + lj_u, lmax_aug);
                         var big_l = l_min;
                         while (big_l <= l_max) : (big_l += 1) {
-                            const aug_vals = aug_r2[i * nbeta * n_l_aug + j * n_l_aug + big_l] orelse continue;
+                            const aug_idx = i * nbeta * n_l_aug + j * n_l_aug + big_l;
+                            const aug_vals = aug_r2[aug_idx] orelse continue;
                             const bl_i32: i32 = @intCast(big_l);
                             var big_m: i32 = -bl_i32;
                             while (big_m <= bl_i32) : (big_m += 1) {
-                                const gaunt_val = gaunt_table.get(li_u, mi_val, lj_u, mj_val, big_l, big_m);
+                                const gaunt_val = gaunt_table.get(
+                                    li_u,
+                                    mi_val,
+                                    lj_u,
+                                    mj_val,
+                                    big_l,
+                                    big_m,
+                                );
                                 if (@abs(gaunt_val) < 1e-30) continue;
-                                const lm_aug = big_l * big_l + @as(usize, @intCast(@as(i64, @intCast(big_l)) + big_m));
+                                const lm_signed = @as(i64, @intCast(big_l)) + big_m;
+                                const lm_offset: usize = @intCast(lm_signed);
+                                const lm_aug = big_l * big_l + lm_offset;
                                 const ylm_a = ylm_aug_at[alpha * n_lm_aug + lm_aug];
                                 const gylm_a = grad_ylm_aug_at[alpha * n_lm_aug + lm_aug];
                                 const aug_coeff = rij * gaunt_val * ylm_a;
                                 for (0..n_mesh) |k| {
                                     rho_ps[k] += aug_coeff * aug_vals[k];
-                                    grad_s_rho_ps[k][0] += rij * gaunt_val * gylm_a[0] * aug_vals[k];
-                                    grad_s_rho_ps[k][1] += rij * gaunt_val * gylm_a[1] * aug_vals[k];
-                                    grad_s_rho_ps[k][2] += rij * gaunt_val * gylm_a[2] * aug_vals[k];
+                                    grad_s_rho_ps[k][0] +=
+                                        rij * gaunt_val * gylm_a[0] * aug_vals[k];
+                                    grad_s_rho_ps[k][1] +=
+                                        rij * gaunt_val * gylm_a[1] * aug_vals[k];
+                                    grad_s_rho_ps[k][2] +=
+                                        rij * gaunt_val * gylm_a[2] * aug_vals[k];
                                 }
                             }
                         }
@@ -1457,7 +1535,10 @@ pub fn computePawDijXcAngularSpin(
 ) !void {
     const nbeta = paw.number_of_proj;
     const n_mesh_full = @min(r.len, rab.len);
-    const n_mesh = if (paw.cutoff_r_index > 0) @min(n_mesh_full, paw.cutoff_r_index) else n_mesh_full;
+    const n_mesh = if (paw.cutoff_r_index > 0)
+        @min(n_mesh_full, paw.cutoff_r_index)
+    else
+        n_mesh_full;
     const grid = lebedev.getLebedevGrid(N_ANG);
     const n_ang = grid.len;
     const n_ij = nbeta * nbeta;
@@ -1589,8 +1670,20 @@ pub fn computePawDijXcAngularSpin(
                 const big_m: i32 = @as(i32, @intCast(bm_idx)) - bl_i32;
                 const lm_idx = big_l * big_l + bm_idx;
                 const flat = alpha_idx * n_lm_aug + lm_idx;
-                ylm_aug_at[flat] = nonlocal.realSphericalHarmonic(bl_i32, big_m, leb_pt.x, leb_pt.y, leb_pt.z);
-                grad_ylm_aug_at[flat] = surfGradYlmGeneral(bl_i32, big_m, leb_pt.x, leb_pt.y, leb_pt.z);
+                ylm_aug_at[flat] = nonlocal.realSphericalHarmonic(
+                    bl_i32,
+                    big_m,
+                    leb_pt.x,
+                    leb_pt.y,
+                    leb_pt.z,
+                );
+                grad_ylm_aug_at[flat] = surfGradYlmGeneral(
+                    bl_i32,
+                    big_m,
+                    leb_pt.x,
+                    leb_pt.y,
+                    leb_pt.z,
+                );
             }
         }
     }
@@ -1724,20 +1817,31 @@ pub fn computePawDijXcAngularSpin(
                             const l_max = @min(li_u + lj_u, lmax_aug);
                             var big_l = l_min;
                             while (big_l <= l_max) : (big_l += 1) {
-                                const aug_vals = aug_r2[i * nbeta * n_l_aug + j * n_l_aug + big_l] orelse continue;
+                                const aug_idx = i * nbeta * n_l_aug + j * n_l_aug + big_l;
+                                const aug_vals = aug_r2[aug_idx] orelse continue;
                                 const bl_i32: i32 = @intCast(big_l);
                                 var big_m: i32 = -bl_i32;
                                 while (big_m <= bl_i32) : (big_m += 1) {
-                                    const gv = gaunt_table.get(li_u, mi_val, lj_u, mj_val, big_l, big_m);
+                                    const gv = gaunt_table.get(
+                                        li_u,
+                                        mi_val,
+                                        lj_u,
+                                        mj_val,
+                                        big_l,
+                                        big_m,
+                                    );
                                     if (@abs(gv) < 1e-30) continue;
-                                    const lm_aug = big_l * big_l + @as(usize, @intCast(@as(i64, @intCast(big_l)) + big_m));
+                                    const lm_signed = @as(i64, @intCast(big_l)) + big_m;
+                                    const lm_offset: usize = @intCast(lm_signed);
+                                    const lm_aug = big_l * big_l + lm_offset;
                                     const ylm_a = ylm_aug_at[alpha * n_lm_aug + lm_aug];
                                     const gylm_a = grad_ylm_aug_at[alpha * n_lm_aug + lm_aug];
                                     const aug_coeff = rij_up * gv * ylm_a;
                                     for (0..n_mesh) |k| {
                                         rho_ps_up[k] += aug_coeff * aug_vals[k];
                                         inline for (0..3) |d| {
-                                            grad_s_ps_up[k][d] += rij_up * gv * gylm_a[d] * aug_vals[k];
+                                            grad_s_ps_up[k][d] +=
+                                                rij_up * gv * gylm_a[d] * aug_vals[k];
                                         }
                                     }
                                 }
@@ -1765,20 +1869,31 @@ pub fn computePawDijXcAngularSpin(
                             const l_max2 = @min(li_u + lj_u, lmax_aug);
                             var big_l2 = l_min2;
                             while (big_l2 <= l_max2) : (big_l2 += 1) {
-                                const aug_vals = aug_r2[i * nbeta * n_l_aug + j * n_l_aug + big_l2] orelse continue;
+                                const aug_idx = i * nbeta * n_l_aug + j * n_l_aug + big_l2;
+                                const aug_vals = aug_r2[aug_idx] orelse continue;
                                 const bl_i32: i32 = @intCast(big_l2);
                                 var big_m: i32 = -bl_i32;
                                 while (big_m <= bl_i32) : (big_m += 1) {
-                                    const gv = gaunt_table.get(li_u, mi_val, lj_u, mj_val, big_l2, big_m);
+                                    const gv = gaunt_table.get(
+                                        li_u,
+                                        mi_val,
+                                        lj_u,
+                                        mj_val,
+                                        big_l2,
+                                        big_m,
+                                    );
                                     if (@abs(gv) < 1e-30) continue;
-                                    const lm_aug = big_l2 * big_l2 + @as(usize, @intCast(@as(i64, @intCast(big_l2)) + big_m));
+                                    const lm_signed = @as(i64, @intCast(big_l2)) + big_m;
+                                    const lm_offset: usize = @intCast(lm_signed);
+                                    const lm_aug = big_l2 * big_l2 + lm_offset;
                                     const ylm_a = ylm_aug_at[alpha * n_lm_aug + lm_aug];
                                     const gylm_a = grad_ylm_aug_at[alpha * n_lm_aug + lm_aug];
                                     const aug_coeff = rij_dn * gv * ylm_a;
                                     for (0..n_mesh) |k| {
                                         rho_ps_down[k] += aug_coeff * aug_vals[k];
                                         inline for (0..3) |d| {
-                                            grad_s_ps_down[k][d] += rij_dn * gv * gylm_a[d] * aug_vals[k];
+                                            grad_s_ps_down[k][d] +=
+                                                rij_dn * gv * gylm_a[d] * aug_vals[k];
                                         }
                                     }
                                 }
@@ -1851,7 +1966,14 @@ pub fn computePawDijXcAngularSpin(
                         (grad_s_ae_up[k][0] * grad_s_ae_down[k][0] +
                             grad_s_ae_up[k][1] * grad_s_ae_down[k][1] +
                             grad_s_ae_up[k][2] * grad_s_ae_down[k][2]) * inv_r2;
-                    const ev_ae = xc.evalPointSpin(xc_func, n_ae_up, n_ae_dn, g2_uu_ae, g2_dd_ae, g2_ud_ae);
+                    const ev_ae = xc.evalPointSpin(
+                        xc_func,
+                        n_ae_up,
+                        n_ae_dn,
+                        g2_uu_ae,
+                        g2_dd_ae,
+                        g2_ud_ae,
+                    );
 
                     // PS spin XC
                     const n_ps_up = @max(rho_ps_up[k], 1e-30);
@@ -1868,26 +1990,50 @@ pub fn computePawDijXcAngularSpin(
                         (grad_s_ps_up[k][0] * grad_s_ps_down[k][0] +
                             grad_s_ps_up[k][1] * grad_s_ps_down[k][1] +
                             grad_s_ps_up[k][2] * grad_s_ps_down[k][2]) * inv_r2;
-                    const ev_ps = xc.evalPointSpin(xc_func, n_ps_up, n_ps_dn, g2_uu_ps, g2_dd_ps, g2_ud_ps);
+                    const ev_ps = xc.evalPointSpin(
+                        xc_func,
+                        n_ps_up,
+                        n_ps_dn,
+                        g2_uu_ps,
+                        g2_dd_ps,
+                        g2_ud_ps,
+                    );
 
-                    // D^xc_up: df/dn_up × f_ij + (2×df/dg2_uu × ∂ρ_up/∂r + df/dg2_ud × ∂ρ_down/∂r) × f'_ij
-                    const ae_rad_up = ev_ae.df_dn_up * ae_f[k] + (2.0 * ev_ae.df_dg2_uu * drho_ae_up[k] + ev_ae.df_dg2_ud * drho_ae_down[k]) * ae_df[k];
-                    const ps_rad_up = ev_ps.df_dn_up * ps_f[k] + (2.0 * ev_ps.df_dg2_uu * drho_ps_up[k] + ev_ps.df_dg2_ud * drho_ps_down[k]) * ps_df[k];
+                    // D^xc_up: df/dn_up × f_ij
+                    //        + (2×df/dg2_uu × ∂ρ_up/∂r
+                    //           + df/dg2_ud × ∂ρ_down/∂r) × f'_ij
+                    const ae_rad_up = ev_ae.df_dn_up * ae_f[k] +
+                        (2.0 * ev_ae.df_dg2_uu * drho_ae_up[k] +
+                            ev_ae.df_dg2_ud * drho_ae_down[k]) * ae_df[k];
+                    const ps_rad_up = ev_ps.df_dn_up * ps_f[k] +
+                        (2.0 * ev_ps.df_dg2_uu * drho_ps_up[k] +
+                            ev_ps.df_dg2_ud * drho_ps_down[k]) * ps_df[k];
                     sum_rad_up += (ae_rad_up - ps_rad_up) * r2 * wk;
 
-                    // D^xc_down: df/dn_down × f_ij + (2×df/dg2_dd × ∂ρ_down/∂r + df/dg2_ud × ∂ρ_up/∂r) × f'_ij
-                    const ae_rad_dn = ev_ae.df_dn_down * ae_f[k] + (2.0 * ev_ae.df_dg2_dd * drho_ae_down[k] + ev_ae.df_dg2_ud * drho_ae_up[k]) * ae_df[k];
-                    const ps_rad_dn = ev_ps.df_dn_down * ps_f[k] + (2.0 * ev_ps.df_dg2_dd * drho_ps_down[k] + ev_ps.df_dg2_ud * drho_ps_up[k]) * ps_df[k];
+                    // D^xc_down: df/dn_down × f_ij
+                    //          + (2×df/dg2_dd × ∂ρ_down/∂r
+                    //             + df/dg2_ud × ∂ρ_up/∂r) × f'_ij
+                    const ae_rad_dn = ev_ae.df_dn_down * ae_f[k] +
+                        (2.0 * ev_ae.df_dg2_dd * drho_ae_down[k] +
+                            ev_ae.df_dg2_ud * drho_ae_up[k]) * ae_df[k];
+                    const ps_rad_dn = ev_ps.df_dn_down * ps_f[k] +
+                        (2.0 * ev_ps.df_dg2_dd * drho_ps_down[k] +
+                            ev_ps.df_dg2_ud * drho_ps_up[k]) * ps_df[k];
                     sum_rad_down += (ae_rad_dn - ps_rad_dn) * r2 * wk;
 
-                    // Angular integrals: (2×df/dg2_σσ × ∇_S ρ_σ + df/dg2_ud × ∇_S ρ_σ') × f_ij
+                    // Angular integrals:
+                    //   (2×df/dg2_σσ × ∇_S ρ_σ + df/dg2_ud × ∇_S ρ_σ') × f_ij
                     for (0..3) |d| {
-                        const ae_a_up = (2.0 * ev_ae.df_dg2_uu * grad_s_ae_up[k][d] + ev_ae.df_dg2_ud * grad_s_ae_down[k][d]) * ae_f[k];
-                        const ps_a_up = (2.0 * ev_ps.df_dg2_uu * grad_s_ps_up[k][d] + ev_ps.df_dg2_ud * grad_s_ps_down[k][d]) * ps_f[k];
+                        const ae_a_up = (2.0 * ev_ae.df_dg2_uu * grad_s_ae_up[k][d] +
+                            ev_ae.df_dg2_ud * grad_s_ae_down[k][d]) * ae_f[k];
+                        const ps_a_up = (2.0 * ev_ps.df_dg2_uu * grad_s_ps_up[k][d] +
+                            ev_ps.df_dg2_ud * grad_s_ps_down[k][d]) * ps_f[k];
                         sum_ang_up[d] += (ae_a_up - ps_a_up) * wk;
 
-                        const ae_a_dn = (2.0 * ev_ae.df_dg2_dd * grad_s_ae_down[k][d] + ev_ae.df_dg2_ud * grad_s_ae_up[k][d]) * ae_f[k];
-                        const ps_a_dn = (2.0 * ev_ps.df_dg2_dd * grad_s_ps_down[k][d] + ev_ps.df_dg2_ud * grad_s_ps_up[k][d]) * ps_f[k];
+                        const ae_a_dn = (2.0 * ev_ae.df_dg2_dd * grad_s_ae_down[k][d] +
+                            ev_ae.df_dg2_ud * grad_s_ae_up[k][d]) * ae_f[k];
+                        const ps_a_dn = (2.0 * ev_ps.df_dg2_dd * grad_s_ps_down[k][d] +
+                            ev_ps.df_dg2_ud * grad_s_ps_up[k][d]) * ps_f[k];
                         sum_ang_down[d] += (ae_a_dn - ps_a_dn) * wk;
                     }
                 }
@@ -1930,13 +2076,26 @@ pub fn computePawDijXcAngularSpin(
                             (grad_s_ps_up[k][0] * grad_s_ps_down[k][0] +
                                 grad_s_ps_up[k][1] * grad_s_ps_down[k][1] +
                                 grad_s_ps_up[k][2] * grad_s_ps_down[k][2]) * inv_r2;
-                        const ev_ps = xc.evalPointSpin(xc_func, n_ps_up, n_ps_dn, g2_uu_ps, g2_dd_ps, g2_ud_ps);
+                        const ev_ps = xc.evalPointSpin(
+                            xc_func,
+                            n_ps_up,
+                            n_ps_dn,
+                            g2_uu_ps,
+                            g2_dd_ps,
+                            g2_ud_ps,
+                        );
 
-                        a_rad_up += (ev_ps.df_dn_up * aug_f[k] + (2.0 * ev_ps.df_dg2_uu * drho_ps_up[k] + ev_ps.df_dg2_ud * drho_ps_down[k]) * aug_df[k]) * r2 * wk;
-                        a_rad_down += (ev_ps.df_dn_down * aug_f[k] + (2.0 * ev_ps.df_dg2_dd * drho_ps_down[k] + ev_ps.df_dg2_ud * drho_ps_up[k]) * aug_df[k]) * r2 * wk;
+                        a_rad_up += (ev_ps.df_dn_up * aug_f[k] +
+                            (2.0 * ev_ps.df_dg2_uu * drho_ps_up[k] +
+                                ev_ps.df_dg2_ud * drho_ps_down[k]) * aug_df[k]) * r2 * wk;
+                        a_rad_down += (ev_ps.df_dn_down * aug_f[k] +
+                            (2.0 * ev_ps.df_dg2_dd * drho_ps_down[k] +
+                                ev_ps.df_dg2_ud * drho_ps_up[k]) * aug_df[k]) * r2 * wk;
                         for (0..3) |d| {
-                            a_ang_up[d] += (2.0 * ev_ps.df_dg2_uu * grad_s_ps_up[k][d] + ev_ps.df_dg2_ud * grad_s_ps_down[k][d]) * aug_f[k] * wk;
-                            a_ang_down[d] += (2.0 * ev_ps.df_dg2_dd * grad_s_ps_down[k][d] + ev_ps.df_dg2_ud * grad_s_ps_up[k][d]) * aug_f[k] * wk;
+                            a_ang_up[d] += (2.0 * ev_ps.df_dg2_uu * grad_s_ps_up[k][d] +
+                                ev_ps.df_dg2_ud * grad_s_ps_down[k][d]) * aug_f[k] * wk;
+                            a_ang_down[d] += (2.0 * ev_ps.df_dg2_dd * grad_s_ps_down[k][d] +
+                                ev_ps.df_dg2_ud * grad_s_ps_up[k][d]) * aug_f[k] * wk;
                         }
                     }
                     aug_rad_up[base_idx] = a_rad_up;
@@ -1997,9 +2156,18 @@ pub fn computePawDijXcAngularSpin(
                             const bl_i32: i32 = @intCast(big_l);
                             var big_m: i32 = -bl_i32;
                             while (big_m <= bl_i32) : (big_m += 1) {
-                                const gv = gaunt_table.get(li_u, mi_val, lj_u, mj_val, big_l, big_m);
+                                const gv = gaunt_table.get(
+                                    li_u,
+                                    mi_val,
+                                    lj_u,
+                                    mj_val,
+                                    big_l,
+                                    big_m,
+                                );
                                 if (@abs(gv) < 1e-30) continue;
-                                const lm_aug = big_l * big_l + @as(usize, @intCast(@as(i64, @intCast(big_l)) + big_m));
+                                const lm_signed = @as(i64, @intCast(big_l)) + big_m;
+                                const lm_offset: usize = @intCast(lm_signed);
+                                const lm_aug = big_l * big_l + lm_offset;
                                 const ylm_a = ylm_aug_at[alpha * n_lm_aug + lm_aug];
                                 const gylm_a = grad_ylm_aug_at[alpha * n_lm_aug + lm_aug];
                                 c_up -= w_ang * gv * ylm_a * aug_rad_up[aug_base];
@@ -2037,7 +2205,10 @@ pub fn computePawExcOnsiteAngularSpin(
 ) !f64 {
     const nbeta = paw.number_of_proj;
     const n_mesh_full = @min(r.len, rab.len);
-    const n_mesh = if (paw.cutoff_r_index > 0) @min(n_mesh_full, paw.cutoff_r_index) else n_mesh_full;
+    const n_mesh = if (paw.cutoff_r_index > 0)
+        @min(n_mesh_full, paw.cutoff_r_index)
+    else
+        n_mesh_full;
     const leb_grid = lebedev.getLebedevGrid(N_ANG);
     const n_ang = leb_grid.len;
     const four_pi = 4.0 * std.math.pi;
@@ -2259,13 +2430,23 @@ pub fn computePawExcOnsiteAngularSpin(
                             const l_max = @min(li_u + lj_u, lmax_aug);
                             var big_l = l_min;
                             while (big_l <= l_max) : (big_l += 1) {
-                                const av = aug_r2[i * nbeta * n_l_aug + j * n_l_aug + big_l] orelse continue;
+                                const aug_idx = i * nbeta * n_l_aug + j * n_l_aug + big_l;
+                                const av = aug_r2[aug_idx] orelse continue;
                                 const bli2: i32 = @intCast(big_l);
                                 var bm: i32 = -bli2;
                                 while (bm <= bli2) : (bm += 1) {
-                                    const gv = gaunt_table.get(li_u, mi_val, lj_u, mj_val, big_l, bm);
+                                    const gv = gaunt_table.get(
+                                        li_u,
+                                        mi_val,
+                                        lj_u,
+                                        mj_val,
+                                        big_l,
+                                        bm,
+                                    );
                                     if (@abs(gv) < 1e-30) continue;
-                                    const lma = big_l * big_l + @as(usize, @intCast(@as(i64, @intCast(big_l)) + bm));
+                                    const lm_signed = @as(i64, @intCast(big_l)) + bm;
+                                    const lm_offset: usize = @intCast(lm_signed);
+                                    const lma = big_l * big_l + lm_offset;
                                     const ylma = ylm_aug_at[alpha * n_lm_aug + lma];
                                     const gylma = grad_ylm_aug_at[alpha * n_lm_aug + lma];
                                     const ac = rij_up * gv * ylma;
@@ -2299,13 +2480,23 @@ pub fn computePawExcOnsiteAngularSpin(
                             const l_max2 = @min(li_u + lj_u, lmax_aug);
                             var big_l2 = l_min2;
                             while (big_l2 <= l_max2) : (big_l2 += 1) {
-                                const av = aug_r2[i * nbeta * n_l_aug + j * n_l_aug + big_l2] orelse continue;
+                                const aug_idx = i * nbeta * n_l_aug + j * n_l_aug + big_l2;
+                                const av = aug_r2[aug_idx] orelse continue;
                                 const bli2: i32 = @intCast(big_l2);
                                 var bm: i32 = -bli2;
                                 while (bm <= bli2) : (bm += 1) {
-                                    const gv = gaunt_table.get(li_u, mi_val, lj_u, mj_val, big_l2, bm);
+                                    const gv = gaunt_table.get(
+                                        li_u,
+                                        mi_val,
+                                        lj_u,
+                                        mj_val,
+                                        big_l2,
+                                        bm,
+                                    );
                                     if (@abs(gv) < 1e-30) continue;
-                                    const lma = big_l2 * big_l2 + @as(usize, @intCast(@as(i64, @intCast(big_l2)) + bm));
+                                    const lm_signed = @as(i64, @intCast(big_l2)) + bm;
+                                    const lm_offset: usize = @intCast(lm_signed);
+                                    const lma = big_l2 * big_l2 + lm_offset;
                                     const ylma = ylm_aug_at[alpha * n_lm_aug + lma];
                                     const gylma = grad_ylm_aug_at[alpha * n_lm_aug + lma];
                                     const ac = rij_dn * gv * ylma;
@@ -2362,22 +2553,34 @@ pub fn computePawExcOnsiteAngularSpin(
             const n_ae_u = @max(rho_ae_up[k], 1e-30);
             const n_ae_d = @max(rho_ae_dn[k], 1e-30);
             const g2_uu_ae = drho_ae_up[k] * drho_ae_up[k] +
-                (gs_ae_up[k][0] * gs_ae_up[k][0] + gs_ae_up[k][1] * gs_ae_up[k][1] + gs_ae_up[k][2] * gs_ae_up[k][2]) * inv_r2;
+                (gs_ae_up[k][0] * gs_ae_up[k][0] +
+                    gs_ae_up[k][1] * gs_ae_up[k][1] +
+                    gs_ae_up[k][2] * gs_ae_up[k][2]) * inv_r2;
             const g2_dd_ae = drho_ae_dn[k] * drho_ae_dn[k] +
-                (gs_ae_dn[k][0] * gs_ae_dn[k][0] + gs_ae_dn[k][1] * gs_ae_dn[k][1] + gs_ae_dn[k][2] * gs_ae_dn[k][2]) * inv_r2;
+                (gs_ae_dn[k][0] * gs_ae_dn[k][0] +
+                    gs_ae_dn[k][1] * gs_ae_dn[k][1] +
+                    gs_ae_dn[k][2] * gs_ae_dn[k][2]) * inv_r2;
             const g2_ud_ae = drho_ae_up[k] * drho_ae_dn[k] +
-                (gs_ae_up[k][0] * gs_ae_dn[k][0] + gs_ae_up[k][1] * gs_ae_dn[k][1] + gs_ae_up[k][2] * gs_ae_dn[k][2]) * inv_r2;
+                (gs_ae_up[k][0] * gs_ae_dn[k][0] +
+                    gs_ae_up[k][1] * gs_ae_dn[k][1] +
+                    gs_ae_up[k][2] * gs_ae_dn[k][2]) * inv_r2;
             const ev_ae = xc.evalPointSpin(xc_func, n_ae_u, n_ae_d, g2_uu_ae, g2_dd_ae, g2_ud_ae);
             exc_ae += w_ang * ev_ae.f * r2 * wk;
 
             const n_ps_u = @max(rho_ps_up[k], 1e-30);
             const n_ps_d = @max(rho_ps_dn[k], 1e-30);
             const g2_uu_ps = drho_ps_up[k] * drho_ps_up[k] +
-                (gs_ps_up[k][0] * gs_ps_up[k][0] + gs_ps_up[k][1] * gs_ps_up[k][1] + gs_ps_up[k][2] * gs_ps_up[k][2]) * inv_r2;
+                (gs_ps_up[k][0] * gs_ps_up[k][0] +
+                    gs_ps_up[k][1] * gs_ps_up[k][1] +
+                    gs_ps_up[k][2] * gs_ps_up[k][2]) * inv_r2;
             const g2_dd_ps = drho_ps_dn[k] * drho_ps_dn[k] +
-                (gs_ps_dn[k][0] * gs_ps_dn[k][0] + gs_ps_dn[k][1] * gs_ps_dn[k][1] + gs_ps_dn[k][2] * gs_ps_dn[k][2]) * inv_r2;
+                (gs_ps_dn[k][0] * gs_ps_dn[k][0] +
+                    gs_ps_dn[k][1] * gs_ps_dn[k][1] +
+                    gs_ps_dn[k][2] * gs_ps_dn[k][2]) * inv_r2;
             const g2_ud_ps = drho_ps_up[k] * drho_ps_dn[k] +
-                (gs_ps_up[k][0] * gs_ps_dn[k][0] + gs_ps_up[k][1] * gs_ps_dn[k][1] + gs_ps_up[k][2] * gs_ps_dn[k][2]) * inv_r2;
+                (gs_ps_up[k][0] * gs_ps_dn[k][0] +
+                    gs_ps_up[k][1] * gs_ps_dn[k][1] +
+                    gs_ps_up[k][2] * gs_ps_dn[k][2]) * inv_r2;
             const ev_ps = xc.evalPointSpin(xc_func, n_ps_u, n_ps_d, g2_uu_ps, g2_dd_ps, g2_ud_ps);
             exc_ps += w_ang * ev_ps.f * r2 * wk;
         }
