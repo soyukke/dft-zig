@@ -167,9 +167,25 @@ pub const XcPointSpin = struct {
     df_dg2_ud: f64,
 };
 
+const xc_point_spin_zero = XcPointSpin{
+    .f = 0.0,
+    .df_dn_up = 0.0,
+    .df_dn_down = 0.0,
+    .df_dg2_uu = 0.0,
+    .df_dg2_dd = 0.0,
+    .df_dg2_ud = 0.0,
+};
+
 /// Evaluate spin-polarized XC energy density and potentials at a single point.
 /// All inputs/outputs in Hartree internally, converted to Rydberg on output.
-pub fn evalPointSpin(xc_func: Functional, n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64) XcPointSpin {
+pub fn evalPointSpin(
+    xc_func: Functional,
+    n_up: f64,
+    n_down: f64,
+    g2_uu: f64,
+    g2_dd: f64,
+    g2_ud: f64,
+) XcPointSpin {
     return switch (xc_func) {
         .lda_pz => ldaPzSpin(n_up, n_down),
         .pbe => pbeSpin(n_up, n_down, g2_uu, g2_dd, g2_ud),
@@ -442,7 +458,7 @@ fn spinInterpolation(zeta: f64) struct { f_z: f64, df_dz: f64 } {
 /// Correlation: PZ para/ferro interpolation with f(zeta)
 fn ldaPzSpin(n_up: f64, n_down: f64) XcPointSpin {
     const n = n_up + n_down;
-    if (n <= 1e-12) return .{ .f = 0.0, .df_dn_up = 0.0, .df_dn_down = 0.0, .df_dg2_uu = 0.0, .df_dg2_dd = 0.0, .df_dg2_ud = 0.0 };
+    if (n <= 1e-12) return xc_point_spin_zero;
 
     const pi = std.math.pi;
     const c_x = -0.75 * std.math.pow(f64, 3.0 / pi, 1.0 / 3.0);
@@ -452,7 +468,8 @@ fn ldaPzSpin(n_up: f64, n_down: f64) XcPointSpin {
     // E_x[n_up, n_down] = (E_x[2*n_up] + E_x[2*n_down]) / 2
     // eps_x(n) = c_x * n^(1/3), so E_x = n * eps_x = c_x * n^(4/3)
     // E_x_sigma = c_x * (2*n_sigma)^(4/3) / 2
-    // V_x_sigma = d(E_x)/d(n_sigma) = c_x * (4/3) * 2^(1/3) * n_sigma^(1/3) * 2 / 2 = (4/3)*c_x*2^(1/3)*n_sigma^(1/3)
+    // V_x_sigma = d(E_x)/d(n_sigma) = c_x * (4/3) * 2^(1/3) * n_sigma^(1/3) * 2 / 2
+    //           = (4/3)*c_x*2^(1/3)*n_sigma^(1/3)
     const two13 = std.math.pow(f64, 2.0, 1.0 / 3.0);
     var ex: f64 = 0.0;
     var vx_up: f64 = 0.0;
@@ -531,7 +548,8 @@ fn pw92CorrelationGeneric(rs: f64, params: PW92Params) CorrResult {
     const ln_g = @log(g);
     const eps = -2.0 * params.a * (1.0 + params.a1 * rs) * ln_g;
 
-    const df_drs = 0.5 * params.b1 / sqrt_rs + params.b2 + 1.5 * params.b3 * sqrt_rs + 2.0 * params.b4 * rs;
+    const df_drs = 0.5 * params.b1 / sqrt_rs + params.b2 +
+        1.5 * params.b3 * sqrt_rs + 2.0 * params.b4 * rs;
     const dln_g_drs = -(1.0 / (2.0 * params.a * f * f * g)) * df_drs;
     const deps_drs = -2.0 * params.a * (params.a1 * ln_g + (1.0 + params.a1 * rs) * dln_g_drs);
     const v_c = eps - (rs / 3.0) * deps_drs;
@@ -539,22 +557,44 @@ fn pw92CorrelationGeneric(rs: f64, params: PW92Params) CorrResult {
 }
 
 // PW92 paramagnetic (ec0)
-const pw92_para = PW92Params{ .a = 0.031091, .a1 = 0.21370, .b1 = 7.5957, .b2 = 3.5876, .b3 = 1.6382, .b4 = 0.49294 };
+const pw92_para = PW92Params{
+    .a = 0.031091,
+    .a1 = 0.21370,
+    .b1 = 7.5957,
+    .b2 = 3.5876,
+    .b3 = 1.6382,
+    .b4 = 0.49294,
+};
 // PW92 ferromagnetic (ec1)
-const pw92_ferro = PW92Params{ .a = 0.015545, .a1 = 0.20548, .b1 = 14.1189, .b2 = 6.1977, .b3 = 3.3662, .b4 = 0.62517 };
+const pw92_ferro = PW92Params{
+    .a = 0.015545,
+    .a1 = 0.20548,
+    .b1 = 14.1189,
+    .b2 = 6.1977,
+    .b3 = 3.3662,
+    .b4 = 0.62517,
+};
 // PW92 alpha_c (spin stiffness)
-const pw92_alpha = PW92Params{ .a = 0.016887, .a1 = 0.11125, .b1 = 10.357, .b2 = 3.6231, .b3 = 0.88026, .b4 = 0.49671 };
+const pw92_alpha = PW92Params{
+    .a = 0.016887,
+    .a1 = 0.11125,
+    .b1 = 10.357,
+    .b2 = 3.6231,
+    .b3 = 0.88026,
+    .b4 = 0.49671,
+};
 
 /// Spin-polarized PBE.
 fn pbeSpin(n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64) XcPointSpin {
     const n = n_up + n_down;
-    if (n <= 1e-12) return .{ .f = 0.0, .df_dn_up = 0.0, .df_dn_down = 0.0, .df_dg2_uu = 0.0, .df_dg2_dd = 0.0, .df_dg2_ud = 0.0 };
+    if (n <= 1e-12) return xc_point_spin_zero;
 
     const to_ry = 2.0;
 
     // Exchange: spin scaling E_x = (E_x[2n_up, 4g2_uu] + E_x[2n_down, 4g2_dd]) / 2
-    const ex_up = if (n_up > 1e-15) pbeExchange(2.0 * n_up, 4.0 * g2_uu) else XcPoint{ .f = 0.0, .df_dn = 0.0, .df_dg2 = 0.0 };
-    const ex_down = if (n_down > 1e-15) pbeExchange(2.0 * n_down, 4.0 * g2_dd) else XcPoint{ .f = 0.0, .df_dn = 0.0, .df_dg2 = 0.0 };
+    const zero_xc = XcPoint{ .f = 0.0, .df_dn = 0.0, .df_dg2 = 0.0 };
+    const ex_up = if (n_up > 1e-15) pbeExchange(2.0 * n_up, 4.0 * g2_uu) else zero_xc;
+    const ex_down = if (n_down > 1e-15) pbeExchange(2.0 * n_down, 4.0 * g2_dd) else zero_xc;
 
     const f_ex = (ex_up.f + ex_down.f) / 2.0;
     // V_x_sigma = d(E_x)/d(n_sigma) = d(E_x[2n_sigma, 4g2_ss])/d(n_sigma) / 2
@@ -588,7 +628,13 @@ const PbeCorrelationSpinResult = struct {
 };
 
 /// Spin-polarized PBE correlation (Hartree units internally).
-fn pbeCorrelationSpin(n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64) PbeCorrelationSpinResult {
+fn pbeCorrelationSpin(
+    n_up: f64,
+    n_down: f64,
+    g2_uu: f64,
+    g2_dd: f64,
+    g2_ud: f64,
+) PbeCorrelationSpinResult {
     const pi = std.math.pi;
     const beta = 0.06672455060314922;
     const gamma_c = 0.031090690869654895;
@@ -607,7 +653,8 @@ fn pbeCorrelationSpin(n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64
     const fz = spinInterpolation(zeta);
     const fdd0 = 1.709921; // f''(0) = 4/(9*(2^(1/3)-1))
 
-    // eps_c(rs, zeta) = ec0 - ac(rs) * f(zeta) / f''(0) * (1 - zeta^4) + (ec1 - ec0) * f(zeta) * zeta^4
+    // eps_c(rs, zeta) = ec0 - ac(rs) * f(zeta) / f''(0) * (1 - zeta^4)
+    //                 + (ec1 - ec0) * f(zeta) * zeta^4
     // Note: ac.eps = -2a(1+a1*rs)*ln(g) < 0, so -ac.eps gives +alpha_c (physical spin stiffness)
     const z4 = zeta * zeta * zeta * zeta;
     const eps_c = ec0.eps - ac.eps * fz.f_z / fdd0 * (1.0 - z4) + (ec1.eps - ec0.eps) * fz.f_z * z4;
@@ -677,11 +724,15 @@ fn pbeCorrelationSpin(n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64
     const dzeta_dn_down = -(1.0 + zeta) / n;
 
     // deps_c/drs
-    const deps_c_drs = ec0.deps_drs - ac.deps_drs * fz.f_z / fdd0 * (1.0 - z4) + (ec1.deps_drs - ec0.deps_drs) * fz.f_z * z4;
+    const deps_c_drs = ec0.deps_drs -
+        ac.deps_drs * fz.f_z / fdd0 * (1.0 - z4) +
+        (ec1.deps_drs - ec0.deps_drs) * fz.f_z * z4;
 
     // deps_c/dzeta
     const dz4_dzeta = 4.0 * zeta * zeta * zeta;
-    const deps_c_dzeta = -ac.eps * fz.df_dz / fdd0 * (1.0 - z4) + (-ac.eps) * fz.f_z / fdd0 * (-dz4_dzeta) + (ec1.eps - ec0.eps) * (fz.df_dz * z4 + fz.f_z * dz4_dzeta);
+    const deps_c_dzeta = -ac.eps * fz.df_dz / fdd0 * (1.0 - z4) +
+        (-ac.eps) * fz.f_z / fdd0 * (-dz4_dzeta) +
+        (ec1.eps - ec0.eps) * (fz.df_dz * z4 + fz.f_z * dz4_dzeta);
 
     // d(n*eps_c)/dn_sigma = eps_c + n * (deps_c/drs * drs/dn + deps_c/dzeta * dzeta/dn_sigma)
     const vc_lda_common = eps_c + n * deps_c_drs * drs_dn;
@@ -702,7 +753,8 @@ fn pbeCorrelationSpin(n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64
 
     // dA/dphi3: derivative through the exponent
     // du/dphi3 = u * eps_c / (gamma * phi3^2)
-    // dA/dphi3 = -(beta/gamma) * du/dphi3 / (u-1)^2 = -(beta/gamma) * u * eps_c / (gamma * phi3^2 * (u-1)^2)
+    // dA/dphi3 = -(beta/gamma) * du/dphi3 / (u-1)^2
+    //          = -(beta/gamma) * u * eps_c / (gamma * phi3^2 * (u-1)^2)
     const dA_dphi3 = if (@abs(u_minus) > 1e-12)
         -(beta / gamma_c) * u * eps_c / (gamma_c * phi3 * phi3 * u_minus * u_minus)
     else
@@ -944,7 +996,8 @@ test "Spin-polarized PBE: libxc spin reference values" {
     const n = n_up + n_down;
 
     // Convert to Hartree for comparison
-    const exc_ha = result.f / (n * 2.0); // f = n * eps_xc in Ry, so eps_xc = f/(n) in Ry = f/(2n) in Ha
+    // f = n * eps_xc in Ry, so eps_xc = f/(n) in Ry = f/(2n) in Ha
+    const exc_ha = result.f / (n * 2.0);
 
     // Verify energy is negative (physical requirement)
     try testing.expect(exc_ha < 0);

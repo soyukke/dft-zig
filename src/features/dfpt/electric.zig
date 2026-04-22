@@ -53,7 +53,19 @@ pub fn computeDielectricAllK(
     const total = grid.count();
     const dfpt_cfg = DfptConfig.fromConfig(cfg);
 
-    const kgs = try phonon_q.prepareFullBZKpointsFromIBZ(alloc, io, cfg, gs, local_r, species, atoms, cell_bohr, recip, volume, grid);
+    const kgs = try phonon_q.prepareFullBZKpointsFromIBZ(
+        alloc,
+        io,
+        cfg,
+        gs,
+        local_r,
+        species,
+        atoms,
+        cell_bohr,
+        recip,
+        volume,
+        grid,
+    );
     defer {
         for (@constCast(kgs)) |*k| k.deinit(alloc);
         alloc.free(kgs);
@@ -139,10 +151,25 @@ pub fn computeDielectricAllK(
                 defer alloc.free(h1psi);
 
                 for (0..n_pw) |g| {
-                    h1psi[g] = math.complex.scale(kg.wavefunctions_k[n][g], 2.0 * perturbation.gComponent(gvecs[g].kpg, dir));
+                    const kpg_dir = perturbation.gComponent(gvecs[g].kpg, dir);
+                    h1psi[g] = math.complex.scale(kg.wavefunctions_k[n][g], 2.0 * kpg_dir);
                 }
                 if (nl_ctx_opt) |nl_ctx| {
-                    applyDdkNonlocal(gvecs, atoms, nl_ctx, dir, 1.0 / volume, kg.wavefunctions_k[n], radial_tables, nl_out, nl_phase, nl_c1, nl_c2, nl_dc1, nl_dc2);
+                    applyDdkNonlocal(
+                        gvecs,
+                        atoms,
+                        nl_ctx,
+                        dir,
+                        1.0 / volume,
+                        kg.wavefunctions_k[n],
+                        radial_tables,
+                        nl_out,
+                        nl_phase,
+                        nl_c1,
+                        nl_c2,
+                        nl_dc1,
+                        nl_dc2,
+                    );
                     for (0..n_pw) |g| {
                         h1psi[g] = math.complex.add(h1psi[g], nl_out[g]);
                     }
@@ -163,7 +190,11 @@ pub fn computeDielectricAllK(
                     kg.wavefunctions_k_const,
                     n_occ,
                     gvecs,
-                    .{ .tol = dfpt_cfg.sternheimer_tol, .max_iter = dfpt_cfg.sternheimer_max_iter, .alpha_shift = dfpt_cfg.alpha_shift },
+                    .{
+                        .tol = dfpt_cfg.sternheimer_tol,
+                        .max_iter = dfpt_cfg.sternheimer_max_iter,
+                        .alpha_shift = dfpt_cfg.alpha_shift,
+                    },
                 );
                 psi1[n] = result.psi1;
                 bands_built = n + 1;
@@ -297,7 +328,14 @@ pub fn computeDielectricAllK(
 
                     // Term 2: V^(1)_Hxc |ψ_k⟩ (apply real-space potential)
                     // Use cached ψ^(0)(r), multiply by V^(1)(r), FFT back, gather
-                    const v1psi = try phonon_q.applyV1PsiQCached(alloc, grid, map_k_ptr, v1_hxc_r, psi0_r_cache[ik][n], n_pw);
+                    const v1psi = try phonon_q.applyV1PsiQCached(
+                        alloc,
+                        grid,
+                        map_k_ptr,
+                        v1_hxc_r,
+                        psi0_r_cache[ik][n],
+                        n_pw,
+                    );
                     defer alloc.free(v1psi);
 
                     // Combine: rhs = -(term1 + term2)
@@ -320,7 +358,11 @@ pub fn computeDielectricAllK(
                         kg.wavefunctions_k_const,
                         n_occ,
                         gvecs,
-                        .{ .tol = dfpt_cfg.sternheimer_tol, .max_iter = dfpt_cfg.sternheimer_max_iter, .alpha_shift = dfpt_cfg.alpha_shift },
+                        .{
+                            .tol = dfpt_cfg.sternheimer_tol,
+                            .max_iter = dfpt_cfg.sternheimer_max_iter,
+                            .alpha_shift = dfpt_cfg.alpha_shift,
+                        },
                     );
                     // Store result
                     @memcpy(psi1_ef[ik][n], ef_result.psi1);
@@ -396,9 +438,14 @@ pub fn computeDielectricAllK(
 
             logDfpt("efield SCF β={d}: iter={d} vresid={e:.6}\n", .{ beta, iter, residual_norm });
 
-            if (residual_norm < dfpt_cfg.scf_tol or (force_converge and residual_norm < 10.0 * dfpt_cfg.scf_tol)) {
+            const converged_strict = residual_norm < dfpt_cfg.scf_tol;
+            const converged_forced = force_converge and residual_norm < 10.0 * dfpt_cfg.scf_tol;
+            if (converged_strict or converged_forced) {
                 alloc.free(residual);
-                logDfptInfo("efield SCF β={d}: converged at iter={d} vresid={e:.6}\n", .{ beta, iter, residual_norm });
+                logDfptInfo(
+                    "efield SCF β={d}: converged at iter={d} vresid={e:.6}\n",
+                    .{ beta, iter, residual_norm },
+                );
                 break;
             }
 
@@ -410,17 +457,26 @@ pub fn computeDielectricAllK(
             }
 
             // Pulay restart check
-            if (iter >= pulay_active_since and residual_norm > restart_factor * best_vresid and best_vresid < 1.0) {
+            const pulay_ready = iter >= pulay_active_since;
+            const residual_blew_up = residual_norm > restart_factor * best_vresid;
+            const best_is_good = best_vresid < 1.0;
+            if (pulay_ready and residual_blew_up and best_is_good) {
                 if (best_v1) |v| @memcpy(v1_hxc_g, v);
                 if (best_vresid < 10.0 * dfpt_cfg.scf_tol) {
                     force_converge = true;
-                    logDfpt("efield SCF β={d}: Pulay restart (near-converged) iter={d}\n", .{ beta, iter });
+                    logDfpt(
+                        "efield SCF β={d}: Pulay restart (near-converged) iter={d}\n",
+                        .{ beta, iter },
+                    );
                     alloc.free(residual);
                     continue;
                 }
                 pulay.reset();
                 pulay_active_since = iter + 1 + dfpt_cfg.pulay_start;
-                logDfpt("efield SCF β={d}: Pulay restart iter={d} vresid={e:.6} best={e:.6}\n", .{ beta, iter, residual_norm, best_vresid });
+                logDfpt(
+                    "efield SCF β={d}: Pulay restart iter={d} vresid={e:.6} best={e:.6}\n",
+                    .{ beta, iter, residual_norm, best_vresid },
+                );
                 alloc.free(residual);
                 continue;
             }
@@ -431,7 +487,8 @@ pub fn computeDielectricAllK(
             } else {
                 const mix_beta = dfpt_cfg.mixing_beta;
                 for (0..total) |i| {
-                    v1_hxc_g[i] = math.complex.add(v1_hxc_g[i], math.complex.scale(residual[i], mix_beta));
+                    const delta = math.complex.scale(residual[i], mix_beta);
+                    v1_hxc_g[i] = math.complex.add(v1_hxc_g[i], delta);
                 }
                 alloc.free(residual);
             }
@@ -465,7 +522,8 @@ pub fn computeDielectricAllK(
                         // Re[conj(+i psi1_α) × psi1_ef_β]
                         overlap += i_psi1_r * psi1_ef[ik][n][g].r + i_psi1_i * psi1_ef[ik][n][g].i;
                     }
-                    epsilon[alpha][beta] -= (16.0 * std.math.pi / volume) * occ * kg.weight * overlap;
+                    const prefactor = (16.0 * std.math.pi / volume) * occ * kg.weight;
+                    epsilon[alpha][beta] -= prefactor * overlap;
                 }
             }
         }
@@ -492,7 +550,8 @@ pub fn computeDielectricAllK(
                         var s: f64 = 0.0;
                         for (0..3) |k2| {
                             for (0..3) |l2| {
-                                s += cell_bohr.m[k2][i] * @as(f64, @floatFromInt(op.rot.m[k2][l2])) * recip.m[l2][j] * inv2pi;
+                                const rot_val = @as(f64, @floatFromInt(op.rot.m[k2][l2]));
+                                s += cell_bohr.m[k2][i] * rot_val * recip.m[l2][j] * inv2pi;
                             }
                         }
                         rc[i][j] = s;
@@ -527,7 +586,8 @@ pub fn computeDielectricAllK(
 /// Uses nonlocal.zig's Y_lm to be consistent with computeDphiBeta.
 fn computePhiBeta(kpg: math.Vec3, l: i32, m: i32, table: *const nonlocal.RadialTable) f64 {
     const r = math.Vec3.norm(kpg);
-    return 4.0 * std.math.pi * table.eval(r) * nonlocal.realSphericalHarmonic(l, m, kpg.x, kpg.y, kpg.z);
+    const ylm = nonlocal.realSphericalHarmonic(l, m, kpg.x, kpg.y, kpg.z);
+    return 4.0 * std.math.pi * table.eval(r) * ylm;
 }
 
 /// Analytical derivative of the nonlocal projector:
@@ -535,7 +595,13 @@ fn computePhiBeta(kpg: math.Vec3, l: i32, m: i32, table: *const nonlocal.RadialT
 ///   dφ/dq_α = 4π [f'(|q|) (q_α/|q|) Y_lm(q̂) + f(|q|) dY_lm(q̂)/dq_α]
 ///
 /// where dY_lm(q̂)/dq_α = Σ_β (∂Y_lm/∂n_β)(δ_αβ - n_α n_β)/|q|
-fn computeDphiBeta(kpg: math.Vec3, direction: usize, l: i32, m: i32, table: *const nonlocal.RadialTable) f64 {
+fn computeDphiBeta(
+    kpg: math.Vec3,
+    direction: usize,
+    l: i32,
+    m: i32,
+    table: *const nonlocal.RadialTable,
+) f64 {
     const four_pi = 4.0 * std.math.pi;
     const r2 = math.Vec3.dot(kpg, kpg);
 
@@ -561,8 +627,11 @@ fn computeDphiBeta(kpg: math.Vec3, direction: usize, l: i32, m: i32, table: *con
                 },
                 else => {},
             }
-            return four_pi * (table.eval(math.Vec3.norm(qp)) * nonlocal.realSphericalHarmonic(l, m, qp.x, qp.y, qp.z) -
-                table.eval(math.Vec3.norm(qm)) * nonlocal.realSphericalHarmonic(l, m, qm.x, qm.y, qm.z)) / (2.0 * delta);
+            const ylm_p = nonlocal.realSphericalHarmonic(l, m, qp.x, qp.y, qp.z);
+            const ylm_m = nonlocal.realSphericalHarmonic(l, m, qm.x, qm.y, qm.z);
+            const phi_p = table.eval(math.Vec3.norm(qp)) * ylm_p;
+            const phi_m = table.eval(math.Vec3.norm(qm)) * ylm_m;
+            return four_pi * (phi_p - phi_m) / (2.0 * delta);
         }
         return 0.0;
     }
@@ -709,11 +778,13 @@ fn applyDdkNonlocal(
                     var coeff = math.complex.init(0.0, 0.0);
                     var dcoeff = math.complex.init(0.0, 0.0);
                     for (0..n_pw) |g| {
+                        const kpg = gvecs[g].kpg;
                         const xphase = math.complex.mul(psi[g], work_phase[g]);
                         // Use fresh phi consistent with computeDphiBeta's Y_lm
-                        const phi_val = computePhiBeta(gvecs[g].kpg, l_val, m_val, table);
+                        const phi_val = computePhiBeta(kpg, l_val, m_val, table);
                         coeff = math.complex.add(coeff, math.complex.scale(xphase, phi_val));
-                        dcoeff = math.complex.add(dcoeff, math.complex.scale(xphase, computeDphiBeta(gvecs[g].kpg, direction, l_val, m_val, table)));
+                        const dphi_val = computeDphiBeta(kpg, direction, l_val, m_val, table);
+                        dcoeff = math.complex.add(dcoeff, math.complex.scale(xphase, dphi_val));
                     }
                     work_coeff[offset + m_idx] = math.complex.scale(coeff, inv_volume);
                     work_dcoeff[offset + m_idx] = math.complex.scale(dcoeff, inv_volume);
@@ -763,7 +834,8 @@ fn applyDij(sp: scf_mod.NonlocalSpecies, input: []const math.Complex, output: []
                 if (sp.l_list[j] != l_val) continue;
                 const dij = sp.coeffs[b * sp.beta_count + j];
                 if (dij == 0.0) continue;
-                sum = math.complex.add(sum, math.complex.scale(input[sp.m_offsets[j] + m_idx], dij));
+                const scaled = math.complex.scale(input[sp.m_offsets[j] + m_idx], dij);
+                sum = math.complex.add(sum, scaled);
             }
             output[offset + m_idx] = sum;
         }

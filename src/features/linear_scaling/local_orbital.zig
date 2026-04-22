@@ -97,16 +97,34 @@ fn overlapSP(alpha_s: f64, alpha_p: f64, p: f64, pref: f64, exp_factor: f64, del
     return norm * pref * exp_factor * (alpha_p / p) * delta_i;
 }
 
-/// p-p overlap (same direction): N_p^2 × [1/(2p) + (α_a α_b / p²) × delta_i²] × (π/p)^(3/2) × exp
-fn overlapPP(alpha_a: f64, alpha_b: f64, p: f64, pref: f64, exp_factor: f64, delta_i: f64, _: f64) f64 {
+/// p-p overlap (same direction):
+///   N_p^2 × [1/(2p) + (α_a α_b / p²) × delta_i²] × (π/p)^(3/2) × exp
+fn overlapPP(
+    alpha_a: f64,
+    alpha_b: f64,
+    p: f64,
+    pref: f64,
+    exp_factor: f64,
+    delta_i: f64,
+    _: f64,
+) f64 {
     const norm = gaussianNormP(alpha_a) * gaussianNormP(alpha_b);
     const term1 = 1.0 / (2.0 * p);
     const term2 = (alpha_a * alpha_b / (p * p)) * delta_i * delta_i;
     return norm * pref * exp_factor * (term1 + term2);
 }
 
-/// p-p overlap (different directions): N_p^2 × (α_a α_b / p²) × delta_i × delta_j × (π/p)^(3/2) × exp
-fn overlapPPoff(alpha_a: f64, alpha_b: f64, p: f64, pref: f64, exp_factor: f64, delta_i: f64, delta_j: f64) f64 {
+/// p-p overlap (different directions):
+///   N_p^2 × (α_a α_b / p²) × delta_i × delta_j × (π/p)^(3/2) × exp
+fn overlapPPoff(
+    alpha_a: f64,
+    alpha_b: f64,
+    p: f64,
+    pref: f64,
+    exp_factor: f64,
+    delta_i: f64,
+    delta_j: f64,
+) f64 {
     const norm = gaussianNormP(alpha_a) * gaussianNormP(alpha_b);
     return norm * pref * exp_factor * (alpha_a * alpha_b / (p * p)) * delta_i * delta_j;
 }
@@ -161,7 +179,15 @@ fn kineticSS(alpha_a: f64, alpha_b: f64, p: f64, mu: f64, pref: f64, exp_factor:
 }
 
 /// s-p kinetic: Laplacian of p-type acting on s gives derivative terms
-fn kineticSP(alpha_s: f64, alpha_p: f64, p: f64, mu: f64, pref: f64, exp_factor: f64, delta_i: f64) f64 {
+fn kineticSP(
+    alpha_s: f64,
+    alpha_p: f64,
+    p: f64,
+    mu: f64,
+    pref: f64,
+    exp_factor: f64,
+    delta_i: f64,
+) f64 {
     const norm = gaussianNorm(alpha_s) * gaussianNormP(alpha_p);
     const s_sp = norm * pref * exp_factor * (alpha_p / p) * delta_i;
     // Kinetic energy involves -1/2 ∇² acting on the Gaussian product
@@ -173,7 +199,17 @@ fn kineticSP(alpha_s: f64, alpha_p: f64, p: f64, mu: f64, pref: f64, exp_factor:
 }
 
 /// p-p kinetic: More complex due to second derivatives
-fn kineticPP(alpha_a: f64, alpha_b: f64, p: f64, mu: f64, pref: f64, exp_factor: f64, delta_i: f64, delta_j: f64, same_dir: bool) f64 {
+fn kineticPP(
+    alpha_a: f64,
+    alpha_b: f64,
+    p: f64,
+    mu: f64,
+    pref: f64,
+    exp_factor: f64,
+    delta_i: f64,
+    delta_j: f64,
+    same_dir: bool,
+) f64 {
     const norm = gaussianNormP(alpha_a) * gaussianNormP(alpha_b);
     const base = norm * pref * exp_factor;
 
@@ -293,7 +329,12 @@ pub fn buildKineticCsrFromCenters(
 }
 
 /// Build orbitals from centers with s-type only
-pub fn buildOrbitalsS(alloc: std.mem.Allocator, centers: []const math.Vec3, alpha: f64, cutoff: f64) ![]Orbital {
+pub fn buildOrbitalsS(
+    alloc: std.mem.Allocator,
+    centers: []const math.Vec3,
+    alpha: f64,
+    cutoff: f64,
+) ![]Orbital {
     const orbitals = try alloc.alloc(Orbital, centers.len);
     for (centers, 0..) |center, i| {
         orbitals[i] = .{ .center = center, .alpha = alpha, .cutoff = cutoff, .angular = .s };
@@ -303,15 +344,35 @@ pub fn buildOrbitalsS(alloc: std.mem.Allocator, centers: []const math.Vec3, alph
 
 /// Build orbitals from centers with sp basis (1 s + 3 p per center)
 /// Returns array of size 4 * centers.len
-pub fn buildOrbitalsSP(alloc: std.mem.Allocator, centers: []const math.Vec3, alpha: f64, cutoff: f64) ![]Orbital {
+pub fn buildOrbitalsSP(
+    alloc: std.mem.Allocator,
+    centers: []const math.Vec3,
+    alpha: f64,
+    cutoff: f64,
+) ![]Orbital {
     const n_orb = 4 * centers.len;
     const orbitals = try alloc.alloc(Orbital, n_orb);
     for (centers, 0..) |center, i| {
         const base = i * 4;
         orbitals[base + 0] = .{ .center = center, .alpha = alpha, .cutoff = cutoff, .angular = .s };
-        orbitals[base + 1] = .{ .center = center, .alpha = alpha, .cutoff = cutoff, .angular = .px };
-        orbitals[base + 2] = .{ .center = center, .alpha = alpha, .cutoff = cutoff, .angular = .py };
-        orbitals[base + 3] = .{ .center = center, .alpha = alpha, .cutoff = cutoff, .angular = .pz };
+        orbitals[base + 1] = .{
+            .center = center,
+            .alpha = alpha,
+            .cutoff = cutoff,
+            .angular = .px,
+        };
+        orbitals[base + 2] = .{
+            .center = center,
+            .alpha = alpha,
+            .cutoff = cutoff,
+            .angular = .py,
+        };
+        orbitals[base + 3] = .{
+            .center = center,
+            .alpha = alpha,
+            .cutoff = cutoff,
+            .angular = .pz,
+        };
     }
     return orbitals;
 }
@@ -323,7 +384,13 @@ pub const BasisType = enum {
 };
 
 /// Build orbitals from centers with specified basis type
-pub fn buildOrbitals(alloc: std.mem.Allocator, centers: []const math.Vec3, alpha: f64, cutoff: f64, basis: BasisType) ![]Orbital {
+pub fn buildOrbitals(
+    alloc: std.mem.Allocator,
+    centers: []const math.Vec3,
+    alpha: f64,
+    cutoff: f64,
+    basis: BasisType,
+) ![]Orbital {
     return switch (basis) {
         .s_only => buildOrbitalsS(alloc, centers, alpha, cutoff),
         .sp => buildOrbitalsSP(alloc, centers, alpha, cutoff),
@@ -413,10 +480,31 @@ test "buildOverlapCsrFromCenters applies PBC" {
 
 test "p-type Gaussian overlap orthogonality at same center" {
     // At the same center, s and p orbitals should be orthogonal
-    const a_s = Orbital{ .center = .{ .x = 0.0, .y = 0.0, .z = 0.0 }, .alpha = 1.0, .cutoff = 10.0, .angular = .s };
-    const a_px = Orbital{ .center = .{ .x = 0.0, .y = 0.0, .z = 0.0 }, .alpha = 1.0, .cutoff = 10.0, .angular = .px };
-    const a_py = Orbital{ .center = .{ .x = 0.0, .y = 0.0, .z = 0.0 }, .alpha = 1.0, .cutoff = 10.0, .angular = .py };
-    const a_pz = Orbital{ .center = .{ .x = 0.0, .y = 0.0, .z = 0.0 }, .alpha = 1.0, .cutoff = 10.0, .angular = .pz };
+    const origin = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
+    const a_s = Orbital{
+        .center = origin,
+        .alpha = 1.0,
+        .cutoff = 10.0,
+        .angular = .s,
+    };
+    const a_px = Orbital{
+        .center = origin,
+        .alpha = 1.0,
+        .cutoff = 10.0,
+        .angular = .px,
+    };
+    const a_py = Orbital{
+        .center = origin,
+        .alpha = 1.0,
+        .cutoff = 10.0,
+        .angular = .py,
+    };
+    const a_pz = Orbital{
+        .center = origin,
+        .alpha = 1.0,
+        .cutoff = 10.0,
+        .angular = .pz,
+    };
 
     // s-s should be 1 (normalized)
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), overlap(a_s, a_s), 1e-10);
@@ -439,9 +527,26 @@ test "p-type Gaussian overlap orthogonality at same center" {
 
 test "p-type Gaussian overlap non-zero at displaced centers" {
     // When centers are displaced, s-p overlap should be non-zero
-    const a_s = Orbital{ .center = .{ .x = 0.0, .y = 0.0, .z = 0.0 }, .alpha = 1.0, .cutoff = 10.0, .angular = .s };
-    const b_px = Orbital{ .center = .{ .x = 1.0, .y = 0.0, .z = 0.0 }, .alpha = 1.0, .cutoff = 10.0, .angular = .px };
-    const b_py = Orbital{ .center = .{ .x = 1.0, .y = 0.0, .z = 0.0 }, .alpha = 1.0, .cutoff = 10.0, .angular = .py };
+    const origin = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
+    const displaced_x = math.Vec3{ .x = 1.0, .y = 0.0, .z = 0.0 };
+    const a_s = Orbital{
+        .center = origin,
+        .alpha = 1.0,
+        .cutoff = 10.0,
+        .angular = .s,
+    };
+    const b_px = Orbital{
+        .center = displaced_x,
+        .alpha = 1.0,
+        .cutoff = 10.0,
+        .angular = .px,
+    };
+    const b_py = Orbital{
+        .center = displaced_x,
+        .alpha = 1.0,
+        .cutoff = 10.0,
+        .angular = .py,
+    };
 
     // s at origin, px displaced along x: should have non-zero overlap
     const s_px = overlap(a_s, b_px);

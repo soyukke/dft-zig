@@ -64,7 +64,8 @@ fn buildG2d(
             while (k < dim_kl) : (k += 1) {
                 var val = c0p[r] * g[base + (k - 1) * stride_k + 0];
                 if (k >= 2) {
-                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + 0];
+                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] *
+                        g[base + (k - 2) * stride_k + 0];
                 }
                 g[base + k * stride_k + 0] = val;
 
@@ -72,9 +73,11 @@ fn buildG2d(
                     var i: usize = 1;
                     while (i < dim_ij) : (i += 1) {
                         val = c0p[r] * g[base + (k - 1) * stride_k + i] +
-                            @as(f64, @floatFromInt(i)) * b00[r] * g[base + (k - 1) * stride_k + i - 1];
+                            @as(f64, @floatFromInt(i)) * b00[r] *
+                                g[base + (k - 1) * stride_k + i - 1];
                         if (k >= 2) {
-                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + i];
+                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] *
+                                g[base + (k - 2) * stride_k + i];
                         }
                         g[base + k * stride_k + i] = val;
                     }
@@ -119,7 +122,8 @@ fn buildG2dWeighted(
             while (k < dim_kl) : (k += 1) {
                 var val = c0p[r] * g[base + (k - 1) * stride_k + 0];
                 if (k >= 2) {
-                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + 0];
+                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] *
+                        g[base + (k - 2) * stride_k + 0];
                 }
                 g[base + k * stride_k + 0] = val;
 
@@ -127,9 +131,11 @@ fn buildG2dWeighted(
                     var i: usize = 1;
                     while (i < dim_ij) : (i += 1) {
                         val = c0p[r] * g[base + (k - 1) * stride_k + i] +
-                            @as(f64, @floatFromInt(i)) * b00[r] * g[base + (k - 1) * stride_k + i - 1];
+                            @as(f64, @floatFromInt(i)) * b00[r] *
+                                g[base + (k - 1) * stride_k + i - 1];
                         if (k >= 2) {
-                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + i];
+                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] *
+                                g[base + (k - 2) * stride_k + i];
                         }
                         g[base + k * stride_k + i] = val;
                     }
@@ -175,12 +181,14 @@ pub fn contracted2CenterERI(
 
     for (shell_p.primitives, 0..) |pp, ip| {
         for (0..np) |ic| {
-            norm_p[ip * np + ic] = basis_mod.normalization(pp.alpha, cart_p[ic].x, cart_p[ic].y, cart_p[ic].z);
+            const c = cart_p[ic];
+            norm_p[ip * np + ic] = basis_mod.normalization(pp.alpha, c.x, c.y, c.z);
         }
     }
     for (shell_q.primitives, 0..) |pq, ip| {
         for (0..nq) |ic| {
-            norm_q[ip * nq + ic] = basis_mod.normalization(pq.alpha, cart_q[ic].x, cart_q[ic].y, cart_q[ic].z);
+            const c = cart_q[ic];
+            norm_q[ip * nq + ic] = basis_mod.normalization(pq.alpha, c.x, c.y, c.z);
         }
     }
 
@@ -222,7 +230,8 @@ pub fn contracted2CenterERI(
             const pq_sum = alpha_p + alpha_q;
 
             // Prefactor: 2π^(5/2) / (p * q * sqrt(p+q))
-            const prefactor = 2.0 * std.math.pow(f64, std.math.pi, 2.5) / (alpha_p * alpha_q * @sqrt(pq_sum));
+            const two_pi_25 = 2.0 * std.math.pow(f64, std.math.pi, 2.5);
+            const prefactor = two_pi_25 / (alpha_p * alpha_q * @sqrt(pq_sum));
 
             const coeff = prim_p.coeff * prim_q.coeff;
 
@@ -266,9 +275,40 @@ pub fn contracted2CenterERI(
                 w_pref[r] = rys_w[r] * prefactor;
             }
 
-            buildG2d(nroots, dim_ij, dim_kl, &c00x, &c0px, &b10_arr, &b01_arr, &b00_arr, gx[0..g_axis_size]);
-            buildG2d(nroots, dim_ij, dim_kl, &c00y, &c0py, &b10_arr, &b01_arr, &b00_arr, gy[0..g_axis_size]);
-            buildG2dWeighted(nroots, dim_ij, dim_kl, &c00z, &c0pz, &b10_arr, &b01_arr, &b00_arr, &w_pref, gz[0..g_axis_size]);
+            buildG2d(
+                nroots,
+                dim_ij,
+                dim_kl,
+                &c00x,
+                &c0px,
+                &b10_arr,
+                &b01_arr,
+                &b00_arr,
+                gx[0..g_axis_size],
+            );
+            buildG2d(
+                nroots,
+                dim_ij,
+                dim_kl,
+                &c00y,
+                &c0py,
+                &b10_arr,
+                &b01_arr,
+                &b00_arr,
+                gy[0..g_axis_size],
+            );
+            buildG2dWeighted(
+                nroots,
+                dim_ij,
+                dim_kl,
+                &c00z,
+                &c0pz,
+                &b10_arr,
+                &b01_arr,
+                &b00_arr,
+                &w_pref,
+                gz[0..g_axis_size],
+            );
 
             // No HR needed (lb=ld=0): directly extract from g2d tables
             // g2d[r, k, i] is at g[r * dim_ij * dim_kl + k * dim_ij + i]
@@ -344,7 +384,8 @@ pub fn contracted3CenterERI(
     for (shell_a.primitives, 0..) |pa, ip| {
         var mx: f64 = 0.0;
         for (0..na) |ic| {
-            const n_val = basis_mod.normalization(pa.alpha, cart_a[ic].x, cart_a[ic].y, cart_a[ic].z);
+            const c = cart_a[ic];
+            const n_val = basis_mod.normalization(pa.alpha, c.x, c.y, c.z);
             norm_a[ip * na + ic] = n_val;
             if (n_val > mx) mx = n_val;
         }
@@ -353,7 +394,8 @@ pub fn contracted3CenterERI(
     for (shell_b.primitives, 0..) |pb, ip| {
         var mx: f64 = 0.0;
         for (0..nb) |ic| {
-            const n_val = basis_mod.normalization(pb.alpha, cart_b[ic].x, cart_b[ic].y, cart_b[ic].z);
+            const c = cart_b[ic];
+            const n_val = basis_mod.normalization(pb.alpha, c.x, c.y, c.z);
             norm_b[ip * nb + ic] = n_val;
             if (n_val > mx) mx = n_val;
         }
@@ -361,7 +403,8 @@ pub fn contracted3CenterERI(
     }
     for (shell_p.primitives, 0..) |pp, ip| {
         for (0..np) |ic| {
-            norm_p[ip * np + ic] = basis_mod.normalization(pp.alpha, cart_p[ic].x, cart_p[ic].y, cart_p[ic].z);
+            const c = cart_p[ic];
+            norm_p[ip * np + ic] = basis_mod.normalization(pp.alpha, c.x, c.y, c.z);
         }
     }
 
@@ -490,9 +533,40 @@ pub fn contracted3CenterERI(
                     w_pref[r] = rys_w[r] * prefactor;
                 }
 
-                buildG2d(nroots, dim_ij, dim_kl, &c00x, &c0px, &b10_arr, &b01_arr, &b00_arr, gx[0..g_axis_size]);
-                buildG2d(nroots, dim_ij, dim_kl, &c00y, &c0py, &b10_arr, &b01_arr, &b00_arr, gy[0..g_axis_size]);
-                buildG2dWeighted(nroots, dim_ij, dim_kl, &c00z, &c0pz, &b10_arr, &b01_arr, &b00_arr, &w_pref, gz[0..g_axis_size]);
+                buildG2d(
+                    nroots,
+                    dim_ij,
+                    dim_kl,
+                    &c00x,
+                    &c0px,
+                    &b10_arr,
+                    &b01_arr,
+                    &b00_arr,
+                    gx[0..g_axis_size],
+                );
+                buildG2d(
+                    nroots,
+                    dim_ij,
+                    dim_kl,
+                    &c00y,
+                    &c0py,
+                    &b10_arr,
+                    &b01_arr,
+                    &b00_arr,
+                    gy[0..g_axis_size],
+                );
+                buildG2dWeighted(
+                    nroots,
+                    dim_ij,
+                    dim_kl,
+                    &c00z,
+                    &c0pz,
+                    &b10_arr,
+                    &b01_arr,
+                    &b00_arr,
+                    &w_pref,
+                    gz[0..g_axis_size],
+                );
 
                 // Bra HR (ld=0, no ket HR needed)
                 // For each Rys root, for each ket index p, apply bra HR

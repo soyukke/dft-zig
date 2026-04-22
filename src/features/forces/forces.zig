@@ -124,7 +124,14 @@ pub fn computeForces(
             .tol = 1e-8,
             .quiet = quiet,
         };
-        const ewald_forces_ha = try ewald.ionIonForces(alloc, cell, recip, charges, positions, ewald_params);
+        const ewald_forces_ha = try ewald.ionIonForces(
+            alloc,
+            cell,
+            recip,
+            charges,
+            positions,
+            ewald_params,
+        );
         defer alloc.free(ewald_forces_ha);
         // Convert Ewald forces to Rydberg units
         for (ewald_forces_ha, 0..) |f_ha, i| {
@@ -258,9 +265,15 @@ pub fn computeForces(
                     const gh = grid.min_h + @as(i32, @intCast(h));
                     const gk = grid.min_k + @as(i32, @intCast(k));
                     const gl = grid.min_l + @as(i32, @intCast(l));
+                    const gh_f = @as(f64, @floatFromInt(gh));
+                    const gk_f = @as(f64, @floatFromInt(gk));
+                    const gl_f = @as(f64, @floatFromInt(gl));
                     const gvec = math.Vec3.add(
-                        math.Vec3.add(math.Vec3.scale(b1x, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2x, @as(f64, @floatFromInt(gk)))),
-                        math.Vec3.scale(b3x, @as(f64, @floatFromInt(gl))),
+                        math.Vec3.add(
+                            math.Vec3.scale(b1x, gh_f),
+                            math.Vec3.scale(b2x, gk_f),
+                        ),
+                        math.Vec3.scale(b3x, gl_f),
                     );
                     const g2 = math.Vec3.dot(gvec, gvec);
                     var vh = math.complex.init(0.0, 0.0);
@@ -293,7 +306,8 @@ pub fn computeForces(
         const atom_positions = try alloc.alloc(math.Vec3, n_atoms);
         defer alloc.free(atom_positions);
         for (atoms, 0..) |atom, idx| {
-            atomic_numbers[idx] = d3_params.atomicNumber(species[atom.species_index].symbol) orelse 0;
+            const symbol = species[atom.species_index].symbol;
+            atomic_numbers[idx] = d3_params.atomicNumber(symbol) orelse 0;
             atom_positions[idx] = atom.position;
         }
         var damping = d3_params.pbe_d3bj;
@@ -330,12 +344,22 @@ pub fn computeForces(
     const log_level: runtime_logging.Level = if (quiet) .warn else .info;
     const logger = runtime_logging.stderr(io, log_level);
     if (!quiet) {
-        const ewald_ms = @as(f64, @floatFromInt(t0.durationTo(after_ewald).raw.nanoseconds)) / 1_000_000.0;
-        const local_ms = @as(f64, @floatFromInt(after_ewald.durationTo(after_local).raw.nanoseconds)) / 1_000_000.0;
-        const nl_ms = @as(f64, @floatFromInt(after_local.durationTo(after_nonlocal).raw.nanoseconds)) / 1_000_000.0;
-        const nlcc_ms = @as(f64, @floatFromInt(after_nonlocal.durationTo(after_nlcc).raw.nanoseconds)) / 1_000_000.0;
-        const total_ms = @as(f64, @floatFromInt(t0.durationTo(after_nlcc).raw.nanoseconds)) / 1_000_000.0;
-        logger.print(.info, "force_profile ewald_ms={d:.1} local_ms={d:.1} nonlocal_ms={d:.1} nlcc_ms={d:.1} total_ms={d:.1}\n", .{ ewald_ms, local_ms, nl_ms, nlcc_ms, total_ms }) catch {};
+        const ewald_ns = t0.durationTo(after_ewald).raw.nanoseconds;
+        const local_ns = after_ewald.durationTo(after_local).raw.nanoseconds;
+        const nl_ns = after_local.durationTo(after_nonlocal).raw.nanoseconds;
+        const nlcc_ns = after_nonlocal.durationTo(after_nlcc).raw.nanoseconds;
+        const total_ns = t0.durationTo(after_nlcc).raw.nanoseconds;
+        const ewald_ms = @as(f64, @floatFromInt(ewald_ns)) / 1_000_000.0;
+        const local_ms = @as(f64, @floatFromInt(local_ns)) / 1_000_000.0;
+        const nl_ms = @as(f64, @floatFromInt(nl_ns)) / 1_000_000.0;
+        const nlcc_ms = @as(f64, @floatFromInt(nlcc_ns)) / 1_000_000.0;
+        const total_ms = @as(f64, @floatFromInt(total_ns)) / 1_000_000.0;
+        logger.print(
+            .info,
+            "force_profile ewald_ms={d:.1} local_ms={d:.1} nonlocal_ms={d:.1}" ++
+                " nlcc_ms={d:.1} total_ms={d:.1}\n",
+            .{ ewald_ms, local_ms, nl_ms, nlcc_ms, total_ms },
+        ) catch {};
     }
 
     // Total forces
@@ -362,6 +386,7 @@ pub fn computeForces(
     // Debug output for force components
     if (runtime_logging.enabled(log_level, .debug)) {
         logger.print(.debug, "\n=== Force Components (Ry/Bohr) ===\n", .{}) catch {};
+        const zero_vec = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
         for (0..n_atoms) |i| {
             const ew = ewald_forces[i];
             const loc = local_forces[i];
@@ -369,34 +394,110 @@ pub fn computeForces(
             if (nl_forces) |nl| {
                 const nlf = nl[i];
                 if (resid_forces != null or nlcc_forces != null) {
-                    const rf = if (resid_forces) |resid| resid[i] else math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-                    const cf = if (nlcc_forces) |nlcc| nlcc[i] else math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
+                    const rf = if (resid_forces) |resid| resid[i] else zero_vec;
+                    const cf = if (nlcc_forces) |nlcc| nlcc[i] else zero_vec;
                     logger.print(
                         .debug,
-                        "Atom {d}: Ewald=({d:.6},{d:.6},{d:.6}) Local=({d:.6},{d:.6},{d:.6}) Nonlocal=({d:.6},{d:.6},{d:.6}) Resid=({d:.6},{d:.6},{d:.6}) NLCC=({d:.6},{d:.6},{d:.6}) Total=({d:.6},{d:.6},{d:.6})\n",
-                        .{ i, ew.x, ew.y, ew.z, loc.x, loc.y, loc.z, nlf.x, nlf.y, nlf.z, rf.x, rf.y, rf.z, cf.x, cf.y, cf.z, tot.x, tot.y, tot.z },
+                        "Atom {d}: Ewald=({d:.6},{d:.6},{d:.6})" ++
+                            " Local=({d:.6},{d:.6},{d:.6})" ++
+                            " Nonlocal=({d:.6},{d:.6},{d:.6})" ++
+                            " Resid=({d:.6},{d:.6},{d:.6})" ++
+                            " NLCC=({d:.6},{d:.6},{d:.6})" ++
+                            " Total=({d:.6},{d:.6},{d:.6})\n",
+                        .{
+                            i,
+                            ew.x,
+                            ew.y,
+                            ew.z,
+                            loc.x,
+                            loc.y,
+                            loc.z,
+                            nlf.x,
+                            nlf.y,
+                            nlf.z,
+                            rf.x,
+                            rf.y,
+                            rf.z,
+                            cf.x,
+                            cf.y,
+                            cf.z,
+                            tot.x,
+                            tot.y,
+                            tot.z,
+                        },
                     ) catch {};
                 } else {
                     logger.print(
                         .debug,
-                        "Atom {d}: Ewald=({d:.6},{d:.6},{d:.6}) Local=({d:.6},{d:.6},{d:.6}) Nonlocal=({d:.6},{d:.6},{d:.6}) Total=({d:.6},{d:.6},{d:.6})\n",
-                        .{ i, ew.x, ew.y, ew.z, loc.x, loc.y, loc.z, nlf.x, nlf.y, nlf.z, tot.x, tot.y, tot.z },
+                        "Atom {d}: Ewald=({d:.6},{d:.6},{d:.6})" ++
+                            " Local=({d:.6},{d:.6},{d:.6})" ++
+                            " Nonlocal=({d:.6},{d:.6},{d:.6})" ++
+                            " Total=({d:.6},{d:.6},{d:.6})\n",
+                        .{
+                            i,
+                            ew.x,
+                            ew.y,
+                            ew.z,
+                            loc.x,
+                            loc.y,
+                            loc.z,
+                            nlf.x,
+                            nlf.y,
+                            nlf.z,
+                            tot.x,
+                            tot.y,
+                            tot.z,
+                        },
                     ) catch {};
                 }
             } else {
                 if (resid_forces != null or nlcc_forces != null) {
-                    const rf = if (resid_forces) |resid| resid[i] else math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-                    const cf = if (nlcc_forces) |nlcc| nlcc[i] else math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
+                    const rf = if (resid_forces) |resid| resid[i] else zero_vec;
+                    const cf = if (nlcc_forces) |nlcc| nlcc[i] else zero_vec;
                     logger.print(
                         .debug,
-                        "Atom {d}: Ewald=({d:.6},{d:.6},{d:.6}) Local=({d:.6},{d:.6},{d:.6}) Resid=({d:.6},{d:.6},{d:.6}) NLCC=({d:.6},{d:.6},{d:.6}) Total=({d:.6},{d:.6},{d:.6})\n",
-                        .{ i, ew.x, ew.y, ew.z, loc.x, loc.y, loc.z, rf.x, rf.y, rf.z, cf.x, cf.y, cf.z, tot.x, tot.y, tot.z },
+                        "Atom {d}: Ewald=({d:.6},{d:.6},{d:.6})" ++
+                            " Local=({d:.6},{d:.6},{d:.6})" ++
+                            " Resid=({d:.6},{d:.6},{d:.6})" ++
+                            " NLCC=({d:.6},{d:.6},{d:.6})" ++
+                            " Total=({d:.6},{d:.6},{d:.6})\n",
+                        .{
+                            i,
+                            ew.x,
+                            ew.y,
+                            ew.z,
+                            loc.x,
+                            loc.y,
+                            loc.z,
+                            rf.x,
+                            rf.y,
+                            rf.z,
+                            cf.x,
+                            cf.y,
+                            cf.z,
+                            tot.x,
+                            tot.y,
+                            tot.z,
+                        },
                     ) catch {};
                 } else {
                     logger.print(
                         .debug,
-                        "Atom {d}: Ewald=({d:.6},{d:.6},{d:.6}) Local=({d:.6},{d:.6},{d:.6}) Total=({d:.6},{d:.6},{d:.6})\n",
-                        .{ i, ew.x, ew.y, ew.z, loc.x, loc.y, loc.z, tot.x, tot.y, tot.z },
+                        "Atom {d}: Ewald=({d:.6},{d:.6},{d:.6})" ++
+                            " Local=({d:.6},{d:.6},{d:.6})" ++
+                            " Total=({d:.6},{d:.6},{d:.6})\n",
+                        .{
+                            i,
+                            ew.x,
+                            ew.y,
+                            ew.z,
+                            loc.x,
+                            loc.y,
+                            loc.z,
+                            tot.x,
+                            tot.y,
+                            tot.z,
+                        },
                     ) catch {};
                 }
             }

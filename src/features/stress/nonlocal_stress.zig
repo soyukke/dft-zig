@@ -44,11 +44,20 @@ pub fn nonlocalStress(
             const nb = upf.beta.len;
             const dij_data: []const f64 = if (paw_dij_per_atom) |pda| pda[atom_idx] else upf.dij;
             const dij_m_data: ?[]const f64 = if (paw_dij_m_per_atom) |pda| pda[atom_idx] else null;
-            const qij_data: ?[]const f64 = if (paw_tabs) |tabs| if (atom.species_index < tabs.len) tabs[atom.species_index].sij else null else null;
-            const dij_eff_buf: ?[]f64 = if (qij_data != null) try alloc.alloc(f64, nb * nb) else null;
+            const qij_data: ?[]const f64 = if (paw_tabs) |tabs|
+                if (atom.species_index < tabs.len) tabs[atom.species_index].sij else null
+            else
+                null;
+            const dij_eff_buf: ?[]f64 = if (qij_data != null)
+                try alloc.alloc(f64, nb * nb)
+            else
+                null;
             defer if (dij_eff_buf) |buf| alloc.free(buf);
 
-            const tables = if (radial_tables_list) |rtl| if (atom.species_index < rtl.len) rtl[atom.species_index] else null else null;
+            const tables = if (radial_tables_list) |rtl|
+                if (atom.species_index < rtl.len) rtl[atom.species_index] else null
+            else
+                null;
 
             const radial_vals = try alloc.alloc(f64, nb * n);
             defer alloc.free(radial_vals);
@@ -66,10 +75,13 @@ pub fn nonlocalStress(
                     } else {
                         const beta = upf.beta[b_idx];
                         const l = beta.l orelse 0;
-                        radial_vals[b_idx * n + g] = nonlocal.radialProjector(beta.values, upf.r, upf.rab, l, gmag);
+                        const bv = beta.values;
+                        radial_vals[b_idx * n + g] =
+                            nonlocal.radialProjector(bv, upf.r, upf.rab, l, gmag);
                         const dg: f64 = 0.001;
-                        const rp = nonlocal.radialProjector(beta.values, upf.r, upf.rab, l, gmag + dg);
-                        const rm = nonlocal.radialProjector(beta.values, upf.r, upf.rab, l, if (gmag > dg) gmag - dg else 0.0);
+                        const rp = nonlocal.radialProjector(bv, upf.r, upf.rab, l, gmag + dg);
+                        const gminus = if (gmag > dg) gmag - dg else 0.0;
+                        const rm = nonlocal.radialProjector(bv, upf.r, upf.rab, l, gminus);
                         radial_derivs[b_idx * n + g] = (rp - rm) / (2.0 * dg);
                     }
                 }
@@ -105,7 +117,10 @@ pub fn nonlocalStress(
             defer alloc.free(p_buf);
             const dp_buf = try alloc.alloc(math.Complex, 3 * m_total);
             defer alloc.free(dp_buf);
-            const dij_m_eff_buf: ?[]f64 = if (dij_m_data != null and qij_data != null) try alloc.alloc(f64, m_total * m_total) else null;
+            const dij_m_eff_buf: ?[]f64 = if (dij_m_data != null and qij_data != null)
+                try alloc.alloc(f64, m_total * m_total)
+            else
+                null;
             defer if (dij_m_eff_buf) |buf| alloc.free(buf);
 
             for (0..kp.nbands) |band| {
@@ -121,7 +136,8 @@ pub fn nonlocalStress(
                     for (0..nb) |bi| {
                         for (0..nb) |bj| {
                             if ((upf.beta[bi].l orelse 0) != (upf.beta[bj].l orelse 0)) continue;
-                            const q_ij = qij[bi * nb + bj] - (if (bi == bj) @as(f64, 1.0) else @as(f64, 0.0));
+                            const delta_bi_bj: f64 = if (bi == bj) 1.0 else 0.0;
+                            const q_ij = qij[bi * nb + bj] - delta_bi_bj;
                             if (q_ij == 0.0) continue;
                             const mc = m_counts[bi];
                             for (0..mc) |mi| {
@@ -138,7 +154,8 @@ pub fn nonlocalStress(
                     for (0..nb) |bi| {
                         for (0..nb) |bj| {
                             const idx_ij = bi * nb + bj;
-                            const q_ij = qij[idx_ij] - (if (bi == bj) @as(f64, 1.0) else @as(f64, 0.0));
+                            const delta_bi_bj: f64 = if (bi == bj) 1.0 else 0.0;
+                            const q_ij = qij[idx_ij] - delta_bi_bj;
                             buf[idx_ij] = dij_data[idx_ij] - eigenval * q_ij;
                         }
                     }
@@ -165,7 +182,9 @@ pub fn nonlocalStress(
                             const phi = 4.0 * std.math.pi * radial * ylm;
 
                             const pc = math.complex.mul(phase_buf[g], c[g]);
-                            p_buf[m_off + m_idx] = math.complex.add(p_buf[m_off + m_idx], math.complex.scale(pc, phi));
+                            const scaled_phi = math.complex.scale(pc, phi);
+                            p_buf[m_off + m_idx] =
+                                math.complex.add(p_buf[m_off + m_idx], scaled_phi);
 
                             if (q_mag < 1e-12) continue;
                             const dradial = radial_derivs[b_idx * n + g];
@@ -175,7 +194,8 @@ pub fn nonlocalStress(
                             const dy = dYlm_dq(l_val, m, q.x, q.y, q.z, q_mag);
 
                             for (0..3) |dir| {
-                                const dphi = 4.0 * std.math.pi * (dradial * nhat[dir] * ylm + radial * dy[dir]);
+                                const dphi = 4.0 * std.math.pi *
+                                    (dradial * nhat[dir] * ylm + radial * dy[dir]);
                                 dp_buf[dir * m_total + m_off + m_idx] = math.complex.add(
                                     dp_buf[dir * m_total + m_off + m_idx],
                                     math.complex.scale(pc, dphi),
@@ -214,7 +234,10 @@ pub fn nonlocalStress(
                                         const jm = m_offsets[j_idx] + mj;
                                         const d_val = dm_eff[bm * m_total + jm];
                                         if (d_val == 0) continue;
-                                        dp_bm = math.complex.add(dp_bm, math.complex.scale(p_buf[jm], d_val));
+                                        dp_bm = math.complex.add(
+                                            dp_bm,
+                                            math.complex.scale(p_buf[jm], d_val),
+                                        );
                                     }
                                 }
                             } else {
@@ -222,7 +245,11 @@ pub fn nonlocalStress(
                                     if ((upf.beta[j_idx].l orelse 0) != l_b) continue;
                                     const d_val = dij_for_band[b_idx * nb + j_idx];
                                     if (d_val == 0) continue;
-                                    dp_bm = math.complex.add(dp_bm, math.complex.scale(p_buf[m_offsets[j_idx] + m_idx], d_val));
+                                    const pj = p_buf[m_offsets[j_idx] + m_idx];
+                                    dp_bm = math.complex.add(
+                                        dp_bm,
+                                        math.complex.scale(pj, d_val),
+                                    );
                                 }
                             }
                             if (dp_bm.r == 0 and dp_bm.i == 0) continue;
@@ -235,7 +262,8 @@ pub fn nonlocalStress(
                             const z = math.complex.mul(math.complex.conj(dp_bm), pc);
 
                             for (0..3) |a| {
-                                const dphi_a = 4.0 * std.math.pi * (dradial_val * nhat[a] * ylm + radial * dy[a]);
+                                const dphi_a = 4.0 * std.math.pi *
+                                    (dradial_val * nhat[a] * ylm + radial * dy[a]);
                                 for (a..3) |b| {
                                     sigma[a][b] -= prefactor * dphi_a * qv[b] * z.r;
                                 }
@@ -261,7 +289,10 @@ pub fn nonlocalStress(
                                     const jm = m_offsets[j_idx] + mj;
                                     const d_val = dm_eff[bm * m_total + jm];
                                     if (d_val == 0) continue;
-                                    dp_bm_e = math.complex.add(dp_bm_e, math.complex.scale(p_buf[jm], d_val));
+                                    dp_bm_e = math.complex.add(
+                                        dp_bm_e,
+                                        math.complex.scale(p_buf[jm], d_val),
+                                    );
                                 }
                             }
                         } else {

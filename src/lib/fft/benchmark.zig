@@ -69,9 +69,14 @@ fn benchmark1d(allocator: std.mem.Allocator, n: usize, iterations: usize) !void 
 
         const elapsed_ns = timer.read();
         const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
-        const per_iter_us = @as(f64, @floatFromInt(elapsed_ns)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
+        const elapsed_f = @as(f64, @floatFromInt(elapsed_ns));
+        const iter_f = @as(f64, @floatFromInt(iterations));
+        const per_iter_us = elapsed_f / iter_f / 1000.0;
 
-        std.debug.print("Bluestein:   {d:8.2} ms total, {d:8.2} µs/iter\n", .{ elapsed_ms, per_iter_us });
+        std.debug.print(
+            "Bluestein:   {d:8.2} ms total, {d:8.2} µs/iter\n",
+            .{ elapsed_ms, per_iter_us },
+        );
     }
 
     // Benchmark Mixed-radix (only if smooth number)
@@ -91,9 +96,14 @@ fn benchmark1d(allocator: std.mem.Allocator, n: usize, iterations: usize) !void 
 
         const elapsed_ns = timer.read();
         const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
-        const per_iter_us = @as(f64, @floatFromInt(elapsed_ns)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
+        const elapsed_f = @as(f64, @floatFromInt(elapsed_ns));
+        const iter_f = @as(f64, @floatFromInt(iterations));
+        const per_iter_us = elapsed_f / iter_f / 1000.0;
 
-        std.debug.print("Mixed-radix: {d:8.2} ms total, {d:8.2} µs/iter\n", .{ elapsed_ms, per_iter_us });
+        std.debug.print(
+            "Mixed-radix: {d:8.2} ms total, {d:8.2} µs/iter\n",
+            .{ elapsed_ms, per_iter_us },
+        );
     } else {
         std.debug.print("Mixed-radix: N/A (not a smooth number)\n", .{});
     }
@@ -115,9 +125,14 @@ fn benchmark1d(allocator: std.mem.Allocator, n: usize, iterations: usize) !void 
 
         const elapsed_ns = timer.read();
         const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
-        const per_iter_us = @as(f64, @floatFromInt(elapsed_ns)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
+        const elapsed_f = @as(f64, @floatFromInt(elapsed_ns));
+        const iter_f = @as(f64, @floatFromInt(iterations));
+        const per_iter_us = elapsed_f / iter_f / 1000.0;
 
-        std.debug.print("Radix-2:     {d:8.2} ms total, {d:8.2} µs/iter\n", .{ elapsed_ms, per_iter_us });
+        std.debug.print(
+            "Radix-2:     {d:8.2} ms total, {d:8.2} µs/iter\n",
+            .{ elapsed_ms, per_iter_us },
+        );
     }
 
     // Benchmark Radix-2 SIMD (only if power of 2)
@@ -137,9 +152,14 @@ fn benchmark1d(allocator: std.mem.Allocator, n: usize, iterations: usize) !void 
 
         const elapsed_ns = timer.read();
         const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
-        const per_iter_us = @as(f64, @floatFromInt(elapsed_ns)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
+        const elapsed_f = @as(f64, @floatFromInt(elapsed_ns));
+        const iter_f = @as(f64, @floatFromInt(iterations));
+        const per_iter_us = elapsed_f / iter_f / 1000.0;
 
-        std.debug.print("Radix2-SIMD: {d:8.2} ms total, {d:8.2} µs/iter\n", .{ elapsed_ms, per_iter_us });
+        std.debug.print(
+            "Radix2-SIMD: {d:8.2} ms total, {d:8.2} µs/iter\n",
+            .{ elapsed_ms, per_iter_us },
+        );
     }
 
     // Benchmark RFFT (only if even size)
@@ -164,13 +184,24 @@ fn benchmark1d(allocator: std.mem.Allocator, n: usize, iterations: usize) !void 
 
         const elapsed_ns = timer.read();
         const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
-        const per_iter_us = @as(f64, @floatFromInt(elapsed_ns)) / @as(f64, @floatFromInt(iterations)) / 1000.0;
+        const elapsed_f = @as(f64, @floatFromInt(elapsed_ns));
+        const iter_f = @as(f64, @floatFromInt(iterations));
+        const per_iter_us = elapsed_f / iter_f / 1000.0;
 
-        std.debug.print("RFFT:        {d:8.2} ms total, {d:8.2} µs/iter\n", .{ elapsed_ms, per_iter_us });
+        std.debug.print(
+            "RFFT:        {d:8.2} ms total, {d:8.2} µs/iter\n",
+            .{ elapsed_ms, per_iter_us },
+        );
     }
 }
 
-fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, iterations: usize) !void {
+fn benchmark3d(
+    allocator: std.mem.Allocator,
+    nx: usize,
+    ny: usize,
+    nz: usize,
+    iterations: usize,
+) !void {
     const total = nx * ny * nz;
     std.debug.print("\n=== 3D FFT Benchmark: {d}x{d}x{d} = {d} ===\n", .{ nx, ny, nz, total });
 
@@ -244,11 +275,17 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
         const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
         const per_iter_ms = elapsed_ms / @as(f64, @floatFromInt(iterations));
 
-        std.debug.print("Bluestein:   {d:8.2} ms total, {d:8.2} ms/iter\n", .{ elapsed_ms, per_iter_ms });
+        std.debug.print(
+            "Bluestein:   {d:8.2} ms total, {d:8.2} ms/iter\n",
+            .{ elapsed_ms, per_iter_ms },
+        );
     }
 
     // Benchmark with Mixed-radix
-    if (mixed_radix.isSmoothNumber(nx) and mixed_radix.isSmoothNumber(ny) and mixed_radix.isSmoothNumber(nz)) {
+    const all_smooth = mixed_radix.isSmoothNumber(nx) and
+        mixed_radix.isSmoothNumber(ny) and
+        mixed_radix.isSmoothNumber(nz);
+    if (all_smooth) {
         var plan_x = try MixedRadixPlan.init(allocator, nx);
         defer plan_x.deinit();
         var plan_y = try MixedRadixPlan.init(allocator, ny);
@@ -300,7 +337,10 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
         const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
         const per_iter_ms = elapsed_ms / @as(f64, @floatFromInt(iterations));
 
-        std.debug.print("Mixed-radix: {d:8.2} ms total, {d:8.2} ms/iter\n", .{ elapsed_ms, per_iter_ms });
+        std.debug.print(
+            "Mixed-radix: {d:8.2} ms total, {d:8.2} ms/iter\n",
+            .{ elapsed_ms, per_iter_ms },
+        );
     } else {
         std.debug.print("Mixed-radix: N/A (not all dimensions are smooth numbers)\n", .{});
     }
@@ -358,7 +398,10 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
         const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
         const per_iter_ms = elapsed_ms / @as(f64, @floatFromInt(iterations));
 
-        std.debug.print("Radix-2:     {d:8.2} ms total, {d:8.2} ms/iter\n", .{ elapsed_ms, per_iter_ms });
+        std.debug.print(
+            "Radix-2:     {d:8.2} ms total, {d:8.2} ms/iter\n",
+            .{ elapsed_ms, per_iter_ms },
+        );
     }
 
     // Benchmark with Radix-2 SIMD (only if all dimensions are powers of 2)
@@ -414,7 +457,10 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
         const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
         const per_iter_ms = elapsed_ms / @as(f64, @floatFromInt(iterations));
 
-        std.debug.print("Radix2-SIMD: {d:8.2} ms total, {d:8.2} ms/iter\n", .{ elapsed_ms, per_iter_ms });
+        std.debug.print(
+            "Radix2-SIMD: {d:8.2} ms total, {d:8.2} ms/iter\n",
+            .{ elapsed_ms, per_iter_ms },
+        );
     }
 
     // Benchmark Sequential Plan3d (using fft.Plan3d)
@@ -433,7 +479,10 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
         const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
         const per_iter_ms = elapsed_ms / @as(f64, @floatFromInt(iterations));
 
-        std.debug.print("Plan3d(seq): {d:8.2} ms total, {d:8.2} ms/iter\n", .{ elapsed_ms, per_iter_ms });
+        std.debug.print(
+            "Plan3d(seq): {d:8.2} ms total, {d:8.2} ms/iter\n",
+            .{ elapsed_ms, per_iter_ms },
+        );
     }
 
     // Benchmark Parallel Plan3d
@@ -454,7 +503,10 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
         const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
         const per_iter_ms = elapsed_ms / @as(f64, @floatFromInt(iterations));
 
-        std.debug.print("Plan3d(par): {d:8.2} ms total, {d:8.2} ms/iter\n", .{ elapsed_ms, per_iter_ms });
+        std.debug.print(
+            "Plan3d(par): {d:8.2} ms total, {d:8.2} ms/iter\n",
+            .{ elapsed_ms, per_iter_ms },
+        );
     }
 
     // Benchmark 3D RFFT (for real-valued data, only if nx is even)
@@ -482,7 +534,10 @@ fn benchmark3d(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, it
         const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
         const per_iter_ms = elapsed_ms / @as(f64, @floatFromInt(iterations));
 
-        std.debug.print("RFFT3d:      {d:8.2} ms total, {d:8.2} ms/iter\n", .{ elapsed_ms, per_iter_ms });
+        std.debug.print(
+            "RFFT3d:      {d:8.2} ms total, {d:8.2} ms/iter\n",
+            .{ elapsed_ms, per_iter_ms },
+        );
     }
 }
 

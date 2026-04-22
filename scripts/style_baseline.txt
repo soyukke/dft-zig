@@ -13,7 +13,6 @@ src/features/dfpt/atomic_data.zig	function_too_long	1
 src/features/dfpt/dfpt.zig	function_too_long	1
 src/features/dfpt/dynmat.zig	function_too_long	5
 src/features/dfpt/dynmat_contrib.zig	function_too_long	1
-src/features/dfpt/electric.zig	line_too_long	20
 src/features/dfpt/electric.zig	function_too_long	2
 src/features/dfpt/ewald2.zig	function_too_long	2
 src/features/dfpt/gamma.zig	function_too_long	4
@@ -37,7 +36,6 @@ src/features/dft/term.zig	line_too_long	6
 src/features/dos/pdos.zig	function_too_long	1
 src/features/ewald/ewald.zig	function_too_long	3
 src/features/fft/fft.zig	function_too_long	1
-src/features/forces/forces.zig	line_too_long	20
 src/features/forces/forces.zig	function_too_long	1
 src/features/forces/local_force.zig	function_too_long	1
 src/features/forces/nlcc_force.zig	function_too_long	1
@@ -66,7 +64,6 @@ src/features/gto_scf/optimizer.zig	function_too_long	2
 src/features/gto_scf/regression_tests.zig	line_too_long	5
 src/features/gto_scf/vibrational.zig	function_too_long	3
 src/features/hamiltonian/hamiltonian.zig	line_too_long	2
-src/features/integrals/eri_df.zig	line_too_long	18
 src/features/integrals/eri_df.zig	function_too_long	2
 src/features/integrals/libcint.zig	function_too_long	4
 src/features/integrals/nuclear.zig	line_too_long	1
@@ -90,7 +87,6 @@ src/features/linear_scaling/energy_compare.zig	line_too_long	6
 src/features/linear_scaling/hartree_xc.zig	line_too_long	4
 src/features/linear_scaling/ionic_potential.zig	line_too_long	2
 src/features/linear_scaling/linear_scaling.zig	line_too_long	2
-src/features/linear_scaling/local_orbital.zig	line_too_long	18
 src/features/linear_scaling/local_orbital_density.zig	line_too_long	1
 src/features/linear_scaling/local_orbital_hamiltonian.zig	line_too_long	3
 src/features/linear_scaling/local_orbital_nonlocal.zig	line_too_long	6
@@ -147,7 +143,6 @@ src/features/stress/kinetic_stress.zig	line_too_long	1
 src/features/stress/local_stress.zig	line_too_long	3
 src/features/stress/local_stress.zig	function_too_long	1
 src/features/stress/nlcc_stress.zig	function_too_long	1
-src/features/stress/nonlocal_stress.zig	line_too_long	15
 src/features/stress/nonlocal_stress.zig	function_too_long	1
 src/features/stress/stress.zig	function_too_long	3
 src/features/stress/xc_stress.zig	function_too_long	1
@@ -161,11 +156,9 @@ src/features/symmetry/symmetry_basis.zig	function_too_long	2
 src/features/symmetry/wavefunction_rotation.zig	line_too_long	3
 src/features/symmetry/wavefunction_rotation.zig	function_too_long	1
 src/features/vdw/d3.zig	function_too_long	3
-src/features/xc/xc.zig	line_too_long	16
 src/features/xc/xc.zig	function_too_long	1
 src/features/xc/xc_functionals.zig	line_too_long	5
 src/features/xc/xc_functionals.zig	function_too_long	1
-src/lib/fft/benchmark.zig	line_too_long	19
 src/lib/fft/benchmark.zig	debug_print	20
 src/lib/fft/benchmark.zig	function_too_long	2
 src/lib/fft/fft.zig	line_too_long	1
