@@ -451,20 +451,6 @@ test "Direct SCF J/K matches ERI table (H2 STO-3G)" {
 
     buildJKDirect(n, &p_mat, &shells, &schwarz, 1e-14, &j_direct, &k_direct);
 
-    std.debug.print("\nDirect SCF vs ERI table (H2 STO-3G):\n", .{});
-    for (0..n * n) |i| {
-        std.debug.print(
-            "  J[{d}]: ref={d:14.10} direct={d:14.10} diff={e:10.3}\n",
-            .{ i, j_ref[i], j_direct[i], j_ref[i] - j_direct[i] },
-        );
-    }
-    for (0..n * n) |i| {
-        std.debug.print(
-            "  K[{d}]: ref={d:14.10} direct={d:14.10} diff={e:10.3}\n",
-            .{ i, k_ref[i], k_direct[i], k_ref[i] - k_direct[i] },
-        );
-    }
-
     for (0..n * n) |i| {
         try testing.expectApproxEqAbs(j_ref[i], j_direct[i], 1e-10);
         try testing.expectApproxEqAbs(k_ref[i], k_direct[i], 1e-10);

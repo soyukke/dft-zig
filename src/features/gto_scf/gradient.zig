@@ -103,7 +103,6 @@ test "contracted overlap derivative vs FD (p-type)" {
         .{ .x = 0.0, .y = delta, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = delta },
     };
-    const labels = [3][]const u8{ "x", "y", "z" };
     for (dirs, 0..) |d, i| {
         const ca_p = Vec3{ .x = center_a.x + d.x, .y = center_a.y + d.y, .z = center_a.z + d.z };
         const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
@@ -112,10 +111,6 @@ test "contracted overlap derivative vs FD (p-type)" {
         const s_p = obara_saika.contractedOverlap(shell_a_p, ang_a, shell_b, ang_b);
         const s_m = obara_saika.contractedOverlap(shell_a_m, ang_a, shell_b, ang_b);
         const fd = (s_p - s_m) / (2.0 * delta);
-        std.debug.print(
-            "  contracted dS/d{s}(p_y, s): analytical={d:20.12} fd={d:20.12} diff={e:12.4}\n",
-            .{ labels[i], analytical[i], fd, @abs(analytical[i] - fd) },
-        );
         try testing.expectApproxEqAbs(fd, analytical[i], tol);
     }
 }
@@ -141,7 +136,6 @@ test "contracted kinetic derivative vs FD (p-type)" {
         .{ .x = 0.0, .y = delta, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = delta },
     };
-    const labels = [3][]const u8{ "x", "y", "z" };
     for (dirs, 0..) |d, i| {
         const ca_p = Vec3{ .x = center_a.x + d.x, .y = center_a.y + d.y, .z = center_a.z + d.z };
         const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
@@ -150,10 +144,6 @@ test "contracted kinetic derivative vs FD (p-type)" {
         const t_p = obara_saika.contractedKinetic(shell_a_p, ang_a, shell_b, ang_b);
         const t_m = obara_saika.contractedKinetic(shell_a_m, ang_a, shell_b, ang_b);
         const fd = (t_p - t_m) / (2.0 * delta);
-        std.debug.print(
-            "  contracted dT/d{s}(p_y, s): analytical={d:20.12} fd={d:20.12} diff={e:12.4}\n",
-            .{ labels[i], analytical[i], fd, @abs(analytical[i] - fd) },
-        );
         try testing.expectApproxEqAbs(fd, analytical[i], tol);
     }
 }
@@ -181,7 +171,6 @@ test "contracted nuclear derivative vs FD (p-type)" {
         .{ .x = 0.0, .y = delta, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = delta },
     };
-    const labels = [3][]const u8{ "x", "y", "z" };
     for (dirs, 0..) |d, i| {
         const ca_p = Vec3{ .x = center_a.x + d.x, .y = center_a.y + d.y, .z = center_a.z + d.z };
         const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
@@ -204,10 +193,6 @@ test "contracted nuclear derivative vs FD (p-type)" {
             &[_]f64{nuc_charge},
         );
         const fd = (v_p - v_m) / (2.0 * delta);
-        std.debug.print(
-            "  contracted dV/d{s}(p_y, s): analytical={d:20.12} fd={d:20.12} diff={e:12.4}\n",
-            .{ labels[i], analytical[i], fd, @abs(analytical[i] - fd) },
-        );
         try testing.expectApproxEqAbs(fd, analytical[i], tol);
     }
 }
@@ -1716,15 +1701,10 @@ test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
 
     const grad = grad_result.gradients;
 
-    std.debug.print("\nKS-DFT LDA Gradient H2 STO-3G (Ha/Bohr):\n", .{});
-    std.debug.print("  H1: {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[0].x, grad[0].y, grad[0].z });
-    std.debug.print("  H2: {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[1].x, grad[1].y, grad[1].z });
-
     // Translational invariance check
     const sum_x = grad[0].x + grad[1].x;
     const sum_y = grad[0].y + grad[1].y;
     const sum_z = grad[0].z + grad[1].z;
-    std.debug.print("  Sum: {d:20.12} {d:20.12} {d:20.12}\n", .{ sum_x, sum_y, sum_z });
 
     // Numerical gradient by finite difference
     const delta: f64 = 1e-5;
@@ -1767,9 +1747,6 @@ test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
     defer ks_m.deinit(alloc);
 
     const num_grad_x = (ks_p.total_energy - ks_m.total_energy) / (2.0 * delta);
-    std.debug.print("  Numerical dE/dx(H1): {d:20.12}\n", .{num_grad_x});
-    std.debug.print("  Analytical dE/dx(H1): {d:20.12}\n", .{grad[0].x});
-    std.debug.print("  Diff: {e:12.4}\n", .{@abs(grad[0].x - num_grad_x)});
 
     // Analytical vs FD should match to reasonable accuracy
     // Note: FD accuracy limited by grid changes with geometry; use generous tolerance
@@ -1855,9 +1832,6 @@ test "KS-DFT LDA gradient H2O STO-3G vs PySCF" {
     defer ks_result.deinit(alloc);
     try testing.expect(ks_result.converged);
 
-    std.debug.print("\nKS-DFT LDA H2O energy: {d:20.12}\n", .{ks_result.total_energy});
-    std.debug.print("PySCF reference:       {d:20.12}\n", .{-74.732105188947});
-
     // Compute analytical gradient
     var grad_result = try computeKsDftGradient(
         alloc,
@@ -1874,15 +1848,6 @@ test "KS-DFT LDA gradient H2O STO-3G vs PySCF" {
     defer grad_result.deinit(alloc);
 
     const grad = grad_result.gradients;
-
-    std.debug.print("\nKS-DFT LDA Gradient H2O STO-3G (Ha/Bohr):\n", .{});
-    std.debug.print("  O:  {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[0].x, grad[0].y, grad[0].z });
-    std.debug.print("  H1: {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[1].x, grad[1].y, grad[1].z });
-    std.debug.print("  H2: {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[2].x, grad[2].y, grad[2].z });
-    std.debug.print("PySCF reference:\n", .{});
-    std.debug.print("  O:  +0.000000000000 +0.000000000000 +0.109695457484\n", .{});
-    std.debug.print("  H1: +0.000000000000 -0.049549298854 -0.054856132039\n", .{});
-    std.debug.print("  H2: -0.000000000000 +0.049549298854 -0.054856132039\n", .{});
 
     // PySCF LDA SVWN gradient reference (STO-3G, cart=True):
     //   O:  -0.000000000000  +0.000000000000  +0.109695457484
@@ -1913,7 +1878,6 @@ test "KS-DFT LDA gradient H2O STO-3G vs PySCF" {
     const sum_x = grad[0].x + grad[1].x + grad[2].x;
     const sum_y = grad[0].y + grad[1].y + grad[2].y;
     const sum_z = grad[0].z + grad[1].z + grad[2].z;
-    std.debug.print("  Sum: {d:20.12} {d:20.12} {d:20.12}\n", .{ sum_x, sum_y, sum_z });
     try testing.expectApproxEqAbs(@as(f64, 0.0), sum_x, 1e-5);
     try testing.expectApproxEqAbs(@as(f64, 0.0), sum_y, 1e-5);
     try testing.expectApproxEqAbs(@as(f64, 0.0), sum_z, 1e-5);
@@ -1981,8 +1945,6 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
     defer ks_result.deinit(alloc);
     try testing.expect(ks_result.converged);
 
-    std.debug.print("\nKS-DFT B3LYP H2 energy: {d:20.12}\n", .{ks_result.total_energy});
-
     // Compute analytical gradient
     var grad_result = try computeKsDftGradient(
         alloc,
@@ -2000,13 +1962,7 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
 
     const grad = grad_result.gradients;
 
-    std.debug.print("KS-DFT B3LYP Gradient H2 STO-3G (Ha/Bohr):\n", .{});
-    std.debug.print("  H1: {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[0].x, grad[0].y, grad[0].z });
-    std.debug.print("  H2: {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[1].x, grad[1].y, grad[1].z });
-
     // PySCF reference: H1: -0.011277589721, H2: +0.011277589721
-    std.debug.print("  PySCF ref dE/dx(H1): -0.011277589721\n", .{});
-    std.debug.print("  Diff vs PySCF: {e:12.4}\n", .{@abs(grad[0].x - (-0.011277589721))});
 
     // Numerical gradient by finite difference
     const delta: f64 = 1e-5;
@@ -2049,9 +2005,6 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
     defer ks_m.deinit(alloc);
 
     const num_grad_x = (ks_p.total_energy - ks_m.total_energy) / (2.0 * delta);
-    std.debug.print("  Numerical dE/dx(H1): {d:20.12}\n", .{num_grad_x});
-    std.debug.print("  Analytical dE/dx(H1): {d:20.12}\n", .{grad[0].x});
-    std.debug.print("  Diff (anal vs FD): {e:12.4}\n", .{@abs(grad[0].x - num_grad_x)});
 
     // Analytical vs FD should match reasonably well
     const fd_tol: f64 = 5e-3;
@@ -2139,8 +2092,6 @@ test "KS-DFT B3LYP gradient H2O STO-3G vs PySCF" {
     defer ks_result.deinit(alloc);
     try testing.expect(ks_result.converged);
 
-    std.debug.print("\nKS-DFT B3LYP H2O energy: {d:20.12}\n", .{ks_result.total_energy});
-
     // Compute analytical gradient
     var grad_result = try computeKsDftGradient(
         alloc,
@@ -2158,25 +2109,15 @@ test "KS-DFT B3LYP gradient H2O STO-3G vs PySCF" {
 
     const grad = grad_result.gradients;
 
-    std.debug.print("KS-DFT B3LYP Gradient H2O STO-3G (Ha/Bohr):\n", .{});
-    std.debug.print("  O:  {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[0].x, grad[0].y, grad[0].z });
-    std.debug.print("  H1: {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[1].x, grad[1].y, grad[1].z });
-    std.debug.print("  H2: {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[2].x, grad[2].y, grad[2].z });
-
     // PySCF reference (B3LYP/STO-3G):
     //   O:  0.000000000000  0.000000000000  0.107150408881
     //   H1: 0.000000000000 -0.047576883737 -0.053581380690
     //   H2:-0.000000000000  0.047576883737 -0.053581380690
-    std.debug.print("PySCF reference:\n", .{});
-    std.debug.print("  O:   0.000000000000  0.000000000000  0.107150408881\n", .{});
-    std.debug.print("  H1:  0.000000000000 -0.047576883737 -0.053581380690\n", .{});
-    std.debug.print("  H2: -0.000000000000  0.047576883737 -0.053581380690\n", .{});
 
     // Translational invariance
     const sum_x = grad[0].x + grad[1].x + grad[2].x;
     const sum_y = grad[0].y + grad[1].y + grad[2].y;
     const sum_z = grad[0].z + grad[1].z + grad[2].z;
-    std.debug.print("  Sum: {d:20.12} {d:20.12} {d:20.12}\n", .{ sum_x, sum_y, sum_z });
 
     const trans_tol: f64 = 5e-3;
     try testing.expectApproxEqAbs(@as(f64, 0.0), sum_x, trans_tol);
@@ -2293,11 +2234,6 @@ test "RHF gradient H2O STO-3G" {
 
     const grad = grad_result.gradients;
 
-    std.debug.print("\nRHF Gradient H2O STO-3G (Ha/Bohr):\n", .{});
-    std.debug.print("  O: {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[0].x, grad[0].y, grad[0].z });
-    std.debug.print("  H: {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[1].x, grad[1].y, grad[1].z });
-    std.debug.print("  H: {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[2].x, grad[2].y, grad[2].z });
-
     // ---- PySCF analytical gradient reference (same geometry, STO-3G, cart=True) ----
     // O:  0.000000000000   0.000000000000   0.061008878575
     // H: -0.000000000000  -0.023592244890  -0.030504439287
@@ -2325,7 +2261,6 @@ test "RHF gradient H2O STO-3G" {
     const sum_x = grad[0].x + grad[1].x + grad[2].x;
     const sum_y = grad[0].y + grad[1].y + grad[2].y;
     const sum_z = grad[0].z + grad[1].z + grad[2].z;
-    std.debug.print("  Sum: {d:20.12} {d:20.12} {d:20.12}\n", .{ sum_x, sum_y, sum_z });
     try testing.expectApproxEqAbs(@as(f64, 0.0), sum_x, 1e-6);
     try testing.expectApproxEqAbs(@as(f64, 0.0), sum_y, 1e-6);
     try testing.expectApproxEqAbs(@as(f64, 0.0), sum_z, 1e-6);
@@ -2377,10 +2312,6 @@ test "RHF gradient H2 STO-3G" {
 
     const grad = grad_result.gradients;
 
-    std.debug.print("\nRHF Gradient H2 STO-3G (Ha/Bohr):\n", .{});
-    std.debug.print("  H1: {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[0].x, grad[0].y, grad[0].z });
-    std.debug.print("  H2: {d:20.12} {d:20.12} {d:20.12}\n", .{ grad[1].x, grad[1].y, grad[1].z });
-
     // Numerical gradient by finite difference
     const delta: f64 = 1e-5;
     // Perturb H1 in x-direction
@@ -2407,9 +2338,6 @@ test "RHF gradient H2 STO-3G" {
     defer scf_m.deinit(alloc);
 
     const num_grad_x = (scf_p.total_energy - scf_m.total_energy) / (2.0 * delta);
-    std.debug.print("  Numerical dE/dx(H1): {d:20.12}\n", .{num_grad_x});
-    std.debug.print("  Analytical dE/dx(H1): {d:20.12}\n", .{grad[0].x});
-    std.debug.print("  Diff: {e:12.4}\n", .{@abs(grad[0].x - num_grad_x)});
 
     // Analytical vs numerical gradient should match closely
     const num_tol: f64 = 1e-5;
@@ -2419,7 +2347,6 @@ test "RHF gradient H2 STO-3G" {
     const sum_x = grad[0].x + grad[1].x;
     const sum_y = grad[0].y + grad[1].y;
     const sum_z = grad[0].z + grad[1].z;
-    std.debug.print("  Sum: {d:20.12} {d:20.12} {d:20.12}\n", .{ sum_x, sum_y, sum_z });
     try testing.expectApproxEqAbs(@as(f64, 0.0), sum_x, 1e-8);
     try testing.expectApproxEqAbs(@as(f64, 0.0), sum_y, 1e-8);
     try testing.expectApproxEqAbs(@as(f64, 0.0), sum_z, 1e-8);

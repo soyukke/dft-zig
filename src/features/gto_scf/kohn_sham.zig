@@ -1648,11 +1648,6 @@ test "density integration equals n_electrons (H2O STO-3G RHF)" {
         n_elec += grid_points[ig].w * dens.rho[ig];
     }
 
-    std.debug.print("\nDensity integration test:\n", .{});
-    std.debug.print("  Grid points: {d}\n", .{grid_points.len});
-    std.debug.print("  Integrated electrons: {d:.6}\n", .{n_elec});
-    std.debug.print("  Expected: 10.0\n", .{});
-
     try testing.expectApproxEqAbs(10.0, n_elec, 0.01);
 }
 
@@ -1692,16 +1687,6 @@ test "KS-DFT H2O STO-3G LDA (SVWN)" {
         },
     );
     defer result.deinit(alloc);
-
-    std.debug.print("\nH2O STO-3G KS-DFT LDA (SVWN):\n", .{});
-    std.debug.print("  Total energy:     {d:.10} Ha\n", .{result.total_energy});
-    std.debug.print("  1e energy:        {d:.10} Ha\n", .{result.one_electron_energy});
-    std.debug.print("  Coulomb energy:   {d:.10} Ha\n", .{result.coulomb_energy});
-    std.debug.print("  XC energy:        {d:.10} Ha\n", .{result.xc_energy});
-    std.debug.print("  Nuclear repulsion:{d:.10} Ha\n", .{result.nuclear_repulsion});
-    std.debug.print("  Iterations:       {d}\n", .{result.iterations});
-    std.debug.print("  Converged:        {}\n", .{result.converged});
-    std.debug.print("  PySCF reference:  -74.7321048790 Ha\n", .{});
 
     try testing.expect(result.converged);
     // PySCF grid-converged LDA: -74.7321048790

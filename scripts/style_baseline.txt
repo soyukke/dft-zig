@@ -41,13 +41,9 @@ src/features/grid/becke.zig	function_too_long	2
 src/features/grid/lebedev.zig	line_too_long	1292
 src/features/gto_scf/density_fitting.zig	function_too_long	1
 src/features/gto_scf/diis.zig	function_too_long	2
-src/features/gto_scf/fock.zig	debug_print	3
 src/features/gto_scf/fock.zig	function_too_long	1
-src/features/gto_scf/gradient.zig	debug_print	52
 src/features/gto_scf/gradient.zig	function_too_long	6
-src/features/gto_scf/gto_scf.zig	debug_print	38
 src/features/gto_scf/gto_scf.zig	function_too_long	2
-src/features/gto_scf/kohn_sham.zig	debug_print	13
 src/features/gto_scf/kohn_sham.zig	function_too_long	5
 src/features/gto_scf/molecule.zig	function_too_long	1
 src/features/gto_scf/optimizer.zig	function_too_long	2
@@ -99,11 +95,9 @@ src/features/symmetry/wavefunction_rotation.zig	function_too_long	1
 src/features/vdw/d3.zig	function_too_long	3
 src/features/xc/xc.zig	function_too_long	1
 src/features/xc/xc_functionals.zig	function_too_long	1
-src/lib/fft/benchmark.zig	debug_print	20
-src/lib/fft/benchmark.zig	function_too_long	2
 src/lib/fft/mixed_radix.zig	function_too_long	2
 src/lib/fft/parallel_fft_transpose.zig	function_too_long	2
 src/lib/fft/rfft.zig	function_too_long	2
-src/lib/linalg/benchmark.zig	debug_print	9
+src/lib/linalg/benchmark.zig	function_too_long	1
 src/test_support.zig	debug_print	2
 src/tests.zig	debug_print	2

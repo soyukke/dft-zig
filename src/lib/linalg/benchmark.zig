@@ -59,12 +59,13 @@ var volatile_sink: f64 = 0;
 
 fn benchmarkInnerProduct(
     io: std.Io,
+    out: *std.Io.Writer,
     comptime name: []const u8,
     comptime func: anytype,
     a: []const Complex,
     b: []const Complex,
     iterations: usize,
-) f64 {
+) !f64 {
     const t_start = std.Io.Clock.Timestamp.now(io, .awake);
     var acc: f64 = 0;
 
@@ -76,17 +77,18 @@ fn benchmarkInnerProduct(
     const elapsed_ns: u64 = @intCast(t_start.untilNow(io).raw.nanoseconds);
     volatile_sink = acc; // Prevent optimization
     const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
-    std.debug.print("{s}: {d:.3} ms ({d} iterations)\n", .{ name, elapsed_ms, iterations });
+    try out.print("{s}: {d:.3} ms ({d} iterations)\n", .{ name, elapsed_ms, iterations });
     return elapsed_ms;
 }
 
 fn benchmarkNorm(
     io: std.Io,
+    out: *std.Io.Writer,
     comptime name: []const u8,
     func: *const fn ([]const Complex) f64,
     a: []const Complex,
     iterations: usize,
-) f64 {
+) !f64 {
     const t_start = std.Io.Clock.Timestamp.now(io, .awake);
     var acc: f64 = 0;
 
@@ -97,17 +99,18 @@ fn benchmarkNorm(
     const elapsed_ns: u64 = @intCast(t_start.untilNow(io).raw.nanoseconds);
     volatile_sink = acc;
     const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
-    std.debug.print("{s}: {d:.3} ms ({d} iterations)\n", .{ name, elapsed_ms, iterations });
+    try out.print("{s}: {d:.3} ms ({d} iterations)\n", .{ name, elapsed_ms, iterations });
     return elapsed_ms;
 }
 
 fn runSizeBenchmark(
     alloc: std.mem.Allocator,
     io: std.Io,
+    out: *std.Io.Writer,
     size: usize,
     iterations: usize,
 ) !void {
-    std.debug.print("--- Size: {d} ---\n", .{size});
+    try out.print("--- Size: {d} ---\n", .{size});
 
     const a = try alloc.alloc(Complex, size);
     defer alloc.free(a);
@@ -127,16 +130,32 @@ fn runSizeBenchmark(
     // innerProduct benchmark
     const ip_s = innerProductScalarNoInline;
     const ip_v = innerProductSimdNoInline;
-    const scalar_ip = benchmarkInnerProduct(io, "innerProduct (scalar)", ip_s, a, b, iterations);
-    const simd_ip = benchmarkInnerProduct(io, "innerProduct (SIMD)  ", ip_v, a, b, iterations);
-    std.debug.print("  Speedup: {d:.2}x\n\n", .{scalar_ip / simd_ip});
+    const scalar_ip = try benchmarkInnerProduct(
+        io,
+        out,
+        "innerProduct (scalar)",
+        ip_s,
+        a,
+        b,
+        iterations,
+    );
+    const simd_ip = try benchmarkInnerProduct(
+        io,
+        out,
+        "innerProduct (SIMD)  ",
+        ip_v,
+        a,
+        b,
+        iterations,
+    );
+    try out.print("  Speedup: {d:.2}x\n\n", .{scalar_ip / simd_ip});
 
     // vectorNorm benchmark
     const vn_s = vectorNormScalarNoInline;
     const vn_v = vectorNormSimdNoInline;
-    const scalar_norm = benchmarkNorm(io, "vectorNorm (scalar)  ", vn_s, a, iterations);
-    const simd_norm = benchmarkNorm(io, "vectorNorm (SIMD)    ", vn_v, a, iterations);
-    std.debug.print("  Speedup: {d:.2}x\n\n", .{scalar_norm / simd_norm});
+    const scalar_norm = try benchmarkNorm(io, out, "vectorNorm (scalar)  ", vn_s, a, iterations);
+    const simd_norm = try benchmarkNorm(io, out, "vectorNorm (SIMD)    ", vn_v, a, iterations);
+    try out.print("  Speedup: {d:.2}x\n\n", .{scalar_norm / simd_norm});
 
     // Reset y for axpy benchmark
     for (0..size) |i| {
@@ -164,9 +183,9 @@ fn runSizeBenchmark(
     const simd_axpy_ns: u64 = @intCast(t_simd.untilNow(io).raw.nanoseconds);
     const simd_axpy = @as(f64, @floatFromInt(simd_axpy_ns)) / 1_000_000.0;
 
-    std.debug.print("axpy (scalar): {d:.3} ms\n", .{scalar_axpy});
-    std.debug.print("axpy (SIMD)  : {d:.3} ms\n", .{simd_axpy});
-    std.debug.print("  Speedup: {d:.2}x\n\n", .{scalar_axpy / simd_axpy});
+    try out.print("axpy (scalar): {d:.3} ms\n", .{scalar_axpy});
+    try out.print("axpy (SIMD)  : {d:.3} ms\n", .{simd_axpy});
+    try out.print("  Speedup: {d:.2}x\n\n", .{scalar_axpy / simd_axpy});
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -176,9 +195,15 @@ pub fn main(init: std.process.Init) !void {
     const alloc = init.gpa;
     const io = init.io;
 
-    std.debug.print("\n=== Complex Vector Operations Benchmark ===\n\n", .{});
+    var stdout_buffer: [1024]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
+    const out = &stdout_writer.interface;
+
+    try out.print("\n=== Complex Vector Operations Benchmark ===\n\n", .{});
 
     for (sizes) |size| {
-        try runSizeBenchmark(alloc, io, size, iterations);
+        try runSizeBenchmark(alloc, io, out, size, iterations);
     }
+
+    try out.flush();
 }

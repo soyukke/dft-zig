@@ -443,16 +443,6 @@ test "RHF H2 STO-3G at R=1.4 bohr" {
     try testing.expectApproxEqAbs(1.0 / 1.4, result.nuclear_repulsion, 1e-10);
     try testing.expect(result.iterations < 20);
     try testing.expect(result.orbital_energies[0] < 0.0);
-
-    std.debug.print("\nH2 STO-3G RHF Results:\n", .{});
-    std.debug.print("  Total energy:     {d:.10} Ha\n", .{result.total_energy});
-    std.debug.print("  Electronic energy: {d:.10} Ha\n", .{result.electronic_energy});
-    std.debug.print("  Nuclear repulsion: {d:.10} Ha\n", .{result.nuclear_repulsion});
-    std.debug.print("  Iterations:        {d}\n", .{result.iterations});
-    std.debug.print(
-        "  Orbital energies:  {d:.6}, {d:.6}\n",
-        .{ result.orbital_energies[0], result.orbital_energies[1] },
-    );
 }
 
 test "General RHF H2 STO-3G matches legacy" {
@@ -506,12 +496,6 @@ test "Nuclear attraction p-orbital symmetry at origin" {
     const v_yy = obara_saika.contractedNuclearAttraction(shell_2p, py, shell_2p, py, nuc_pos, 8.0);
     const v_zz = obara_saika.contractedNuclearAttraction(shell_2p, pz, shell_2p, pz, nuc_pos, 8.0);
 
-    std.debug.print("\nNuclear attraction <p|V|p> at origin (Z=8):\n", .{});
-    std.debug.print("  V_xx = {d:.10}\n", .{v_xx});
-    std.debug.print("  V_yy = {d:.10}\n", .{v_yy});
-    std.debug.print("  V_zz = {d:.10}\n", .{v_zz});
-    std.debug.print("  PySCF = -8.9794547266\n", .{});
-
     // These should all be equal by spherical symmetry
     try testing.expectApproxEqAbs(v_xx, v_yy, 1e-10);
     try testing.expectApproxEqAbs(v_xx, v_zz, 1e-10);
@@ -525,12 +509,6 @@ test "Nuclear attraction p-orbital symmetry at origin" {
     const v_yy_h = obara_saika.contractedNuclearAttraction(shell_2p, py, shell_2p, py, h_pos, 1.0);
     const v_zz_h = obara_saika.contractedNuclearAttraction(shell_2p, pz, shell_2p, pz, h_pos, 1.0);
     const v_yz_h = obara_saika.contractedNuclearAttraction(shell_2p, py, shell_2p, pz, h_pos, 1.0);
-
-    std.debug.print("\nNuclear attraction <p|V_H|p> with H at (0, 1.43, 1.11) (Z=1):\n", .{});
-    std.debug.print("  V_xx = {d:.10}  (PySCF: -0.5031599190)\n", .{v_xx_h});
-    std.debug.print("  V_yy = {d:.10}  (PySCF: -0.5810854958)\n", .{v_yy_h});
-    std.debug.print("  V_zz = {d:.10}  (PySCF: -0.5500158390)\n", .{v_zz_h});
-    std.debug.print("  V_yz = {d:.10}  (PySCF: -0.0604257775)\n", .{v_yz_h});
 
     // PySCF reference for H nucleus at (0, 1.43, 1.11) with Z=1
     try testing.expectApproxEqAbs(-0.5031599190, v_xx_h, 1e-4);
@@ -576,29 +554,6 @@ test "General RHF H2O STO-3G integrals" {
     defer alloc.free(t_mat);
     const v_mat = try obara_saika.buildNuclearMatrix(alloc, &shells, &nuc_positions, &nuc_charges);
     defer alloc.free(v_mat);
-
-    std.debug.print("\n=== H2O STO-3G Integral Diagnostics ===\n", .{});
-    std.debug.print("Overlap matrix S:\n", .{});
-    for (0..n) |i| {
-        for (0..n) |j| {
-            std.debug.print("{d:12.8} ", .{s_mat[i * n + j]});
-        }
-        std.debug.print("\n", .{});
-    }
-    std.debug.print("\nKinetic matrix T:\n", .{});
-    for (0..n) |i| {
-        for (0..n) |j| {
-            std.debug.print("{d:12.8} ", .{t_mat[i * n + j]});
-        }
-        std.debug.print("\n", .{});
-    }
-    std.debug.print("\nNuclear attraction matrix V:\n", .{});
-    for (0..n) |i| {
-        for (0..n) |j| {
-            std.debug.print("{d:12.8} ", .{v_mat[i * n + j]});
-        }
-        std.debug.print("\n", .{});
-    }
 
     // Check S matrix against PySCF
     // S[0][0] should be 1.0 (O 1s self-overlap)
@@ -654,18 +609,6 @@ test "General RHF H2O STO-3G" {
     var result = try runGeneralRhfScf(alloc, &shells, &nuc_positions, &nuc_charges, 10, .{});
     defer result.deinit(alloc);
 
-    std.debug.print("\nH2O STO-3G RHF Results:\n", .{});
-    std.debug.print("  Total energy:     {d:.10} Ha\n", .{result.total_energy});
-    std.debug.print("  Electronic energy: {d:.10} Ha\n", .{result.electronic_energy});
-    std.debug.print("  Nuclear repulsion: {d:.10} Ha\n", .{result.nuclear_repulsion});
-    std.debug.print("  Iterations:        {d}\n", .{result.iterations});
-    std.debug.print("  Converged:         {}\n", .{result.converged});
-    std.debug.print("  Orbital energies:", .{});
-    for (result.orbital_energies) |e| {
-        std.debug.print(" {d:.6}", .{e});
-    }
-    std.debug.print("\n", .{});
-
     // Reference: PySCF RHF/STO-3G H2O = -74.9630631297 Ha
     try testing.expect(result.converged);
     try testing.expectApproxEqAbs(-74.9630631297, result.total_energy, 1e-4);
@@ -706,16 +649,6 @@ test "DIIS accelerates H2O convergence" {
         .use_diis = true,
     });
     defer result_diis.deinit(alloc);
-
-    std.debug.print("\nDIIS comparison for H2O STO-3G:\n", .{});
-    std.debug.print(
-        "  Without DIIS: {d} iterations, E = {d:.10} Ha\n",
-        .{ result_no_diis.iterations, result_no_diis.total_energy },
-    );
-    std.debug.print(
-        "  With DIIS:    {d} iterations, E = {d:.10} Ha\n",
-        .{ result_diis.iterations, result_diis.total_energy },
-    );
 
     // Both should converge to the same energy
     try testing.expect(result_no_diis.converged);
