@@ -104,6 +104,187 @@ pub const MultiKPertResult = struct {
     }
 };
 
+const KqSetup = struct {
+    n_pw_kq: usize,
+    basis_kq: plane_wave.Basis,
+    map_kq: scf_mod.PwGridMap,
+    apply_ctx_kq: *scf_mod.ApplyContext,
+
+    fn deinit(self: *KqSetup, alloc: std.mem.Allocator) void {
+        self.apply_ctx_kq.deinit(alloc);
+        alloc.destroy(self.apply_ctx_kq);
+        self.map_kq.deinit(alloc);
+        self.basis_kq.deinit(alloc);
+    }
+};
+
+const KqOccupations = struct {
+    occ_kq: [][]math.Complex,
+    occ_kq_const: [][]const math.Complex,
+    n_occ_kq: usize,
+
+    fn deinit(self: *KqOccupations, alloc: std.mem.Allocator) void {
+        for (self.occ_kq) |w| alloc.free(w);
+        alloc.free(self.occ_kq);
+        alloc.free(self.occ_kq_const);
+    }
+};
+
+fn initKqSetup(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: config_mod.Config,
+    grid: Grid,
+    local_r: []const f64,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    recip: math.Mat3,
+    volume: f64,
+    num_workspaces: usize,
+    kq_cart: math.Vec3,
+) !KqSetup {
+    var basis_kq = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, kq_cart);
+    errdefer basis_kq.deinit(alloc);
+
+    var map_kq = try scf_mod.PwGridMap.init(alloc, @constCast(basis_kq.gvecs), grid);
+    errdefer map_kq.deinit(alloc);
+
+    const apply_ctx_kq = try alloc.create(scf_mod.ApplyContext);
+    errdefer alloc.destroy(apply_ctx_kq);
+    apply_ctx_kq.* = try scf_mod.ApplyContext.initWithWorkspaces(
+        alloc,
+        io,
+        grid,
+        @constCast(basis_kq.gvecs),
+        local_r,
+        null,
+        species,
+        atoms,
+        1.0 / volume,
+        true,
+        null,
+        null,
+        cfg.scf.fft_backend,
+        num_workspaces,
+    );
+    errdefer apply_ctx_kq.deinit(alloc);
+
+    return .{
+        .n_pw_kq = basis_kq.gvecs.len,
+        .basis_kq = basis_kq,
+        .map_kq = map_kq,
+        .apply_ctx_kq = apply_ctx_kq,
+    };
+}
+
+fn copyGammaOccupations(
+    alloc: std.mem.Allocator,
+    kg: *const KPointGsData,
+    n_pw_kq: usize,
+) !KqOccupations {
+    const n_occ_kq = kg.n_occ;
+    const occ_kq = try alloc.alloc([]math.Complex, n_occ_kq);
+    for (occ_kq) |*w| w.* = &[_]math.Complex{};
+    errdefer alloc.free(occ_kq);
+    const occ_kq_const = try alloc.alloc([]const math.Complex, n_occ_kq);
+    errdefer alloc.free(occ_kq_const);
+    errdefer for (occ_kq) |w| if (w.len > 0) alloc.free(w);
+
+    for (0..n_occ_kq) |n| {
+        occ_kq[n] = try alloc.alloc(math.Complex, n_pw_kq);
+        @memcpy(occ_kq[n], kg.wavefunctions_k[n]);
+        occ_kq_const[n] = occ_kq[n];
+    }
+    return .{ .occ_kq = occ_kq, .occ_kq_const = occ_kq_const, .n_occ_kq = n_occ_kq };
+}
+
+fn solveKqOccupations(
+    alloc: std.mem.Allocator,
+    cfg: config_mod.Config,
+    kg: *const KPointGsData,
+    basis_kq: plane_wave.Basis,
+    apply_ctx_kq: *scf_mod.ApplyContext,
+) !KqOccupations {
+    const n_pw_kq = basis_kq.gvecs.len;
+    const n_occ_kq = kg.n_occ;
+    const occ_kq = try alloc.alloc([]math.Complex, n_occ_kq);
+    for (occ_kq) |*w| w.* = &[_]math.Complex{};
+    errdefer alloc.free(occ_kq);
+    const occ_kq_const = try alloc.alloc([]const math.Complex, n_occ_kq);
+    errdefer alloc.free(occ_kq_const);
+    errdefer for (occ_kq) |w| if (w.len > 0) alloc.free(w);
+
+    const diag_kq = try alloc.alloc(f64, n_pw_kq);
+    defer alloc.free(diag_kq);
+
+    for (basis_kq.gvecs, 0..) |g, i| {
+        diag_kq[i] = g.kinetic;
+    }
+
+    const nbands_kq = @max(kg.n_occ + 2, @as(usize, 8));
+    const op_kq = iterative.Operator{
+        .n = n_pw_kq,
+        .ctx = @ptrCast(apply_ctx_kq),
+        .apply = &scf_mod.applyHamiltonian,
+        .apply_batch = &scf_mod.applyHamiltonianBatched,
+    };
+    var eig_kq = try iterative.hermitianEigenDecompIterative(
+        alloc,
+        cfg.linalg_backend,
+        op_kq,
+        diag_kq,
+        nbands_kq,
+        .{ .max_iter = 100, .tol = 1e-8, .init_diagonal = true },
+    );
+    defer eig_kq.deinit(alloc);
+
+    for (0..n_occ_kq) |n| {
+        occ_kq[n] = try alloc.alloc(math.Complex, n_pw_kq);
+        @memcpy(occ_kq[n], eig_kq.vectors[n * n_pw_kq .. (n + 1) * n_pw_kq]);
+        occ_kq_const[n] = occ_kq[n];
+    }
+    return .{ .occ_kq = occ_kq, .occ_kq_const = occ_kq_const, .n_occ_kq = n_occ_kq };
+}
+
+fn initKqOccupations(
+    alloc: std.mem.Allocator,
+    cfg: config_mod.Config,
+    kg: *const KPointGsData,
+    basis_kq: plane_wave.Basis,
+    apply_ctx_kq: *scf_mod.ApplyContext,
+    is_q_gamma: bool,
+) !KqOccupations {
+    if (is_q_gamma) return copyGammaOccupations(alloc, kg, basis_kq.gvecs.len);
+    return solveKqOccupations(alloc, cfg, kg, basis_kq, apply_ctx_kq);
+}
+
+fn buildKPointDfptData(
+    kg: *const KPointGsData,
+    setup: KqSetup,
+    occupations: KqOccupations,
+) KPointDfptData {
+    return .{
+        .k_frac = kg.k_frac,
+        .k_cart = kg.k_cart,
+        .weight = kg.weight,
+        .n_occ = kg.n_occ,
+        .n_pw_k = kg.n_pw_k,
+        .basis_k = kg.basis_k,
+        .map_k = kg.map_k,
+        .apply_ctx_k = kg.apply_ctx_k,
+        .eigenvalues_k = kg.eigenvalues_k,
+        .wavefunctions_k = kg.wavefunctions_k,
+        .wavefunctions_k_const = kg.wavefunctions_k_const,
+        .n_pw_kq = setup.n_pw_kq,
+        .basis_kq = setup.basis_kq,
+        .map_kq = setup.map_kq,
+        .apply_ctx_kq = setup.apply_ctx_kq,
+        .occ_kq = occupations.occ_kq,
+        .occ_kq_const = occupations.occ_kq_const,
+        .n_occ_kq = occupations.n_occ_kq,
+    };
+}
+
 /// Build KPointDfptData array from precomputed ground-state data for a given q-point.
 /// The k-point data (basis, wavefunctions, eigenvalues) is shared from KPointGsData.
 /// Only the k+q data (basis_kq, occ_kq, etc.) is newly allocated per q-point.
@@ -136,104 +317,32 @@ pub fn buildKPointDfptDataFromGS(
             .y = kg.k_cart.y + q_cart.y,
             .z = kg.k_cart.z + q_cart.z,
         };
-        const is_q_gamma = q_norm < 1e-10;
-
-        // Build k+q basis
-        var basis_kq = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, kq_cart);
-        errdefer basis_kq.deinit(alloc);
-        const n_pw_kq = basis_kq.gvecs.len;
-
-        var map_kq = try scf_mod.PwGridMap.init(alloc, @constCast(basis_kq.gvecs), grid);
-        errdefer map_kq.deinit(alloc);
-
-        const apply_ctx_kq = try alloc.create(scf_mod.ApplyContext);
-        errdefer alloc.destroy(apply_ctx_kq);
-        apply_ctx_kq.* = try scf_mod.ApplyContext.initWithWorkspaces(
+        var setup = try initKqSetup(
             alloc,
             io,
+            cfg,
             grid,
-            @constCast(basis_kq.gvecs),
             local_r,
-            null,
             species,
             atoms,
-            1.0 / volume,
-            true,
-            null,
-            null,
-            cfg.scf.fft_backend,
+            recip,
+            volume,
             num_workspaces,
+            kq_cart,
         );
-        errdefer apply_ctx_kq.deinit(alloc);
+        errdefer setup.deinit(alloc);
 
-        const n_occ_kq = kg.n_occ;
-        const occ_kq = try alloc.alloc([]math.Complex, n_occ_kq);
-        errdefer {
-            for (occ_kq) |w| alloc.free(w);
-            alloc.free(occ_kq);
-        }
-        const occ_kq_const = try alloc.alloc([]const math.Complex, n_occ_kq);
-        errdefer alloc.free(occ_kq_const);
+        var occupations = try initKqOccupations(
+            alloc,
+            cfg,
+            kg,
+            setup.basis_kq,
+            setup.apply_ctx_kq,
+            q_norm < 1e-10,
+        );
+        errdefer occupations.deinit(alloc);
 
-        if (is_q_gamma) {
-            // q=0: k+q = k, reuse wavefunctions
-            for (0..n_occ_kq) |n| {
-                occ_kq[n] = try alloc.alloc(math.Complex, n_pw_kq);
-                @memcpy(occ_kq[n], kg.wavefunctions_k[n]);
-                occ_kq_const[n] = occ_kq[n];
-            }
-        } else {
-            // q≠0: solve eigenvalue problem at k+q
-            const diag_kq = try alloc.alloc(f64, n_pw_kq);
-            defer alloc.free(diag_kq);
-            for (basis_kq.gvecs, 0..) |g, i| {
-                diag_kq[i] = g.kinetic;
-            }
-
-            const nbands_kq = @max(kg.n_occ + 2, @as(usize, 8));
-            const op_kq = iterative.Operator{
-                .n = n_pw_kq,
-                .ctx = @ptrCast(apply_ctx_kq),
-                .apply = &scf_mod.applyHamiltonian,
-                .apply_batch = &scf_mod.applyHamiltonianBatched,
-            };
-            var eig_kq = try iterative.hermitianEigenDecompIterative(
-                alloc,
-                cfg.linalg_backend,
-                op_kq,
-                diag_kq,
-                nbands_kq,
-                .{ .max_iter = 100, .tol = 1e-8, .init_diagonal = true },
-            );
-            defer eig_kq.deinit(alloc);
-
-            for (0..n_occ_kq) |n| {
-                occ_kq[n] = try alloc.alloc(math.Complex, n_pw_kq);
-                @memcpy(occ_kq[n], eig_kq.vectors[n * n_pw_kq .. (n + 1) * n_pw_kq]);
-                occ_kq_const[n] = occ_kq[n];
-            }
-        }
-
-        kpts[ik] = KPointDfptData{
-            .k_frac = kg.k_frac,
-            .k_cart = kg.k_cart,
-            .weight = kg.weight,
-            .n_occ = kg.n_occ,
-            .n_pw_k = kg.n_pw_k,
-            .basis_k = kg.basis_k, // shared, not owned
-            .map_k = kg.map_k, // shared, not owned
-            .apply_ctx_k = kg.apply_ctx_k, // shared, not owned
-            .eigenvalues_k = kg.eigenvalues_k, // shared, not owned
-            .wavefunctions_k = kg.wavefunctions_k, // shared, not owned
-            .wavefunctions_k_const = kg.wavefunctions_k_const, // shared, not owned
-            .n_pw_kq = n_pw_kq,
-            .basis_kq = basis_kq,
-            .map_kq = map_kq,
-            .apply_ctx_kq = apply_ctx_kq,
-            .occ_kq = occ_kq,
-            .occ_kq_const = occ_kq_const,
-            .n_occ_kq = n_occ_kq,
-        };
+        kpts[ik] = buildKPointDfptData(kg, setup, occupations);
         built = ik + 1;
     }
 

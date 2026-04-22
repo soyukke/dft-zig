@@ -825,6 +825,196 @@ pub const JKResult = struct {
     k_matrix: []f64,
 };
 
+const ShellQuartetInfo = struct {
+    na: usize,
+    nb: usize,
+    nc: usize,
+    nd: usize,
+    off_a: usize,
+    off_b: usize,
+    off_c: usize,
+    off_d: usize,
+    ab_same: bool,
+    cd_same: bool,
+    abcd_same: bool,
+    na_nb: usize,
+    na_nb_nc: usize,
+};
+
+fn buildDensityScreening(
+    alloc: std.mem.Allocator,
+    data: LibcintData,
+    nbas: usize,
+    n: usize,
+    density: []const f64,
+) ![]f64 {
+    const d_max = try alloc.alloc(f64, nbas * nbas);
+    for (0..nbas) |si| {
+        const oi = data.shell_offsets[si];
+        const ni = numCartesianFromBas(data, si);
+        for (0..nbas) |sj| {
+            const oj = data.shell_offsets[sj];
+            const nj = numCartesianFromBas(data, sj);
+            var max_p: f64 = 0.0;
+            for (0..ni) |ii| {
+                for (0..nj) |jj| {
+                    const abs_p = @abs(density[(oi + ii) * n + (oj + jj)]);
+                    if (abs_p > max_p) max_p = abs_p;
+                }
+            }
+            d_max[si * nbas + sj] = max_p;
+        }
+    }
+    return d_max;
+}
+
+fn shellQuartetDensityBound(
+    d_max: []const f64,
+    nbas: usize,
+    sa: usize,
+    sb: usize,
+    sc: usize,
+    sd: usize,
+) f64 {
+    return @max(
+        @max(d_max[sa * nbas + sb], d_max[sc * nbas + sd]),
+        @max(
+            @max(d_max[sa * nbas + sc], d_max[sa * nbas + sd]),
+            @max(d_max[sb * nbas + sc], d_max[sb * nbas + sd]),
+        ),
+    );
+}
+
+fn initShellQuartetInfo(
+    data: LibcintData,
+    sa: usize,
+    sb: usize,
+    sc: usize,
+    sd: usize,
+    ab_pair: usize,
+    cd_pair: usize,
+) ShellQuartetInfo {
+    const na = numCartesianFromBas(data, sa);
+    const nb = numCartesianFromBas(data, sb);
+    const nc = numCartesianFromBas(data, sc);
+    const nd = numCartesianFromBas(data, sd);
+    return .{
+        .na = na,
+        .nb = nb,
+        .nc = nc,
+        .nd = nd,
+        .off_a = data.shell_offsets[sa],
+        .off_b = data.shell_offsets[sb],
+        .off_c = data.shell_offsets[sc],
+        .off_d = data.shell_offsets[sd],
+        .ab_same = sa == sb,
+        .cd_same = sc == sd,
+        .abcd_same = ab_pair == cd_pair,
+        .na_nb = na * nb,
+        .na_nb_nc = na * nb * nc,
+    };
+}
+
+fn computeShellQuartetEri(
+    data: LibcintData,
+    opt: ?*c.CINTOpt,
+    shls: *[4]c_int,
+    buf: []f64,
+    sa: usize,
+    sb: usize,
+    sc: usize,
+    sd: usize,
+) ShellQuartetInfo {
+    shls[0] = @intCast(sa);
+    shls[1] = @intCast(sb);
+    shls[2] = @intCast(sc);
+    shls[3] = @intCast(sd);
+    _ = cint_fns.int2e_cart(
+        buf.ptr,
+        null,
+        shls,
+        data.atm.ptr,
+        data.natm,
+        data.bas.ptr,
+        data.nbas,
+        data.env.ptr,
+        opt,
+        null,
+    );
+    return initShellQuartetInfo(data, sa, sb, sc, sd, pairIndex(sa, sb), pairIndex(sc, sd));
+}
+
+fn accumulateShellQuartetJK(
+    j_matrix: []f64,
+    k_matrix: []f64,
+    density: []const f64,
+    cart_norms: []const f64,
+    n: usize,
+    buf: []const f64,
+    quartet: ShellQuartetInfo,
+) void {
+    for (0..quartet.na) |ia| {
+        const mu = quartet.off_a + ia;
+        for (0..quartet.nb) |ib| {
+            const nu = quartet.off_b + ib;
+            for (0..quartet.nc) |ic| {
+                const lam = quartet.off_c + ic;
+                for (0..quartet.nd) |id_d| {
+                    const sig = quartet.off_d + id_d;
+                    const cidx = ia +
+                        ib * quartet.na +
+                        ic * quartet.na_nb +
+                        id_d * quartet.na_nb_nc;
+                    const norm_mn = cart_norms[mu] * cart_norms[nu];
+                    const norm_ls = cart_norms[lam] * cart_norms[sig];
+                    const eri = buf[cidx] * norm_mn * norm_ls;
+
+                    j_matrix[mu * n + nu] += density[lam * n + sig] * eri;
+                    k_matrix[mu * n + lam] += density[nu * n + sig] * eri;
+                    if (!quartet.ab_same) {
+                        j_matrix[nu * n + mu] += density[lam * n + sig] * eri;
+                        k_matrix[nu * n + lam] += density[mu * n + sig] * eri;
+                    }
+                    if (!quartet.cd_same) {
+                        const d_sl = density[sig * n + lam];
+                        const d_nl = density[nu * n + lam];
+                        j_matrix[mu * n + nu] += d_sl * eri;
+                        k_matrix[mu * n + sig] += d_nl * eri;
+                    }
+                    if (!quartet.ab_same and !quartet.cd_same) {
+                        const d_sl = density[sig * n + lam];
+                        const d_ml = density[mu * n + lam];
+                        j_matrix[nu * n + mu] += d_sl * eri;
+                        k_matrix[nu * n + sig] += d_ml * eri;
+                    }
+                    if (quartet.abcd_same) continue;
+
+                    j_matrix[lam * n + sig] += density[mu * n + nu] * eri;
+                    k_matrix[lam * n + mu] += density[sig * n + nu] * eri;
+                    if (!quartet.cd_same) {
+                        const d_mn = density[mu * n + nu];
+                        const d_ln = density[lam * n + nu];
+                        j_matrix[sig * n + lam] += d_mn * eri;
+                        k_matrix[sig * n + mu] += d_ln * eri;
+                    }
+                    if (!quartet.ab_same) {
+                        const d_nm = density[nu * n + mu];
+                        const d_sm = density[sig * n + mu];
+                        j_matrix[lam * n + sig] += d_nm * eri;
+                        k_matrix[lam * n + nu] += d_sm * eri;
+                    }
+                    if (!quartet.ab_same and !quartet.cd_same) {
+                        const d_nm = density[nu * n + mu];
+                        const d_lm = density[lam * n + mu];
+                        j_matrix[sig * n + lam] += d_nm * eri;
+                        k_matrix[sig * n + nu] += d_lm * eri;
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Pre-computed data for fast J/K matrix construction using libcint.
 ///
 /// Create once before the SCF loop. The Schwarz table and CINTOpt are
@@ -944,27 +1134,9 @@ pub const LibcintJKBuilder = struct {
         @memset(j_matrix, 0.0);
         @memset(k_matrix, 0.0);
 
-        // Density screening: D_max(i,j) = max|P[mu,nu]| over shell pair
-        const d_max = try alloc.alloc(f64, nbas * nbas);
+        const d_max = try buildDensityScreening(alloc, data, nbas, n, density);
         defer alloc.free(d_max);
-        for (0..nbas) |si| {
-            const oi = data.shell_offsets[si];
-            const ni = numCartesianFromBas(data, si);
-            for (0..nbas) |sj| {
-                const oj = data.shell_offsets[sj];
-                const nj = numCartesianFromBas(data, sj);
-                var max_p: f64 = 0.0;
-                for (0..ni) |ii| {
-                    for (0..nj) |jj| {
-                        const abs_p = @abs(density[(oi + ii) * n + (oj + jj)]);
-                        if (abs_p > max_p) max_p = abs_p;
-                    }
-                }
-                d_max[si * nbas + sj] = max_p;
-            }
-        }
 
-        // Main shell quartet loop with screening
         const max_buf_size = 50625;
         var buf: [max_buf_size]f64 = undefined;
         var shls: [4]c_int = undefined;
@@ -985,122 +1157,27 @@ pub const LibcintJKBuilder = struct {
                         const q_cd = schwarz[sc * nbas + sd];
                         const q_bound = q_ab * q_cd;
                         if (q_bound < schwarz_threshold) continue;
-
-                        // Density-based screening
-                        const d_max_abcd = @max(
-                            @max(d_max[sa * nbas + sb], d_max[sc * nbas + sd]),
-                            @max(
-                                @max(d_max[sa * nbas + sc], d_max[sa * nbas + sd]),
-                                @max(d_max[sb * nbas + sc], d_max[sb * nbas + sd]),
-                            ),
-                        );
+                        const d_max_abcd = shellQuartetDensityBound(d_max, nbas, sa, sb, sc, sd);
                         if (d_max_abcd * q_bound < schwarz_threshold) continue;
-
-                        shls[0] = @intCast(sa);
-                        shls[1] = @intCast(sb);
-                        shls[2] = @intCast(sc);
-                        shls[3] = @intCast(sd);
-
-                        const na = numCartesianFromBas(data, sa);
-                        const nb = numCartesianFromBas(data, sb);
-                        const nc = numCartesianFromBas(data, sc);
-                        const nd = numCartesianFromBas(data, sd);
-
-                        _ = cint_fns.int2e_cart(
-                            &buf,
-                            null,
-                            &shls,
-                            data.atm.ptr,
-                            data.natm,
-                            data.bas.ptr,
-                            data.nbas,
-                            data.env.ptr,
+                        const quartet = computeShellQuartetEri(
+                            data,
                             self.opt,
-                            null,
+                            &shls,
+                            &buf,
+                            sa,
+                            sb,
+                            sc,
+                            sd,
                         );
-
-                        const off_a = data.shell_offsets[sa];
-                        const off_b = data.shell_offsets[sb];
-                        const off_c = data.shell_offsets[sc];
-                        const off_d = data.shell_offsets[sd];
-
-                        const ab_same = (sa == sb);
-                        const cd_same = (sc == sd);
-                        const abcd_same = (ab_pair == cd_pair);
-
-                        // Distribute ERIs with 8-fold symmetry
-                        const na_nb = na * nb;
-                        const na_nb_nc = na_nb * nc;
-                        for (0..na) |ia| {
-                            const mu = off_a + ia;
-                            for (0..nb) |ib| {
-                                const nu = off_b + ib;
-                                for (0..nc) |ic| {
-                                    const lam = off_c + ic;
-                                    for (0..nd) |id_d| {
-                                        const sig = off_d + id_d;
-
-                                        const cidx = ia + ib * na + ic * na_nb + id_d * na_nb_nc;
-                                        const norm_mn = cart_norms[mu] * cart_norms[nu];
-                                        const norm_ls = cart_norms[lam] * cart_norms[sig];
-                                        const eri = buf[cidx] * norm_mn * norm_ls;
-
-                                        // 1. (mu,nu | lam,sig)
-                                        j_matrix[mu * n + nu] += density[lam * n + sig] * eri;
-                                        k_matrix[mu * n + lam] += density[nu * n + sig] * eri;
-
-                                        // 2. (nu,mu | lam,sig)
-                                        if (!ab_same) {
-                                            j_matrix[nu * n + mu] += density[lam * n + sig] * eri;
-                                            k_matrix[nu * n + lam] += density[mu * n + sig] * eri;
-                                        }
-
-                                        // 3. (mu,nu | sig,lam)
-                                        if (!cd_same) {
-                                            const d_sl = density[sig * n + lam];
-                                            const d_nl = density[nu * n + lam];
-                                            j_matrix[mu * n + nu] += d_sl * eri;
-                                            k_matrix[mu * n + sig] += d_nl * eri;
-                                        }
-
-                                        // 4. (nu,mu | sig,lam)
-                                        if (!ab_same and !cd_same) {
-                                            const d_sl = density[sig * n + lam];
-                                            const d_ml = density[mu * n + lam];
-                                            j_matrix[nu * n + mu] += d_sl * eri;
-                                            k_matrix[nu * n + sig] += d_ml * eri;
-                                        }
-
-                                        // 5-8. bra-ket exchange
-                                        if (!abcd_same) {
-                                            j_matrix[lam * n + sig] += density[mu * n + nu] * eri;
-                                            k_matrix[lam * n + mu] += density[sig * n + nu] * eri;
-
-                                            if (!cd_same) {
-                                                const d_mn = density[mu * n + nu];
-                                                const d_ln = density[lam * n + nu];
-                                                j_matrix[sig * n + lam] += d_mn * eri;
-                                                k_matrix[sig * n + mu] += d_ln * eri;
-                                            }
-
-                                            if (!ab_same) {
-                                                const d_nm = density[nu * n + mu];
-                                                const d_sm = density[sig * n + mu];
-                                                j_matrix[lam * n + sig] += d_nm * eri;
-                                                k_matrix[lam * n + nu] += d_sm * eri;
-                                            }
-
-                                            if (!ab_same and !cd_same) {
-                                                const d_nm = density[nu * n + mu];
-                                                const d_lm = density[lam * n + mu];
-                                                j_matrix[sig * n + lam] += d_nm * eri;
-                                                k_matrix[sig * n + nu] += d_lm * eri;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        accumulateShellQuartetJK(
+                            j_matrix,
+                            k_matrix,
+                            density,
+                            cart_norms,
+                            n,
+                            &buf,
+                            quartet,
+                        );
                     }
                 }
             }
@@ -1123,6 +1200,7 @@ pub fn buildJKDirect(
 
     var builder = try LibcintJKBuilder.init(alloc, data, 1e-14);
     defer builder.deinit(alloc);
+
     return builder.buildJK(alloc, density);
 }
 

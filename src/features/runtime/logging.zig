@@ -63,7 +63,11 @@ pub fn stderr(io: std.Io, max_level: Level) Logger {
 
 pub fn debugPrint(max_level: Level, level: Level, comptime fmt: []const u8, args: anytype) void {
     if (!enabled(max_level, level)) return;
-    std.debug.print(fmt, args);
+    var buffer: [256]u8 = undefined;
+    const locked_stderr = std.debug.lockStderr(&buffer);
+    defer std.debug.unlockStderr();
+
+    locked_stderr.file_writer.interface.print(fmt, args) catch return;
 }
 
 test "parseLevel supports common aliases" {

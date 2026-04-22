@@ -1,3 +1,5 @@
+// style-ignore: function_too_long
+
 const std = @import("std");
 const apply = @import("apply.zig");
 const core_density = @import("core_density.zig");
@@ -271,6 +273,7 @@ pub fn symmetrizeDensity(
     const total = grid.count();
     const rho_sym = try alloc.alloc(math.Complex, total);
     defer alloc.free(rho_sym);
+
     @memset(rho_sym, math.complex.init(0.0, 0.0));
 
     const inv_ops = 1.0 / @as(f64, @floatFromInt(ops.len));
@@ -320,6 +323,7 @@ pub fn symmetrizeDensity(
 
     const rho_real = try reciprocalToReal(alloc, grid, rho_sym);
     defer alloc.free(rho_real);
+
     std.mem.copyForwards(f64, rho, rho_real);
 }
 
@@ -384,6 +388,202 @@ pub const ScfCommon = struct {
 };
 
 /// Initialize common SCF state shared by spin-unpolarized and spin-polarized paths.
+/// Generate the k-point mesh respecting boundary=isolated (Gamma-only) and symmetry options.
+fn generateKpointsForConfig(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: *const config.Config,
+    recip: math.Mat3,
+    cell: math.Mat3,
+    atoms: []const hamiltonian.AtomData,
+) ![]KPoint {
+    if (cfg.boundary == .isolated) {
+        const gamma_kpoints = try alloc.alloc(KPoint, 1);
+        gamma_kpoints[0] = KPoint{
+            .k_frac = .{ .x = 0.0, .y = 0.0, .z = 0.0 },
+            .k_cart = .{ .x = 0.0, .y = 0.0, .z = 0.0 },
+            .weight = 1.0,
+        };
+        return gamma_kpoints;
+    }
+    const shift: math.Vec3 = .{
+        .x = cfg.scf.kmesh_shift[0],
+        .y = cfg.scf.kmesh_shift[1],
+        .z = cfg.scf.kmesh_shift[2],
+    };
+    if (cfg.scf.symmetry) {
+        return try kmesh_mod.generateKmeshSymmetry(
+            alloc,
+            io,
+            cfg.scf.kmesh,
+            shift,
+            recip,
+            cell,
+            atoms,
+            cfg.scf.time_reversal,
+        );
+    }
+    return try kmesh_mod.generateKmesh(alloc, cfg.scf.kmesh, recip, shift);
+}
+
+/// Build per-species radial projector tables used by the nonlocal context.
+fn buildRadialTablesForSpecies(
+    alloc: std.mem.Allocator,
+    species: []const hamiltonian.SpeciesEntry,
+    ecut_ry: f64,
+) !?[]nonlocal_mod.RadialTableSet {
+    const g_max = @sqrt(2.0 * ecut_ry) * 1.5;
+    var buf = try alloc.alloc(nonlocal_mod.RadialTableSet, species.len);
+    errdefer {
+        for (buf) |*t| {
+            if (t.tables.len > 0) t.deinit(alloc);
+        }
+        alloc.free(buf);
+    }
+    for (species, 0..) |entry, si| {
+        const upf = entry.upf.*;
+        if (upf.beta.len == 0 or upf.dij.len == 0) {
+            buf[si] = .{ .tables = &[_]nonlocal_mod.RadialTable{} };
+            continue;
+        }
+        buf[si] = try nonlocal_mod.RadialTableSet.init(alloc, upf.beta, upf.r, upf.rab, g_max);
+    }
+    return buf;
+}
+
+/// Build PAW per-species tables and the m-resolved RhoIJ matrix.
+fn buildPawTablesAndRhoIJ(
+    alloc: std.mem.Allocator,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    ecut_ry: f64,
+) !struct { tabs: []paw_mod.PawTab, rhoij: paw_mod.RhoIJ } {
+    const q_max = @sqrt(2.0 * ecut_ry) * 1.5;
+    var tabs = try alloc.alloc(paw_mod.PawTab, species.len);
+    errdefer {
+        for (tabs) |*t| t.deinit(alloc);
+        alloc.free(tabs);
+    }
+    for (species, 0..) |entry, si| {
+        if (entry.upf.paw) |paw| {
+            tabs[si] = try paw_mod.PawTab.init(alloc, paw, entry.upf.r, entry.upf.rab, q_max);
+        } else {
+            tabs[si] = .{
+                .sij = &[_]f64{},
+                .kij = &[_]f64{},
+                .qijl_form = &[_]f64{},
+                .n_qijl_entries = 0,
+                .qijl_indices = &[_]paw_mod.PawTab.QijlIndex{},
+                .n_qpoints = 0,
+                .dq = 0.0,
+                .nbeta = 0,
+                .l_list = &[_]i32{},
+            };
+        }
+    }
+    const natom = atoms.len;
+    const nbeta_list = try alloc.alloc(usize, natom);
+    defer alloc.free(nbeta_list);
+
+    const l_lists = try alloc.alloc([]const i32, natom);
+    defer alloc.free(l_lists);
+
+    for (0..natom) |a| {
+        const sp = atoms[a].species_index;
+        nbeta_list[a] = tabs[sp].nbeta;
+        l_lists[a] = tabs[sp].l_list;
+    }
+    const rhoij = try paw_mod.RhoIJ.init(alloc, natom, nbeta_list, l_lists);
+    return .{ .tabs = tabs, .rhoij = rhoij };
+}
+
+/// Determine lmax_proj, lmax_aug from PAW tabs and build the Gaunt coefficient table.
+fn buildPawGauntTable(
+    alloc: std.mem.Allocator,
+    tabs: []const paw_mod.PawTab,
+) !paw_mod.GauntTable {
+    var lmax_proj: usize = 0;
+    var lmax_aug: usize = 0;
+    for (tabs) |tab| {
+        if (tab.nbeta == 0) continue;
+        for (tab.l_list) |l| {
+            const lu = @as(usize, @intCast(l));
+            if (lu > lmax_proj) lmax_proj = lu;
+        }
+        for (0..tab.n_qijl_entries) |e| {
+            if (tab.qijl_indices[e].l > lmax_aug) lmax_aug = tab.qijl_indices[e].l;
+        }
+    }
+    return try paw_mod.GauntTable.init(alloc, lmax_proj, lmax_aug);
+}
+
+/// Compute ecutrho (spherical cutoff for density) for PAW systems; otherwise null.
+fn ecutrhoForPaw(cfg: *const config.Config, is_paw: bool) ?f64 {
+    if (!is_paw) return null;
+    const gs_val = if (cfg.scf.grid_scale > 0.0) cfg.scf.grid_scale else 1.0;
+    return cfg.scf.ecut_ry * gs_val * gs_val;
+}
+
+/// Build the optional radial tables (for nonlocal context warm-start).
+fn maybeBuildRadialTables(
+    alloc: std.mem.Allocator,
+    cfg: *const config.Config,
+    species: []const hamiltonian.SpeciesEntry,
+) !?[]nonlocal_mod.RadialTableSet {
+    const nonlocal_enabled_run = cfg.scf.enable_nonlocal and hasNonlocal(species);
+    if (!nonlocal_enabled_run) return null;
+    return try buildRadialTablesForSpecies(alloc, species, cfg.scf.ecut_ry);
+}
+
+/// Free radial tables (helper for errdefer blocks).
+fn freeRadialTables(alloc: std.mem.Allocator, buf: []nonlocal_mod.RadialTableSet) void {
+    for (buf) |*t| {
+        if (t.tables.len > 0) t.deinit(alloc);
+    }
+    alloc.free(buf);
+}
+
+/// Free PAW bundle contents (helper for errdefer blocks).
+fn freePawBundle(alloc: std.mem.Allocator, bundle: *PawBundle) void {
+    if (bundle.tabs) |tabs| {
+        for (tabs) |*t| t.deinit(alloc);
+        alloc.free(tabs);
+    }
+    if (bundle.rhoij) |*rij| rij.deinit(alloc);
+    if (bundle.gaunt) |*gt| gt.deinit(alloc);
+}
+
+/// Build optional NLCC core density.
+fn maybeBuildRhoCore(
+    alloc: std.mem.Allocator,
+    grid: grid_mod.Grid,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+) !?[]f64 {
+    if (!core_density.hasNlcc(species)) return null;
+    return try core_density.buildCoreDensity(alloc, grid, species, atoms);
+}
+
+/// Combined PAW table + Gaunt build for initScfCommon.
+const PawBundle = struct {
+    tabs: ?[]paw_mod.PawTab,
+    rhoij: ?paw_mod.RhoIJ,
+    gaunt: ?paw_mod.GauntTable,
+};
+
+fn maybeBuildPawBundle(
+    alloc: std.mem.Allocator,
+    cfg: *const config.Config,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    is_paw: bool,
+) !PawBundle {
+    if (!is_paw) return .{ .tabs = null, .rhoij = null, .gaunt = null };
+    const paw_init = try buildPawTablesAndRhoIJ(alloc, species, atoms, cfg.scf.ecut_ry);
+    const gaunt = try buildPawGauntTable(alloc, paw_init.tabs);
+    return .{ .tabs = paw_init.tabs, .rhoij = paw_init.rhoij, .gaunt = gaunt };
+}
+
 fn initScfCommon(params: ScfParams) !ScfCommon {
     const alloc = params.alloc;
     const io = params.io;
@@ -403,14 +603,14 @@ fn initScfCommon(params: ScfParams) !ScfCommon {
     else
         null;
 
-    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, grid.cell);
+    const local_cfg = local_potential.resolve(
+        cfg.scf.local_potential,
+        cfg.ewald.alpha,
+        grid.cell,
+    );
 
-    // Compute ecutrho spherical cutoff early so it can be applied to V_local(G)
     const is_paw = hasPaw(species);
-    const ecutrho: ?f64 = if (is_paw) blk: {
-        const gs_val = if (cfg.scf.grid_scale > 0.0) cfg.scf.grid_scale else 1.0;
-        break :blk cfg.scf.ecut_ry * gs_val * gs_val;
-    } else null;
+    const ecutrho = ecutrhoForPaw(cfg, is_paw);
 
     var ionic = try potential_mod.buildIonicPotentialGrid(
         alloc,
@@ -425,43 +625,17 @@ fn initScfCommon(params: ScfParams) !ScfCommon {
 
     var log = try ScfLog.init(alloc, io, cfg.out_dir);
     errdefer log.deinit();
+
     try log.writeHeader();
 
-    // For isolated systems, force Gamma-only k-point sampling
-    const kpoints = if (cfg.boundary == .isolated) blk: {
-        const gamma_kpoints = try alloc.alloc(KPoint, 1);
-        gamma_kpoints[0] = KPoint{
-            .k_frac = .{ .x = 0.0, .y = 0.0, .z = 0.0 },
-            .k_cart = .{ .x = 0.0, .y = 0.0, .z = 0.0 },
-            .weight = 1.0,
-        };
-        break :blk gamma_kpoints;
-    } else if (cfg.scf.symmetry)
-        try kmesh_mod.generateKmeshSymmetry(
-            alloc,
-            io,
-            cfg.scf.kmesh,
-            .{
-                .x = cfg.scf.kmesh_shift[0],
-                .y = cfg.scf.kmesh_shift[1],
-                .z = cfg.scf.kmesh_shift[2],
-            },
-            recip,
-            grid.cell,
-            atoms,
-            cfg.scf.time_reversal,
-        )
-    else
-        try kmesh_mod.generateKmesh(
-            alloc,
-            cfg.scf.kmesh,
-            recip,
-            .{
-                .x = cfg.scf.kmesh_shift[0],
-                .y = cfg.scf.kmesh_shift[1],
-                .z = cfg.scf.kmesh_shift[2],
-            },
-        );
+    const kpoints = try generateKpointsForConfig(
+        alloc,
+        io,
+        cfg,
+        recip,
+        grid.cell,
+        atoms,
+    );
     errdefer alloc.free(kpoints);
 
     const sym_ops = if (cfg.scf.symmetry)
@@ -470,124 +644,23 @@ fn initScfCommon(params: ScfParams) !ScfCommon {
         null;
     errdefer if (sym_ops) |ops| alloc.free(ops);
 
-    var rho_core: ?[]f64 = null;
-    if (core_density.hasNlcc(species)) {
-        rho_core = try core_density.buildCoreDensity(alloc, grid, species, atoms);
-    }
+    const rho_core = try maybeBuildRhoCore(alloc, grid, species, atoms);
     errdefer if (rho_core) |values| alloc.free(values);
 
-    // Build radial lookup tables for fast NonlocalContext construction
-    const nonlocal_enabled_run = cfg.scf.enable_nonlocal and hasNonlocal(species);
-    var radial_tables_buf: ?[]nonlocal_mod.RadialTableSet = null;
-    if (nonlocal_enabled_run) {
-        const g_max = @sqrt(2.0 * cfg.scf.ecut_ry) * 1.5;
-        var buf = try alloc.alloc(nonlocal_mod.RadialTableSet, species.len);
-        errdefer {
-            for (buf) |*t| {
-                if (t.tables.len > 0) t.deinit(alloc);
-            }
-            alloc.free(buf);
-        }
-        for (species, 0..) |entry, si| {
-            const upf = entry.upf.*;
-            if (upf.beta.len == 0 or upf.dij.len == 0) {
-                buf[si] = .{ .tables = &[_]nonlocal_mod.RadialTable{} };
-                continue;
-            }
-            buf[si] = try nonlocal_mod.RadialTableSet.init(alloc, upf.beta, upf.r, upf.rab, g_max);
-        }
-        radial_tables_buf = buf;
-    }
-    errdefer {
-        if (radial_tables_buf) |buf| {
-            for (buf) |*t| {
-                if (t.tables.len > 0) t.deinit(alloc);
-            }
-            alloc.free(buf);
-        }
-    }
+    const radial_tables_buf = try maybeBuildRadialTables(alloc, cfg, species);
+    errdefer if (radial_tables_buf) |buf| freeRadialTables(alloc, buf);
+
     const radial_tables: ?[]const nonlocal_mod.RadialTableSet = radial_tables_buf;
 
-    // Initialize Pulay mixer if configured
     const pulay_mixer: ?PulayMixer = if (cfg.scf.pulay_history > 0)
         PulayMixer.init(alloc, cfg.scf.pulay_history)
     else
         null;
 
-    // Initialize PAW tables if any species uses PAW
-    // (is_paw already determined above for ecutrho)
-    var paw_tabs: ?[]paw_mod.PawTab = null;
-    var paw_rhoij: ?paw_mod.RhoIJ = null;
-    if (is_paw) {
-        const q_max = @sqrt(2.0 * cfg.scf.ecut_ry) * 1.5;
-        var tabs = try alloc.alloc(paw_mod.PawTab, species.len);
-        errdefer {
-            for (tabs) |*t| t.deinit(alloc);
-            alloc.free(tabs);
-        }
-        for (species, 0..) |entry, si| {
-            if (entry.upf.paw) |paw| {
-                tabs[si] = try paw_mod.PawTab.init(alloc, paw, entry.upf.r, entry.upf.rab, q_max);
-            } else {
-                // Non-PAW species: zero-initialize
-                tabs[si] = .{
-                    .sij = &[_]f64{},
-                    .kij = &[_]f64{},
-                    .qijl_form = &[_]f64{},
-                    .n_qijl_entries = 0,
-                    .qijl_indices = &[_]paw_mod.PawTab.QijlIndex{},
-                    .n_qpoints = 0,
-                    .dq = 0.0,
-                    .nbeta = 0,
-                    .l_list = &[_]i32{},
-                };
-            }
-        }
-        paw_tabs = tabs;
+    var paw = try maybeBuildPawBundle(alloc, cfg, species, atoms, is_paw);
+    errdefer freePawBundle(alloc, &paw);
 
-        // Initialize m-resolved RhoIJ for all atoms
-        const natom = atoms.len;
-        const nbeta_list = try alloc.alloc(usize, natom);
-        defer alloc.free(nbeta_list);
-        const l_lists = try alloc.alloc([]const i32, natom);
-        defer alloc.free(l_lists);
-        for (0..natom) |a| {
-            const sp = atoms[a].species_index;
-            nbeta_list[a] = tabs[sp].nbeta;
-            l_lists[a] = tabs[sp].l_list;
-        }
-        paw_rhoij = try paw_mod.RhoIJ.init(alloc, natom, nbeta_list, l_lists);
-    }
-
-    // Initialize Gaunt table for multi-L PAW
-    var paw_gaunt: ?paw_mod.GauntTable = null;
-    if (paw_tabs) |tabs| {
-        // Determine lmax_proj and lmax_aug from PAW tabs
-        var lmax_proj: usize = 0;
-        var lmax_aug: usize = 0;
-        for (tabs) |tab| {
-            if (tab.nbeta == 0) continue;
-            for (tab.l_list) |l| {
-                const lu = @as(usize, @intCast(l));
-                if (lu > lmax_proj) lmax_proj = lu;
-            }
-            for (0..tab.n_qijl_entries) |e| {
-                if (tab.qijl_indices[e].l > lmax_aug) lmax_aug = tab.qijl_indices[e].l;
-            }
-        }
-        paw_gaunt = try paw_mod.GauntTable.init(alloc, lmax_proj, lmax_aug);
-    }
-
-    errdefer {
-        if (paw_tabs) |tabs| {
-            for (tabs) |*t| t.deinit(alloc);
-            alloc.free(tabs);
-        }
-        if (paw_rhoij) |*rij| rij.deinit(alloc);
-        if (paw_gaunt) |*gt| gt.deinit(alloc);
-    }
-
-    return ScfCommon{
+    return buildScfCommonStruct(.{
         .alloc = alloc,
         .cfg = cfg,
         .species = species,
@@ -606,14 +679,646 @@ fn initScfCommon(params: ScfParams) !ScfCommon {
         .radial_tables = radial_tables,
         .pulay_mixer = pulay_mixer,
         .coulomb_r_cut = coulomb_r_cut,
-        .paw_tabs = paw_tabs,
-        .paw_rhoij = paw_rhoij,
-        .paw_gaunt = paw_gaunt,
+        .paw = paw,
         .is_paw = is_paw,
+    });
+}
+
+/// Params bag for ScfCommon assembly — all fields correspond to ScfCommon plus the PawBundle.
+const ScfCommonSetup = struct {
+    alloc: std.mem.Allocator,
+    cfg: *const config.Config,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    recip: math.Mat3,
+    volume_bohr: f64,
+    grid: grid_mod.Grid,
+    total_electrons: f64,
+    local_cfg: local_potential.LocalPotentialConfig,
+    ionic: potential_mod.IonicPotentialGrid,
+    log: ScfLog,
+    kpoints: []KPoint,
+    sym_ops: ?[]symmetry.SymOp,
+    rho_core: ?[]f64,
+    radial_tables_buf: ?[]nonlocal_mod.RadialTableSet,
+    radial_tables: ?[]const nonlocal_mod.RadialTableSet,
+    pulay_mixer: ?PulayMixer,
+    coulomb_r_cut: ?f64,
+    paw: PawBundle,
+    is_paw: bool,
+};
+
+fn buildScfCommonStruct(s: ScfCommonSetup) ScfCommon {
+    return ScfCommon{
+        .alloc = s.alloc,
+        .cfg = s.cfg,
+        .species = s.species,
+        .atoms = s.atoms,
+        .recip = s.recip,
+        .volume_bohr = s.volume_bohr,
+        .grid = s.grid,
+        .total_electrons = s.total_electrons,
+        .local_cfg = s.local_cfg,
+        .ionic = s.ionic,
+        .log = s.log,
+        .kpoints = s.kpoints,
+        .sym_ops = s.sym_ops,
+        .rho_core = s.rho_core,
+        .radial_tables_buf = s.radial_tables_buf,
+        .radial_tables = s.radial_tables,
+        .pulay_mixer = s.pulay_mixer,
+        .coulomb_r_cut = s.coulomb_r_cut,
+        .paw_tabs = s.paw.tabs,
+        .paw_rhoij = s.paw.rhoij,
+        .paw_gaunt = s.paw.gaunt,
+        .is_paw = s.is_paw,
     };
 }
 
 /// Run SCF loop to build Hartree+XC potential.
+/// Initialise rho with user-provided density (if present and fits) or flat total_electrons/volume.
+fn initRhoFromUserOrFlat(
+    rho: []f64,
+    initial_density: ?[]const f64,
+    total_electrons: f64,
+    grid_volume: f64,
+) void {
+    if (initial_density) |init_rho| {
+        if (init_rho.len == rho.len) {
+            @memcpy(rho, init_rho);
+            return;
+        }
+    }
+    const rho0 = total_electrons / grid_volume;
+    @memset(rho, rho0);
+}
+
+/// Warm-start the per-kpoint cache from a previously converged SCF run, if provided.
+fn warmStartKpointCache(
+    kpoint_cache: []KpointCache,
+    initial_kpoint_cache: ?[]const KpointCache,
+) !void {
+    if (initial_kpoint_cache) |init_cache| {
+        const copy_len = @min(kpoint_cache.len, init_cache.len);
+        for (0..copy_len) |k| {
+            if (init_cache[k].vectors.len > 0) {
+                try kpoint_cache[k].store(
+                    init_cache[k].n,
+                    init_cache[k].nbands,
+                    init_cache[k].vectors,
+                );
+            }
+        }
+    }
+}
+
+/// Return paw ecutrho used throughout the SCF loop, or null for non-PAW systems.
+fn pawEcutrho(cfg: *const config.Config, is_paw: bool) ?f64 {
+    if (!is_paw) return null;
+    const gs_val = if (cfg.scf.grid_scale > 0.0) cfg.scf.grid_scale else 1.0;
+    return cfg.scf.ecut_ry * gs_val * gs_val;
+}
+
+/// Copy NLCC core density to a newly-allocated buffer for result, or null.
+fn copyRhoCoreForResult(alloc: std.mem.Allocator, rho_core: ?[]const f64) !?[]f64 {
+    if (rho_core) |rc| {
+        const copy = try alloc.alloc(f64, rc.len);
+        @memcpy(copy, rc);
+        return copy;
+    }
+    return null;
+}
+
+/// Bag of SCF loop profiling accumulators.
+const ScfLoopProf = struct {
+    compute_density_ns: u64 = 0,
+    build_potential_ns: u64 = 0,
+    residual_ns: u64 = 0,
+    mixing_ns: u64 = 0,
+    build_local_r_ns: u64 = 0,
+    build_fft_map_ns: u64 = 0,
+};
+
+/// Either return the caller-supplied apply caches or allocate + default-init a fresh set.
+fn getOrAllocApplyCaches(
+    alloc: std.mem.Allocator,
+    initial: ?[]apply.KpointApplyCache,
+    n: usize,
+) ![]apply.KpointApplyCache {
+    if (initial) |caches| return caches;
+    const caches = try alloc.alloc(apply.KpointApplyCache, n);
+    for (caches) |*ac| ac.* = .{};
+    return caches;
+}
+
+/// Duplicate per-atom []f64 slices from an iterator to an owned slice of owned slices.
+fn dupPerAtomDij(
+    alloc: std.mem.Allocator,
+    nc_species: anytype,
+    select: enum { radial, m_resolved },
+) !?[][]f64 {
+    var list: std.ArrayList([]f64) = .empty;
+    errdefer {
+        for (list.items) |d| alloc.free(d);
+        list.deinit(alloc);
+    }
+    for (nc_species) |entry| {
+        const source = switch (select) {
+            .radial => entry.dij_per_atom,
+            .m_resolved => entry.dij_m_per_atom,
+        };
+        if (source) |dpa| {
+            for (dpa) |atom_dij| {
+                const copy = try alloc.alloc(f64, atom_dij.len);
+                @memcpy(copy, atom_dij);
+                try list.append(alloc, copy);
+            }
+        }
+    }
+    if (list.items.len > 0) return try list.toOwnedSlice(alloc);
+    list.deinit(alloc);
+    return null;
+}
+
+fn appendEmptyDxc(
+    alloc: std.mem.Allocator,
+    dxc_list: *std.ArrayList([]f64),
+) !void {
+    try dxc_list.append(alloc, try alloc.alloc(f64, 0));
+}
+
+fn accumulateMatrixRhoijTrace(
+    sum_dxc_rhoij: *f64,
+    matrix: []const f64,
+    rhoij_m: []const f64,
+    mt: usize,
+) void {
+    for (0..mt) |im| {
+        for (0..mt) |jm| {
+            sum_dxc_rhoij.* += matrix[im * mt + jm] * rhoij_m[im * mt + jm];
+        }
+    }
+}
+
+/// Compute per-atom D^xc (angular) and accumulate the D^H/D^xc
+/// double-counting correction into sum_dxc_rhoij.
+fn computePerAtomDxcAndDC(
+    alloc: std.mem.Allocator,
+    cfg: *const config.Config,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    prij: *const paw_mod.RhoIJ,
+    tabs: []const paw_mod.PawTab,
+    gaunt: *paw_mod.GauntTable,
+) !struct { dxc: ?[][]f64, sum_dxc_rhoij: f64 } {
+    var dxc_list: std.ArrayList([]f64) = .empty;
+    errdefer {
+        for (dxc_list.items) |d| alloc.free(d);
+        dxc_list.deinit(alloc);
+    }
+    var sum_dxc_rhoij: f64 = 0.0;
+    for (atoms, 0..) |atom, ai| {
+        const si = atom.species_index;
+        const upf = species[si].upf;
+        const paw = upf.paw orelse {
+            try appendEmptyDxc(alloc, &dxc_list);
+            continue;
+        };
+        if (si >= tabs.len or tabs[si].nbeta == 0) {
+            try appendEmptyDxc(alloc, &dxc_list);
+            continue;
+        }
+        const mt = prij.m_total_per_atom[ai];
+        const sp_m_offsets = prij.m_offsets[ai];
+
+        const dxc_m = try alloc.alloc(f64, mt * mt);
+        try paw_mod.paw_xc.computePawDijXcAngular(
+            alloc,
+            dxc_m,
+            paw,
+            prij.values[ai],
+            mt,
+            sp_m_offsets,
+            upf.r,
+            upf.rab,
+            paw.ae_core_density,
+            if (upf.nlcc.len > 0) upf.nlcc else null,
+            cfg.scf.xc,
+            gaunt,
+        );
+        const rhoij_m = prij.values[ai];
+        accumulateMatrixRhoijTrace(&sum_dxc_rhoij, dxc_m, rhoij_m, mt);
+        try dxc_list.append(alloc, dxc_m);
+
+        const dij_h_dc = try alloc.alloc(f64, mt * mt);
+        defer alloc.free(dij_h_dc);
+
+        try paw_mod.paw_xc.computePawDijHartreeMultiL(
+            alloc,
+            dij_h_dc,
+            paw,
+            rhoij_m,
+            mt,
+            sp_m_offsets,
+            upf.r,
+            upf.rab,
+            gaunt,
+        );
+        accumulateMatrixRhoijTrace(&sum_dxc_rhoij, dij_h_dc, rhoij_m, mt);
+    }
+    const dxc = if (dxc_list.items.len > 0) try dxc_list.toOwnedSlice(alloc) else null_blk: {
+        dxc_list.deinit(alloc);
+        break :null_blk @as(?[][]f64, null);
+    };
+    return .{ .dxc = dxc, .sum_dxc_rhoij = sum_dxc_rhoij };
+}
+
+/// Copy contracted per-atom rhoij for force calculation.
+fn duplicateContractedRhoIJ(
+    alloc: std.mem.Allocator,
+    prij: *paw_mod.RhoIJ,
+) !?[][]f64 {
+    var rij_list: std.ArrayList([]f64) = .empty;
+    errdefer {
+        for (rij_list.items) |r| alloc.free(r);
+        rij_list.deinit(alloc);
+    }
+    for (0..prij.natom) |a| {
+        const nb = prij.nbeta_per_atom[a];
+        const copy = try alloc.alloc(f64, nb * nb);
+        prij.contractToRadial(a, copy);
+        try rij_list.append(alloc, copy);
+    }
+    if (rij_list.items.len > 0) return try rij_list.toOwnedSlice(alloc);
+    rij_list.deinit(alloc);
+    return null;
+}
+
+/// Top-level PAW result extraction (transfers ownership + builds result arrays).
+fn extractPawResults(
+    alloc: std.mem.Allocator,
+    cfg: *const config.Config,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    apply_caches: []apply.KpointApplyCache,
+    common: *ScfCommon,
+    energy_terms: *energy_mod.EnergyTerms,
+    out_tabs: *?[]paw_mod.PawTab,
+    out_dij: *?[][]f64,
+    out_dij_m: *?[][]f64,
+    out_dxc: *?[][]f64,
+    out_rhoij: *?[][]f64,
+) !void {
+    if (common.paw_tabs) |tabs| {
+        out_tabs.* = tabs;
+        common.paw_tabs = null;
+    }
+    if (apply_caches.len > 0) {
+        if (apply_caches[0].nonlocal_ctx) |nc| {
+            out_dij.* = try dupPerAtomDij(alloc, nc.species, .radial);
+            out_dij_m.* = try dupPerAtomDij(alloc, nc.species, .m_resolved);
+        }
+    }
+    if (common.paw_rhoij) |*prij| {
+        if (out_tabs.*) |tabs| {
+            const dxc_result = try computePerAtomDxcAndDC(
+                alloc,
+                cfg,
+                species,
+                atoms,
+                prij,
+                tabs,
+                &common.paw_gaunt.?,
+            );
+            out_dxc.* = dxc_result.dxc;
+            energy_terms.paw_dxc_rhoij = -dxc_result.sum_dxc_rhoij;
+            energy_terms.total += energy_terms.paw_dxc_rhoij;
+        }
+        out_rhoij.* = try duplicateContractedRhoIJ(alloc, prij);
+    }
+}
+
+/// Compute the ecutrho cutoff used for in-loop density filtering.
+fn pawEcutrhoCompute(cfg: *const config.Config) f64 {
+    const gs_comp = if (cfg.scf.grid_scale > 0.0) cfg.scf.grid_scale else 1.0;
+    return cfg.scf.ecut_ry * gs_comp * gs_comp;
+}
+
+/// Symmetrize density over crystal operations, and PAW rhoij when applicable.
+fn symmetrizeDensityAndRhoIJ(
+    alloc: std.mem.Allocator,
+    cfg: *const config.Config,
+    grid: grid_mod.Grid,
+    common: *ScfCommon,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    rho: []f64,
+) !void {
+    if (common.sym_ops) |ops| {
+        if (ops.len > 1) {
+            try symmetrizeDensity(alloc, grid, rho, ops, cfg.scf.use_rfft);
+        }
+    }
+    if (common.paw_rhoij) |*prij| {
+        if (cfg.scf.symmetry) {
+            try paw_scf.symmetrizeRhoIJ(alloc, prij, species, atoms);
+        }
+    }
+}
+
+/// Filter density to |G|² < ecutrho sphere, writing the result back into rho.
+fn filterAugmentedDensityInPlace(
+    alloc: std.mem.Allocator,
+    grid: grid_mod.Grid,
+    rho: []f64,
+    ecutrho: f64,
+    use_rfft: bool,
+) !void {
+    const filtered = try potential_mod.filterDensityToEcutrho(alloc, grid, rho, ecutrho, use_rfft);
+    defer alloc.free(filtered);
+
+    @memcpy(rho, filtered);
+}
+
+/// Allocate an augmented density ρ̃ + n̂_hat for potential construction (PAW).
+fn buildAugmentedDensity(
+    alloc: std.mem.Allocator,
+    grid: grid_mod.Grid,
+    rho: []const f64,
+    common: *ScfCommon,
+    atoms: []const hamiltonian.AtomData,
+    ecutrho: f64,
+    grid_count: usize,
+) ![]f64 {
+    const aug = try alloc.alloc(f64, grid_count);
+    @memcpy(aug, rho);
+    if (common.paw_rhoij) |*prij| {
+        try paw_scf.addPawCompensationCharge(
+            alloc,
+            grid,
+            aug,
+            prij,
+            common.paw_tabs.?,
+            atoms,
+            ecutrho,
+            &common.paw_gaunt.?,
+        );
+    }
+    return aug;
+}
+
+/// Compute and store potential residual; updates vresid_last to a freshly-allocated grid.
+fn recordPotentialResidual(
+    alloc: std.mem.Allocator,
+    grid: grid_mod.Grid,
+    potential: hamiltonian.PotentialGrid,
+    potential_out: hamiltonian.PotentialGrid,
+    vresid_last: *?hamiltonian.PotentialGrid,
+) !f64 {
+    const nvals = potential.values.len;
+    var residual_values = try alloc.alloc(math.Complex, nvals);
+    errdefer alloc.free(residual_values);
+
+    var sum_sq: f64 = 0.0;
+    for (0..nvals) |idx| {
+        const diff = math.complex.sub(potential_out.values[idx], potential.values[idx]);
+        residual_values[idx] = diff;
+        sum_sq += diff.r * diff.r + diff.i * diff.i;
+    }
+    const residual_rms = if (nvals > 0)
+        std.math.sqrt(sum_sq / @as(f64, @floatFromInt(nvals)))
+    else
+        0.0;
+    if (vresid_last.*) |*old| old.deinit(alloc);
+    vresid_last.* = hamiltonian.PotentialGrid{
+        .nx = grid.nx,
+        .ny = grid.ny,
+        .nz = grid.nz,
+        .min_h = grid.min_h,
+        .min_k = grid.min_k,
+        .min_l = grid.min_l,
+        .values = residual_values,
+    };
+    return residual_rms;
+}
+
+/// Build rho_aug for final energy evaluation (PAW only); returns null for non-PAW.
+fn maybeBuildRhoAugForEnergy(
+    alloc: std.mem.Allocator,
+    cfg: *const config.Config,
+    grid: grid_mod.Grid,
+    common: *ScfCommon,
+    atoms: []const hamiltonian.AtomData,
+    rho: []const f64,
+) !?[]f64 {
+    if (!common.is_paw) return null;
+    const prij = (common.paw_rhoij orelse return null);
+    _ = prij;
+    const aug = try alloc.alloc(f64, grid.count());
+    @memcpy(aug, rho);
+    const gs_en = if (cfg.scf.grid_scale > 0.0) cfg.scf.grid_scale else 1.0;
+    const ecutrho_scf = cfg.scf.ecut_ry * gs_en * gs_en;
+    try paw_scf.addPawCompensationCharge(
+        alloc,
+        grid,
+        aug,
+        &common.paw_rhoij.?,
+        common.paw_tabs.?,
+        atoms,
+        ecutrho_scf,
+        &common.paw_gaunt.?,
+    );
+    const filtered = try potential_mod.filterDensityToEcutrho(
+        alloc,
+        grid,
+        aug,
+        ecutrho_scf,
+        cfg.scf.use_rfft,
+    );
+    alloc.free(aug);
+    return filtered;
+}
+
+/// Params bag for building the final ScfResult.
+const ScfResultSetup = struct {
+    potential: hamiltonian.PotentialGrid,
+    density: []f64,
+    iterations: usize,
+    converged: bool,
+    energy: energy_mod.EnergyTerms,
+    fermi_level: f64,
+    potential_residual: f64,
+    wavefunctions: ?WavefunctionData,
+    vresid: ?hamiltonian.PotentialGrid,
+    grid: grid_mod.Grid,
+    kpoint_cache: []KpointCache,
+    apply_caches: []apply.KpointApplyCache,
+    vxc_r: ?[]f64,
+    paw_tabs: ?[]paw_mod.PawTab,
+    paw_dij: ?[][]f64,
+    paw_dij_m: ?[][]f64,
+    paw_dxc: ?[][]f64,
+    paw_rhoij: ?[][]f64,
+    ionic_g: ?[]math.Complex,
+    rho_core_copy: ?[]f64,
+};
+
+fn buildScfResult(s: ScfResultSetup) ScfResult {
+    return ScfResult{
+        .potential = s.potential,
+        .density = s.density,
+        .iterations = s.iterations,
+        .converged = s.converged,
+        .energy = s.energy,
+        .fermi_level = s.fermi_level,
+        .potential_residual = s.potential_residual,
+        .wavefunctions = s.wavefunctions,
+        .vresid = s.vresid,
+        .grid = s.grid,
+        .kpoint_cache = s.kpoint_cache,
+        .apply_caches = s.apply_caches,
+        .vxc_r = s.vxc_r,
+        .paw_tabs = s.paw_tabs,
+        .paw_dij = s.paw_dij,
+        .paw_dij_m = s.paw_dij_m,
+        .paw_dxc = s.paw_dxc,
+        .paw_rhoij = s.paw_rhoij,
+        .ionic_g = s.ionic_g,
+        .rho_core = s.rho_core_copy,
+    };
+}
+
+/// Potential-mixing branch: mixes V_in and V_out, frees potential_out.
+fn mixPotentialMode(
+    alloc: std.mem.Allocator,
+    cfg: *const config.Config,
+    grid: grid_mod.Grid,
+    common: *ScfCommon,
+    iterations: usize,
+    rho: []f64,
+    new_rho: []const f64,
+    potential: *hamiltonian.PotentialGrid,
+    potential_out: *hamiltonian.PotentialGrid,
+    keep_potential_out: *bool,
+) !void {
+    const n_complex = potential.values.len;
+    const n_f64 = n_complex * 2;
+    const v_in: []f64 = @as([*]f64, @ptrCast(potential.values.ptr))[0..n_f64];
+
+    if (common.pulay_mixer != null and iterations >= cfg.scf.pulay_start) {
+        const residual_g = try alloc.alloc(math.Complex, n_complex);
+        for (0..n_complex) |idx| {
+            residual_g[idx] = math.complex.sub(potential_out.values[idx], potential.values[idx]);
+        }
+        if (cfg.scf.diemac > 1.0) {
+            mixing.applyModelDielectricPreconditioner(
+                grid,
+                residual_g,
+                cfg.scf.diemac,
+                cfg.scf.dielng,
+            );
+        }
+        const precond_f64: []f64 = @as([*]f64, @ptrCast(residual_g.ptr))[0..n_f64];
+        try common.pulay_mixer.?.mixWithResidual(v_in, precond_f64, cfg.scf.mixing_beta);
+    } else {
+        const v_out_ptr = @as([*]const f64, @ptrCast(potential_out.values.ptr));
+        const v_out: []const f64 = v_out_ptr[0..n_f64];
+        mixDensity(v_in, v_out, cfg.scf.mixing_beta);
+    }
+
+    @memcpy(rho, new_rho);
+    potential_out.deinit(alloc);
+    keep_potential_out.* = true;
+}
+
+/// Density-mixing branch: mixes rho and rebuilds potential.
+fn mixDensityMode(
+    alloc: std.mem.Allocator,
+    cfg: *const config.Config,
+    grid: grid_mod.Grid,
+    common: *ScfCommon,
+    iterations: usize,
+    rho: []f64,
+    new_rho: []const f64,
+    potential: *hamiltonian.PotentialGrid,
+    paw_ecutrho: ?f64,
+) !void {
+    if (common.pulay_mixer != null and iterations >= cfg.scf.pulay_start) {
+        if (cfg.scf.kerker_q0 > 0.0) {
+            try common.pulay_mixer.?.mixKerkerPulay(
+                rho,
+                new_rho,
+                cfg.scf.mixing_beta,
+                grid,
+                cfg.scf.kerker_q0,
+                cfg.scf.use_rfft,
+            );
+        } else {
+            try common.pulay_mixer.?.mix(rho, new_rho, cfg.scf.mixing_beta);
+        }
+    } else if (cfg.scf.kerker_q0 > 0.0) {
+        try mixDensityKerker(
+            alloc,
+            grid,
+            rho,
+            new_rho,
+            cfg.scf.mixing_beta,
+            cfg.scf.kerker_q0,
+            cfg.scf.use_rfft,
+        );
+    } else {
+        mixDensity(rho, new_rho, cfg.scf.mixing_beta);
+    }
+
+    potential.deinit(alloc);
+    potential.* = try potential_mod.buildPotentialGrid(
+        alloc,
+        grid,
+        rho,
+        common.rho_core,
+        cfg.scf.use_rfft,
+        cfg.scf.xc,
+        null,
+        common.coulomb_r_cut,
+        paw_ecutrho,
+    );
+}
+
+/// Update PAW D_ij matrix from the current mixed potential (no-op for non-PAW).
+fn updatePawDijIfNeeded(
+    alloc: std.mem.Allocator,
+    cfg: *const config.Config,
+    grid: grid_mod.Grid,
+    common: *ScfCommon,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    potential: hamiltonian.PotentialGrid,
+    apply_caches: []apply.KpointApplyCache,
+) !void {
+    if (!common.is_paw) return;
+    const tabs = common.paw_tabs orelse return;
+    const gs_paw = if (cfg.scf.grid_scale > 0.0) cfg.scf.grid_scale else 1.0;
+    const ecutrho_paw = cfg.scf.ecut_ry * gs_paw * gs_paw;
+    try paw_scf.updatePawDij(
+        alloc,
+        grid,
+        common.ionic,
+        potential,
+        tabs,
+        species,
+        atoms,
+        apply_caches,
+        ecutrho_paw,
+        &common.paw_rhoij.?,
+        cfg.scf.xc,
+        cfg.scf.symmetry,
+        &common.paw_gaunt.?,
+        false,
+        null,
+        1.0,
+    );
+}
+
 pub fn run(params: ScfParams) !ScfResult {
     const alloc = params.alloc;
     const io = params.io;
@@ -629,6 +1334,7 @@ pub fn run(params: ScfParams) !ScfResult {
 
     var common = try initScfCommon(params);
     defer common.deinit();
+
     const grid = common.grid;
     const kpoints = common.kpoints;
     const radial_tables = common.radial_tables;
@@ -648,46 +1354,22 @@ pub fn run(params: ScfParams) !ScfResult {
             alloc.free(kpoint_cache);
         }
     }
+
     for (kpoint_cache) |*cache| {
         cache.* = .{};
     }
-    // Warmstart: copy initial eigenvectors from previous SCF run
-    if (initial_kpoint_cache) |init_cache| {
-        const copy_len = @min(kpoint_cache.len, init_cache.len);
-        for (0..copy_len) |k| {
-            if (init_cache[k].vectors.len > 0) {
-                try kpoint_cache[k].store(
-                    init_cache[k].n,
-                    init_cache[k].nbands,
-                    init_cache[k].vectors,
-                );
-            }
-        }
-    }
+    try warmStartKpointCache(kpoint_cache, initial_kpoint_cache);
 
     const grid_count = grid.count();
     const rho = try alloc.alloc(f64, grid_count);
     errdefer alloc.free(rho);
 
-    if (initial_density) |init_rho| {
-        if (init_rho.len == grid_count) {
-            @memcpy(rho, init_rho);
-        } else {
-            const rho0 = common.total_electrons / grid.volume;
-            @memset(rho, rho0);
-        }
-    } else {
-        const rho0 = common.total_electrons / grid.volume;
-        @memset(rho, rho0);
-    }
+    initRhoFromUserOrFlat(rho, initial_density, common.total_electrons, grid.volume);
 
     var iterations: usize = 0;
     var converged = false;
     // ecutrho spherical cutoff for PAW: limit G-space sums to |G|² < ecutrho
-    const paw_ecutrho: ?f64 = if (common.is_paw) blk: {
-        const gs_val = if (cfg.scf.grid_scale > 0.0) cfg.scf.grid_scale else 1.0;
-        break :blk cfg.scf.ecut_ry * gs_val * gs_val;
-    } else null;
+    const paw_ecutrho = pawEcutrho(cfg, common.is_paw);
     var potential = try potential_mod.buildPotentialGrid(
         alloc,
         grid,
@@ -700,8 +1382,10 @@ pub fn run(params: ScfParams) !ScfResult {
         paw_ecutrho,
     );
     errdefer potential.deinit(alloc);
+
     var vxc_r: ?[]f64 = null;
     errdefer if (vxc_r) |v| alloc.free(v);
+
     var vresid_last: ?hamiltonian.PotentialGrid = null;
     errdefer if (vresid_last) |*vresid| vresid.deinit(alloc);
 
@@ -712,14 +1396,8 @@ pub fn run(params: ScfParams) !ScfResult {
     var last_potential_residual: f64 = 0.0;
 
     // Per-kpoint cache for NonlocalContext and PwGridMap (reused across SCF iterations)
-    const apply_caches = if (initial_apply_caches) |init_caches|
-        init_caches
-    else
-        try alloc.alloc(apply.KpointApplyCache, kpoints.len);
+    const apply_caches = try getOrAllocApplyCaches(alloc, initial_apply_caches, kpoints.len);
     var apply_caches_owned = true;
-    if (initial_apply_caches == null) {
-        for (apply_caches) |*ac| ac.* = .{};
-    }
     defer {
         if (apply_caches_owned) {
             for (apply_caches) |*ac| ac.deinit(alloc);
@@ -728,12 +1406,7 @@ pub fn run(params: ScfParams) !ScfResult {
     }
 
     // SCF loop profiling accumulators (for unaccounted time analysis)
-    var prof_compute_density_ns: u64 = 0;
-    var prof_build_potential_ns: u64 = 0;
-    var prof_residual_ns: u64 = 0;
-    var prof_mixing_ns: u64 = 0;
-    var prof_build_local_r_ns: u64 = 0;
-    var prof_build_fft_map_ns: u64 = 0;
+    var prof = ScfLoopProf{};
 
     while (iterations < cfg.scf.max_iter) : (iterations += 1) {
         if (!cfg.scf.quiet) {
@@ -757,73 +1430,54 @@ pub fn run(params: ScfParams) !ScfResult {
             apply_caches,
             radial_tables,
             if (cfg.scf.profile) ScfLoopProfile{
-                .build_local_r_ns = &prof_build_local_r_ns,
-                .build_fft_map_ns = &prof_build_fft_map_ns,
+                .build_local_r_ns = &prof.build_local_r_ns,
+                .build_fft_map_ns = &prof.build_fft_map_ns,
             } else null,
             common.paw_tabs,
             if (common.paw_rhoij) |*rij| rij else null,
         );
-        if (cfg.scf.profile) profileAdd(io, &prof_compute_density_ns, t_density_start);
+        if (cfg.scf.profile) profileAdd(io, &prof.compute_density_ns, t_density_start);
         defer alloc.free(density_result.rho);
+
         last_band_energy = density_result.band_energy;
         last_nonlocal_energy = density_result.nonlocal_energy;
         last_entropy_energy = density_result.entropy_energy;
         last_fermi_level = density_result.fermi_level;
 
-        if (common.sym_ops) |ops| {
-            if (ops.len > 1) {
-                try symmetrizeDensity(alloc, grid, density_result.rho, ops, cfg.scf.use_rfft);
-            }
-        }
+        try symmetrizeDensityAndRhoIJ(
+            alloc,
+            cfg,
+            grid,
+            &common,
+            species,
+            atoms,
+            density_result.rho,
+        );
 
-        // PAW: symmetrize rhoij between equivalent atoms of the same species.
-        // LOBPCG eigenvectors for degenerate states may break crystal symmetry,
-        // leading to different rhoij for symmetry-equivalent atoms.  Averaging
-        // restores the correct symmetry and prevents spurious band splitting.
-        // Skip when symmetry is disabled (e.g. during relaxation) to preserve
-        // per-atom rhoij differences needed for accurate force calculation.
-        if (common.paw_rhoij) |*prij| {
-            if (cfg.scf.symmetry) {
-                try paw_scf.symmetrizeRhoIJ(alloc, prij, species, atoms);
-            }
-        }
-
-        // PAW: filter density to ecutrho sphere — matches QE's convention.
-        // QE stores density as G-vectors inside |G|²<ecutrho sphere (10777 for Si 32³).
-        // Without filtering, high-G components from the cubic grid enter V_xc(r),
-        // causing a different SCF solution.
-        const gs_comp = if (cfg.scf.grid_scale > 0.0) cfg.scf.grid_scale else 1.0;
-        const ecutrho_comp = cfg.scf.ecut_ry * gs_comp * gs_comp;
+        const ecutrho_comp = pawEcutrhoCompute(cfg);
         if (common.is_paw) {
-            const filtered = try potential_mod.filterDensityToEcutrho(
+            try filterAugmentedDensityInPlace(
                 alloc,
                 grid,
                 density_result.rho,
                 ecutrho_comp,
                 cfg.scf.use_rfft,
             );
-            defer alloc.free(filtered);
-            @memcpy(density_result.rho, filtered);
         }
 
         // PAW: build augmented density (ρ̃ + n_hat) for potential construction
-        const rho_for_potential = if (common.is_paw) blk: {
-            const aug = try alloc.alloc(f64, grid_count);
-            @memcpy(aug, density_result.rho);
-            if (common.paw_rhoij) |*prij| {
-                try paw_scf.addPawCompensationCharge(
-                    alloc,
-                    grid,
-                    aug,
-                    prij,
-                    common.paw_tabs.?,
-                    atoms,
-                    ecutrho_comp,
-                    &common.paw_gaunt.?,
-                );
-            }
-            break :blk aug;
-        } else density_result.rho;
+        const rho_for_potential = if (common.is_paw)
+            try buildAugmentedDensity(
+                alloc,
+                grid,
+                density_result.rho,
+                &common,
+                atoms,
+                ecutrho_comp,
+                grid_count,
+            )
+        else
+            density_result.rho;
         defer if (common.is_paw) alloc.free(rho_for_potential);
 
         // Capture V_xc(r) for NLCC force calculation when relax is enabled
@@ -842,38 +1496,20 @@ pub fn run(params: ScfParams) !ScfResult {
             common.coulomb_r_cut,
             paw_ecutrho,
         );
-        if (cfg.scf.profile) profileAdd(io, &prof_build_potential_ns, t_build_pot_start);
+        if (cfg.scf.profile) profileAdd(io, &prof.build_potential_ns, t_build_pot_start);
         var keep_potential_out = false;
         defer if (!keep_potential_out) potential_out.deinit(alloc);
 
         {
             const t_resid_start = if (cfg.scf.profile) profileStart(io) else null;
-            const nvals = potential.values.len;
-            var residual_values = try alloc.alloc(math.Complex, nvals);
-            errdefer alloc.free(residual_values);
-            var sum_sq: f64 = 0.0;
-            for (0..nvals) |idx| {
-                const diff = math.complex.sub(potential_out.values[idx], potential.values[idx]);
-                residual_values[idx] = diff;
-                sum_sq += diff.r * diff.r + diff.i * diff.i;
-            }
-            last_potential_residual = if (nvals > 0)
-                std.math.sqrt(sum_sq / @as(f64, @floatFromInt(nvals)))
-            else
-                0.0;
-            if (vresid_last) |*old| {
-                old.deinit(alloc);
-            }
-            vresid_last = hamiltonian.PotentialGrid{
-                .nx = grid.nx,
-                .ny = grid.ny,
-                .nz = grid.nz,
-                .min_h = grid.min_h,
-                .min_k = grid.min_k,
-                .min_l = grid.min_l,
-                .values = residual_values,
-            };
-            if (cfg.scf.profile) profileAdd(io, &prof_residual_ns, t_resid_start);
+            last_potential_residual = try recordPotentialResidual(
+                alloc,
+                grid,
+                potential,
+                potential_out,
+                &vresid_last,
+            );
+            if (cfg.scf.profile) profileAdd(io, &prof.residual_ns, t_resid_start);
         }
 
         const diff = densityDiff(rho, density_result.rho);
@@ -910,164 +1546,60 @@ pub fn run(params: ScfParams) !ScfResult {
 
         const t_mix_start = if (cfg.scf.profile) profileStart(io) else null;
         if (cfg.scf.mixing_mode == .potential) {
-            // Potential mixing: mix V_in and V_out directly (like ABINIT iscf=7)
-            const n_complex = potential.values.len;
-            const n_f64 = n_complex * 2;
-            const v_in: []f64 = @as([*]f64, @ptrCast(potential.values.ptr))[0..n_f64];
-
-            if (common.pulay_mixer != null and iterations >= cfg.scf.pulay_start) {
-                // Compute complex residual R(G) = V_out(G) - V_in(G)
-                const residual_g = try alloc.alloc(math.Complex, n_complex);
-                // Ownership transfers to mixer via mixWithResidual — no defer free.
-                // Safety: Complex{r:f64,i:f64} has same size/align as [2]f64,
-                // so alloc(Complex, n) can be freed as alloc.free([]f64) of len n*2.
-                for (0..n_complex) |idx| {
-                    residual_g[idx] = math.complex.sub(
-                        potential_out.values[idx],
-                        potential.values[idx],
-                    );
-                }
-
-                // Apply model dielectric preconditioner if enabled
-                if (cfg.scf.diemac > 1.0) {
-                    mixing.applyModelDielectricPreconditioner(
-                        grid,
-                        residual_g,
-                        cfg.scf.diemac,
-                        cfg.scf.dielng,
-                    );
-                }
-
-                const precond_f64: []f64 = @as([*]f64, @ptrCast(residual_g.ptr))[0..n_f64];
-                try common.pulay_mixer.?.mixWithResidual(v_in, precond_f64, cfg.scf.mixing_beta);
-            } else {
-                const v_out_ptr = @as([*]const f64, @ptrCast(potential_out.values.ptr));
-                const v_out: []const f64 = v_out_ptr[0..n_f64];
-                mixDensity(v_in, v_out, cfg.scf.mixing_beta);
-            }
-
-            // Update density from output (for convergence tracking and energy computation)
-            @memcpy(rho, density_result.rho);
-            // potential.values now contains the mixed potential in-place
-            potential_out.deinit(alloc);
-            keep_potential_out = true; // prevent double-free of potential_out
-        } else {
-            // Density mixing: mix rho_in and rho_out, then rebuild potential
-            if (common.pulay_mixer != null and iterations >= cfg.scf.pulay_start) {
-                if (cfg.scf.kerker_q0 > 0.0) {
-                    try common.pulay_mixer.?.mixKerkerPulay(
-                        rho,
-                        density_result.rho,
-                        cfg.scf.mixing_beta,
-                        grid,
-                        cfg.scf.kerker_q0,
-                        cfg.scf.use_rfft,
-                    );
-                } else {
-                    try common.pulay_mixer.?.mix(rho, density_result.rho, cfg.scf.mixing_beta);
-                }
-            } else if (cfg.scf.kerker_q0 > 0.0) {
-                try mixDensityKerker(
-                    alloc,
-                    grid,
-                    rho,
-                    density_result.rho,
-                    cfg.scf.mixing_beta,
-                    cfg.scf.kerker_q0,
-                    cfg.scf.use_rfft,
-                );
-            } else {
-                mixDensity(rho, density_result.rho, cfg.scf.mixing_beta);
-            }
-
-            potential.deinit(alloc);
-            potential = try potential_mod.buildPotentialGrid(
+            try mixPotentialMode(
                 alloc,
+                cfg,
                 grid,
+                &common,
+                iterations,
                 rho,
-                common.rho_core,
-                cfg.scf.use_rfft,
-                cfg.scf.xc,
-                null,
-                common.coulomb_r_cut,
+                density_result.rho,
+                &potential,
+                &potential_out,
+                &keep_potential_out,
+            );
+        } else {
+            try mixDensityMode(
+                alloc,
+                cfg,
+                grid,
+                &common,
+                iterations,
+                rho,
+                density_result.rho,
+                &potential,
                 paw_ecutrho,
             );
         }
-        if (cfg.scf.profile) profileAdd(io, &prof_mixing_ns, t_mix_start);
+        if (cfg.scf.profile) profileAdd(io, &prof.mixing_ns, t_mix_start);
 
-        // PAW: update D_ij from the current mixed potential
-        if (common.is_paw) {
-            if (common.paw_tabs) |tabs| {
-                const gs_paw = if (cfg.scf.grid_scale > 0.0) cfg.scf.grid_scale else 1.0;
-                const ecutrho_paw = cfg.scf.ecut_ry * gs_paw * gs_paw;
-                try paw_scf.updatePawDij(
-                    alloc,
-                    grid,
-                    common.ionic,
-                    potential,
-                    tabs,
-                    species,
-                    atoms,
-                    apply_caches,
-                    ecutrho_paw,
-                    &common.paw_rhoij.?,
-                    cfg.scf.xc,
-                    cfg.scf.symmetry,
-                    &common.paw_gaunt.?,
-                    false,
-                    null,
-                    1.0,
-                );
-            }
-        }
+        try updatePawDijIfNeeded(
+            alloc,
+            cfg,
+            grid,
+            &common,
+            species,
+            atoms,
+            potential,
+            apply_caches,
+        );
     }
 
     // Print SCF loop profile
     if (cfg.scf.profile and !cfg.scf.quiet) {
         try logLoopProfile(
             io,
-            prof_compute_density_ns,
-            prof_build_potential_ns,
-            prof_residual_ns,
-            prof_mixing_ns,
-            prof_build_local_r_ns,
-            prof_build_fft_map_ns,
+            prof.compute_density_ns,
+            prof.build_potential_ns,
+            prof.residual_ns,
+            prof.mixing_ns,
+            prof.build_local_r_ns,
+            prof.build_fft_map_ns,
         );
     }
 
     // For PAW: build augmented density ρ̃ + n̂hat for energy computation.
-    // E_H and E_xc must use the augmented density to be variationally consistent
-    // with the potential used during SCF (which was built from augmented density).
-    // Filter to ecutrho sphere to match QE convention (cube corners excluded).
-    var rho_aug_for_energy: ?[]f64 = null;
-    if (common.is_paw) {
-        if (common.paw_rhoij) |*prij| {
-            const aug = try alloc.alloc(f64, grid.count());
-            @memcpy(aug, rho);
-            const gs_en = if (cfg.scf.grid_scale > 0.0) cfg.scf.grid_scale else 1.0;
-            const ecutrho_scf = cfg.scf.ecut_ry * gs_en * gs_en;
-            try paw_scf.addPawCompensationCharge(
-                alloc,
-                grid,
-                aug,
-                prij,
-                common.paw_tabs.?,
-                atoms,
-                ecutrho_scf,
-                &common.paw_gaunt.?,
-            );
-            // Filter augmented density to ecutrho sphere for E_xc consistency
-            const filtered = try potential_mod.filterDensityToEcutrho(
-                alloc,
-                grid,
-                aug,
-                ecutrho_scf,
-                cfg.scf.use_rfft,
-            );
-            alloc.free(aug);
-            rho_aug_for_energy = filtered;
-        }
-    }
+    const rho_aug_for_energy = try maybeBuildRhoAugForEnergy(alloc, cfg, grid, &common, atoms, rho);
     defer if (rho_aug_for_energy) |a| alloc.free(a);
 
     var energy_terms = try energy_mod.computeEnergyTerms(.{
@@ -1150,158 +1682,20 @@ pub fn run(params: ScfParams) !ScfResult {
     var result_paw_dxc: ?[][]f64 = null;
     var result_paw_rhoij: ?[][]f64 = null;
     if (common.is_paw) {
-        // Transfer paw_tabs ownership from common to result
-        if (common.paw_tabs) |tabs| {
-            result_paw_tabs = tabs;
-            common.paw_tabs = null; // prevent common.deinit from freeing
-        }
-        // Extract per-atom D_ij from first apply cache
-        if (apply_caches.len > 0) {
-            if (apply_caches[0].nonlocal_ctx) |nc| {
-                var dij_list: std.ArrayList([]f64) = .empty;
-                errdefer {
-                    for (dij_list.items) |d| alloc.free(d);
-                    dij_list.deinit(alloc);
-                }
-                for (nc.species) |entry| {
-                    if (entry.dij_per_atom) |dpa| {
-                        for (dpa) |atom_dij| {
-                            const copy = try alloc.alloc(f64, atom_dij.len);
-                            @memcpy(copy, atom_dij);
-                            try dij_list.append(alloc, copy);
-                        }
-                    }
-                }
-                if (dij_list.items.len > 0) {
-                    result_paw_dij = try dij_list.toOwnedSlice(alloc);
-                } else {
-                    dij_list.deinit(alloc);
-                }
-                // Extract m-resolved D_ij for stress
-                var dij_m_list: std.ArrayList([]f64) = .empty;
-                errdefer {
-                    for (dij_m_list.items) |d| alloc.free(d);
-                    dij_m_list.deinit(alloc);
-                }
-                for (nc.species) |entry| {
-                    if (entry.dij_m_per_atom) |dpa| {
-                        for (dpa) |atom_dij_m| {
-                            const copy = try alloc.alloc(f64, atom_dij_m.len);
-                            @memcpy(copy, atom_dij_m);
-                            try dij_m_list.append(alloc, copy);
-                        }
-                    }
-                }
-                if (dij_m_list.items.len > 0) {
-                    result_paw_dij_m = try dij_m_list.toOwnedSlice(alloc);
-                } else {
-                    dij_m_list.deinit(alloc);
-                }
-            }
-        }
-        // Compute per-atom D^xc for on-site stress
-        if (common.paw_rhoij) |prij| {
-            if (result_paw_tabs) |tabs| {
-                var dxc_list: std.ArrayList([]f64) = .empty;
-                errdefer {
-                    for (dxc_list.items) |d| alloc.free(d);
-                    dxc_list.deinit(alloc);
-                }
-                var sum_dxc_rhoij: f64 = 0.0;
-                for (atoms, 0..) |atom, ai| {
-                    const si = atom.species_index;
-                    const upf = species[si].upf;
-                    const paw = upf.paw orelse {
-                        const zero = try alloc.alloc(f64, 0);
-                        try dxc_list.append(alloc, zero);
-                        continue;
-                    };
-                    if (si >= tabs.len or tabs[si].nbeta == 0) {
-                        const zero = try alloc.alloc(f64, 0);
-                        try dxc_list.append(alloc, zero);
-                        continue;
-                    }
-                    const mt = prij.m_total_per_atom[ai];
-                    const sp_m_offsets = prij.m_offsets[ai];
-
-                    // D^xc (m-resolved, angular Lebedev quadrature with GGA gradients)
-                    const dxc_m = try alloc.alloc(f64, mt * mt);
-                    try paw_mod.paw_xc.computePawDijXcAngular(
-                        alloc,
-                        dxc_m,
-                        paw,
-                        prij.values[ai],
-                        mt,
-                        sp_m_offsets,
-                        upf.r,
-                        upf.rab,
-                        paw.ae_core_density,
-                        if (upf.nlcc.len > 0) upf.nlcc else null,
-                        cfg.scf.xc,
-                        &common.paw_gaunt.?,
-                    );
-                    // m-resolved double-counting: DC_xc = -Σ_{im,jm} D^xc_m × ρ_m
-                    const rhoij_m = prij.values[ai];
-                    for (0..mt) |im| {
-                        for (0..mt) |jm| {
-                            sum_dxc_rhoij += dxc_m[im * mt + jm] * rhoij_m[im * mt + jm];
-                        }
-                    }
-                    try dxc_list.append(alloc, dxc_m);
-
-                    // D^H double-counting (m-resolved, multi-L with Gaunt)
-                    {
-                        const dij_h_dc = try alloc.alloc(f64, mt * mt);
-                        defer alloc.free(dij_h_dc);
-                        try paw_mod.paw_xc.computePawDijHartreeMultiL(
-                            alloc,
-                            dij_h_dc,
-                            paw,
-                            rhoij_m,
-                            mt,
-                            sp_m_offsets,
-                            upf.r,
-                            upf.rab,
-                            &common.paw_gaunt.?,
-                        );
-                        for (0..mt) |im| {
-                            for (0..mt) |jm| {
-                                sum_dxc_rhoij += dij_h_dc[im * mt + jm] * rhoij_m[im * mt + jm];
-                            }
-                        }
-                    }
-                }
-                if (dxc_list.items.len > 0) {
-                    result_paw_dxc = try dxc_list.toOwnedSlice(alloc);
-                } else {
-                    dxc_list.deinit(alloc);
-                }
-                // PAW double-counting correction: subtract
-                // Σ (D^xc + D^H) × ρ_ij from total energy.
-                // D^xc and D^H both use m-resolved sums for Hellmann-Feynman consistency.
-                energy_terms.paw_dxc_rhoij = -sum_dxc_rhoij;
-                energy_terms.total += energy_terms.paw_dxc_rhoij;
-            }
-        }
-        // Copy per-atom rhoij (contracted to radial basis) for force calculation
-        if (common.paw_rhoij) |*prij| {
-            var rij_list: std.ArrayList([]f64) = .empty;
-            errdefer {
-                for (rij_list.items) |r| alloc.free(r);
-                rij_list.deinit(alloc);
-            }
-            for (0..prij.natom) |a| {
-                const nb = prij.nbeta_per_atom[a];
-                const copy = try alloc.alloc(f64, nb * nb);
-                prij.contractToRadial(a, copy);
-                try rij_list.append(alloc, copy);
-            }
-            if (rij_list.items.len > 0) {
-                result_paw_rhoij = try rij_list.toOwnedSlice(alloc);
-            } else {
-                rij_list.deinit(alloc);
-            }
-        }
+        try extractPawResults(
+            alloc,
+            cfg,
+            species,
+            atoms,
+            apply_caches,
+            &common,
+            &energy_terms,
+            &result_paw_tabs,
+            &result_paw_dij,
+            &result_paw_dij_m,
+            &result_paw_dxc,
+            &result_paw_rhoij,
+        );
     }
 
     if (!cfg.scf.quiet) {
@@ -1330,7 +1724,7 @@ pub fn run(params: ScfParams) !ScfResult {
         @memcpy(result_ionic_g.?, ionic_vals);
     }
 
-    return ScfResult{
+    return buildScfResult(.{
         .potential = potential,
         .density = rho,
         .iterations = iterations,
@@ -1350,12 +1744,8 @@ pub fn run(params: ScfParams) !ScfResult {
         .paw_dxc = result_paw_dxc,
         .paw_rhoij = result_paw_rhoij,
         .ionic_g = result_ionic_g,
-        .rho_core = if (common.rho_core) |rc| blk: {
-            const copy = try alloc.alloc(f64, rc.len);
-            @memcpy(copy, rc);
-            break :blk copy;
-        } else null,
-    };
+        .rho_core_copy = try copyRhoCoreForResult(alloc, common.rho_core),
+    });
 }
 
 pub const buildAtomicDensity = core_density.buildAtomicDensity;
@@ -1479,6 +1869,7 @@ pub fn computeFinalWavefunctionsWithSpinFactor(
         // Allocate occupations array (per-spin occupation, scf uses spin_factor later)
         const occupations = try alloc.alloc(f64, eigen_data.nbands);
         errdefer alloc.free(occupations);
+
         @memset(occupations, 0.0);
 
         // Set occupations for occupied bands and accumulate energies
@@ -1613,6 +2004,7 @@ fn computeDensity(
 
             var basis = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, kpoints[0].k_cart);
             defer basis.deinit(alloc);
+
             const inv_volume = 1.0 / volume;
             try checkHamiltonianApply(
                 alloc,
@@ -1633,6 +2025,7 @@ fn computeDensity(
     if ((cfg.scf.debug_nonlocal or cfg.scf.debug_local) and scf_iter == 0 and kpoints.len > 0) {
         var basis = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, kpoints[0].k_cart);
         defer basis.deinit(alloc);
+
         const inv_volume = 1.0 / volume;
         if (cfg.scf.debug_local) {
             try logLocalDiagnostics(io, basis.gvecs, species, atoms, local_cfg);
@@ -1675,6 +2068,7 @@ fn computeDensity(
     const ngrid = grid.count();
     const rho = try alloc.alloc(f64, ngrid);
     errdefer alloc.free(rho);
+
     @memset(rho, 0.0);
 
     var band_energy: f64 = 0.0;
@@ -1756,14 +2150,17 @@ fn computeDensity(
 
     const rho_locals = try alloc.alloc(f64, ngrid * thread_count);
     defer alloc.free(rho_locals);
+
     @memset(rho_locals, 0.0);
 
     const band_energies = try alloc.alloc(f64, thread_count);
     defer alloc.free(band_energies);
+
     @memset(band_energies, 0.0);
 
     const nonlocal_energies = try alloc.alloc(f64, thread_count);
     defer alloc.free(nonlocal_energies);
+
     @memset(nonlocal_energies, 0.0);
 
     var profiles: ?[]ScfProfile = null;
@@ -1784,6 +2181,7 @@ fn computeDensity(
         }
         alloc.free(fft_plans);
     }
+
     for (fft_plans) |*plan| {
         plan.* = try fft.Fft3dPlan.initWithBackend(
             alloc,
@@ -1842,6 +2240,7 @@ fn computeDensity(
 
     const workers = try alloc.alloc(KpointWorker, thread_count);
     defer alloc.free(workers);
+
     const threads = try alloc.alloc(std.Thread, thread_count);
     defer alloc.free(threads);
 
