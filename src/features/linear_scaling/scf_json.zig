@@ -167,7 +167,13 @@ test "scf comparison json parses" {
     const report = scf_harness.ScfComparisonReport{
         .total = .{
             .energy = .{ .abs = 0.1, .rel = 0.01 },
-            .density = .{ .max_abs = 0.2, .mean_abs = 0.1, .rms = 0.12, .rel_max = 0.02, .rel_rms = 0.03 },
+            .density = .{
+                .max_abs = 0.2,
+                .mean_abs = 0.1,
+                .rms = 0.12,
+                .rel_max = 0.02,
+                .rel_rms = 0.03,
+            },
         },
         .energy_terms = .{
             .total = .{ .abs = 0.1, .rel = 0.01 },

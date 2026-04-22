@@ -34,7 +34,9 @@ pub const RealPlan = struct {
         errdefer allocator.free(twiddles);
 
         for (0..half_n) |k| {
-            const angle = -2.0 * std.math.pi * @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(n));
+            const k_f = @as(f64, @floatFromInt(k));
+            const n_f = @as(f64, @floatFromInt(n));
+            const angle = -2.0 * std.math.pi * k_f / n_f;
             twiddles[k] = Complex.init(@cos(angle), @sin(angle));
         }
 
@@ -215,7 +217,8 @@ pub const RealPlan = struct {
             const x_mid = complex_input[mid];
             // For the middle element, X[mid] = E[mid] + W_N^{mid} * O[mid]
             // and X[N/2-mid] = X[mid], so E[mid] is real, O[mid] is real
-            // E[mid] = Re(X[mid]), W_N^{mid}*O[mid] = Im(X[mid])*i (since W_N^{N/4} = -i for N/2 even)
+            // E[mid] = Re(X[mid]), W_N^{mid}*O[mid] = Im(X[mid])*i
+            // (since W_N^{N/4} = -i for N/2 even)
             // Actually W_N^{N/4} = exp(-i*pi/2) = -i
             // So O[mid] = -Im(X[mid]) * i / (-i) = Im(X[mid])... let me recalculate
             // W_N^{mid} where mid = N/4 and W_N = exp(-2pi*i/N)

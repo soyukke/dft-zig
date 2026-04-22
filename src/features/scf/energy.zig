@@ -200,7 +200,10 @@ pub fn computeEnergyTerms(in: EnergyInput) !EnergyTerms {
     const psp_core = if (coulomb_r_cut != null) 0.0 else epsatm_sum * n_elec / grid.volume;
     const double_counting = -eh - vxc_rho + exc;
     // DFT-D3 dispersion correction
-    const e_disp = if (vdw_cfg.enabled) try computeDispersionEnergy(alloc, species, atoms, grid.cell, vdw_cfg) else 0.0;
+    const e_disp = if (vdw_cfg.enabled)
+        try computeDispersionEnergy(alloc, species, atoms, grid.cell, vdw_cfg)
+    else
+        0.0;
     // Entropy term (-T*S) is subtracted from total energy for smearing
     const total = band_energy + double_counting + ion + psp_core - entropy_energy + e_disp;
     return EnergyTerms{
@@ -258,7 +261,15 @@ pub fn computeEnergyTermsSpin(in: EnergyInputSpin) !EnergyTerms {
     }
 
     // Spin XC — use augmented density for PAW
-    const xc_fields = try computeXcFieldsSpin(alloc, grid, rho_up_hxc, rho_down_hxc, rho_core, use_rfft, xc_func);
+    const xc_fields = try computeXcFieldsSpin(
+        alloc,
+        grid,
+        rho_up_hxc,
+        rho_down_hxc,
+        rho_core,
+        use_rfft,
+        xc_func,
+    );
     defer {
         alloc.free(xc_fields.vxc_up);
         alloc.free(xc_fields.vxc_down);
@@ -309,7 +320,9 @@ pub fn computeEnergyTermsSpin(in: EnergyInputSpin) !EnergyTerms {
     for (xc_fields.exc) |e| exc += e * dv;
     // vxc_rho = ∫(V_xc_up * rho_up + V_xc_down * rho_down) dv — use augmented for PAW
     for (0..total) |i| {
-        vxc_rho += (xc_fields.vxc_up[i] * rho_up_hxc[i] + xc_fields.vxc_down[i] * rho_down_hxc[i]) * dv;
+        const up_prod = xc_fields.vxc_up[i] * rho_up_hxc[i];
+        const dn_prod = xc_fields.vxc_down[i] * rho_down_hxc[i];
+        vxc_rho += (up_prod + dn_prod) * dv;
     }
 
     const ion = if (coulomb_r_cut != null)
@@ -330,7 +343,10 @@ pub fn computeEnergyTermsSpin(in: EnergyInputSpin) !EnergyTerms {
     }
     const psp_core = if (coulomb_r_cut != null) 0.0 else epsatm_sum * n_elec / grid.volume;
     const double_counting = -eh - vxc_rho + exc;
-    const e_disp = if (vdw_cfg.enabled) try computeDispersionEnergy(alloc, species, atoms, grid.cell, vdw_cfg) else 0.0;
+    const e_disp = if (vdw_cfg.enabled)
+        try computeDispersionEnergy(alloc, species, atoms, grid.cell, vdw_cfg)
+    else
+        0.0;
     const total_energy = band_energy + double_counting + ion + psp_core - entropy_energy + e_disp;
     return EnergyTerms{
         .total = total_energy,

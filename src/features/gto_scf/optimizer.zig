@@ -360,7 +360,11 @@ pub fn optimizeGeometry(
         const grad_rms = vecRms(current_grad_flat);
         const grad_max = vecMaxAbs(current_grad_flat);
 
-        logging.progress(params.print_progress, "  Opt step {d}: E = {d:.12} Ha, grad_rms = {e:10.3}, grad_max = {e:10.3}\n", .{ steps, current_energy, grad_rms, grad_max });
+        logging.progress(
+            params.print_progress,
+            "  Opt step {d}: E = {d:.12} Ha, grad_rms = {e:10.3}, grad_max = {e:10.3}\n",
+            .{ steps, current_energy, grad_rms, grad_max },
+        );
 
         // Check gradient convergence
         if (grad_rms < params.grad_rms_threshold and grad_max < params.grad_max_threshold) {
@@ -588,7 +592,11 @@ pub fn optimizeKsDftGeometry(
         const grad_rms = vecRms(current_grad_flat);
         const grad_max = vecMaxAbs(current_grad_flat);
 
-        logging.progress(params.print_progress, "  KS-DFT opt step {d}: E = {d:.12} Ha, grad_rms = {e:10.3}, grad_max = {e:10.3}\n", .{ steps, current_energy, grad_rms, grad_max });
+        logging.progress(
+            params.print_progress,
+            "  KS-DFT opt step {d}: E = {d:.12} Ha, grad_rms = {e:10.3}, grad_max = {e:10.3}\n",
+            .{ steps, current_energy, grad_rms, grad_max },
+        );
 
         // Check gradient convergence
         if (grad_rms < params.grad_rms_threshold and grad_max < params.grad_max_threshold) {

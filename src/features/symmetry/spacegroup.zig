@@ -167,7 +167,11 @@ fn orthogonalBasisTransforms(alloc: std.mem.Allocator) ![]symmetry.Mat3i {
     return try list.toOwnedSlice(alloc);
 }
 
-fn transformOps(out_ops: []symmetry.SymOp, ops: []const symmetry.SymOp, basis: symmetry.Mat3i) void {
+fn transformOps(
+    out_ops: []symmetry.SymOp,
+    ops: []const symmetry.SymOp,
+    basis: symmetry.Mat3i,
+) void {
     const inv = basis.inverse() orelse basis;
     var i: usize = 0;
     while (i < ops.len) : (i += 1) {
@@ -234,7 +238,10 @@ fn encodeTranslation(trans: math.Vec3, grid: i32) u32 {
     const qy = quantizeCoord(t.y, grid);
     const qz = quantizeCoord(t.z, grid);
     const grid_u = @as(u32, @intCast(grid));
-    return @as(u32, @intCast(qx)) + grid_u * (@as(u32, @intCast(qy)) + grid_u * @as(u32, @intCast(qz)));
+    const qx_u = @as(u32, @intCast(qx));
+    const qy_u = @as(u32, @intCast(qy));
+    const qz_u = @as(u32, @intCast(qz));
+    return qx_u + grid_u * (qy_u + grid_u * qz_u);
 }
 
 fn quantizeCoord(x: f64, grid: i32) i32 {

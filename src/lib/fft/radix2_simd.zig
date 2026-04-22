@@ -132,7 +132,9 @@ pub const Plan = struct {
             const base = stage_offsets[s];
             var k: usize = 0;
             while (k < half) : (k += 1) {
-                const angle = -2.0 * std.math.pi * @as(f64, @floatFromInt(k)) / @as(f64, @floatFromInt(len));
+                const k_f = @as(f64, @floatFromInt(k));
+                const len_f = @as(f64, @floatFromInt(len));
+                const angle = -2.0 * std.math.pi * k_f / len_f;
                 twiddle_re[base + k] = @cos(angle);
                 twiddle_im[base + k] = @sin(angle);
             }

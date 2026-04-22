@@ -96,10 +96,10 @@ pub fn divergenceFromReal(
 
     var it = gvec_iter.GVecIterator.init(grid);
     while (it.next()) |g| {
-        const sum = math.complex.add(
-            math.complex.add(math.complex.scale(bx_g[g.idx], g.gvec.x), math.complex.scale(by_g[g.idx], g.gvec.y)),
-            math.complex.scale(bz_g[g.idx], g.gvec.z),
-        );
+        const bx_term = math.complex.scale(bx_g[g.idx], g.gvec.x);
+        const by_term = math.complex.scale(by_g[g.idx], g.gvec.y);
+        const bz_term = math.complex.scale(bz_g[g.idx], g.gvec.z);
+        const sum = math.complex.add(math.complex.add(bx_term, by_term), bz_term);
         div_g[g.idx] = math.complex.mul(sum, i_unit);
     }
 
@@ -232,7 +232,8 @@ pub fn computeXcFieldsSpin(
     var grad_down = try gradientFromReal(alloc, grid, density_down, use_rfft);
     defer grad_down.deinit(alloc);
 
-    // B vectors for divergence correction (6 components: bx_uu, by_uu, bz_uu, bx_dd, by_dd, bz_dd, + cross terms)
+    // B vectors for divergence correction
+    // (6 components: bx_uu, by_uu, bz_uu, bx_dd, by_dd, bz_dd, + cross terms)
     // For PBE spin: V_xc_sigma -= 2 * div(df/dg2_ss * grad_sigma + df/dg2_ud * grad_sigma')
     const bx_up = try alloc.alloc(f64, total);
     errdefer alloc.free(bx_up);

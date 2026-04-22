@@ -1,7 +1,9 @@
 //! Transpose-based Parallel 3D FFT implementation
 //!
 //! Uses transpose operations to ensure all FFTs operate on contiguous memory.
-//! Pattern: FFT(x) -> Transpose(xyz->yxz) -> FFT(y) -> Transpose(yxz->zxy) -> FFT(z) -> Transpose(zxy->xyz)
+//! Pattern:
+//!   FFT(x) -> Transpose(xyz->yxz) -> FFT(y)
+//!          -> Transpose(yxz->zxy) -> FFT(z) -> Transpose(zxy->xyz)
 //!
 //! This maximizes cache efficiency by avoiding strided memory access.
 
@@ -96,11 +98,24 @@ pub const TransposePlan3d = struct {
     state: *ThreadPoolState,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, nx: usize, ny: usize, nz: usize) !TransposePlan3d {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        nx: usize,
+        ny: usize,
+        nz: usize,
+    ) !TransposePlan3d {
         return initWithThreads(allocator, io, nx, ny, nz, 0);
     }
 
-    pub fn initWithThreads(allocator: std.mem.Allocator, io: std.Io, nx: usize, ny: usize, nz: usize, num_threads_hint: usize) !TransposePlan3d {
+    pub fn initWithThreads(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        nx: usize,
+        ny: usize,
+        nz: usize,
+        num_threads_hint: usize,
+    ) !TransposePlan3d {
         if (nx == 0 or ny == 0 or nz == 0) return error.InvalidSize;
 
         const cpu_count = std.Thread.getCpuCount() catch 4;
@@ -252,7 +267,14 @@ pub const TransposePlan3d = struct {
         @memcpy(data, self.buffer);
     }
 
-    fn dispatchFft(self: *TransposePlan3d, task: TaskType, data: []Complex, axis_size: usize, num_ffts: usize, inv: bool) void {
+    fn dispatchFft(
+        self: *TransposePlan3d,
+        task: TaskType,
+        data: []Complex,
+        axis_size: usize,
+        num_ffts: usize,
+        inv: bool,
+    ) void {
         self.state.mutex.lockUncancelable(self.state.io);
 
         self.state.task_generation += 1;
@@ -277,7 +299,12 @@ pub const TransposePlan3d = struct {
         self.state.mutex.unlock(self.state.io);
     }
 
-    fn dispatchTranspose(self: *TransposePlan3d, task: TaskType, src: []Complex, dst: []Complex) void {
+    fn dispatchTranspose(
+        self: *TransposePlan3d,
+        task: TaskType,
+        src: []Complex,
+        dst: []Complex,
+    ) void {
         self.state.mutex.lockUncancelable(self.state.io);
 
         self.state.task_generation += 1;
@@ -387,7 +414,13 @@ pub const TransposePlan3d = struct {
         }
     }
 
-    fn processFftAxis(data: []Complex, axis_size: usize, item: usize, inv: bool, ws: *ThreadWorkspace) void {
+    fn processFftAxis(
+        data: []Complex,
+        axis_size: usize,
+        item: usize,
+        inv: bool,
+        ws: *ThreadWorkspace,
+    ) void {
         const offset = item * axis_size;
         if (inv) {
             ws.plan.inverse(data[offset .. offset + axis_size]);
@@ -397,7 +430,12 @@ pub const TransposePlan3d = struct {
     }
 
     // xyz[x + nx*(y + ny*z)] -> yxz[y + ny*(x + nx*z)]
-    fn transposeXyzToYxz(state: *ThreadPoolState, src: []Complex, dst: []Complex, item: usize) void {
+    fn transposeXyzToYxz(
+        state: *ThreadPoolState,
+        src: []Complex,
+        dst: []Complex,
+        item: usize,
+    ) void {
         const nx = state.nx;
         const ny = state.ny;
         const y = item % ny;
@@ -411,7 +449,12 @@ pub const TransposePlan3d = struct {
     }
 
     // yxz[y + ny*(x + nx*z)] -> zxy[z + nz*(x + nx*y)]
-    fn transposeYxzToZxy(state: *ThreadPoolState, src: []Complex, dst: []Complex, item: usize) void {
+    fn transposeYxzToZxy(
+        state: *ThreadPoolState,
+        src: []Complex,
+        dst: []Complex,
+        item: usize,
+    ) void {
         const nx = state.nx;
         const ny = state.ny;
         const nz = state.nz;
@@ -426,7 +469,12 @@ pub const TransposePlan3d = struct {
     }
 
     // zxy[z + nz*(x + nx*y)] -> xyz[x + nx*(y + ny*z)]
-    fn transposeZxyToXyz(state: *ThreadPoolState, src: []Complex, dst: []Complex, item: usize) void {
+    fn transposeZxyToXyz(
+        state: *ThreadPoolState,
+        src: []Complex,
+        dst: []Complex,
+        item: usize,
+    ) void {
         const nx = state.nx;
         const ny = state.ny;
         const nz = state.nz;

@@ -6,6 +6,18 @@ pub const Triplet = struct {
     value: f64,
 };
 
+fn emptyCsr(alloc: std.mem.Allocator, nrows: usize, ncols: usize) !CsrMatrix {
+    const row_ptr = try alloc.alloc(usize, nrows + 1);
+    @memset(row_ptr, 0);
+    return .{
+        .nrows = nrows,
+        .ncols = ncols,
+        .row_ptr = row_ptr,
+        .col_idx = &.{},
+        .values = &.{},
+    };
+}
+
 pub const CsrMatrix = struct {
     nrows: usize,
     ncols: usize,
@@ -20,11 +32,7 @@ pub const CsrMatrix = struct {
         triplets: []const Triplet,
     ) !CsrMatrix {
         if (nrows == 0 or ncols == 0) return error.InvalidShape;
-        if (triplets.len == 0) {
-            const row_ptr = try alloc.alloc(usize, nrows + 1);
-            @memset(row_ptr, 0);
-            return .{ .nrows = nrows, .ncols = ncols, .row_ptr = row_ptr, .col_idx = &[_]usize{}, .values = &[_]f64{} };
-        }
+        if (triplets.len == 0) return emptyCsr(alloc, nrows, ncols);
 
         const sorted = try alloc.alloc(Triplet, triplets.len);
         defer alloc.free(sorted);
@@ -73,7 +81,13 @@ pub const CsrMatrix = struct {
             next[t.row] += 1;
         }
 
-        return .{ .nrows = nrows, .ncols = ncols, .row_ptr = row_ptr, .col_idx = col_idx, .values = values };
+        return .{
+            .nrows = nrows,
+            .ncols = ncols,
+            .row_ptr = row_ptr,
+            .col_idx = col_idx,
+            .values = values,
+        };
     }
 
     pub fn deinit(self: *CsrMatrix, alloc: std.mem.Allocator) void {
@@ -204,7 +218,13 @@ pub fn clone(alloc: std.mem.Allocator, matrix: CsrMatrix) !CsrMatrix {
     const values = try alloc.alloc(f64, matrix.values.len);
     errdefer alloc.free(values);
     @memcpy(values, matrix.values);
-    return .{ .nrows = matrix.nrows, .ncols = matrix.ncols, .row_ptr = row_ptr, .col_idx = col_idx, .values = values };
+    return .{
+        .nrows = matrix.nrows,
+        .ncols = matrix.ncols,
+        .row_ptr = row_ptr,
+        .col_idx = col_idx,
+        .values = values,
+    };
 }
 
 pub fn addScaled(

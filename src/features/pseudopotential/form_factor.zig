@@ -65,17 +65,30 @@ pub const RadialFormFactorTable = struct {
 
     const N_POINTS: usize = 4096;
 
-    pub fn initRhoAtom(alloc: std.mem.Allocator, upf: pseudo.UpfData, q_max: f64) !RadialFormFactorTable {
+    pub fn initRhoAtom(
+        alloc: std.mem.Allocator,
+        upf: pseudo.UpfData,
+        q_max: f64,
+    ) !RadialFormFactorTable {
         if (upf.rho_atom.len == 0) return .{ .values = &[_]f64{}, .dq = 1.0, .n_points = 0 };
         return buildTable(alloc, upf, upf.rho_atom, q_max);
     }
 
-    pub fn initRhoCore(alloc: std.mem.Allocator, upf: pseudo.UpfData, q_max: f64) !RadialFormFactorTable {
+    pub fn initRhoCore(
+        alloc: std.mem.Allocator,
+        upf: pseudo.UpfData,
+        q_max: f64,
+    ) !RadialFormFactorTable {
         if (upf.nlcc.len == 0) return .{ .values = &[_]f64{}, .dq = 1.0, .n_points = 0 };
         return buildTable(alloc, upf, upf.nlcc, q_max);
     }
 
-    fn buildTable(alloc: std.mem.Allocator, upf: pseudo.UpfData, data: []const f64, q_max: f64) !RadialFormFactorTable {
+    fn buildTable(
+        alloc: std.mem.Allocator,
+        upf: pseudo.UpfData,
+        data: []const f64,
+        q_max: f64,
+    ) !RadialFormFactorTable {
         const n = N_POINTS;
         const dq = q_max / @as(f64, @floatFromInt(n - 1));
         const values = try alloc.alloc(f64, n);
@@ -169,7 +182,8 @@ pub fn localVqEwald(upf: pseudo.UpfData, z_valence: f64, q: f64, alpha: f64) f64
 fn erfApprox(x: f64) f64 {
     const ax = @abs(x);
     const t = 1.0 / (1.0 + 0.3275911 * ax);
-    const poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    const poly = t * (0.254829592 + t *
+        (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
     const result = 1.0 - poly * std.math.exp(-ax * ax);
     return if (x >= 0.0) result else -result;
 }

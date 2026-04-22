@@ -63,7 +63,11 @@ pub fn normalizeTrace(matrix: *sparse.CsrMatrix, target: f64) !void {
     sparse.scaleInPlace(matrix, target / current);
 }
 
-pub fn normalizeTraceOverlap(matrix: *sparse.CsrMatrix, overlap: sparse.CsrMatrix, target: f64) !void {
+pub fn normalizeTraceOverlap(
+    matrix: *sparse.CsrMatrix,
+    overlap: sparse.CsrMatrix,
+    target: f64,
+) !void {
     if (target <= 0.0) return error.InvalidTraceTarget;
     const current = try traceOverlap(matrix.*, overlap);
     if (current == 0.0) return error.ZeroTrace;
@@ -78,7 +82,8 @@ pub fn densityFromHamiltonian(
     iterations: usize,
     threshold: f64,
 ) !sparse.CsrMatrix {
-    if (hamiltonian.nrows != overlap.nrows or hamiltonian.ncols != overlap.ncols) return error.InvalidShape;
+    if (hamiltonian.nrows != overlap.nrows or hamiltonian.ncols != overlap.ncols)
+        return error.InvalidShape;
     if (electrons <= 0.0) return error.InvalidTraceTarget;
     const diag = try sparse.diagonalValues(alloc, hamiltonian);
     defer alloc.free(diag);

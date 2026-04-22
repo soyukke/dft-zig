@@ -36,7 +36,11 @@ pub const ScfRunOptions = struct {
     nonlocal_basis: local_orbital.BasisType = .s_only,
 };
 
-pub fn loadPseudos(alloc: std.mem.Allocator, io: std.Io, specs: []const pseudo.Spec) ![]pseudo.Parsed {
+pub fn loadPseudos(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    specs: []const pseudo.Spec,
+) ![]pseudo.Parsed {
     var list: std.ArrayList(pseudo.Parsed) = .empty;
     errdefer {
         for (list.items) |*item| {
@@ -70,7 +74,8 @@ pub fn buildIonSitesFromAtoms(
     const sites = try alloc.alloc(ionic_potential.IonSite, atoms.len);
     errdefer alloc.free(sites);
     for (atoms, 0..) |atom, idx| {
-        const upf = findUpfForSymbol(pseudos, atom.symbol) orelse return error.MissingPseudopotential;
+        const upf = findUpfForSymbol(pseudos, atom.symbol) orelse
+            return error.MissingPseudopotential;
         sites[idx] = .{ .position = math.Vec3.scale(atom.position, scale_to_bohr), .upf = upf };
     }
     return sites;
@@ -124,7 +129,14 @@ pub fn runScfFromAtoms(
         .nonlocal_threshold = opts.nonlocal_threshold,
         .nonlocal_basis = opts.nonlocal_basis,
     };
-    return local_orbital_scf.runScfWithGridAndIons(alloc, centers, scaled_cell, pbc, sites, scf_opts);
+    return local_orbital_scf.runScfWithGridAndIons(
+        alloc,
+        centers,
+        scaled_cell,
+        pbc,
+        sites,
+        scf_opts,
+    );
 }
 
 pub fn runScfFromXyz(

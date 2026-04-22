@@ -139,7 +139,11 @@ pub const GtoDiis = struct {
 
         for (0..m) |i| {
             for (0..m) |j| {
-                b_mat[i * dim + j] = dotProduct(nn, self.error_history.items[i], self.error_history.items[j]);
+                b_mat[i * dim + j] = dotProduct(
+                    nn,
+                    self.error_history.items[i],
+                    self.error_history.items[j],
+                );
             }
             b_mat[i * dim + m] = -1.0;
             b_mat[m * dim + i] = -1.0;

@@ -115,7 +115,13 @@ pub fn buildScfModelFromCenters(
         .kinetic_scale = opts.kinetic_scale,
         .threshold = opts.matrix_threshold,
     };
-    var hamiltonian = try local_orbital_hamiltonian.buildHamiltonianFromCenters(alloc, centers, cell, pbc, ham_opts);
+    var hamiltonian = try local_orbital_hamiltonian.buildHamiltonianFromCenters(
+        alloc,
+        centers,
+        cell,
+        pbc,
+        ham_opts,
+    );
     errdefer hamiltonian.deinit(alloc);
 
     var density = try density_matrix.mcWeenyNonOrthogonal(
@@ -187,7 +193,14 @@ pub fn runScfWithGrid(
             .threshold = opts.nonlocal_threshold,
             .basis = opts.nonlocal_basis,
         };
-        nonlocal = try local_orbital_nonlocal.buildNonlocalCsr(alloc, centers, ions, cell, pbc, nl_opts);
+        nonlocal = try local_orbital_nonlocal.buildNonlocalCsr(
+            alloc,
+            centers,
+            ions,
+            cell,
+            pbc,
+            nl_opts,
+        );
     }
     defer if (nonlocal) |*nl| nl.deinit(alloc);
 
@@ -414,7 +427,10 @@ test "model reference compares to itself" {
     defer result.deinit(alloc);
     var model_ref = try buildModelReference(alloc, &result);
     defer model_ref.deinit(alloc);
-    const report = try reference.compareReference(model_ref.asReferenceData(), model_ref.asReferenceData());
+    const report = try reference.compareReference(
+        model_ref.asReferenceData(),
+        model_ref.asReferenceData(),
+    );
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), report.energy.abs, 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), report.density.max_abs, 1e-12);
 }

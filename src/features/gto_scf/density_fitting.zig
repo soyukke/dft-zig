@@ -58,7 +58,8 @@ pub const DensityFittingContext = struct {
                     // Copy into full matrix
                     for (0..np) |ip| {
                         for (0..nq) |iq| {
-                            coulomb_2c[(off_p + ip) * n_aux + (off_q + iq)] = shell_buf[ip * nq + iq];
+                            const row = (off_p + ip) * n_aux + (off_q + iq);
+                            coulomb_2c[row] = shell_buf[ip * nq + iq];
                         }
                     }
                     off_q += nq;
@@ -133,7 +134,12 @@ pub const DensityFittingContext = struct {
     ///   c_P = Σ_{λσ} P_{λσ} (λσ|P)     [contract density with 3c integrals]
     ///   Solve L * L^T * d = c            [Cholesky solve for fitting coefficients]
     ///   J_{μν} = Σ_P (μν|P) d_P          [expand with 3c integrals]
-    pub fn buildJ(self: *const DensityFittingContext, alloc: std.mem.Allocator, p_mat: []const f64, j_mat: []f64) !void {
+    pub fn buildJ(
+        self: *const DensityFittingContext,
+        alloc: std.mem.Allocator,
+        p_mat: []const f64,
+        j_mat: []f64,
+    ) !void {
         const n = self.n_basis;
         const n_aux = self.n_aux;
 
@@ -164,7 +170,12 @@ pub const DensityFittingContext = struct {
     ///   K_{μν} = Σ_P Σ_λ B_{μλ,P} × (Σ_σ P_{λσ} B_{νσ,P})
     ///
     /// Equivalent to: K_{μν} = Σ_P (B^P · P · B^{P T})_{μν}
-    pub fn buildK(self: *const DensityFittingContext, alloc: std.mem.Allocator, p_mat: []const f64, k_mat: []f64) !void {
+    pub fn buildK(
+        self: *const DensityFittingContext,
+        alloc: std.mem.Allocator,
+        p_mat: []const f64,
+        k_mat: []f64,
+    ) !void {
         const n = self.n_basis;
         const n_aux = self.n_aux;
 

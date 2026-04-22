@@ -383,7 +383,10 @@ fn markIndex(group: []bool, kmesh: [3]usize, index: Index3) void {
 }
 
 fn flatIndex(kmesh: [3]usize, index: Index3) usize {
-    return @as(usize, @intCast(index.x)) + kmesh[0] * (@as(usize, @intCast(index.y)) + kmesh[1] * @as(usize, @intCast(index.z)));
+    const ix = @as(usize, @intCast(index.x));
+    const iy = @as(usize, @intCast(index.y));
+    const iz = @as(usize, @intCast(index.z));
+    return ix + kmesh[0] * (iy + kmesh[1] * iz);
 }
 
 fn indexFromFlat(kmesh: [3]usize, flat: usize) Index3 {

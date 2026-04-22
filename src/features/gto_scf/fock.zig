@@ -311,9 +311,12 @@ pub fn buildJKDirect(
                                 for (0..nd) |id_d| {
                                     const sig = off_d + id_d;
 
-                                    const eri = eri_buf[ia * nb * nc * nd + ib * nc * nd + ic * nd + id_d];
+                                    const idx_eri = ia * nb * nc * nd +
+                                        ib * nc * nd + ic * nd + id_d;
+                                    const eri = eri_buf[idx_eri];
 
-                                    // Distribute ERI to J and K using all 8 permutational symmetries
+                                    // Distribute ERI to J and K using all 8 permutational
+                                    // symmetries
 
                                     // 1. (mu,nu | lam,sig) — original
                                     j_mat[mu * n + nu] += p[lam * n + sig] * eri;
@@ -450,10 +453,16 @@ test "Direct SCF J/K matches ERI table (H2 STO-3G)" {
 
     std.debug.print("\nDirect SCF vs ERI table (H2 STO-3G):\n", .{});
     for (0..n * n) |i| {
-        std.debug.print("  J[{d}]: ref={d:14.10} direct={d:14.10} diff={e:10.3}\n", .{ i, j_ref[i], j_direct[i], j_ref[i] - j_direct[i] });
+        std.debug.print(
+            "  J[{d}]: ref={d:14.10} direct={d:14.10} diff={e:10.3}\n",
+            .{ i, j_ref[i], j_direct[i], j_ref[i] - j_direct[i] },
+        );
     }
     for (0..n * n) |i| {
-        std.debug.print("  K[{d}]: ref={d:14.10} direct={d:14.10} diff={e:10.3}\n", .{ i, k_ref[i], k_direct[i], k_ref[i] - k_direct[i] });
+        std.debug.print(
+            "  K[{d}]: ref={d:14.10} direct={d:14.10} diff={e:10.3}\n",
+            .{ i, k_ref[i], k_direct[i], k_ref[i] - k_direct[i] },
+        );
     }
 
     for (0..n * n) |i| {

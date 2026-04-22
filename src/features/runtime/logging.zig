@@ -18,7 +18,9 @@ pub fn name(level: Level) []const u8 {
 
 pub fn parseLevel(value: []const u8) !Level {
     if (std.mem.eql(u8, value, "error")) return .err;
-    if (std.mem.eql(u8, value, "warn") or std.mem.eql(u8, value, "warning") or std.mem.eql(u8, value, "quiet")) return .warn;
+    if (std.mem.eql(u8, value, "warn") or
+        std.mem.eql(u8, value, "warning") or
+        std.mem.eql(u8, value, "quiet")) return .warn;
     if (std.mem.eql(u8, value, "info") or std.mem.eql(u8, value, "normal")) return .info;
     if (std.mem.eql(u8, value, "debug") or std.mem.eql(u8, value, "verbose")) return .debug;
     return error.InvalidLogLevel;

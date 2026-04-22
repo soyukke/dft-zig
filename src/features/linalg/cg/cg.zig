@@ -124,7 +124,8 @@ pub fn solve(
             if (has_prev_direction and prev_zr > 1e-30) {
                 const beta = @max(0.0, zr / prev_zr);
                 for (0..n) |i| {
-                    direction[i] = math.complex.add(precond_buf[i], math.complex.scale(direction[i], beta));
+                    const scaled = math.complex.scale(direction[i], beta);
+                    direction[i] = math.complex.add(precond_buf[i], scaled);
                 }
             } else {
                 @memcpy(direction, precond_buf);

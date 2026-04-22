@@ -73,7 +73,12 @@ pub const NonlocalContext = struct {
 
     /// Ensure per-atom D_ij arrays are allocated for a PAW species.
     /// Lazy init: does nothing if already allocated with matching natom.
-    pub fn ensureDijPerAtom(self: *NonlocalContext, alloc: std.mem.Allocator, species_index: usize, natom: usize) !void {
+    pub fn ensureDijPerAtom(
+        self: *NonlocalContext,
+        alloc: std.mem.Allocator,
+        species_index: usize,
+        natom: usize,
+    ) !void {
         for (self.species) |*entry| {
             if (entry.species_index == species_index) {
                 if (entry.dij_per_atom != null) return; // already allocated
@@ -90,7 +95,12 @@ pub const NonlocalContext = struct {
     }
 
     /// Update D_ij for a specific atom of a PAW species.
-    pub fn updateDijAtom(self: *NonlocalContext, species_index: usize, atom_of_species: usize, new_dij: []const f64) void {
+    pub fn updateDijAtom(
+        self: *NonlocalContext,
+        species_index: usize,
+        atom_of_species: usize,
+        new_dij: []const f64,
+    ) void {
         for (self.species) |*entry| {
             if (entry.species_index == species_index) {
                 if (entry.dij_per_atom) |dpa| {
@@ -103,7 +113,12 @@ pub const NonlocalContext = struct {
     }
 
     /// Ensure per-atom m-resolved D_ij arrays are allocated for a PAW species.
-    pub fn ensureDijMPerAtom(self: *NonlocalContext, alloc: std.mem.Allocator, species_index: usize, natom: usize) !void {
+    pub fn ensureDijMPerAtom(
+        self: *NonlocalContext,
+        alloc: std.mem.Allocator,
+        species_index: usize,
+        natom: usize,
+    ) !void {
         for (self.species) |*entry| {
             if (entry.species_index == species_index) {
                 if (entry.dij_m_per_atom != null) return;
@@ -121,7 +136,12 @@ pub const NonlocalContext = struct {
     }
 
     /// Update m-resolved D_ij for a specific atom of a PAW species.
-    pub fn updateDijMAtom(self: *NonlocalContext, species_index: usize, atom_of_species: usize, new_dij_m: []const f64) void {
+    pub fn updateDijMAtom(
+        self: *NonlocalContext,
+        species_index: usize,
+        atom_of_species: usize,
+        new_dij_m: []const f64,
+    ) void {
         for (self.species) |*entry| {
             if (entry.species_index == species_index) {
                 if (entry.dij_m_per_atom) |dpa| {
@@ -199,7 +219,10 @@ pub fn buildNonlocalContextPaw(
     for (species, 0..) |entry, s| {
         const upf = entry.upf.*;
         if (upf.beta.len == 0 or upf.dij.len == 0) continue;
-        const tables = if (radial_tables) |rt| (if (table_idx < rt.len) &rt[table_idx] else null) else null;
+        const tables = if (radial_tables) |rt|
+            (if (table_idx < rt.len) &rt[table_idx] else null)
+        else
+            null;
         var nl = try buildNonlocalSpeciesWithTables(alloc, s, upf, gvecs, tables);
 
         // If this species has PAW data, set up mutable D_ij buffer and overlap coefficients
@@ -310,7 +333,13 @@ fn buildNonlocalSpeciesWithTables(
             var g: usize = 0;
             while (g < g_count) : (g += 1) {
                 const gmag = math.Vec3.norm(gvecs[g].kpg);
-                radial[b * g_count + g] = nonlocal.radialProjector(upf.beta[b].values, upf.r, upf.rab, l_val, gmag);
+                radial[b * g_count + g] = nonlocal.radialProjector(
+                    upf.beta[b].values,
+                    upf.r,
+                    upf.rab,
+                    l_val,
+                    gmag,
+                );
             }
         }
     }

@@ -23,7 +23,10 @@ pub const PwGridMap = struct {
             const ki = g.k - grid.min_k;
             const li = g.l - grid.min_l;
             if (hi < 0 or ki < 0 or li < 0) return error.InvalidGrid;
-            if (hi >= @as(i32, @intCast(grid.nx)) or ki >= @as(i32, @intCast(grid.ny)) or li >= @as(i32, @intCast(grid.nz))) {
+            const nx_i = @as(i32, @intCast(grid.nx));
+            const ny_i = @as(i32, @intCast(grid.ny));
+            const nz_i = @as(i32, @intCast(grid.nz));
+            if (hi >= nx_i or ki >= ny_i or li >= nz_i) {
                 return error.InvalidGrid;
             }
             const h = @as(usize, @intCast(hi));
@@ -50,7 +53,11 @@ pub const PwGridMap = struct {
 
     /// Build direct PW->FFT index mapping for fused scatter/gather.
     /// Eliminates the full-grid remap+scale loops (32K ops -> 2K ops).
-    pub fn buildFftIndices(self: *PwGridMap, alloc: std.mem.Allocator, fft_index_map: []const usize) !void {
+    pub fn buildFftIndices(
+        self: *PwGridMap,
+        alloc: std.mem.Allocator,
+        fft_index_map: []const usize,
+    ) !void {
         const total = fft_index_map.len;
         // Build inverse map: recip_grid_pos -> fft_sequential_pos
         const inv_map = try alloc.alloc(usize, total);
@@ -80,7 +87,12 @@ pub const PwGridMap = struct {
     }
 
     /// Scatter PW coefficients directly to FFT-ordered buffer with scaling.
-    pub fn scatterFft(self: PwGridMap, coeffs: []const math.Complex, fft_data: []math.Complex, scale: f64) void {
+    pub fn scatterFft(
+        self: PwGridMap,
+        coeffs: []const math.Complex,
+        fft_data: []math.Complex,
+        scale: f64,
+    ) void {
         @memset(fft_data, math.complex.init(0.0, 0.0));
         for (self.fft_indices, 0..) |idx, i| {
             fft_data[idx] = math.complex.scale(coeffs[i], scale);
@@ -88,7 +100,12 @@ pub const PwGridMap = struct {
     }
 
     /// Gather PW coefficients directly from FFT-ordered buffer with scaling.
-    pub fn gatherFft(self: PwGridMap, fft_data: []const math.Complex, out: []math.Complex, scale: f64) void {
+    pub fn gatherFft(
+        self: PwGridMap,
+        fft_data: []const math.Complex,
+        out: []math.Complex,
+        scale: f64,
+    ) void {
         for (self.fft_indices, 0..) |idx, i| {
             out[i] = math.complex.scale(fft_data[idx], scale);
         }

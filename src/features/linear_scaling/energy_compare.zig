@@ -52,13 +52,22 @@ pub fn compareEnergyTerms(reference: scf.EnergyTerms, candidate: scf.EnergyTerms
         .xc = compare.compareScalar(reference.xc, candidate.xc),
         .ion_ion = compare.compareScalar(reference.ion_ion, candidate.ion_ion),
         .psp_core = compare.compareScalar(reference.psp_core, candidate.psp_core),
-        .double_counting = compare.compareScalar(reference.double_counting, candidate.double_counting),
+        .double_counting = compare.compareScalar(
+            reference.double_counting,
+            candidate.double_counting,
+        ),
         .local_pseudo = compare.compareScalar(reference.local_pseudo, candidate.local_pseudo),
-        .nonlocal_pseudo = compare.compareScalar(reference.nonlocal_pseudo, candidate.nonlocal_pseudo),
+        .nonlocal_pseudo = compare.compareScalar(
+            reference.nonlocal_pseudo,
+            candidate.nonlocal_pseudo,
+        ),
     };
 }
 
-pub fn withinEnergyTolerance(report: EnergyComparison, tol: EnergyTermsTolerance) EnergyTermsToleranceResult {
+pub fn withinEnergyTolerance(
+    report: EnergyComparison,
+    tol: EnergyTermsTolerance,
+) EnergyTermsToleranceResult {
     const total = compare.withinScalarTolerance(report.total, tol.total);
     const band = compare.withinScalarTolerance(report.band, tol.band);
     const hartree = compare.withinScalarTolerance(report.hartree, tol.hartree);
@@ -66,10 +75,17 @@ pub fn withinEnergyTolerance(report: EnergyComparison, tol: EnergyTermsTolerance
     const xc = compare.withinScalarTolerance(report.xc, tol.xc);
     const ion_ion = compare.withinScalarTolerance(report.ion_ion, tol.ion_ion);
     const psp_core = compare.withinScalarTolerance(report.psp_core, tol.psp_core);
-    const double_counting = compare.withinScalarTolerance(report.double_counting, tol.double_counting);
+    const double_counting = compare.withinScalarTolerance(
+        report.double_counting,
+        tol.double_counting,
+    );
     const local_pseudo = compare.withinScalarTolerance(report.local_pseudo, tol.local_pseudo);
-    const nonlocal_pseudo = compare.withinScalarTolerance(report.nonlocal_pseudo, tol.nonlocal_pseudo);
-    const all = total and band and hartree and vxc_rho and xc and ion_ion and psp_core and double_counting and local_pseudo and nonlocal_pseudo;
+    const nonlocal_pseudo = compare.withinScalarTolerance(
+        report.nonlocal_pseudo,
+        tol.nonlocal_pseudo,
+    );
+    const all = total and band and hartree and vxc_rho and xc and
+        ion_ion and psp_core and double_counting and local_pseudo and nonlocal_pseudo;
     return .{
         .total = total,
         .band = band,

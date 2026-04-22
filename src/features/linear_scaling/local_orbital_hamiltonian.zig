@@ -62,7 +62,14 @@ pub fn buildHamiltonianFromCenters(
     if (opts.kinetic_scale != 1.0) {
         sparse.scaleInPlace(&kinetic, opts.kinetic_scale);
     }
-    const hamiltonian = try sparse.addScaled(alloc, kinetic, 1.0, overlap, opts.local_potential, opts.threshold);
+    const hamiltonian = try sparse.addScaled(
+        alloc,
+        kinetic,
+        1.0,
+        overlap,
+        opts.local_potential,
+        opts.threshold,
+    );
     return .{ .overlap = overlap, .hamiltonian = hamiltonian };
 }
 
@@ -157,13 +164,22 @@ test "buildHamiltonianFromCentersWithGrid matches constant potential" {
     const values = try alloc.alloc(f64, count);
     defer alloc.free(values);
     @memset(values, 0.4);
-    const grid = local_orbital_potential.PotentialGrid{ .cell = cell, .dims = dims, .values = values };
+    const grid = local_orbital_potential.PotentialGrid{
+        .cell = cell,
+        .dims = dims,
+        .values = values,
+    };
     const centers = [_]math.Vec3{
         .{ .x = 2.0, .y = 2.0, .z = 2.0 },
         .{ .x = 3.0, .y = 2.0, .z = 2.0 },
     };
     const pbc = neighbor_list.Pbc{ .x = false, .y = false, .z = false };
-    const opts = HamiltonianGridOptions{ .sigma = 0.5, .cutoff = 3.0, .kinetic_scale = 1.0, .threshold = 0.0 };
+    const opts = HamiltonianGridOptions{
+        .sigma = 0.5,
+        .cutoff = 3.0,
+        .kinetic_scale = 1.0,
+        .threshold = 0.0,
+    };
     var result = try buildHamiltonianFromCentersWithGrid(alloc, centers[0..], pbc, grid, opts);
     defer result.deinit(alloc);
 

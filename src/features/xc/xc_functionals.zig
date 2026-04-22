@@ -184,7 +184,8 @@ pub fn becke88Exchange(rho: f64, sigma: f64) XcResult {
     // v_xc = d(rho * eps_xc)/d(rho)
     // The B88 correction energy per volume is: 2^{-1/3} * rho^{4/3} * F(x_s)
     // where x_s = sqrt(sigma)*2^{1/3}/rho^{4/3}, so dx_s/drho = -(4/3)*x_s/rho.
-    // d(2^{-1/3}*rho^{4/3}*F)/drho = 2^{-1/3}*(4/3)*rho^{1/3}*F + 2^{-1/3}*rho^{4/3}*dF/dxs*(-4/3*x_s/rho)
+    // d(2^{-1/3}*rho^{4/3}*F)/drho
+    //   = 2^{-1/3}*(4/3)*rho^{1/3}*F + 2^{-1/3}*rho^{4/3}*dF/dxs*(-4/3*x_s/rho)
     // = 2^{-1/3}*(4/3)*rho^{1/3}*(F - x_s*dF/dxs)
     const v_b88 = two_m1_3 * (4.0 / 3.0) * rho_13 * (f_b88 - x_s * df_dxs);
     const v_xc = slater.v_xc + v_b88;
@@ -302,13 +303,16 @@ pub fn lypCorrelation(rho: f64, sigma: f64) XcResult {
 
     // Derivatives of t2..t6 w.r.t. rho
     // t2 = -xt2 * ((47 - 7*delta)/72 - 2/3)
-    const dt2_drho = -dxt2_drho * ((47.0 - 7.0 * delta) / 72.0 - 2.0 / 3.0) - xt2 * (-7.0 * ddelta_drho / 72.0);
+    const dt2_drho = -dxt2_drho * ((47.0 - 7.0 * delta) / 72.0 - 2.0 / 3.0) -
+        xt2 * (-7.0 * ddelta_drho / 72.0);
 
     // t3 = -c_f (constant w.r.t. rho)
     // dt3_drho = 0
 
     // t4 = aux4 * (5/2 - delta/18) * 2*xs2
-    const dt4_drho = lyp_aux4 * ((-ddelta_drho / 18.0) * (2.0 * xs2) + (5.0 / 2.0 - delta / 18.0) * (2.0 * dxs2_drho));
+    const dt4_drho = lyp_aux4 *
+        ((-ddelta_drho / 18.0) * (2.0 * xs2) +
+            (5.0 / 2.0 - delta / 18.0) * (2.0 * dxs2_drho));
 
     // t5 = aux5 * (delta - 11) * 2*xs2
     const dt5_drho = lyp_aux5 * (ddelta_drho * (2.0 * xs2) + (delta - 11.0) * (2.0 * dxs2_drho));
@@ -409,8 +413,10 @@ pub fn b3lyp(rho: f64, sigma: f64) B3lypResult {
     // E_xc = (1-a0)*Slater + ax*dB88 + (1-ac)*VWN + ac*LYP
     // Note: (1-a0)*S + ax*(B88-S) = (1-a0-ax)*S + ax*B88 = (1-a0)*S + ax*dB88
     return .{
-        .eps_xc = (1.0 - b3lyp_a0) * slater_eps + b3lyp_ax * db88_eps + (1.0 - b3lyp_ac) * vwn.eps_xc + b3lyp_ac * lyp.eps_xc,
-        .v_xc = (1.0 - b3lyp_a0) * slater_v + b3lyp_ax * db88_v + (1.0 - b3lyp_ac) * vwn.v_xc + b3lyp_ac * lyp.v_xc,
+        .eps_xc = (1.0 - b3lyp_a0) * slater_eps + b3lyp_ax * db88_eps +
+            (1.0 - b3lyp_ac) * vwn.eps_xc + b3lyp_ac * lyp.eps_xc,
+        .v_xc = (1.0 - b3lyp_a0) * slater_v + b3lyp_ax * db88_v +
+            (1.0 - b3lyp_ac) * vwn.v_xc + b3lyp_ac * lyp.v_xc,
         .v_sigma = b3lyp_ax * b88_v_sigma + b3lyp_ac * lyp.v_sigma,
         .hf_exchange_fraction = b3lyp_a0,
     };

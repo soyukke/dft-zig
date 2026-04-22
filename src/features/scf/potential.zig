@@ -131,7 +131,15 @@ pub fn buildPotentialGridSpin(
     defer alloc.free(rho_g);
 
     // Compute spin XC fields
-    const xc_fields = try computeXcFieldsSpin(alloc, grid, rho_up, rho_down, rho_core, use_rfft, xc_func);
+    const xc_fields = try computeXcFieldsSpin(
+        alloc,
+        grid,
+        rho_up,
+        rho_down,
+        rho_core,
+        use_rfft,
+        xc_func,
+    );
     defer {
         if (vxc_r_out_up) |out| {
             out.* = xc_fields.vxc_up;
@@ -215,7 +223,14 @@ pub fn buildIonicPotentialGrid(
                 continue;
             }
         }
-        values[g.idx] = try hamiltonian.ionicLocalPotentialWithTable(g.gvec, species, atoms, inv_volume, local_cfg, ff_tables);
+        values[g.idx] = try hamiltonian.ionicLocalPotentialWithTable(
+            g.gvec,
+            species,
+            atoms,
+            inv_volume,
+            local_cfg,
+            ff_tables,
+        );
     }
     return hamiltonian.PotentialGrid{
         .nx = grid.nx,

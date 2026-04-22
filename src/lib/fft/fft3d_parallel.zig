@@ -36,7 +36,13 @@ pub const Plan3dParallel = struct {
     /// - num_threads = 1: Sequential execution (no thread overhead)
     /// - num_threads > 1: Parallel execution with that many threads
     /// - num_threads = 0: Auto-detect (uses up to 8 threads)
-    pub fn initWithThreads(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize, num_threads: usize) !Plan3dParallel {
+    pub fn initWithThreads(
+        allocator: std.mem.Allocator,
+        nx: usize,
+        ny: usize,
+        nz: usize,
+        num_threads: usize,
+    ) !Plan3dParallel {
         if (nx == 0 or ny == 0 or nz == 0) return error.InvalidSize;
 
         var plan_x = try Plan1d.init(allocator, nx);

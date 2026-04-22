@@ -124,7 +124,12 @@ pub fn formatName(format: Format) []const u8 {
 
 /// Load and parse a pseudopotential file.
 pub fn load(alloc: std.mem.Allocator, io: std.Io, spec: Spec) !Parsed {
-    const content = try std.Io.Dir.cwd().readFileAlloc(io, spec.path, alloc, .limited(8 * 1024 * 1024));
+    const content = try std.Io.Dir.cwd().readFileAlloc(
+        io,
+        spec.path,
+        alloc,
+        .limited(8 * 1024 * 1024),
+    );
     defer alloc.free(content);
 
     var header = Header{
@@ -158,7 +163,8 @@ pub fn load(alloc: std.mem.Allocator, io: std.Io, spec: Spec) !Parsed {
 /// Parse UPF header attributes for minimal metadata.
 fn parseUpfHeader(alloc: std.mem.Allocator, content: []const u8) !Header {
     const header_start = std.mem.indexOf(u8, content, "<PP_HEADER") orelse return error.InvalidUpf;
-    const tag_end = std.mem.indexOfPos(u8, content, header_start, ">") orelse return error.InvalidUpf;
+    const tag_end = std.mem.indexOfPos(u8, content, header_start, ">") orelse
+        return error.InvalidUpf;
     const tag = content[header_start .. tag_end + 1];
 
     var header = Header{
@@ -605,7 +611,9 @@ fn findAttributeValue(tag: []const u8, key: []const u8) ?[]const u8 {
         // Check that the character before key is a word boundary
         if (found > 0) {
             const before = tag[found - 1];
-            if (before != ' ' and before != '\t' and before != '\r' and before != '\n' and before != '<') {
+            if (before != ' ' and before != '\t' and before != '\r' and
+                before != '\n' and before != '<')
+            {
                 pos = found + 1;
                 continue;
             }

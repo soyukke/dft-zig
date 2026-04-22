@@ -555,7 +555,21 @@ test "zgemm basic" {
         Complex.init(0.0, 0.0), Complex.init(0.0, 0.0),
     };
 
-    zgemm(.no_trans, .no_trans, 2, 2, 2, Complex.init(1.0, 0.0), &a, 2, &b, 2, Complex.init(0.0, 0.0), &c, 2);
+    zgemm(
+        .no_trans,
+        .no_trans,
+        2,
+        2,
+        2,
+        Complex.init(1.0, 0.0),
+        &a,
+        2,
+        &b,
+        2,
+        Complex.init(0.0, 0.0),
+        &c,
+        2,
+    );
 
     // Column-major: A=[[1,3],[2,4]], B=[[5,7],[6,8]]
     // C[0,0] = A[0,0]*B[0,0] + A[0,1]*B[1,0] = 1*5 + 3*6 = 23

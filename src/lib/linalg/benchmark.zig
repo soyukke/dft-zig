@@ -57,7 +57,14 @@ fn axpyScalar(y: []Complex, x: []const Complex, alpha: f64) void {
 /// Volatile sink to prevent dead code elimination
 var volatile_sink: f64 = 0;
 
-fn benchmarkInnerProduct(io: std.Io, comptime name: []const u8, comptime func: anytype, a: []const Complex, b: []const Complex, iterations: usize) f64 {
+fn benchmarkInnerProduct(
+    io: std.Io,
+    comptime name: []const u8,
+    comptime func: anytype,
+    a: []const Complex,
+    b: []const Complex,
+    iterations: usize,
+) f64 {
     const t_start = std.Io.Clock.Timestamp.now(io, .awake);
     var acc: f64 = 0;
 
@@ -73,7 +80,13 @@ fn benchmarkInnerProduct(io: std.Io, comptime name: []const u8, comptime func: a
     return elapsed_ms;
 }
 
-fn benchmarkNorm(io: std.Io, comptime name: []const u8, func: *const fn ([]const Complex) f64, a: []const Complex, iterations: usize) f64 {
+fn benchmarkNorm(
+    io: std.Io,
+    comptime name: []const u8,
+    func: *const fn ([]const Complex) f64,
+    a: []const Complex,
+    iterations: usize,
+) f64 {
     const t_start = std.Io.Clock.Timestamp.now(io, .awake);
     var acc: f64 = 0;
 
@@ -88,6 +101,74 @@ fn benchmarkNorm(io: std.Io, comptime name: []const u8, func: *const fn ([]const
     return elapsed_ms;
 }
 
+fn runSizeBenchmark(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    size: usize,
+    iterations: usize,
+) !void {
+    std.debug.print("--- Size: {d} ---\n", .{size});
+
+    const a = try alloc.alloc(Complex, size);
+    defer alloc.free(a);
+    const b = try alloc.alloc(Complex, size);
+    defer alloc.free(b);
+    var y = try alloc.alloc(Complex, size);
+    defer alloc.free(y);
+
+    // Initialize with random-ish data
+    for (0..size) |i| {
+        const fi: f64 = @floatFromInt(i);
+        a[i] = Complex.init(@sin(fi), @cos(fi));
+        b[i] = Complex.init(@cos(fi * 1.5), @sin(fi * 0.7));
+        y[i] = Complex.init(fi * 0.01, fi * 0.02);
+    }
+
+    // innerProduct benchmark
+    const ip_s = innerProductScalarNoInline;
+    const ip_v = innerProductSimdNoInline;
+    const scalar_ip = benchmarkInnerProduct(io, "innerProduct (scalar)", ip_s, a, b, iterations);
+    const simd_ip = benchmarkInnerProduct(io, "innerProduct (SIMD)  ", ip_v, a, b, iterations);
+    std.debug.print("  Speedup: {d:.2}x\n\n", .{scalar_ip / simd_ip});
+
+    // vectorNorm benchmark
+    const vn_s = vectorNormScalarNoInline;
+    const vn_v = vectorNormSimdNoInline;
+    const scalar_norm = benchmarkNorm(io, "vectorNorm (scalar)  ", vn_s, a, iterations);
+    const simd_norm = benchmarkNorm(io, "vectorNorm (SIMD)    ", vn_v, a, iterations);
+    std.debug.print("  Speedup: {d:.2}x\n\n", .{scalar_norm / simd_norm});
+
+    // Reset y for axpy benchmark
+    for (0..size) |i| {
+        const fi: f64 = @floatFromInt(i);
+        y[i] = Complex.init(fi * 0.01, fi * 0.02);
+    }
+
+    // axpy benchmark (need to copy y each time to avoid accumulation)
+    const y_copy = try alloc.alloc(Complex, size);
+    defer alloc.free(y_copy);
+
+    const t_scalar = std.Io.Clock.Timestamp.now(io, .awake);
+    for (0..iterations) |_| {
+        @memcpy(y_copy, y);
+        axpyScalar(y_copy, a, 0.5);
+    }
+    const scalar_axpy_ns: u64 = @intCast(t_scalar.untilNow(io).raw.nanoseconds);
+    const scalar_axpy = @as(f64, @floatFromInt(scalar_axpy_ns)) / 1_000_000.0;
+
+    const t_simd = std.Io.Clock.Timestamp.now(io, .awake);
+    for (0..iterations) |_| {
+        @memcpy(y_copy, y);
+        complex_vec.axpy(y_copy, a, 0.5);
+    }
+    const simd_axpy_ns: u64 = @intCast(t_simd.untilNow(io).raw.nanoseconds);
+    const simd_axpy = @as(f64, @floatFromInt(simd_axpy_ns)) / 1_000_000.0;
+
+    std.debug.print("axpy (scalar): {d:.3} ms\n", .{scalar_axpy});
+    std.debug.print("axpy (SIMD)  : {d:.3} ms\n", .{simd_axpy});
+    std.debug.print("  Speedup: {d:.2}x\n\n", .{scalar_axpy / simd_axpy});
+}
+
 pub fn main(init: std.process.Init) !void {
     const sizes = [_]usize{ 500, 1000, 2000, 5000 };
     const iterations = 50000;
@@ -98,61 +179,6 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("\n=== Complex Vector Operations Benchmark ===\n\n", .{});
 
     for (sizes) |size| {
-        std.debug.print("--- Size: {d} ---\n", .{size});
-
-        const a = try alloc.alloc(Complex, size);
-        defer alloc.free(a);
-        const b = try alloc.alloc(Complex, size);
-        defer alloc.free(b);
-        var y = try alloc.alloc(Complex, size);
-        defer alloc.free(y);
-
-        // Initialize with random-ish data
-        for (0..size) |i| {
-            const fi: f64 = @floatFromInt(i);
-            a[i] = Complex.init(@sin(fi), @cos(fi));
-            b[i] = Complex.init(@cos(fi * 1.5), @sin(fi * 0.7));
-            y[i] = Complex.init(fi * 0.01, fi * 0.02);
-        }
-
-        // innerProduct benchmark
-        const scalar_ip = benchmarkInnerProduct(io, "innerProduct (scalar)", innerProductScalarNoInline, a, b, iterations);
-        const simd_ip = benchmarkInnerProduct(io, "innerProduct (SIMD)  ", innerProductSimdNoInline, a, b, iterations);
-        std.debug.print("  Speedup: {d:.2}x\n\n", .{scalar_ip / simd_ip});
-
-        // vectorNorm benchmark
-        const scalar_norm = benchmarkNorm(io, "vectorNorm (scalar)  ", vectorNormScalarNoInline, a, iterations);
-        const simd_norm = benchmarkNorm(io, "vectorNorm (SIMD)    ", vectorNormSimdNoInline, a, iterations);
-        std.debug.print("  Speedup: {d:.2}x\n\n", .{scalar_norm / simd_norm});
-
-        // Reset y for axpy benchmark
-        for (0..size) |i| {
-            const fi: f64 = @floatFromInt(i);
-            y[i] = Complex.init(fi * 0.01, fi * 0.02);
-        }
-
-        // axpy benchmark (need to copy y each time to avoid accumulation)
-        const y_copy = try alloc.alloc(Complex, size);
-        defer alloc.free(y_copy);
-
-        const t_scalar = std.Io.Clock.Timestamp.now(io, .awake);
-        for (0..iterations) |_| {
-            @memcpy(y_copy, y);
-            axpyScalar(y_copy, a, 0.5);
-        }
-        const scalar_axpy_ns: u64 = @intCast(t_scalar.untilNow(io).raw.nanoseconds);
-        const scalar_axpy = @as(f64, @floatFromInt(scalar_axpy_ns)) / 1_000_000.0;
-
-        const t_simd = std.Io.Clock.Timestamp.now(io, .awake);
-        for (0..iterations) |_| {
-            @memcpy(y_copy, y);
-            complex_vec.axpy(y_copy, a, 0.5);
-        }
-        const simd_axpy_ns: u64 = @intCast(t_simd.untilNow(io).raw.nanoseconds);
-        const simd_axpy = @as(f64, @floatFromInt(simd_axpy_ns)) / 1_000_000.0;
-
-        std.debug.print("axpy (scalar): {d:.3} ms\n", .{scalar_axpy});
-        std.debug.print("axpy (SIMD)  : {d:.3} ms\n", .{simd_axpy});
-        std.debug.print("  Speedup: {d:.2}x\n\n", .{scalar_axpy / simd_axpy});
+        try runSizeBenchmark(alloc, io, size, iterations);
     }
 }

@@ -203,10 +203,34 @@ fn dft5(input: *const [5]Complex, output: *[5]Complex, inv: bool) void {
 
     // X[k] = sum_{n=0}^{4} x[n] * W5^(nk)
     output[0] = storeVec2(x0 + x1 + x2 + x3 + x4);
-    output[1] = storeVec2(x0 + complexMulVec2(x1, w5_1) + complexMulVec2(x2, w5_2) + complexMulVec2(x3, w5_3) + complexMulVec2(x4, w5_4));
-    output[2] = storeVec2(x0 + complexMulVec2(x1, w5_2) + complexMulVec2(x2, w5_4) + complexMulVec2(x3, w5_1) + complexMulVec2(x4, w5_3));
-    output[3] = storeVec2(x0 + complexMulVec2(x1, w5_3) + complexMulVec2(x2, w5_1) + complexMulVec2(x3, w5_4) + complexMulVec2(x4, w5_2));
-    output[4] = storeVec2(x0 + complexMulVec2(x1, w5_4) + complexMulVec2(x2, w5_3) + complexMulVec2(x3, w5_2) + complexMulVec2(x4, w5_1));
+    {
+        const t1 = complexMulVec2(x1, w5_1);
+        const t2 = complexMulVec2(x2, w5_2);
+        const t3 = complexMulVec2(x3, w5_3);
+        const t4 = complexMulVec2(x4, w5_4);
+        output[1] = storeVec2(x0 + t1 + t2 + t3 + t4);
+    }
+    {
+        const t1 = complexMulVec2(x1, w5_2);
+        const t2 = complexMulVec2(x2, w5_4);
+        const t3 = complexMulVec2(x3, w5_1);
+        const t4 = complexMulVec2(x4, w5_3);
+        output[2] = storeVec2(x0 + t1 + t2 + t3 + t4);
+    }
+    {
+        const t1 = complexMulVec2(x1, w5_3);
+        const t2 = complexMulVec2(x2, w5_1);
+        const t3 = complexMulVec2(x3, w5_4);
+        const t4 = complexMulVec2(x4, w5_2);
+        output[3] = storeVec2(x0 + t1 + t2 + t3 + t4);
+    }
+    {
+        const t1 = complexMulVec2(x1, w5_4);
+        const t2 = complexMulVec2(x2, w5_3);
+        const t3 = complexMulVec2(x3, w5_2);
+        const t4 = complexMulVec2(x4, w5_1);
+        output[4] = storeVec2(x0 + t1 + t2 + t3 + t4);
+    }
 }
 
 /// DFT of size 5 (in-place version).
@@ -722,10 +746,34 @@ fn dft5InPlaceScalar(data: []Complex, inv: bool) void {
     const x4 = data[4];
 
     data[0] = Complex.add(Complex.add(Complex.add(Complex.add(x0, x1), x2), x3), x4);
-    data[1] = Complex.add(Complex.add(Complex.add(Complex.add(x0, Complex.mul(x1, w5_1)), Complex.mul(x2, w5_2)), Complex.mul(x3, w5_3)), Complex.mul(x4, w5_4));
-    data[2] = Complex.add(Complex.add(Complex.add(Complex.add(x0, Complex.mul(x1, w5_2)), Complex.mul(x2, w5_4)), Complex.mul(x3, w5_1)), Complex.mul(x4, w5_3));
-    data[3] = Complex.add(Complex.add(Complex.add(Complex.add(x0, Complex.mul(x1, w5_3)), Complex.mul(x2, w5_1)), Complex.mul(x3, w5_4)), Complex.mul(x4, w5_2));
-    data[4] = Complex.add(Complex.add(Complex.add(Complex.add(x0, Complex.mul(x1, w5_4)), Complex.mul(x2, w5_3)), Complex.mul(x3, w5_2)), Complex.mul(x4, w5_1));
+    {
+        const t1 = Complex.mul(x1, w5_1);
+        const t2 = Complex.mul(x2, w5_2);
+        const t3 = Complex.mul(x3, w5_3);
+        const t4 = Complex.mul(x4, w5_4);
+        data[1] = Complex.add(Complex.add(Complex.add(Complex.add(x0, t1), t2), t3), t4);
+    }
+    {
+        const t1 = Complex.mul(x1, w5_2);
+        const t2 = Complex.mul(x2, w5_4);
+        const t3 = Complex.mul(x3, w5_1);
+        const t4 = Complex.mul(x4, w5_3);
+        data[2] = Complex.add(Complex.add(Complex.add(Complex.add(x0, t1), t2), t3), t4);
+    }
+    {
+        const t1 = Complex.mul(x1, w5_3);
+        const t2 = Complex.mul(x2, w5_1);
+        const t3 = Complex.mul(x3, w5_4);
+        const t4 = Complex.mul(x4, w5_2);
+        data[3] = Complex.add(Complex.add(Complex.add(Complex.add(x0, t1), t2), t3), t4);
+    }
+    {
+        const t1 = Complex.mul(x1, w5_4);
+        const t2 = Complex.mul(x2, w5_3);
+        const t3 = Complex.mul(x3, w5_2);
+        const t4 = Complex.mul(x4, w5_1);
+        data[4] = Complex.add(Complex.add(Complex.add(Complex.add(x0, t1), t2), t3), t4);
+    }
 }
 
 /// Mixed-radix FFT without normalization (scalar version for benchmarking).

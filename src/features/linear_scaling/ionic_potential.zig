@@ -73,7 +73,12 @@ fn wrapFrac(value: f64) f64 {
     return value - std.math.floor(value + 0.5);
 }
 
-fn minimumImageDelta(cell: math.Mat3, inv_cell: math.Mat3, pbc: neighbor_list.Pbc, delta: math.Vec3) math.Vec3 {
+fn minimumImageDelta(
+    cell: math.Mat3,
+    inv_cell: math.Mat3,
+    pbc: neighbor_list.Pbc,
+    delta: math.Vec3,
+) math.Vec3 {
     var frac = inv_cell.mulVec(delta);
     if (pbc.x) frac.x = wrapFrac(frac.x);
     if (pbc.y) frac.y = wrapFrac(frac.y);
@@ -111,7 +116,11 @@ test "ionic potential constant matches upf values" {
         .{ .x = 0.0, .y = 0.0, .z = 4.0 },
     );
     const dims = [3]usize{ 4, 4, 4 };
-    const grid = local_orbital_potential.PotentialGrid{ .cell = cell, .dims = dims, .values = &[_]f64{} };
+    const grid = local_orbital_potential.PotentialGrid{
+        .cell = cell,
+        .dims = dims,
+        .values = &[_]f64{},
+    };
     const sites = [_]IonSite{.{ .position = .{ .x = 2.0, .y = 2.0, .z = 2.0 }, .upf = &upf }};
     const pbc = neighbor_list.Pbc{ .x = false, .y = false, .z = false };
     const values = try buildIonicPotentialGrid(alloc, grid, sites[0..], pbc);

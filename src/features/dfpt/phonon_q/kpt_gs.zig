@@ -80,7 +80,10 @@ pub fn prepareFullBZKpoints(
     defer alloc.free(full_kpts);
 
     const n_kpts = full_kpts.len;
-    logDfptInfo("dfpt_band: generating full BZ k-mesh: {d}x{d}x{d} = {d} k-points\n", .{ kmesh[0], kmesh[1], kmesh[2], n_kpts });
+    logDfptInfo(
+        "dfpt_band: generating full BZ k-mesh: {d}x{d}x{d} = {d} k-points\n",
+        .{ kmesh[0], kmesh[1], kmesh[2], n_kpts },
+    );
 
     var kgs_data = try alloc.alloc(KPointGsData, n_kpts);
     var built: usize = 0;
@@ -376,9 +379,13 @@ pub fn prepareFullBZKpointsFromIBZ(
             const h0 = gv.h;
             const k0 = gv.k;
             const l0 = gv.l;
-            const h1 = sign_i * (symop.k_rot.m[0][0] * h0 + symop.k_rot.m[0][1] * k0 + symop.k_rot.m[0][2] * l0) + delta_hkl[0];
-            const k1 = sign_i * (symop.k_rot.m[1][0] * h0 + symop.k_rot.m[1][1] * k0 + symop.k_rot.m[1][2] * l0) + delta_hkl[1];
-            const l1 = sign_i * (symop.k_rot.m[2][0] * h0 + symop.k_rot.m[2][1] * k0 + symop.k_rot.m[2][2] * l0) + delta_hkl[2];
+            const kr = symop.k_rot.m;
+            const rot0 = kr[0][0] * h0 + kr[0][1] * k0 + kr[0][2] * l0;
+            const rot1 = kr[1][0] * h0 + kr[1][1] * k0 + kr[1][2] * l0;
+            const rot2 = kr[2][0] * h0 + kr[2][1] * k0 + kr[2][2] * l0;
+            const h1 = sign_i * rot0 + delta_hkl[0];
+            const k1 = sign_i * rot1 + delta_hkl[1];
+            const l1 = sign_i * rot2 + delta_hkl[2];
             const g_cart = math.Vec3.add(
                 math.Vec3.add(
                     math.Vec3.scale(b1, @as(f64, @floatFromInt(h1))),

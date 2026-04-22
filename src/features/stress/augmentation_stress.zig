@@ -93,7 +93,8 @@ pub fn buildAugmentedDensity(
 }
 
 /// PAW augmentation charge stress (off-diagonal only, matching QE's addusstress).
-/// σ^aug_αβ = (1/Ω) Σ_{G≠0} Σ_{a,ij} ρ_ij × dQ_ij(|G|)/d|G| × V_eff(G) × S*_a(G) × (-G_αG_β/|G|) / Ω
+/// σ^aug_αβ = (1/Ω) Σ_{G≠0} Σ_{a,ij} ρ_ij × dQ_ij(|G|)/d|G|
+///             × V_eff(G) × S*_a(G) × (-G_αG_β/|G|) / Ω
 pub fn augmentationStress(
     alloc: std.mem.Allocator,
     grid: Grid,

@@ -58,9 +58,11 @@ pub const HamiltonianOptions = local_orbital_hamiltonian.HamiltonianOptions;
 pub const HamiltonianResult = local_orbital_hamiltonian.HamiltonianResult;
 pub const buildHamiltonianFromCenters = local_orbital_hamiltonian.buildHamiltonianFromCenters;
 pub const HamiltonianGridOptions = local_orbital_hamiltonian.HamiltonianGridOptions;
-pub const buildHamiltonianFromCentersWithGrid = local_orbital_hamiltonian.buildHamiltonianFromCentersWithGrid;
+pub const buildHamiltonianFromCentersWithGrid =
+    local_orbital_hamiltonian.buildHamiltonianFromCentersWithGrid;
 pub const PotentialGrid = local_orbital_potential.PotentialGrid;
-pub const buildLocalPotentialCsrFromCenters = local_orbital_potential.buildLocalPotentialCsrFromCenters;
+pub const buildLocalPotentialCsrFromCenters =
+    local_orbital_potential.buildLocalPotentialCsrFromCenters;
 pub const buildDensityGridFromCenters = density_grid.buildDensityGridFromCenters;
 pub const HartreeXcResult = hartree_xc.HartreeXcResult;
 pub const LocalPotentialResult = hartree_xc.LocalPotentialResult;

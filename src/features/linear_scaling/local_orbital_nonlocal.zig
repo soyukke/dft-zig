@@ -233,27 +233,29 @@ fn computeProjectorOverlap(
         return 0.0;
     }
 
-    // Get orbital angular momentum
+    // Match orbital angular momentum with projector angular momentum.
+    // Selection rules determine which combinations give significant overlap.
     const l_orb = orb.angular.l();
+    const overlap_fn = selectOverlapFn(l_orb, l_proj) orelse return 0.0;
+    return overlap_fn(orb, dist, delta, r_grid, rab_grid, beta_data, pw_projector);
+}
 
-    // Match orbital angular momentum with projector angular momentum
-    // Selection rules determine which combinations give significant overlap
-    if (l_orb == 0 and l_proj == 0) {
-        // s-orbital with s-projector: standard overlap
-        return computeProjectorOverlapSS(orb, dist, delta, r_grid, rab_grid, beta_data, pw_projector);
-    } else if (l_orb == 0 and l_proj == 1) {
-        // s-orbital with p-projector: small overlap (angular mismatch)
-        return computeProjectorOverlapSP(orb, dist, delta, r_grid, rab_grid, beta_data, pw_projector);
-    } else if (l_orb == 1 and l_proj == 0) {
-        // p-orbital with s-projector: small overlap (angular mismatch)
-        return computeProjectorOverlapPS(orb, dist, delta, r_grid, rab_grid, beta_data, pw_projector);
-    } else if (l_orb == 1 and l_proj == 1) {
-        // p-orbital with p-projector: good overlap when directions match
-        return computeProjectorOverlapPP(orb, dist, delta, r_grid, rab_grid, beta_data, pw_projector);
-    } else {
-        // Higher angular momentum not yet supported
-        return 0.0;
-    }
+const ProjectorOverlapFn = *const fn (
+    orb: local_orbital.Orbital,
+    dist: f64,
+    delta: math.Vec3,
+    r_grid: []const f64,
+    rab_grid: []const f64,
+    beta_data: []const f64,
+    pw_projector: f64,
+) f64;
+
+fn selectOverlapFn(l_orb: i32, l_proj: i32) ?ProjectorOverlapFn {
+    if (l_orb == 0 and l_proj == 0) return computeProjectorOverlapSS;
+    if (l_orb == 0 and l_proj == 1) return computeProjectorOverlapSP;
+    if (l_orb == 1 and l_proj == 0) return computeProjectorOverlapPS;
+    if (l_orb == 1 and l_proj == 1) return computeProjectorOverlapPP;
+    return null;
 }
 
 /// s-orbital with s-projector overlap
@@ -329,7 +331,8 @@ fn computeProjectorOverlapSP(
 
     // Angular factor: depends on direction of displacement
     // For s-p overlap, proportional to cos(theta) where theta is angle to p-orbital axis
-    const angular_factor = if (dist < 1e-10) 0.0 else @sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z) / dist * 0.5;
+    const delta_norm = @sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+    const angular_factor = if (dist < 1e-10) 0.0 else delta_norm / dist * 0.5;
 
     if (@abs(pw_sum) < 1e-15) return 0.0;
     return sum * angular_factor;
@@ -455,7 +458,12 @@ fn invertCell(cell: math.Mat3) !math.Mat3 {
     return local_orbital_potential.invertCell(cell);
 }
 
-fn minimumImageDelta(cell: math.Mat3, inv_cell: math.Mat3, pbc: neighbor_list.Pbc, delta: math.Vec3) math.Vec3 {
+fn minimumImageDelta(
+    cell: math.Mat3,
+    inv_cell: math.Mat3,
+    pbc: neighbor_list.Pbc,
+    delta: math.Vec3,
+) math.Vec3 {
     var frac = inv_cell.mulVec(delta);
     if (pbc.x) frac.x -= @round(frac.x);
     if (pbc.y) frac.y -= @round(frac.y);

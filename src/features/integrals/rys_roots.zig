@@ -171,9 +171,13 @@ fn modifiedChebyshev(
         // for k = l..2n-l-1
         const l_idx = l + 1; // actual array index for sigma_l
         for (l..2 * n - l) |k| {
-            sigma[l_idx][k] = sigma[l_idx - 1][k + 1] - alpha[l - 1] * sigma[l_idx - 1][k] - beta[l - 1] * sigma[l_idx - 2][k];
+            const term_a = alpha[l - 1] * sigma[l_idx - 1][k];
+            const term_b = beta[l - 1] * sigma[l_idx - 2][k];
+            sigma[l_idx][k] = sigma[l_idx - 1][k + 1] - term_a - term_b;
         }
-        alpha[l] = sigma[l_idx][l + 1] / sigma[l_idx][l] - sigma[l_idx - 1][l] / sigma[l_idx - 1][l - 1];
+        const alpha_hi = sigma[l_idx][l + 1] / sigma[l_idx][l];
+        const alpha_lo = sigma[l_idx - 1][l] / sigma[l_idx - 1][l - 1];
+        alpha[l] = alpha_hi - alpha_lo;
         beta[l] = sigma[l_idx][l] / sigma[l_idx - 1][l - 1];
     }
 }

@@ -165,11 +165,14 @@ pub const NeighborList = struct {
                                     const nz_i = wrapCellIndex(cz, nz, dz, pbc.z);
                                     const neighbor_cell = nx_i + nx * (ny_i + ny * nz_i);
                                     var j_atom = heads[neighbor_cell];
-                                    while (j_atom >= 0) : (j_atom = next[@as(usize, @intCast(j_atom))]) {
+                                    while (j_atom >= 0) : (j_atom =
+                                        next[@as(usize, @intCast(j_atom))])
+                                    {
                                         const i_idx = @as(usize, @intCast(i_atom));
                                         const j_idx = @as(usize, @intCast(j_atom));
                                         if (j_idx <= i_idx) continue;
-                                        const delta = math.Vec3.sub(positions[j_idx], positions[i_idx]);
+                                        const pos_j = positions[j_idx];
+                                        const delta = math.Vec3.sub(pos_j, positions[i_idx]);
                                         const dvec = minimumImageDelta(cell, inv_cell, pbc, delta);
                                         const dist2 = math.Vec3.dot(dvec, dvec);
                                         if (dist2 <= cutoff * cutoff) {

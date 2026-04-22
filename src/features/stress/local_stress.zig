@@ -10,7 +10,8 @@ const Stress3x3 = stress_util.Stress3x3;
 const Grid = stress_util.Grid;
 
 /// Local pseudopotential stress:
-/// σ_αβ = -(E_loc/Ω) δ_αβ - (1/Ω) Σ_{G≠0} (G_αG_β/|G|) × Σ_I V'_form(|G|) × Re[ρ*(G) S_I(G)]
+/// σ_αβ = -(E_loc/Ω) δ_αβ
+///         - (1/Ω) Σ_{G≠0} (G_αG_β/|G|) × Σ_I V'_form(|G|) × Re[ρ*(G) S_I(G)]
 pub fn localStress(
     grid: Grid,
     rho_g: []const math.Complex,
@@ -55,8 +56,9 @@ pub fn localStress(
             else blk: {
                 // Numerical derivative
                 const dq: f64 = 0.01;
-                const vp = hamiltonian.localFormFactor(&species[atom.species_index], g_norm + dq, local_cfg);
-                const vm = hamiltonian.localFormFactor(&species[atom.species_index], g_norm - dq, local_cfg);
+                const sp = &species[atom.species_index];
+                const vp = hamiltonian.localFormFactor(sp, g_norm + dq, local_cfg);
+                const vm = hamiltonian.localFormFactor(sp, g_norm - dq, local_cfg);
                 break :blk (vp - vm) / (2.0 * dq);
             };
 
@@ -76,7 +78,8 @@ pub fn localStress(
         evloc += vloc_rho_re;
 
         // Local stress contribution from this G:
-        // From V_form(|G|) dependence: dV_form/dε_αβ = V'_form × d|G|/dε_αβ = V'_form × (-G_αG_β/|G|)
+        // From V_form(|G|) dependence:
+        //   dV_form/dε_αβ = V'_form × d|G|/dε_αβ = V'_form × (-G_αG_β/|G|)
         // From 1/Ω (in ρ): -(1-Tr(ε)) gives -δ_αβ × E_loc at the end
         // So: σ_αβ += -(1/Ω) × dvloc_rho_re × G_αG_β/|G|
         const inv_gnorm = 1.0 / g_norm;

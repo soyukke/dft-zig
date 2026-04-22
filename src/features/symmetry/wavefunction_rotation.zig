@@ -53,9 +53,10 @@ pub fn rotateWavefunctionsInPlace(
             const k0 = gv.k;
             const l0 = gv.l;
             // G_rot = k_rot * G (fractional hkl, unnegated)
-            const gr0 = @as(f64, @floatFromInt(rot.m[0][0] * h0 + rot.m[0][1] * k0 + rot.m[0][2] * l0));
-            const gr1 = @as(f64, @floatFromInt(rot.m[1][0] * h0 + rot.m[1][1] * k0 + rot.m[1][2] * l0));
-            const gr2 = @as(f64, @floatFromInt(rot.m[2][0] * h0 + rot.m[2][1] * k0 + rot.m[2][2] * l0));
+            const rm = rot.m;
+            const gr0 = @as(f64, @floatFromInt(rm[0][0] * h0 + rm[0][1] * k0 + rm[0][2] * l0));
+            const gr1 = @as(f64, @floatFromInt(rm[1][0] * h0 + rm[1][1] * k0 + rm[1][2] * l0));
+            const gr2 = @as(f64, @floatFromInt(rm[2][0] * h0 + rm[2][1] * k0 + rm[2][2] * l0));
 
             // (k_rot*G + sk_unwrapped) · τ
             const dot = (gr0 + sk_unwrapped.x) * tau.x +

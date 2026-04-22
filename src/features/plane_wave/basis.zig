@@ -23,7 +23,12 @@ pub const Basis = struct {
 };
 
 /// Generate plane-wave basis for a k-point within cutoff (Ry).
-pub fn generate(alloc: std.mem.Allocator, recip: math.Mat3, ecut_ry: f64, k_cart: math.Vec3) !Basis {
+pub fn generate(
+    alloc: std.mem.Allocator,
+    recip: math.Mat3,
+    ecut_ry: f64,
+    k_cart: math.Vec3,
+) !Basis {
     const b1 = recip.row(0);
     const b2 = recip.row(1);
     const b3 = recip.row(2);
@@ -42,13 +47,23 @@ pub fn generate(alloc: std.mem.Allocator, recip: math.Mat3, ecut_ry: f64, k_cart
             var l: i32 = -max_n;
             while (l <= max_n) : (l += 1) {
                 const g_cart = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(h))), math.Vec3.scale(b2, @as(f64, @floatFromInt(k)))),
+                    math.Vec3.add(
+                        math.Vec3.scale(b1, @as(f64, @floatFromInt(h))),
+                        math.Vec3.scale(b2, @as(f64, @floatFromInt(k))),
+                    ),
                     math.Vec3.scale(b3, @as(f64, @floatFromInt(l))),
                 );
                 const kpg = math.Vec3.add(k_cart, g_cart);
                 const kinetic = math.Vec3.dot(kpg, kpg);
                 if (kinetic <= ecut_ry) {
-                    try list.append(alloc, .{ .h = h, .k = k, .l = l, .cart = g_cart, .kpg = kpg, .kinetic = kinetic });
+                    try list.append(alloc, .{
+                        .h = h,
+                        .k = k,
+                        .l = l,
+                        .cart = g_cart,
+                        .kpg = kpg,
+                        .kinetic = kinetic,
+                    });
                 }
             }
         }

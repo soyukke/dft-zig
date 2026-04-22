@@ -80,7 +80,11 @@ test "density pipeline preserves symmetry" {
     };
     var result = try buildDensityFromCenters(alloc, centers[0..], cell, pbc, opts);
     defer result.deinit(alloc);
-    try std.testing.expectApproxEqAbs(result.density.valueAt(0, 1), result.density.valueAt(1, 0), 1e-12);
+    try std.testing.expectApproxEqAbs(
+        result.density.valueAt(0, 1),
+        result.density.valueAt(1, 0),
+        1e-12,
+    );
     const trace_val = try density_matrix.traceOverlap(result.density, result.overlap);
     try std.testing.expectApproxEqAbs(@as(f64, 4.0), trace_val, 1e-10);
 }

@@ -27,13 +27,25 @@ pub fn asReference(snapshot: ScfSnapshot) reference.ReferenceData {
     return .{ .energy = snapshot.energy_terms.total, .density = snapshot.density };
 }
 
-pub fn compareSnapshots(reference_snapshot: ScfSnapshot, candidate_snapshot: ScfSnapshot) !ScfComparisonReport {
-    const total = try reference.compareReference(asReference(reference_snapshot), asReference(candidate_snapshot));
-    const energy_terms = energy_compare.compareEnergyTerms(reference_snapshot.energy_terms, candidate_snapshot.energy_terms);
+pub fn compareSnapshots(
+    reference_snapshot: ScfSnapshot,
+    candidate_snapshot: ScfSnapshot,
+) !ScfComparisonReport {
+    const total = try reference.compareReference(
+        asReference(reference_snapshot),
+        asReference(candidate_snapshot),
+    );
+    const energy_terms = energy_compare.compareEnergyTerms(
+        reference_snapshot.energy_terms,
+        candidate_snapshot.energy_terms,
+    );
     return .{ .total = total, .energy_terms = energy_terms };
 }
 
-pub fn compareScfResults(reference_result: *const scf.ScfResult, candidate_result: *const scf.ScfResult) !ScfComparisonReport {
+pub fn compareScfResults(
+    reference_result: *const scf.ScfResult,
+    candidate_result: *const scf.ScfResult,
+) !ScfComparisonReport {
     const ref_snapshot = snapshotFromScfResult(reference_result);
     const cand_snapshot = snapshotFromScfResult(candidate_result);
     return compareSnapshots(ref_snapshot, cand_snapshot);
@@ -147,5 +159,8 @@ test "compareSnapshots fails on mismatched density" {
     };
     const ref_snapshot = ScfSnapshot{ .energy_terms = terms, .density = ref_density[0..] };
     const cand_snapshot = ScfSnapshot{ .energy_terms = terms, .density = cand_density[0..] };
-    try std.testing.expectError(error.MismatchedLength, compareSnapshots(ref_snapshot, cand_snapshot));
+    try std.testing.expectError(
+        error.MismatchedLength,
+        compareSnapshots(ref_snapshot, cand_snapshot),
+    );
 }

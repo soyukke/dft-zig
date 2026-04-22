@@ -67,7 +67,12 @@ pub const BandVectorCache = struct {
         self.* = .{};
     }
 
-    pub fn store(self: *BandVectorCache, n: usize, nbands: usize, values: []const math.Complex) !void {
+    pub fn store(
+        self: *BandVectorCache,
+        n: usize,
+        nbands: usize,
+        values: []const math.Complex,
+    ) !void {
         const total = n * nbands;
         if (values.len < total) return error.InvalidMatrixSize;
         if (self.vectors.len != total) {
@@ -99,7 +104,15 @@ pub fn initBandIterativeContext(
     {
         return error.InvalidGrid;
     }
-    var ionic = try potential_mod.buildIonicPotentialGrid(alloc, grid, species, atoms, local_cfg, null, null);
+    var ionic = try potential_mod.buildIonicPotentialGrid(
+        alloc,
+        grid,
+        species,
+        atoms,
+        local_cfg,
+        null,
+        null,
+    );
     defer ionic.deinit(alloc);
     const local_r = try potential_mod.buildLocalPotentialReal(alloc, grid, ionic, extra);
 
@@ -146,10 +159,22 @@ pub fn bandEigenvaluesIterative(
     reuse_vectors: bool,
     cache: ?*BandVectorCache,
 ) ![]f64 {
-    return bandEigenvaluesIterativeExt(alloc, io, cfg, ctx, k_cart, species, atoms, recip, nbands, cache, .{
-        .reuse_vectors = reuse_vectors,
-        .pool = null,
-    });
+    return bandEigenvaluesIterativeExt(
+        alloc,
+        io,
+        cfg,
+        ctx,
+        k_cart,
+        species,
+        atoms,
+        recip,
+        nbands,
+        cache,
+        .{
+            .reuse_vectors = reuse_vectors,
+            .pool = null,
+        },
+    );
 }
 
 /// Extended band eigenvalue calculation with optional thread pool for parallel LOBPCG
@@ -201,15 +226,28 @@ pub fn bandEigenvaluesIterativeExt(
     const num_workspaces: usize = if (opts.pool != null) @min(16, nbands_use + 4) else 1;
 
     // Build NonlocalContext:
-    // - For PAW: always build ourselves with buildNonlocalContextPaw (sets up D_ij buffer + overlap)
+    // - For PAW: always build ourselves with buildNonlocalContextPaw
+    //   (sets up D_ij buffer + overlap)
     // - For NC with radial tables: use buildNonlocalContextWithTables (fast path)
     // - Otherwise: let ApplyContext build it internally
     var owned_nonlocal_ctx: ?apply.NonlocalContext = null;
-    const build_nonlocal_ourselves = has_paw or (opts.radial_tables != null and nonlocal_enabled and num_workspaces <= 1);
+    const build_nonlocal_ourselves = has_paw or
+        (opts.radial_tables != null and nonlocal_enabled and num_workspaces <= 1);
     if (has_paw) {
-        owned_nonlocal_ctx = try apply.buildNonlocalContextPaw(alloc, species, basis.gvecs, opts.radial_tables, opts.paw_tabs.?);
+        owned_nonlocal_ctx = try apply.buildNonlocalContextPaw(
+            alloc,
+            species,
+            basis.gvecs,
+            opts.radial_tables,
+            opts.paw_tabs.?,
+        );
     } else if (opts.radial_tables != null and nonlocal_enabled and num_workspaces <= 1) {
-        owned_nonlocal_ctx = try apply.buildNonlocalContextWithTables(alloc, species, basis.gvecs, opts.radial_tables.?);
+        owned_nonlocal_ctx = try apply.buildNonlocalContextWithTables(
+            alloc,
+            species,
+            basis.gvecs,
+            opts.radial_tables.?,
+        );
     }
     errdefer if (owned_nonlocal_ctx) |*nc| nc.deinit(alloc);
 
@@ -248,7 +286,17 @@ pub fn bandEigenvaluesIterativeExt(
         if (ctx.fft_index_map) |idx_map| {
             try map.buildFftIndices(alloc, idx_map);
         }
-        const fft_plan = if (opts.shared_fft_plan) |plan| plan else try fft.Fft3dPlan.initWithBackend(alloc, io, ctx.grid.nx, ctx.grid.ny, ctx.grid.nz, cfg.scf.fft_backend);
+        const fft_plan = if (opts.shared_fft_plan) |plan|
+            plan
+        else
+            try fft.Fft3dPlan.initWithBackend(
+                alloc,
+                io,
+                ctx.grid.nx,
+                ctx.grid.ny,
+                ctx.grid.nz,
+                cfg.scf.fft_backend,
+            );
         const owns_plan = opts.shared_fft_plan == null;
         var actx = try ApplyContext.initWithCache(
             alloc,
@@ -332,13 +380,27 @@ pub fn bandEigenvaluesIterativeExt(
     var eig = if (cfg.band.solver == .cg)
         try iterative.hermitianEigenDecompCG(alloc, op, diag, nbands_use, lobpcg_opts)
     else if (opts.pool) |pool|
-        try iterative.hermitianEigenDecompIterativeExt(alloc, cfg.linalg_backend, op, diag, nbands_use, .{
-            .base = lobpcg_opts,
-            .lobpcg_backend = .parallel,
-            .pool = pool,
-        })
+        try iterative.hermitianEigenDecompIterativeExt(
+            alloc,
+            cfg.linalg_backend,
+            op,
+            diag,
+            nbands_use,
+            .{
+                .base = lobpcg_opts,
+                .lobpcg_backend = .parallel,
+                .pool = pool,
+            },
+        )
     else
-        try iterative.hermitianEigenDecompIterative(alloc, cfg.linalg_backend, op, diag, nbands_use, lobpcg_opts);
+        try iterative.hermitianEigenDecompIterative(
+            alloc,
+            cfg.linalg_backend,
+            op,
+            diag,
+            nbands_use,
+            lobpcg_opts,
+        );
     defer eig.deinit(alloc);
 
     if (opts.reuse_vectors) {

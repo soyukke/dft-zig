@@ -120,7 +120,14 @@ pub fn computeDensitySmearing(
 
     if (thread_count <= 1) {
         // Pre-create shared FFT plan for single-threaded mode
-        var shared_fft_plan = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
+        var shared_fft_plan = try fft.Fft3dPlan.initWithBackend(
+            alloc,
+            io,
+            grid.nx,
+            grid.ny,
+            grid.nz,
+            cfg.scf.fft_backend,
+        );
         defer shared_fft_plan.deinit(alloc);
 
         // Sequential path for single thread
@@ -182,7 +189,14 @@ pub fn computeDensitySmearing(
             alloc.free(fft_plans);
         }
         for (fft_plans) |*plan| {
-            plan.* = try fft.Fft3dPlan.initWithBackend(alloc, io, grid.nx, grid.ny, grid.nz, cfg.scf.fft_backend);
+            plan.* = try fft.Fft3dPlan.initWithBackend(
+                alloc,
+                io,
+                grid.nx,
+                grid.ny,
+                grid.nz,
+                cfg.scf.fft_backend,
+            );
         }
 
         var next_index = std.atomic.Value(usize).init(0);
@@ -314,9 +328,22 @@ pub fn computeDensitySmearing(
             var basis = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, gamma_kp.k_cart);
             defer basis.deinit(alloc);
             const inv_volume = 1.0 / volume;
-            const h = try hamiltonian.buildHamiltonian(alloc, basis.gvecs, species, atoms, inv_volume, local_cfg, potential);
+            const h = try hamiltonian.buildHamiltonian(
+                alloc,
+                basis.gvecs,
+                species,
+                atoms,
+                inv_volume,
+                local_cfg,
+                potential,
+            );
             defer alloc.free(h);
-            var eig = try linalg.hermitianEigenDecomp(alloc, cfg.linalg_backend, basis.gvecs.len, h);
+            var eig = try linalg.hermitianEigenDecomp(
+                alloc,
+                cfg.linalg_backend,
+                basis.gvecs.len,
+                h,
+            );
             defer eig.deinit(alloc);
             const count = @min(cfg.band.nbands, eig.values.len);
             try logEigenvalues(io, "scf", "gamma_dense", eig.values, count);

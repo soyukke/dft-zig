@@ -28,7 +28,8 @@ fn buildSto3gShells(
     for (atomic_numbers, 0..) |z, i| {
         const center = positions[i];
         const n_shells = sto3g.numShellsForAtom(@intCast(z)) orelse return error.UnsupportedElement;
-        const atom_shells = sto3g.buildAtomShells(@intCast(z), center) orelse return error.UnsupportedElement;
+        const atom_shells = sto3g.buildAtomShells(@intCast(z), center) orelse
+            return error.UnsupportedElement;
         for (0..n_shells) |s| {
             try shells_list.append(alloc, atom_shells[s]);
         }
@@ -96,12 +97,20 @@ test "KS-DFT H2O STO-3G B3LYP" {
         .{ .center = nuc_positions[2], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    var result = try kohn_sham.runKohnShamScf(alloc, std.testing.io, &shells, &nuc_positions, &nuc_charges, 10, .{
-        .xc_functional = .b3lyp,
-        .n_radial = 99,
-        .n_angular = 590,
-        .prune = false,
-    });
+    var result = try kohn_sham.runKohnShamScf(
+        alloc,
+        std.testing.io,
+        &shells,
+        &nuc_positions,
+        &nuc_charges,
+        10,
+        .{
+            .xc_functional = .b3lyp,
+            .n_radial = 99,
+            .n_angular = 590,
+            .prune = false,
+        },
+    );
     defer result.deinit(alloc);
 
     try testing.expect(result.converged);
@@ -581,11 +590,10 @@ test "KS-DFT B3LYP geometry optimization H2 STO-3G" {
     );
     defer result.deinit(alloc);
 
-    const r_hh = @sqrt(
-        (result.positions[1].x - result.positions[0].x) * (result.positions[1].x - result.positions[0].x) +
-            (result.positions[1].y - result.positions[0].y) * (result.positions[1].y - result.positions[0].y) +
-            (result.positions[1].z - result.positions[0].z) * (result.positions[1].z - result.positions[0].z),
-    );
+    const dx_hh = result.positions[1].x - result.positions[0].x;
+    const dy_hh = result.positions[1].y - result.positions[0].y;
+    const dz_hh = result.positions[1].z - result.positions[0].z;
+    const r_hh = @sqrt(dx_hh * dx_hh + dy_hh * dy_hh + dz_hh * dz_hh);
 
     try testing.expect(result.converged);
     try testing.expectApproxEqAbs(1.3764, r_hh, 0.05);

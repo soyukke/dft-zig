@@ -161,7 +161,8 @@ pub fn parseXyzString(
 
     // Line 1: atom count
     const count_line = skipEmpty(&lines_iter) orelse return ParseError.InvalidFormat;
-    const n_atoms = std.fmt.parseInt(usize, std.mem.trim(u8, count_line, &std.ascii.whitespace), 10) catch
+    const trimmed_count = std.mem.trim(u8, count_line, &std.ascii.whitespace);
+    const n_atoms = std.fmt.parseInt(usize, trimmed_count, 10) catch
         return ParseError.InvalidAtomCount;
 
     if (n_atoms == 0) return ParseError.InvalidAtomCount;

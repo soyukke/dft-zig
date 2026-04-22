@@ -236,14 +236,18 @@ pub fn analyzeCs(
         const g_int = [3]i32{ g.h, g.k, g.l };
 
         // Apply mirror: G' = mirror.k_rot * G
+        const r = mirror.k_rot.m;
         const g_prime_int = [3]i32{
-            mirror.k_rot.m[0][0] * g_int[0] + mirror.k_rot.m[0][1] * g_int[1] + mirror.k_rot.m[0][2] * g_int[2],
-            mirror.k_rot.m[1][0] * g_int[0] + mirror.k_rot.m[1][1] * g_int[1] + mirror.k_rot.m[1][2] * g_int[2],
-            mirror.k_rot.m[2][0] * g_int[0] + mirror.k_rot.m[2][1] * g_int[1] + mirror.k_rot.m[2][2] * g_int[2],
+            r[0][0] * g_int[0] + r[0][1] * g_int[1] + r[0][2] * g_int[2],
+            r[1][0] * g_int[0] + r[1][1] * g_int[1] + r[1][2] * g_int[2],
+            r[2][0] * g_int[0] + r[2][1] * g_int[1] + r[2][2] * g_int[2],
         };
 
         // Check if G is invariant (G' = G)
-        if (g_prime_int[0] == g_int[0] and g_prime_int[1] == g_int[1] and g_prime_int[2] == g_int[2]) {
+        const is_inv = g_prime_int[0] == g_int[0] and
+            g_prime_int[1] == g_int[1] and
+            g_prime_int[2] == g_int[2];
+        if (is_inv) {
             // Invariant under mirror -> belongs only to A'
             try invariant_list.append(alloc, i);
             processed[i] = true;

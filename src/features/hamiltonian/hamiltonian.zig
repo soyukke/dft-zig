@@ -125,7 +125,8 @@ pub fn buildAtomData(
     const data = try alloc.alloc(AtomData, atoms.len);
     errdefer alloc.free(data);
     for (atoms, 0..) |atom, i| {
-        const idx = findSpeciesIndex(species, atom.symbol) orelse return error.MissingPseudopotential;
+        const idx = findSpeciesIndex(species, atom.symbol) orelse
+            return error.MissingPseudopotential;
         data[i] = .{
             .position = math.Vec3.scale(atom.position, unit_scale_bohr),
             .species_index = idx,
@@ -162,7 +163,16 @@ pub fn buildHamiltonian(
         var i: usize = 0;
         while (i < n) : (i += 1) {
             const q = math.Vec3.sub(gvecs[i].cart, gvecs[j].cart);
-            var value = try localPotential(q, gvecs[i], gvecs[j], species, atoms, inv_volume, local_cfg, extra);
+            var value = try localPotential(
+                q,
+                gvecs[i],
+                gvecs[j],
+                species,
+                atoms,
+                inv_volume,
+                local_cfg,
+                extra,
+            );
             if (i == j) {
                 value.r += gvecs[i].kinetic;
             }

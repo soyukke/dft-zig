@@ -84,11 +84,24 @@ pub const ParallelPlan3d24 = struct {
     state: *ThreadPoolState,
     allocator: std.mem.Allocator,
 
-    pub fn init(allocator: std.mem.Allocator, io: std.Io, nx: usize, ny: usize, nz: usize) !ParallelPlan3d24 {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        nx: usize,
+        ny: usize,
+        nz: usize,
+    ) !ParallelPlan3d24 {
         return initWithThreads(allocator, io, nx, ny, nz, 0);
     }
 
-    pub fn initWithThreads(allocator: std.mem.Allocator, io: std.Io, nx: usize, ny: usize, nz: usize, num_threads_hint: usize) !ParallelPlan3d24 {
+    pub fn initWithThreads(
+        allocator: std.mem.Allocator,
+        io: std.Io,
+        nx: usize,
+        ny: usize,
+        nz: usize,
+        num_threads_hint: usize,
+    ) !ParallelPlan3d24 {
         if (nx == 0 or ny == 0 or nz == 0) return error.InvalidSize;
         // Only support 24×24×24 grids
         if (nx != 24 or ny != 24 or nz != 24) return error.UnsupportedSize;
@@ -192,7 +205,13 @@ pub const ParallelPlan3d24 = struct {
         self.dispatchTask(.fft_z, data, inv, nx * ny);
     }
 
-    fn dispatchTask(self: *ParallelPlan3d24, task: TaskType, data: []Complex, inv: bool, total_work: usize) void {
+    fn dispatchTask(
+        self: *ParallelPlan3d24,
+        task: TaskType,
+        data: []Complex,
+        inv: bool,
+        total_work: usize,
+    ) void {
         self.state.mutex.lockUncancelable(self.state.io);
 
         self.state.task_generation += 1;
@@ -272,7 +291,13 @@ pub const ParallelPlan3d24 = struct {
         fft24_comptime.fft24(data[offset .. offset + nx], inv);
     }
 
-    fn processYAxis(state: *ThreadPoolState, ws: *ThreadWorkspace, data: []Complex, inv: bool, item: usize) void {
+    fn processYAxis(
+        state: *ThreadPoolState,
+        ws: *ThreadWorkspace,
+        data: []Complex,
+        inv: bool,
+        item: usize,
+    ) void {
         const nx = state.nx;
         const ny = state.ny;
         const x = item % nx;
@@ -292,7 +317,13 @@ pub const ParallelPlan3d24 = struct {
         }
     }
 
-    fn processZAxis(state: *ThreadPoolState, ws: *ThreadWorkspace, data: []Complex, inv: bool, item: usize) void {
+    fn processZAxis(
+        state: *ThreadPoolState,
+        ws: *ThreadWorkspace,
+        data: []Complex,
+        inv: bool,
+        item: usize,
+    ) void {
         const nx = state.nx;
         const ny = state.ny;
         const nz = state.nz;

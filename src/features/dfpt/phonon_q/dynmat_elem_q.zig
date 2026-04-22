@@ -128,10 +128,12 @@ pub fn computeNlccCrossDynmatQ(
         @memcpy(rho1_core_i_copy, rho1_core_gs[i]);
         const rho1_core_i_r = try alloc.alloc(math.Complex, total);
         defer alloc.free(rho1_core_i_r);
-        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rho1_core_i_copy, rho1_core_i_r, null);
+        const ri_in = rho1_core_i_copy;
+        const ri_out = rho1_core_i_r;
+        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, ri_in, ri_out, null);
 
         // Build V_xc^(1)[ρ^(1)_core,I] using GGA-aware kernel
-        const vxc1_core_i = try perturbation.buildXcPerturbationFullComplex(alloc, gs, rho1_core_i_r);
+        const vxc1_core_i = try perturbation.buildXcPerturbationFullComplex(alloc, gs, ri_out);
         defer alloc.free(vxc1_core_i);
 
         for (0..dim) |j| {
@@ -150,7 +152,9 @@ pub fn computeNlccCrossDynmatQ(
             @memcpy(rho1_core_j_copy, rho1_core_gs[j]);
             const rho1_core_j_r = try alloc.alloc(math.Complex, total);
             defer alloc.free(rho1_core_j_r);
-            try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rho1_core_j_copy, rho1_core_j_r, null);
+            const rj_in = rho1_core_j_copy;
+            const rj_out = rho1_core_j_r;
+            try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rj_in, rj_out, null);
 
             // D(I,J) = ∫ conj(V_xc^(1)[ρ^(1)_core,I]) × ρ^(1)_total,J dr
             var sum = math.complex.init(0.0, 0.0);

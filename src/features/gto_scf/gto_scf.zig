@@ -279,7 +279,10 @@ pub fn runGeneralRhfScf(
     defer alloc.free(f_mat);
 
     // DIIS accelerator (Fock-matrix extrapolation)
-    var diis: ?GtoDiis = if (params.use_diis) GtoDiis.init(alloc, n, params.diis_max_vectors) else null;
+    var diis: ?GtoDiis = if (params.use_diis)
+        GtoDiis.init(alloc, n, params.diis_max_vectors)
+    else
+        null;
     defer if (diis) |*d| d.deinit();
 
     // Buffer for DIIS-extrapolated Fock matrix
@@ -289,7 +292,15 @@ pub fn runGeneralRhfScf(
     while (iter < params.max_iter) : (iter += 1) {
         // Build Fock matrix
         if (params.use_direct_scf) {
-            fock.buildFockDirect(n, h_core, p_mat, shells, &schwarz_table.?, params.schwarz_threshold, f_mat);
+            fock.buildFockDirect(
+                n,
+                h_core,
+                p_mat,
+                shells,
+                &schwarz_table.?,
+                params.schwarz_threshold,
+                f_mat,
+            );
         } else {
             fock.updateFockMatrixGeneral(n, h_core, p_mat, eri_table.?, f_mat);
         }
@@ -329,7 +340,15 @@ pub fn runGeneralRhfScf(
 
     if (!converged) {
         if (params.use_direct_scf) {
-            fock.buildFockDirect(n, h_core, p_mat, shells, &schwarz_table.?, params.schwarz_threshold, f_mat);
+            fock.buildFockDirect(
+                n,
+                h_core,
+                p_mat,
+                shells,
+                &schwarz_table.?,
+                params.schwarz_threshold,
+                f_mat,
+            );
         } else {
             fock.updateFockMatrixGeneral(n, h_core, p_mat, eri_table.?, f_mat);
         }
@@ -430,7 +449,10 @@ test "RHF H2 STO-3G at R=1.4 bohr" {
     std.debug.print("  Electronic energy: {d:.10} Ha\n", .{result.electronic_energy});
     std.debug.print("  Nuclear repulsion: {d:.10} Ha\n", .{result.nuclear_repulsion});
     std.debug.print("  Iterations:        {d}\n", .{result.iterations});
-    std.debug.print("  Orbital energies:  {d:.6}, {d:.6}\n", .{ result.orbital_energies[0], result.orbital_energies[1] });
+    std.debug.print(
+        "  Orbital energies:  {d:.6}, {d:.6}\n",
+        .{ result.orbital_energies[0], result.orbital_energies[1] },
+    );
 }
 
 test "General RHF H2 STO-3G matches legacy" {
@@ -686,8 +708,14 @@ test "DIIS accelerates H2O convergence" {
     defer result_diis.deinit(alloc);
 
     std.debug.print("\nDIIS comparison for H2O STO-3G:\n", .{});
-    std.debug.print("  Without DIIS: {d} iterations, E = {d:.10} Ha\n", .{ result_no_diis.iterations, result_no_diis.total_energy });
-    std.debug.print("  With DIIS:    {d} iterations, E = {d:.10} Ha\n", .{ result_diis.iterations, result_diis.total_energy });
+    std.debug.print(
+        "  Without DIIS: {d} iterations, E = {d:.10} Ha\n",
+        .{ result_no_diis.iterations, result_no_diis.total_energy },
+    );
+    std.debug.print(
+        "  With DIIS:    {d} iterations, E = {d:.10} Ha\n",
+        .{ result_diis.iterations, result_diis.total_energy },
+    );
 
     // Both should converge to the same energy
     try testing.expect(result_no_diis.converged);

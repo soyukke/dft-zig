@@ -187,18 +187,15 @@ fn buildSymmetryOps(
                                             .{ m3, m4, m5 },
                                             .{ m6, m7, m8 },
                                         } };
-                                        const det_val = rot.det();
-                                        if (det_val != 1 and det_val != -1) continue;
-                                        if (!latticeSymmetric(rot, metric, tol)) continue;
-                                        const translations = try findTranslations(alloc, rot, atom_fracs, matched, tol);
-                                        defer alloc.free(translations);
-                                        if (translations.len == 0) continue;
-                                        const inv = rot.inverse() orelse continue;
-                                        const k_rot = inv.transpose();
-                                        for (translations) |t| {
-                                            if (hasSymOp(ops_list.items, rot, t, tol)) continue;
-                                            try ops_list.append(alloc, .{ .rot = rot, .k_rot = k_rot, .trans = t });
-                                        }
+                                        try tryAppendRotation(
+                                            alloc,
+                                            &ops_list,
+                                            rot,
+                                            metric,
+                                            atom_fracs,
+                                            matched,
+                                            tol,
+                                        );
                                     }
                                 }
                             }
@@ -210,6 +207,29 @@ fn buildSymmetryOps(
     }
 
     return try ops_list.toOwnedSlice(alloc);
+}
+
+fn tryAppendRotation(
+    alloc: std.mem.Allocator,
+    ops_list: *std.ArrayList(SymOp),
+    rot: Mat3i,
+    metric: [3][3]f64,
+    atom_fracs: []const AtomFrac,
+    matched: []bool,
+    tol: f64,
+) !void {
+    const det_val = rot.det();
+    if (det_val != 1 and det_val != -1) return;
+    if (!latticeSymmetric(rot, metric, tol)) return;
+    const translations = try findTranslations(alloc, rot, atom_fracs, matched, tol);
+    defer alloc.free(translations);
+    if (translations.len == 0) return;
+    const inv = rot.inverse() orelse return;
+    const k_rot = inv.transpose();
+    for (translations) |t| {
+        if (hasSymOp(ops_list.items, rot, t, tol)) continue;
+        try ops_list.append(alloc, .{ .rot = rot, .k_rot = k_rot, .trans = t });
+    }
 }
 
 fn latticeMetric(cell: math.Mat3) [3][3]f64 {
@@ -233,7 +253,9 @@ fn latticeSymmetric(rot: Mat3i, metric: [3][3]f64, tol: f64) bool {
             while (a < 3) : (a += 1) {
                 var b: usize = 0;
                 while (b < 3) : (b += 1) {
-                    sum += @as(f64, @floatFromInt(rot.m[a][i])) * metric[a][b] * @as(f64, @floatFromInt(rot.m[b][j]));
+                    const rai = @as(f64, @floatFromInt(rot.m[a][i]));
+                    const rbj = @as(f64, @floatFromInt(rot.m[b][j]));
+                    sum += rai * metric[a][b] * rbj;
                 }
             }
             if (@abs(sum - metric[i][j]) > tol) return false;
@@ -242,7 +264,11 @@ fn latticeSymmetric(rot: Mat3i, metric: [3][3]f64, tol: f64) bool {
     return true;
 }
 
-fn buildAtomFracs(alloc: std.mem.Allocator, recip: math.Mat3, atoms: []const hamiltonian.AtomData) ![]AtomFrac {
+fn buildAtomFracs(
+    alloc: std.mem.Allocator,
+    recip: math.Mat3,
+    atoms: []const hamiltonian.AtomData,
+) ![]AtomFrac {
     const two_pi = 2.0 * std.math.pi;
     const b1 = recip.row(0);
     const b2 = recip.row(1);
@@ -265,7 +291,7 @@ fn buildAtomFracs(alloc: std.mem.Allocator, recip: math.Mat3, atoms: []const ham
 fn findTranslations(
     alloc: std.mem.Allocator,
     rot: Mat3i,
-    atoms: []AtomFrac,
+    atoms: []const AtomFrac,
     matched: []bool,
     tol: f64,
 ) ![]math.Vec3 {
@@ -286,7 +312,13 @@ fn findTranslations(
     return try list.toOwnedSlice(alloc);
 }
 
-fn translationValid(rot: Mat3i, t: math.Vec3, atoms: []AtomFrac, matched: []bool, tol: f64) bool {
+fn translationValid(
+    rot: Mat3i,
+    t: math.Vec3,
+    atoms: []const AtomFrac,
+    matched: []bool,
+    tol: f64,
+) bool {
     @memset(matched, false);
     var i: usize = 0;
     while (i < atoms.len) : (i += 1) {
@@ -534,7 +566,8 @@ pub fn blockDiagonalEigenvalues(
                 // ⟨inv|H|+⟩ = (⟨inv|H|G⟩ + ⟨inv|H|G'⟩) / √2
                 const h_i = full_h[idx_inv + pair.i * n];
                 const h_j = full_h[idx_inv + pair.j * n];
-                const val = math.complex.scale(math.complex.add(h_i, h_j), 1.0 / std.math.sqrt(2.0));
+                const h_sum = math.complex.add(h_i, h_j);
+                const val = math.complex.scale(h_sum, 1.0 / std.math.sqrt(2.0));
                 h_even[row + col * n_even] = val;
                 h_even[col + row * n_even] = math.complex.conj(val);
             }
@@ -551,7 +584,9 @@ pub fn blockDiagonalEigenvalues(
                 const h_jj = full_h[pair_a.j + pair_b.j * n];
                 const h_ij = full_h[pair_a.i + pair_b.j * n];
                 const h_ji = full_h[pair_a.j + pair_b.i * n];
-                const sum = math.complex.add(math.complex.add(h_ii, h_jj), math.complex.add(h_ij, h_ji));
+                const diag_sum = math.complex.add(h_ii, h_jj);
+                const off_sum = math.complex.add(h_ij, h_ji);
+                const sum = math.complex.add(diag_sum, off_sum);
                 h_even[row + col * n_even] = math.complex.scale(sum, 0.5);
             }
         }
@@ -575,7 +610,9 @@ pub fn blockDiagonalEigenvalues(
                 const h_jj = full_h[pair_a.j + pair_b.j * n];
                 const h_ij = full_h[pair_a.i + pair_b.j * n];
                 const h_ji = full_h[pair_a.j + pair_b.i * n];
-                const sum = math.complex.sub(math.complex.add(h_ii, h_jj), math.complex.add(h_ij, h_ji));
+                const diag_sum = math.complex.add(h_ii, h_jj);
+                const off_sum = math.complex.add(h_ij, h_ji);
+                const sum = math.complex.sub(diag_sum, off_sum);
                 h_odd[a + b * n_odd] = math.complex.scale(sum, 0.5);
             }
         }

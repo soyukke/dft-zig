@@ -26,7 +26,8 @@ const bluestein = @import("bluestein.zig");
 pub const mixed_radix = @import("mixed_radix.zig"); // Mixed-radix FFT
 pub const vdsp_fft = @import("vdsp_fft.zig"); // vDSP FFT for macOS Accelerate
 pub const parallel_fft = @import("parallel_fft.zig"); // Parallel 3D FFT with threading
-pub const parallel_fft_transpose = @import("parallel_fft_transpose.zig"); // Transpose-based parallel FFT
+// Transpose-based parallel FFT
+pub const parallel_fft_transpose = @import("parallel_fft_transpose.zig");
 pub const fftw_fft = @import("fftw_fft.zig"); // FFTW3 FFT (requires linking)
 pub const metal_fft = @import("metal_fft.zig"); // Metal GPU FFT (macOS only)
 pub const fft24_comptime = @import("fft24_comptime.zig"); // Comptime-optimized FFT-24

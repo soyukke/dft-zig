@@ -41,9 +41,10 @@ pub fn generate(alloc: std.mem.Allocator, band: config.BandConfig, recip: math.M
         const end = band.path[i + 1];
         const delta = math.Vec3.sub(end.k, start.k);
 
+        const segs_f = @as(f64, @floatFromInt(band.points_per_segment));
         var step: usize = 0;
         while (step < band.points_per_segment) : (step += 1) {
-            const t = @as(f64, @floatFromInt(step)) / @as(f64, @floatFromInt(band.points_per_segment));
+            const t = @as(f64, @floatFromInt(step)) / segs_f;
             const k_frac = math.Vec3.add(start.k, math.Vec3.scale(delta, t));
             const k_cart = math.fracToCart(k_frac, recip);
             if (prev_cart) |prev| {
