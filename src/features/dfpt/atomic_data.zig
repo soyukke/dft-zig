@@ -84,7 +84,12 @@ pub fn atomicMass(symbol: []const u8) f64 {
     }
     // Fallback: return a reasonable default and log warning
     if (!builtin.is_test) {
-        runtime_logging.debugPrint(.warn, .warn, "dfpt: WARNING: unknown element '{s}', using mass=1.0 AMU\n", .{symbol});
+        runtime_logging.debugPrint(
+            .warn,
+            .warn,
+            "dfpt: WARNING: unknown element '{s}', using mass=1.0 AMU\n",
+            .{symbol},
+        );
     }
     return 1.0;
 }

@@ -215,7 +215,11 @@ pub fn buildMolecularGrid(
     // For each atom, generate atom-centered grid
     for (0..n_atoms) |iatom| {
         // Generate radial grid
-        const rad_grid = try radial.defaultRadialGrid(allocator, atoms[iatom].z_number, config.n_radial);
+        const rad_grid = try radial.defaultRadialGrid(
+            allocator,
+            atoms[iatom].z_number,
+            config.n_radial,
+        );
         defer allocator.free(rad_grid);
 
         // For each radial shell

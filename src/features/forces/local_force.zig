@@ -180,7 +180,16 @@ test "local force finite difference" {
     rho_g[idx.of(grid, 0, -1, 0)] = math.complex.conj(rho_y);
 
     const local_cfg = local_potential.LocalPotentialConfig.init(.short_range, 0.0);
-    const forces = try localPseudoForces(alloc, grid, rho_g, species, atoms[0..], volume, local_cfg, null);
+    const forces = try localPseudoForces(
+        alloc,
+        grid,
+        rho_g,
+        species,
+        atoms[0..],
+        volume,
+        local_cfg,
+        null,
+    );
     defer alloc.free(forces);
 
     const energyForPos = struct {

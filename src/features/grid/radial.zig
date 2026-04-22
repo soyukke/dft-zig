@@ -138,7 +138,11 @@ pub fn muraKnowles(allocator: std.mem.Allocator, n: usize, alpha_scale: f64) ![]
 /// Generates the default radial grid for an atom.
 /// Uses Treutler-Ahlrichs with the Bragg-Slater radius scaling.
 /// n_radial is the number of radial points (typically 75 for light atoms).
-pub fn defaultRadialGrid(allocator: std.mem.Allocator, atomic_number: usize, n_radial: usize) ![]RadialPoint {
+pub fn defaultRadialGrid(
+    allocator: std.mem.Allocator,
+    atomic_number: usize,
+    n_radial: usize,
+) ![]RadialPoint {
     const radius = braggSlaterRadius(atomic_number);
     return treutlerAhlrichs(allocator, n_radial, radius);
 }

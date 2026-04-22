@@ -247,7 +247,8 @@ fn computeKij(
         const centrifugal_ae = if (r[k] > 1e-10) ll1 * ae_i[k] * ae_j[k] / (r[k] * r[k]) else 0.0;
         const centrifugal_ps = if (r[k] > 1e-10) ll1 * ps_i[k] * ps_j[k] / (r[k] * r[k]) else 0.0;
 
-        sum += ((deriv_ae + centrifugal_ae) - (deriv_ps + centrifugal_ps)) * rab[k] * ctrapWeight(k, n);
+        const delta = (deriv_ae + centrifugal_ae) - (deriv_ps + centrifugal_ps);
+        sum += delta * rab[k] * ctrapWeight(k, n);
     }
 
     return sum;

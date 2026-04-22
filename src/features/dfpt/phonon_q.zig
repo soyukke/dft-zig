@@ -57,7 +57,8 @@ pub const solvePerturbationQMultiK = solver_multik_mod.solvePerturbationQMultiK;
 
 // Dynamical matrix construction
 pub const buildQDynmat = dynmat_build_mod.buildQDynmat;
-pub const computeNonlocalResponseDynmatQMultiK = dynmat_build_mod.computeNonlocalResponseDynmatQMultiK;
+pub const computeNonlocalResponseDynmatQMultiK =
+    dynmat_build_mod.computeNonlocalResponseDynmatQMultiK;
 pub const computeNonlocalSelfDynmatMultiK = dynmat_build_mod.computeNonlocalSelfDynmatMultiK;
 
 // Phonon band structure entry points
