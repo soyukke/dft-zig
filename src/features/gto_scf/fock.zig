@@ -25,7 +25,7 @@ const EriTable = eri_mod.EriTable;
 const GeneralEriTable = obara_saika.GeneralEriTable;
 
 /// Build the Fock matrix F = H_core + G(P) (s-only, legacy).
-pub fn buildFockMatrix(
+pub fn build_fock_matrix(
     alloc: std.mem.Allocator,
     n: usize,
     h_core: []const f64,
@@ -36,12 +36,12 @@ pub fn buildFockMatrix(
     std.debug.assert(p.len == n * n);
 
     const f = try alloc.alloc(f64, n * n);
-    updateFockMatrix(n, h_core, p, eri_table, f);
+    update_fock_matrix(n, h_core, p, eri_table, f);
     return f;
 }
 
 /// Update the Fock matrix in-place: F = H_core + G(P) (s-only, legacy).
-pub fn updateFockMatrix(
+pub fn update_fock_matrix(
     n: usize,
     h_core: []const f64,
     p: []const f64,
@@ -69,7 +69,7 @@ pub fn updateFockMatrix(
 }
 
 /// Update the Fock matrix in-place using general ERI table (any angular momentum).
-pub fn updateFockMatrixGeneral(
+pub fn update_fock_matrix_general(
     n: usize,
     h_core: []const f64,
     p: []const f64,
@@ -130,7 +130,7 @@ pub const SchwarzTable = struct {
 /// Build the Schwarz screening table.
 /// For each shell pair (A,B), compute Q_AB = max_{a in A, b in B} sqrt(|(ab|ab)|).
 /// Uses Rys quadrature shell-quartet ERI for efficiency.
-pub fn buildSchwarzTable(
+pub fn build_schwarz_table(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
 ) !SchwarzTable {
@@ -143,7 +143,7 @@ pub fn buildSchwarzTable(
     var offset: usize = 0;
     for (shells, 0..) |shell, si| {
         shell_offsets[si] = offset;
-        const nc = shell.numCartesianFunctions();
+        const nc = shell.num_cartesian_functions();
         shell_sizes[si] = nc;
         offset += nc;
     }
@@ -162,7 +162,7 @@ pub fn buildSchwarzTable(
             const nb = shell_sizes[sj];
 
             // Compute (AB|AB) shell quartet using Rys ERI
-            _ = rys_eri.contractedShellQuartetERI(
+            _ = rys_eri.contracted_shell_quartet_eri(
                 shells[si],
                 shells[sj],
                 shells[si],
@@ -202,8 +202,8 @@ pub fn buildSchwarzTable(
 ///
 /// For RHF: hf_frac = 0.5
 /// For KS-DFT with B3LYP: only call with the J part (hf_frac=0) and K part separately,
-/// or use buildJKDirect.
-pub fn buildFockDirect(
+/// or use build_jk_direct.
+pub fn build_fock_direct(
     n: usize,
     h_core: []const f64,
     p: []const f64,
@@ -220,7 +220,7 @@ pub fn buildFockDirect(
     @memcpy(f, h_core);
 
     // Build G directly via shell quartet loop
-    buildGDirect(n, p, shells, schwarz, threshold, 0.5, f);
+    build_g_direct(n, p, shells, schwarz, threshold, 0.5, f);
 }
 
 /// Build J and K matrices directly using Schwarz screening.
@@ -236,7 +236,7 @@ pub fn buildFockDirect(
 /// Loop: sa >= sb, sc >= sd, and combined pair(sa,sb) >= pair(sc,sd).
 /// This reduces the number of unique shell quartets by ~8x.
 ///
-/// Uses batch ERI computation (contractedShellQuartetERI) to build the theta table
+/// Uses batch ERI computation (contracted_shell_quartet_eri) to build the theta table
 /// once per primitive quartet and extract all Cartesian component ERIs at once.
 const QuartetDims = struct {
     na: usize,
@@ -255,7 +255,7 @@ const QuartetSym = struct {
     abcd_same: bool,
 };
 
-fn accumulateEriSymmetries(
+fn accumulate_eri_symmetries(
     n: usize,
     p: []const f64,
     j_mat: []f64,
@@ -316,7 +316,7 @@ fn accumulateEriSymmetries(
     }
 }
 
-fn distributeQuartetToJK(
+fn distribute_quartet_to_jk(
     n: usize,
     p: []const f64,
     eri_buf: []const f64,
@@ -338,7 +338,7 @@ fn distributeQuartetToJK(
                         ib * dims.nc * dims.nd + ic * dims.nd + id_d;
                     const eri = eri_buf[idx_eri];
 
-                    accumulateEriSymmetries(n, p, j_mat, k_mat, sym, mu, nu, lam, sig, eri);
+                    accumulate_eri_symmetries(n, p, j_mat, k_mat, sym, mu, nu, lam, sig, eri);
                 }
             }
         }
@@ -356,7 +356,7 @@ const AbContext = struct {
     ab_pair: usize,
 };
 
-fn processKetShells(
+fn process_ket_shells(
     n: usize,
     p: []const f64,
     shells: []const ContractedShell,
@@ -373,7 +373,7 @@ fn processKetShells(
         const off_c = schwarz.shell_offsets[sc];
 
         for (0..sc + 1) |sd| {
-            const cd_pair = pairIndex(sc, sd);
+            const cd_pair = pair_index(sc, sd);
             if (cd_pair > ab.ab_pair) continue;
 
             const q_cd = schwarz.get(sc, sd);
@@ -383,7 +383,7 @@ fn processKetShells(
             const off_d = schwarz.shell_offsets[sd];
 
             // Compute ALL ERIs for this shell quartet at once using Rys quadrature
-            _ = rys_eri.contractedShellQuartetERI(
+            _ = rys_eri.contracted_shell_quartet_eri(
                 shells[ab.sa],
                 shells[ab.sb],
                 shells[sc],
@@ -408,12 +408,12 @@ fn processKetShells(
             };
 
             // Distribute batch ERIs to J and K matrices
-            distributeQuartetToJK(n, p, eri_buf, dims, sym, j_mat, k_mat);
+            distribute_quartet_to_jk(n, p, eri_buf, dims, sym, j_mat, k_mat);
         }
     }
 }
 
-pub fn buildJKDirect(
+pub fn build_jk_direct(
     n: usize,
     p: []const f64,
     shells: []const ContractedShell,
@@ -446,7 +446,7 @@ pub fn buildJKDirect(
             const off_b = schwarz.shell_offsets[sb];
             const q_ab = schwarz.get(sa, sb);
 
-            const ab_pair = pairIndex(sa, sb);
+            const ab_pair = pair_index(sa, sb);
             const ab = AbContext{
                 .sa = sa,
                 .sb = sb,
@@ -457,20 +457,20 @@ pub fn buildJKDirect(
                 .q_ab = q_ab,
                 .ab_pair = ab_pair,
             };
-            processKetShells(n, p, shells, schwarz, threshold, ab, &eri_buf, j_mat, k_mat);
+            process_ket_shells(n, p, shells, schwarz, threshold, ab, &eri_buf, j_mat, k_mat);
         }
     }
 }
 
 /// Pair index for shell pairs: maps (a, b) with a >= b to a*(a+1)/2 + b.
-fn pairIndex(a: usize, b: usize) usize {
+fn pair_index(a: usize, b: usize) usize {
     if (a >= b) return a * (a + 1) / 2 + b;
     return b * (b + 1) / 2 + a;
 }
 
 /// Build the G matrix directly: G = J - hf_frac * K.
 /// Adds the result to f (which should already contain H_core).
-fn buildGDirect(
+fn build_g_direct(
     n: usize,
     p: []const f64,
     shells: []const ContractedShell,
@@ -486,7 +486,7 @@ fn buildGDirect(
     const k_mat = alloc.alloc(f64, n * n) catch return;
     defer alloc.free(k_mat);
 
-    buildJKDirect(n, p, shells, schwarz, threshold, j_mat, k_mat);
+    build_jk_direct(n, p, shells, schwarz, threshold, j_mat, k_mat);
 
     for (0..n * n) |i| {
         f[i] += j_mat[i] - hf_frac * k_mat[i];
@@ -511,7 +511,7 @@ test "Direct SCF J/K matches ERI table (H2 STO-3G)" {
     const p_mat = [_]f64{ 0.6, 0.4, 0.4, 0.6 };
 
     // --- ERI table approach ---
-    var eri_table = try obara_saika.buildEriTable(alloc, &shells);
+    var eri_table = try obara_saika.build_eri_table(alloc, &shells);
     defer eri_table.deinit(alloc);
 
     var j_ref: [4]f64 = undefined;
@@ -533,13 +533,13 @@ test "Direct SCF J/K matches ERI table (H2 STO-3G)" {
     }
 
     // --- Direct SCF approach ---
-    var schwarz = try buildSchwarzTable(alloc, &shells);
+    var schwarz = try build_schwarz_table(alloc, &shells);
     defer schwarz.deinit(alloc);
 
     var j_direct: [4]f64 = undefined;
     var k_direct: [4]f64 = undefined;
 
-    buildJKDirect(n, &p_mat, &shells, &schwarz, 1e-14, &j_direct, &k_direct);
+    build_jk_direct(n, &p_mat, &shells, &schwarz, 1e-14, &j_direct, &k_direct);
 
     for (0..n * n) |i| {
         try testing.expectApproxEqAbs(j_ref[i], j_direct[i], 1e-10);
@@ -564,10 +564,10 @@ test "Fock matrix equals H_core when P is zero" {
         .{ .center = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 }, .l = 0, .primitives = &sto3g.H_1s },
         .{ .center = math.Vec3{ .x = 1.4, .y = 0.0, .z = 0.0 }, .l = 0, .primitives = &sto3g.H_1s },
     };
-    var eri_table = try eri_mod.buildEriTable(alloc, &shells);
+    var eri_table = try eri_mod.build_eri_table(alloc, &shells);
     defer eri_table.deinit(alloc);
 
-    const f = try buildFockMatrix(alloc, n, &h_core, &p, eri_table);
+    const f = try build_fock_matrix(alloc, n, &h_core, &p, eri_table);
     defer alloc.free(f);
 
     // With P=0, F should equal H_core

@@ -35,7 +35,7 @@ pub const ExtendedOptions = struct {
 };
 
 /// Solve eigenvalue problem using LOBPCG with specified backend
-pub fn hermitianEigenDecompIterativeExt(
+pub fn hermitian_eigen_decomp_iterative_ext(
     alloc: std.mem.Allocator,
     backend: linalg.Backend,
     op: Operator,
@@ -53,7 +53,7 @@ pub fn hermitianEigenDecompIterativeExt(
 }
 
 /// Solve eigenvalue problem using band-by-band CG
-pub fn hermitianEigenDecompCG(
+pub fn hermitian_eigen_decomp_cg(
     alloc: std.mem.Allocator,
     op: Operator,
     diag: []const f64,
@@ -64,7 +64,7 @@ pub fn hermitianEigenDecompCG(
 }
 
 /// Solve eigenvalue problem using serial LOBPCG (backward compatible)
-pub fn hermitianEigenDecompIterative(
+pub fn hermitian_eigen_decomp_iterative(
     alloc: std.mem.Allocator,
     backend: linalg.Backend,
     op: Operator,
@@ -99,7 +99,7 @@ test "LOBPCG serial basic" {
         .apply = TestCtx.apply,
     };
 
-    var result = try hermitianEigenDecompIterative(
+    var result = try hermitian_eigen_decomp_iterative(
         allocator,
         .accelerate,
         op,
@@ -124,14 +124,14 @@ test "LOBPCG generalized eigenvalue (S != I)" {
         h_diag: [3]f64,
         s_diag: [3]f64,
 
-        pub fn applyH(ctx_ptr: *anyopaque, x: []const math.Complex, y: []math.Complex) !void {
+        pub fn apply_h(ctx_ptr: *anyopaque, x: []const math.Complex, y: []math.Complex) !void {
             const self: *@This() = @ptrCast(@alignCast(ctx_ptr));
             for (0..3) |i| {
                 y[i] = math.complex.scale(x[i], self.h_diag[i]);
             }
         }
 
-        pub fn applyS(ctx_ptr: *anyopaque, x: []const math.Complex, y: []math.Complex) !void {
+        pub fn apply_s(ctx_ptr: *anyopaque, x: []const math.Complex, y: []math.Complex) !void {
             const self: *@This() = @ptrCast(@alignCast(ctx_ptr));
             for (0..3) |i| {
                 y[i] = math.complex.scale(x[i], self.s_diag[i]);
@@ -146,11 +146,11 @@ test "LOBPCG generalized eigenvalue (S != I)" {
     const op = Operator{
         .n = 3,
         .ctx = @ptrCast(&ctx),
-        .apply = TestCtx.applyH,
-        .apply_s = TestCtx.applyS,
+        .apply = TestCtx.apply_h,
+        .apply_s = TestCtx.apply_s,
     };
 
-    var result = try hermitianEigenDecompIterative(
+    var result = try hermitian_eigen_decomp_iterative(
         allocator,
         .accelerate,
         op,
@@ -188,7 +188,7 @@ test "LOBPCG with apply_s=null gives same results as standard" {
         // apply_s = null (default) => S = I
     };
 
-    var result = try hermitianEigenDecompIterative(
+    var result = try hermitian_eigen_decomp_iterative(
         allocator,
         .accelerate,
         op,

@@ -24,7 +24,7 @@ pub const SternheimerResult = struct {
 
 /// Project onto conduction band subspace: P_c = 1 - Σ_m |ψ_m⟩⟨ψ_m|
 /// Modifies x in-place.
-pub fn projectConduction(
+pub fn project_conduction(
     x: []math.Complex,
     occupied: []const []const math.Complex,
     n_occ: usize,
@@ -54,7 +54,7 @@ pub fn projectConduction(
 /// BLAS-optimized P_c projection using a contiguous occupied matrix.
 /// psi_matrix: column-major [n_pw × n_occ], overlaps: work buffer [n_occ].
 /// x = x - Psi × (Psi^H × x)
-fn projectConductionBlas(
+fn project_conduction_blas(
     x: []math.Complex,
     psi_matrix: []const math.Complex,
     n_pw: usize,
@@ -94,7 +94,7 @@ fn projectConductionBlas(
 }
 
 /// BLAS-optimized P_v projection: y += alpha * Psi × (Psi^H × x)
-fn applyValenceProjectionBlas(
+fn apply_valence_projection_blas(
     x: []const math.Complex,
     y: []math.Complex,
     psi_matrix: []const math.Complex,
@@ -137,7 +137,7 @@ fn applyValenceProjectionBlas(
 }
 
 /// Pack slice-of-slices occupied wavefunctions into a contiguous column-major matrix.
-fn packOccupiedMatrix(
+fn pack_occupied_matrix(
     alloc: std.mem.Allocator,
     occupied: []const []const math.Complex,
     n_occ: usize,
@@ -152,7 +152,7 @@ fn packOccupiedMatrix(
 
 /// Apply Sternheimer operator: A|x⟩ = (H₀ - ε_n + α×P_v)|x⟩
 /// where P_v = Σ_m |ψ_m⟩⟨ψ_m|
-fn applySternheimer(
+fn apply_sternheimer(
     ctx: *scf_mod.ApplyContext,
     x: []const math.Complex,
     y: []math.Complex,
@@ -165,7 +165,7 @@ fn applySternheimer(
     const n = x.len;
 
     // y = H₀|x⟩
-    try scf_mod.applyHamiltonian(ctx, x, y);
+    try scf_mod.apply_hamiltonian(ctx, x, y);
 
     // y -= ε_n × x
     for (0..n) |g| {
@@ -193,7 +193,7 @@ fn applySternheimer(
 }
 
 /// BLAS-optimized Sternheimer operator using contiguous occupied matrix.
-fn applySternheimerBlas(
+fn apply_sternheimer_blas(
     ctx: *scf_mod.ApplyContext,
     x: []const math.Complex,
     y: []math.Complex,
@@ -205,7 +205,7 @@ fn applySternheimerBlas(
     overlaps: []math.Complex,
 ) !void {
     // y = H₀|x⟩
-    try scf_mod.applyHamiltonian(ctx, x, y);
+    try scf_mod.apply_hamiltonian(ctx, x, y);
 
     // y -= ε_n × x
     for (0..n_pw) |g| {
@@ -214,12 +214,12 @@ fn applySternheimerBlas(
 
     // y += α × P_v|x⟩
     if (alpha_shift > 0.0) {
-        applyValenceProjectionBlas(x, y, psi_matrix, n_pw, n_occ, alpha_shift, overlaps);
+        apply_valence_projection_blas(x, y, psi_matrix, n_pw, n_occ, alpha_shift, overlaps);
     }
 }
 
 /// Kinetic energy preconditioner: K = 1 / (|k+G|² - ε_n + α)
-fn applyPreconditioner(
+fn apply_preconditioner(
     gvecs: []const plane_wave.GVector,
     x: []const math.Complex,
     y: []math.Complex,
@@ -235,7 +235,7 @@ fn applyPreconditioner(
 }
 
 /// Complex inner product: ⟨a|b⟩ = Σ_g conj(a[g]) × b[g]
-fn innerProduct(a: []const math.Complex, b: []const math.Complex) math.Complex {
+fn inner_product(a: []const math.Complex, b: []const math.Complex) math.Complex {
     var sum = math.complex.init(0.0, 0.0);
     for (0..a.len) |g| {
         sum = math.complex.add(sum, math.complex.mul(math.complex.conj(a[g]), b[g]));
@@ -312,16 +312,16 @@ pub fn solve(
 
     // r = rhs (since x=0, r = b - Ax = b)
     @memcpy(r, rhs);
-    projectConductionBlas(r, psi_matrix, n, n_occ, overlaps);
+    project_conduction_blas(r, psi_matrix, n, n_occ, overlaps);
 
     // z = K × r
-    applyPreconditioner(gvecs, r, z, epsilon_n, params.alpha_shift);
-    projectConductionBlas(z, psi_matrix, n, n_occ, overlaps);
+    apply_preconditioner(gvecs, r, z, epsilon_n, params.alpha_shift);
+    project_conduction_blas(z, psi_matrix, n, n_occ, overlaps);
 
     // d = z
     @memcpy(d, z);
 
-    var rz = innerProduct(r, z);
+    var rz = inner_product(r, z);
     var residual_norm = norm(r);
     var iter: usize = 0;
 
@@ -329,7 +329,7 @@ pub fn solve(
         if (residual_norm < params.tol) break;
 
         // ad = A × d
-        try applySternheimerBlas(
+        try apply_sternheimer_blas(
             ctx,
             d,
             ad,
@@ -340,10 +340,10 @@ pub fn solve(
             n_occ,
             overlaps,
         );
-        projectConductionBlas(ad, psi_matrix, n, n_occ, overlaps);
+        project_conduction_blas(ad, psi_matrix, n, n_occ, overlaps);
 
         // α_cg = ⟨r|z⟩ / ⟨d|Ad⟩
-        const dad = innerProduct(d, ad);
+        const dad = inner_product(d, ad);
         if (@abs(dad.r) < 1e-30) break;
         const alpha_cg = rz.r / dad.r;
 
@@ -356,7 +356,7 @@ pub fn solve(
         for (0..n) |g| {
             r[g] = math.complex.sub(r[g], math.complex.scale(ad[g], alpha_cg));
         }
-        projectConductionBlas(r, psi_matrix, n, n_occ, overlaps);
+        project_conduction_blas(r, psi_matrix, n, n_occ, overlaps);
 
         residual_norm = norm(r);
         if (residual_norm < params.tol) {
@@ -365,11 +365,11 @@ pub fn solve(
         }
 
         // z_new = K × r
-        applyPreconditioner(gvecs, r, z, epsilon_n, params.alpha_shift);
-        projectConductionBlas(z, psi_matrix, n, n_occ, overlaps);
+        apply_preconditioner(gvecs, r, z, epsilon_n, params.alpha_shift);
+        project_conduction_blas(z, psi_matrix, n, n_occ, overlaps);
 
         // β = ⟨r_new|z_new⟩ / ⟨r_old|z_old⟩
-        const rz_new = innerProduct(r, z);
+        const rz_new = inner_product(r, z);
         const beta = if (@abs(rz.r) > 1e-30) rz_new.r / rz.r else 0.0;
 
         // d = z + β × d
@@ -381,7 +381,7 @@ pub fn solve(
     }
 
     // Final projection
-    projectConductionBlas(x, psi_matrix, n, n_occ, overlaps);
+    project_conduction_blas(x, psi_matrix, n, n_occ, overlaps);
 
     return .{
         .psi1 = x,
@@ -395,7 +395,7 @@ pub fn solve(
 // Tests
 // =========================================================================
 
-test "projectConduction removes occupied component" {
+test "project_conduction removes occupied component" {
     // Create a simple occupied state
     var psi0_data = [_]math.Complex{
         math.complex.init(0.5, 0.0),
@@ -415,12 +415,12 @@ test "projectConduction removes occupied component" {
     };
 
     // Compute overlap before projection
-    const overlap_before = innerProduct(psi0, x[0..]);
+    const overlap_before = inner_product(psi0, x[0..]);
 
-    projectConduction(x[0..], occupied[0..], 1);
+    project_conduction(x[0..], occupied[0..], 1);
 
     // After projection, overlap with occupied state should be ~0
-    const overlap_after = innerProduct(psi0, x[0..]);
+    const overlap_after = inner_product(psi0, x[0..]);
     try std.testing.expectApproxEqAbs(overlap_after.r, 0.0, 1e-12);
     try std.testing.expectApproxEqAbs(overlap_after.i, 0.0, 1e-12);
 
@@ -428,7 +428,7 @@ test "projectConduction removes occupied component" {
     _ = overlap_before;
 }
 
-test "projectConduction is idempotent" {
+test "project_conduction is idempotent" {
     const n = 4;
 
     var psi0_data = [_]math.Complex{
@@ -447,14 +447,14 @@ test "projectConduction is idempotent" {
         math.complex.init(0.7, -1.0),
     };
 
-    projectConduction(x[0..], occupied[0..], 1);
+    project_conduction(x[0..], occupied[0..], 1);
 
     // Save state after first projection
     var x_after1: [n]math.Complex = undefined;
     @memcpy(&x_after1, &x);
 
     // Apply again
-    projectConduction(x[0..], occupied[0..], 1);
+    project_conduction(x[0..], occupied[0..], 1);
 
     // Should be unchanged (idempotent)
     for (0..n) |g| {
@@ -489,7 +489,7 @@ test "preconditioner basic properties" {
     const epsilon = 1.0;
     const alpha = 0.01;
 
-    applyPreconditioner(gvecs[0..], x[0..], y[0..], epsilon, alpha);
+    apply_preconditioner(gvecs[0..], x[0..], y[0..], epsilon, alpha);
 
     // Higher kinetic energy → smaller preconditioner value
     try std.testing.expect(y[0].r > y[1].r);

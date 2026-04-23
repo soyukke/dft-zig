@@ -6,26 +6,26 @@ const grid_mod = @import("pw_grid.zig");
 pub const Grid = grid_mod.Grid;
 
 /// Convert real grid to reciprocal grid using direct DFT.
-pub fn realToReciprocal(
+pub fn real_to_reciprocal(
     alloc: std.mem.Allocator,
     grid: Grid,
     values: []const f64,
     use_rfft: bool,
 ) ![]math.Complex {
     if (use_rfft and grid.nx % 2 == 0) {
-        return try fftRealToReciprocalRfft(alloc, grid, values);
+        return try fft_real_to_reciprocal_rfft(alloc, grid, values);
     }
-    return try fftRealToReciprocal(alloc, grid, values);
+    return try fft_real_to_reciprocal(alloc, grid, values);
 }
 
 /// Convert reciprocal grid to real grid.
-pub fn reciprocalToReal(alloc: std.mem.Allocator, grid: Grid, values: []math.Complex) ![]f64 {
+pub fn reciprocal_to_real(alloc: std.mem.Allocator, grid: Grid, values: []math.Complex) ![]f64 {
     // FFT supports arbitrary sizes via Bluestein's algorithm
-    return try fftReciprocalToReal(alloc, grid, values);
+    return try fft_reciprocal_to_real(alloc, grid, values);
 }
 
 /// Convert real grid to reciprocal grid using direct DFT.
-fn dftRealToReciprocalDirect(
+fn dft_real_to_reciprocal_direct(
     alloc: std.mem.Allocator,
     grid: Grid,
     values: []const f64,
@@ -94,7 +94,7 @@ fn dftRealToReciprocalDirect(
 
 /// Convert real grid to reciprocal grid using RFFT (faster for real data).
 /// The output is expanded to full size using Hermitian symmetry: F[-k] = conj(F[k])
-fn fftRealToReciprocalRfft(
+fn fft_real_to_reciprocal_rfft(
     alloc: std.mem.Allocator,
     grid: Grid,
     values: []const f64,
@@ -163,9 +163,9 @@ fn fftRealToReciprocalRfft(
         while (y_idx < ny) : (y_idx += 1) {
             var x_idx: usize = 0;
             while (x_idx < nx) : (x_idx += 1) {
-                const fh = indexToFreq(x_idx, nx);
-                const fk = indexToFreq(y_idx, ny);
-                const fl = indexToFreq(z, nz);
+                const fh = index_to_freq(x_idx, nx);
+                const fk = index_to_freq(y_idx, ny);
+                const fl = index_to_freq(z, nz);
                 const th = @as(usize, @intCast(fh - grid.min_h));
                 const tk = @as(usize, @intCast(fk - grid.min_k));
                 const tl = @as(usize, @intCast(fl - grid.min_l));
@@ -179,7 +179,11 @@ fn fftRealToReciprocalRfft(
 }
 
 /// Convert real grid to reciprocal grid using radix-2 FFT.
-fn fftRealToReciprocal(alloc: std.mem.Allocator, grid: Grid, values: []const f64) ![]math.Complex {
+fn fft_real_to_reciprocal(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    values: []const f64,
+) ![]math.Complex {
     const total = grid.count();
     if (values.len != total) return error.InvalidGrid;
 
@@ -190,7 +194,7 @@ fn fftRealToReciprocal(alloc: std.mem.Allocator, grid: Grid, values: []const f64
         data[i] = math.complex.init(v, 0.0);
     }
 
-    try fft.fft3dForwardInPlace(alloc, data, grid.nx, grid.ny, grid.nz);
+    try fft.fft3d_forward_in_place(alloc, data, grid.nx, grid.ny, grid.nz);
 
     const scale = 1.0 / @as(f64, @floatFromInt(total));
     for (data) |*v| {
@@ -208,9 +212,9 @@ fn fftRealToReciprocal(alloc: std.mem.Allocator, grid: Grid, values: []const f64
         while (y < ny) : (y += 1) {
             var x: usize = 0;
             while (x < nx) : (x += 1) {
-                const fh = indexToFreq(x, nx);
-                const fk = indexToFreq(y, ny);
-                const fl = indexToFreq(z, nz);
+                const fh = index_to_freq(x, nx);
+                const fk = index_to_freq(y, ny);
+                const fl = index_to_freq(z, nz);
                 const th = @as(usize, @intCast(fh - grid.min_h));
                 const tk = @as(usize, @intCast(fk - grid.min_k));
                 const tl = @as(usize, @intCast(fl - grid.min_l));
@@ -224,7 +228,7 @@ fn fftRealToReciprocal(alloc: std.mem.Allocator, grid: Grid, values: []const f64
 }
 
 /// Convert reciprocal grid to real using radix-2 FFT.
-fn fftReciprocalToReal(alloc: std.mem.Allocator, grid: Grid, values: []math.Complex) ![]f64 {
+fn fft_reciprocal_to_real(alloc: std.mem.Allocator, grid: Grid, values: []math.Complex) ![]f64 {
     const total = grid.count();
     if (values.len != total) return error.InvalidGrid;
 
@@ -239,9 +243,9 @@ fn fftReciprocalToReal(alloc: std.mem.Allocator, grid: Grid, values: []math.Comp
         while (y < grid.ny) : (y += 1) {
             var x: usize = 0;
             while (x < grid.nx) : (x += 1) {
-                const fh = indexToFreq(x, grid.nx);
-                const fk = indexToFreq(y, grid.ny);
-                const fl = indexToFreq(z, grid.nz);
+                const fh = index_to_freq(x, grid.nx);
+                const fk = index_to_freq(y, grid.ny);
+                const fl = index_to_freq(z, grid.nz);
                 const th = @as(usize, @intCast(fh - grid.min_h));
                 const tk = @as(usize, @intCast(fk - grid.min_k));
                 const tl = @as(usize, @intCast(fl - grid.min_l));
@@ -252,7 +256,7 @@ fn fftReciprocalToReal(alloc: std.mem.Allocator, grid: Grid, values: []math.Comp
         }
     }
 
-    try fft.fft3dInverseInPlace(alloc, data, grid.nx, grid.ny, grid.nz);
+    try fft.fft3d_inverse_in_place(alloc, data, grid.nx, grid.ny, grid.nz);
 
     const out = try alloc.alloc(f64, total);
     for (data, 0..) |v, i| {
@@ -262,7 +266,7 @@ fn fftReciprocalToReal(alloc: std.mem.Allocator, grid: Grid, values: []math.Comp
 }
 
 /// Convert reciprocal grid to complex real-space grid in-place.
-pub fn fftReciprocalToComplexInPlace(
+pub fn fft_reciprocal_to_complex_in_place(
     alloc: std.mem.Allocator,
     grid: Grid,
     values: []const math.Complex,
@@ -280,9 +284,9 @@ pub fn fftReciprocalToComplexInPlace(
         while (y < grid.ny) : (y += 1) {
             var x: usize = 0;
             while (x < grid.nx) : (x += 1) {
-                const fh = indexToFreq(x, grid.nx);
-                const fk = indexToFreq(y, grid.ny);
-                const fl = indexToFreq(z, grid.nz);
+                const fh = index_to_freq(x, grid.nx);
+                const fk = index_to_freq(y, grid.ny);
+                const fl = index_to_freq(z, grid.nz);
                 const th = @as(usize, @intCast(fh - grid.min_h));
                 const tk = @as(usize, @intCast(fk - grid.min_k));
                 const tl = @as(usize, @intCast(fl - grid.min_l));
@@ -295,13 +299,13 @@ pub fn fftReciprocalToComplexInPlace(
 
     if (plan) |p| {
         if (p.nx != grid.nx or p.ny != grid.ny or p.nz != grid.nz) return error.InvalidGrid;
-        try fft.fft3dInverseInPlacePlan(p, out);
+        try fft.fft3d_inverse_in_place_plan(p, out);
     } else {
-        try fft.fft3dInverseInPlace(alloc, out, grid.nx, grid.ny, grid.nz);
+        try fft.fft3d_inverse_in_place(alloc, out, grid.nx, grid.ny, grid.nz);
     }
 }
 
-pub fn fftReciprocalToComplexInPlaceMapped(
+pub fn fft_reciprocal_to_complex_in_place_mapped(
     alloc: std.mem.Allocator,
     grid: Grid,
     map: []const usize,
@@ -320,14 +324,14 @@ pub fn fftReciprocalToComplexInPlaceMapped(
 
     if (plan) |p| {
         if (p.nx != grid.nx or p.ny != grid.ny or p.nz != grid.nz) return error.InvalidGrid;
-        try fft.fft3dInverseInPlacePlan(p, out);
+        try fft.fft3d_inverse_in_place_plan(p, out);
     } else {
-        try fft.fft3dInverseInPlace(alloc, out, grid.nx, grid.ny, grid.nz);
+        try fft.fft3d_inverse_in_place(alloc, out, grid.nx, grid.ny, grid.nz);
     }
 }
 
 /// Convert complex real-space grid to reciprocal grid in-place.
-pub fn fftComplexToReciprocalInPlace(
+pub fn fft_complex_to_reciprocal_in_place(
     alloc: std.mem.Allocator,
     grid: Grid,
     data: []math.Complex,
@@ -339,9 +343,9 @@ pub fn fftComplexToReciprocalInPlace(
 
     if (plan) |p| {
         if (p.nx != grid.nx or p.ny != grid.ny or p.nz != grid.nz) return error.InvalidGrid;
-        try fft.fft3dForwardInPlacePlan(p, data);
+        try fft.fft3d_forward_in_place_plan(p, data);
     } else {
-        try fft.fft3dForwardInPlace(alloc, data, grid.nx, grid.ny, grid.nz);
+        try fft.fft3d_forward_in_place(alloc, data, grid.nx, grid.ny, grid.nz);
     }
 
     const scale = 1.0 / @as(f64, @floatFromInt(total));
@@ -352,9 +356,9 @@ pub fn fftComplexToReciprocalInPlace(
         while (y < grid.ny) : (y += 1) {
             var x: usize = 0;
             while (x < grid.nx) : (x += 1) {
-                const fh = indexToFreq(x, grid.nx);
-                const fk = indexToFreq(y, grid.ny);
-                const fl = indexToFreq(z, grid.nz);
+                const fh = index_to_freq(x, grid.nx);
+                const fk = index_to_freq(y, grid.ny);
+                const fl = index_to_freq(z, grid.nz);
                 const th = @as(usize, @intCast(fh - grid.min_h));
                 const tk = @as(usize, @intCast(fk - grid.min_k));
                 const tl = @as(usize, @intCast(fl - grid.min_l));
@@ -366,7 +370,7 @@ pub fn fftComplexToReciprocalInPlace(
     }
 }
 
-pub fn fftComplexToReciprocalInPlaceMapped(
+pub fn fft_complex_to_reciprocal_in_place_mapped(
     alloc: std.mem.Allocator,
     grid: Grid,
     map: []const usize,
@@ -379,9 +383,9 @@ pub fn fftComplexToReciprocalInPlaceMapped(
 
     if (plan) |p| {
         if (p.nx != grid.nx or p.ny != grid.ny or p.nz != grid.nz) return error.InvalidGrid;
-        try fft.fft3dForwardInPlacePlan(p, data);
+        try fft.fft3d_forward_in_place_plan(p, data);
     } else {
-        try fft.fft3dForwardInPlace(alloc, data, grid.nx, grid.ny, grid.nz);
+        try fft.fft3d_forward_in_place(alloc, data, grid.nx, grid.ny, grid.nz);
     }
 
     const scale = 1.0 / @as(f64, @floatFromInt(total));
@@ -391,7 +395,7 @@ pub fn fftComplexToReciprocalInPlaceMapped(
     }
 }
 
-pub fn buildFftIndexMap(alloc: std.mem.Allocator, grid: Grid) ![]usize {
+pub fn build_fft_index_map(alloc: std.mem.Allocator, grid: Grid) ![]usize {
     const total = grid.count();
     const map = try alloc.alloc(usize, total);
     const nx = grid.nx;
@@ -404,9 +408,9 @@ pub fn buildFftIndexMap(alloc: std.mem.Allocator, grid: Grid) ![]usize {
         while (y < ny) : (y += 1) {
             var x: usize = 0;
             while (x < nx) : (x += 1) {
-                const fh = indexToFreq(x, nx);
-                const fk = indexToFreq(y, ny);
-                const fl = indexToFreq(z, nz);
+                const fh = index_to_freq(x, nx);
+                const fk = index_to_freq(y, ny);
+                const fl = index_to_freq(z, nz);
                 const th = @as(usize, @intCast(fh - grid.min_h));
                 const tk = @as(usize, @intCast(fk - grid.min_k));
                 const tl = @as(usize, @intCast(fl - grid.min_l));
@@ -419,7 +423,7 @@ pub fn buildFftIndexMap(alloc: std.mem.Allocator, grid: Grid) ![]usize {
 }
 
 /// Convert FFT index to signed frequency.
-pub fn indexToFreq(i: usize, n: usize) i32 {
+pub fn index_to_freq(i: usize, n: usize) i32 {
     const half = (n - 1) / 2;
     return if (i <= half) @as(i32, @intCast(i)) else @as(i32, @intCast(i)) - @as(i32, @intCast(n));
 }

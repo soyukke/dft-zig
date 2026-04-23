@@ -31,7 +31,7 @@ pub const IFC = struct {
 
 /// Generate R-vectors for the given q-grid.
 /// R = n1*a1 + n2*a2 + n3*a3, where n_i ∈ {0, ..., N_i-1}.
-pub fn generateRvectors(alloc: std.mem.Allocator, qgrid: [3]usize) ![][3]i32 {
+pub fn generate_rvectors(alloc: std.mem.Allocator, qgrid: [3]usize) ![][3]i32 {
     const n_total = qgrid[0] * qgrid[1] * qgrid[2];
     var rvecs = try alloc.alloc([3]i32, n_total);
     var idx: usize = 0;
@@ -52,7 +52,7 @@ pub fn generateRvectors(alloc: std.mem.Allocator, qgrid: [3]usize) ![][3]i32 {
 
 /// Compute IFC from dynamical matrices on a q-grid.
 /// C(R) = (1/Nq) Σ_q D(q) × exp(-i 2π q_frac · n)
-pub fn computeIFC(
+pub fn compute_ifc(
     alloc: std.mem.Allocator,
     dynmat_q: []const []const Complex,
     q_points_frac: []const math.Vec3,
@@ -64,7 +64,7 @@ pub fn computeIFC(
     const n_q = q_points_frac.len;
     const nq_f = @as(f64, @floatFromInt(n_q));
 
-    const r_vecs = try generateRvectors(alloc, qgrid);
+    const r_vecs = try generate_rvectors(alloc, qgrid);
     errdefer alloc.free(r_vecs);
     const n_rvec = r_vecs.len;
 
@@ -116,7 +116,7 @@ pub fn computeIFC(
 /// Apply acoustic sum rule in IFC space.
 /// For each atom I and directions α,β:
 ///   C_{Iα,Iβ}(R=0) = -Σ_{(J,R)≠(I,0)} C_{Iα,Jβ}(R)
-pub fn applyASR(ifc: *IFC) void {
+pub fn apply_asr(ifc: *IFC) void {
     const dim = ifc.dim;
     const n_atoms = ifc.n_atoms;
 
@@ -200,7 +200,7 @@ pub const NacData = struct {
 /// D^NA_{κα,κ'β}(q̂) = (8π/Ω) × (q̂·Z*_κ)_α × (q̂·Z*_κ')_β / (q̂·ε∞·q̂)
 ///
 /// The NAC is only applied for q ≠ 0 (q_norm > threshold).
-pub fn interpolateWithNAC(
+pub fn interpolate_with_nac(
     alloc: std.mem.Allocator,
     ifc_data: *const IFC,
     q_frac: math.Vec3,
@@ -298,7 +298,7 @@ test "IFC round-trip: D(q) -> C(R) -> D(q) recovers original" {
     const dynmat_q = [_][]const Complex{ dyn0, dyn1 };
 
     // Forward: D(q) -> C(R)
-    var ifc_data = try computeIFC(alloc, &dynmat_q, &q_points, qgrid, n_atoms);
+    var ifc_data = try compute_ifc(alloc, &dynmat_q, &q_points, qgrid, n_atoms);
     defer ifc_data.deinit(alloc);
 
     // Inverse: C(R) -> D(q) should recover original
@@ -356,11 +356,11 @@ test "IFC ASR: acoustic modes have zero frequency at Gamma" {
 
     const dynmat_q = [_][]const Complex{ dyn0, dyn1 };
 
-    var ifc_data = try computeIFC(alloc, &dynmat_q, &q_points, qgrid, n_atoms);
+    var ifc_data = try compute_ifc(alloc, &dynmat_q, &q_points, qgrid, n_atoms);
     defer ifc_data.deinit(alloc);
 
     // Apply ASR
-    applyASR(&ifc_data);
+    apply_asr(&ifc_data);
 
     // Interpolate at Γ and check ASR: row sums should be zero
     const dyn_gamma = try interpolate(alloc, &ifc_data, q_points[0]);

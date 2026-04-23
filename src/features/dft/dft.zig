@@ -17,12 +17,12 @@ const relax = @import("../relax/relax.zig");
 const runtime_logging = @import("../runtime/logging.zig");
 const xyz = @import("../structure/xyz.zig");
 
-fn logStep(io: std.Io, msg: []const u8) !void {
+fn log_step(io: std.Io, msg: []const u8) !void {
     const logger = runtime_logging.stderr(io, .info);
     try logger.print(.info, "{s}\n", .{msg});
 }
 
-fn logPhononFrequencies(io: std.Io, frequencies_cm1: []const f64) !void {
+fn log_phonon_frequencies(io: std.Io, frequencies_cm1: []const f64) !void {
     const logger = runtime_logging.stderr(io, .info);
     try logger.print(.info, "phonon frequencies (cm⁻¹):\n", .{});
     for (frequencies_cm1) |f| {
@@ -30,13 +30,13 @@ fn logPhononFrequencies(io: std.Io, frequencies_cm1: []const f64) !void {
     }
 }
 
-fn nowNs(io: std.Io) u64 {
+fn now_ns(io: std.Io) u64 {
     const ts = std.Io.Clock.Timestamp.now(io, .awake);
     return @intCast(ts.raw.nanoseconds);
 }
 
-fn elapsedNs(io: std.Io, start_ns: u64) u64 {
-    const now = nowNs(io);
+fn elapsed_ns(io: std.Io, start_ns: u64) u64 {
+    const now = now_ns(io);
     if (now <= start_ns) return 0;
     return now - start_ns;
 }
@@ -48,14 +48,14 @@ const ActiveStructure = struct {
     volume_bohr: f64,
 };
 
-fn cellVolume(cell_bohr: math.Mat3) f64 {
+fn cell_volume(cell_bohr: math.Mat3) f64 {
     const a1 = cell_bohr.row(0);
     const a2 = cell_bohr.row(1);
     const a3 = cell_bohr.row(2);
     return @abs(math.Vec3.dot(a1, math.Vec3.cross(a2, a3)));
 }
 
-fn selectActiveStructure(
+fn select_active_structure(
     initial_atoms: []const hamiltonian.AtomData,
     initial_cell_bohr: math.Mat3,
     initial_recip: math.Mat3,
@@ -68,7 +68,7 @@ fn selectActiveStructure(
             .atoms = result.final_atoms,
             .cell_bohr = active_cell,
             .recip = result.final_recip orelse math.reciprocal(active_cell),
-            .volume_bohr = result.final_volume orelse cellVolume(active_cell),
+            .volume_bohr = result.final_volume orelse cell_volume(active_cell),
         };
     }
     return .{
@@ -81,16 +81,16 @@ fn selectActiveStructure(
 
 /// Run the current DFT workflow.
 pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xyz.Atom) !void {
-    const total_start_ns = nowNs(io);
+    const total_start_ns = now_ns(io);
     var timing = output.Timing{};
-    timing.cpu_start_us = output.Timing.getCpuTimeUs();
+    timing.cpu_start_us = output.Timing.get_cpu_time_us();
 
     const cwd = std.Io.Dir.cwd();
     try cwd.createDirPath(io, cfg.out_dir);
     var out_dir = try cwd.openDir(io, cfg.out_dir, .{});
     defer out_dir.close(io);
 
-    const setup = try prepareRunSetup(alloc, io, cfg, atoms);
+    const setup = try prepare_run_setup(alloc, io, cfg, atoms);
     defer setup.deinit(alloc);
 
     timing.setup_ns = setup.setup_ns;
@@ -99,7 +99,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
     var relax_result: ?relax.RelaxResult = null;
     defer if (relax_result) |*result| result.deinit(alloc);
 
-    try maybeRunRelax(
+    try maybe_run_relax(
         alloc,
         io,
         out_dir,
@@ -113,29 +113,29 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         &timing,
     );
 
-    const active = selectActiveStructure(
+    const active = select_active_structure(
         setup.atom_data,
         setup.cell.cell_bohr,
         setup.cell.recip,
         setup.cell.volume_bohr,
         if (relax_result) |*rr| rr else null,
     );
-    const cell_ang = active.cell_bohr.scale(math.unitsScaleToAngstrom(.bohr));
+    const cell_ang = active.cell_bohr.scale(math.units_scale_to_angstrom(.bohr));
 
-    try logStep(io, "step: generate k-path");
+    try log_step(io, "step: generate k-path");
     var auto_path_result: ?kpath.auto_kpath.AutoKPathResult = null;
     defer if (auto_path_result) |*r| r.deinit(alloc);
 
-    var kpoints = try generateBandKpath(alloc, cfg, active, &auto_path_result);
+    var kpoints = try generate_band_kpath(alloc, cfg, active, &auto_path_result);
     defer kpoints.deinit(alloc);
 
     var scf_result: ?scf.ScfResult = null;
     defer if (scf_result) |*result| result.deinit(alloc);
 
-    const active_model = buildActiveModel(setup.species, active);
-    try maybeRunScf(alloc, io, cfg, &active_model, &relax_result, &scf_result, &timing);
+    const active_model = build_active_model(setup.species, active);
+    try maybe_run_scf(alloc, io, cfg, &active_model, &relax_result, &scf_result, &timing);
 
-    try runPostScfPipeline(
+    try run_post_scf_pipeline(
         alloc,
         io,
         out_dir,
@@ -147,7 +147,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         &scf_result,
     );
 
-    try finalizeRunOutputs(
+    try finalize_run_outputs(
         alloc,
         io,
         out_dir,
@@ -164,12 +164,12 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         &timing,
     );
 
-    try finishRun(io, out_dir, cfg, scf_result, &timing, total_start_ns, kpoints.points.len);
+    try finish_run(io, out_dir, cfg, scf_result, &timing, total_start_ns, kpoints.points.len);
 }
 
 /// Write all end-of-run outputs: run-info/atoms/kpoints/pseudos, and band
 /// energies if a k-path was generated.
-fn finalizeRunOutputs(
+fn finalize_run_outputs(
     alloc: std.mem.Allocator,
     io: std.Io,
     out_dir: std.Io.Dir,
@@ -185,11 +185,11 @@ fn finalizeRunOutputs(
     scf_result: *?scf.ScfResult,
     timing: *output.Timing,
 ) !void {
-    const extra_potential = selectExtraPotential(relax_result, scf_result);
-    const extra_potential_down = selectExtraPotentialDown(scf_result);
+    const extra_potential = select_extra_potential(relax_result, scf_result);
+    const extra_potential_down = select_extra_potential_down(scf_result);
 
-    try logStep(io, "step: write outputs");
-    try writeRunOutputs(
+    try log_step(io, "step: write outputs");
+    try write_run_outputs(
         io,
         out_dir,
         cfg,
@@ -202,8 +202,8 @@ fn finalizeRunOutputs(
     );
 
     if (kpoints.points.len > 0) {
-        const band_start_ns = nowNs(io);
-        try runBandEnergies(
+        const band_start_ns = now_ns(io);
+        try run_band_energies(
             alloc,
             io,
             out_dir,
@@ -214,11 +214,11 @@ fn finalizeRunOutputs(
             extra_potential_down,
             if (scf_result.*) |*r| r else null,
         );
-        timing.band_ns = elapsedNs(io, band_start_ns);
+        timing.band_ns = elapsed_ns(io, band_start_ns);
     }
 }
 
-fn selectExtraPotential(
+fn select_extra_potential(
     relax_result: *?relax.RelaxResult,
     scf_result: *?scf.ScfResult,
 ) ?*hamiltonian.PotentialGrid {
@@ -229,14 +229,14 @@ fn selectExtraPotential(
     return null;
 }
 
-fn selectExtraPotentialDown(scf_result: *?scf.ScfResult) ?*hamiltonian.PotentialGrid {
+fn select_extra_potential_down(scf_result: *?scf.ScfResult) ?*hamiltonian.PotentialGrid {
     if (scf_result.*) |*result| {
         if (result.potential_down) |*p| return p;
     }
     return null;
 }
 
-fn writeRunOutputs(
+fn write_run_outputs(
     io: std.Io,
     out_dir: std.Io.Dir,
     cfg: config.Config,
@@ -247,19 +247,19 @@ fn writeRunOutputs(
     kpoints: kpath.KPath,
     pseudo_data: []const pseudo.Parsed,
 ) !void {
-    try output.writeRunInfo(io, out_dir, cfg, atoms, cell_ang);
-    try output.writeAtomsFromAtomData(
+    try output.write_run_info(io, out_dir, cfg, atoms, cell_ang);
+    try output.write_atoms_from_atom_data(
         io,
         out_dir,
         active_atoms,
         species,
-        math.unitsScaleToAngstrom(.bohr),
+        math.units_scale_to_angstrom(.bohr),
     );
-    try output.writeKpoints(io, out_dir, kpoints);
-    try output.writePseudopotentials(io, out_dir, pseudo_data);
+    try output.write_kpoints(io, out_dir, kpoints);
+    try output.write_pseudopotentials(io, out_dir, pseudo_data);
 }
 
-fn runBandEnergies(
+fn run_band_energies(
     alloc: std.mem.Allocator,
     io: std.Io,
     out_dir: std.Io.Dir,
@@ -270,10 +270,10 @@ fn runBandEnergies(
     extra_potential_down: ?*hamiltonian.PotentialGrid,
     scf_result: ?*scf.ScfResult,
 ) !void {
-    try logStep(io, "step: band energies");
+    try log_step(io, "step: band energies");
     const band_paw_tabs: ?[]const paw_mod.PawTab = if (scf_result) |r| r.paw_tabs else null;
     const band_paw_dij: ?[]const []const f64 = if (scf_result) |r| r.paw_dij else null;
-    try band.writeBandEnergies(
+    try band.write_band_energies(
         alloc,
         io,
         out_dir,
@@ -288,7 +288,7 @@ fn runBandEnergies(
 }
 
 /// Load pseudopotentials from config list.
-fn loadPseudopotentials(
+fn load_pseudopotentials(
     alloc: std.mem.Allocator,
     io: std.Io,
     specs: []pseudo.Spec,
@@ -310,7 +310,7 @@ fn loadPseudopotentials(
 }
 
 /// Free parsed pseudopotential list.
-fn deinitPseudopotentials(alloc: std.mem.Allocator, items: []pseudo.Parsed) void {
+fn deinit_pseudopotentials(alloc: std.mem.Allocator, items: []pseudo.Parsed) void {
     if (items.len == 0) return;
     for (items) |*item| {
         item.deinit(alloc);
@@ -335,40 +335,40 @@ const RunSetup = struct {
 
     fn deinit(self: *const RunSetup, alloc: std.mem.Allocator) void {
         alloc.free(self.atom_data);
-        hamiltonian.deinitSpeciesEntries(alloc, self.species);
-        deinitPseudopotentials(alloc, self.pseudo_data);
+        hamiltonian.deinit_species_entries(alloc, self.species);
+        deinit_pseudopotentials(alloc, self.pseudo_data);
     }
 };
 
-fn buildCellSetup(cfg: config.Config) CellSetup {
-    const unit_scale_bohr = math.unitsScaleToBohr(cfg.units);
+fn build_cell_setup(cfg: config.Config) CellSetup {
+    const unit_scale_bohr = math.units_scale_to_bohr(cfg.units);
     const cell_bohr = cfg.cell.scale(unit_scale_bohr);
     return .{
         .unit_scale_bohr = unit_scale_bohr,
         .cell_bohr = cell_bohr,
         .recip = math.reciprocal(cell_bohr),
-        .volume_bohr = cellVolume(cell_bohr),
+        .volume_bohr = cell_volume(cell_bohr),
     };
 }
 
-fn prepareRunSetup(
+fn prepare_run_setup(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
     atoms: []const xyz.Atom,
 ) !RunSetup {
-    const setup_start_ns = nowNs(io);
-    const cell = buildCellSetup(cfg);
+    const setup_start_ns = now_ns(io);
+    const cell = build_cell_setup(cfg);
 
-    try logStep(io, "step: load pseudopotentials");
-    const pseudo_data = try loadPseudopotentials(alloc, io, cfg.pseudopotentials);
-    errdefer deinitPseudopotentials(alloc, pseudo_data);
+    try log_step(io, "step: load pseudopotentials");
+    const pseudo_data = try load_pseudopotentials(alloc, io, cfg.pseudopotentials);
+    errdefer deinit_pseudopotentials(alloc, pseudo_data);
 
-    try logStep(io, "step: build species/atom data");
-    const species = try hamiltonian.buildSpeciesEntries(alloc, pseudo_data);
-    errdefer hamiltonian.deinitSpeciesEntries(alloc, species);
+    try log_step(io, "step: build species/atom data");
+    const species = try hamiltonian.build_species_entries(alloc, pseudo_data);
+    errdefer hamiltonian.deinit_species_entries(alloc, species);
 
-    const atom_data = try hamiltonian.buildAtomData(
+    const atom_data = try hamiltonian.build_atom_data(
         alloc,
         atoms,
         cell.unit_scale_bohr,
@@ -381,11 +381,11 @@ fn prepareRunSetup(
         .pseudo_data = pseudo_data,
         .species = species,
         .atom_data = atom_data,
-        .setup_ns = elapsedNs(io, setup_start_ns),
+        .setup_ns = elapsed_ns(io, setup_start_ns),
     };
 }
 
-fn finishRun(
+fn finish_run(
     io: std.Io,
     out_dir: std.Io.Dir,
     cfg: config.Config,
@@ -394,14 +394,14 @@ fn finishRun(
     total_start_ns: u64,
     kpoint_count: usize,
 ) !void {
-    timing.total_ns = elapsedNs(io, total_start_ns);
-    timing.cpu_end_us = output.Timing.getCpuTimeUs();
-    try output.writeStatus(io, out_dir, cfg, scf_result);
-    try output.writeTiming(io, out_dir, timing.*, kpoint_count);
-    try logStep(io, "step: done");
+    timing.total_ns = elapsed_ns(io, total_start_ns);
+    timing.cpu_end_us = output.Timing.get_cpu_time_us();
+    try output.write_status(io, out_dir, cfg, scf_result);
+    try output.write_timing(io, out_dir, timing.*, kpoint_count);
+    try log_step(io, "step: done");
 }
 
-fn buildActiveModel(
+fn build_active_model(
     species: []const hamiltonian.SpeciesEntry,
     active: ActiveStructure,
 ) model_mod.Model {
@@ -416,7 +416,7 @@ fn buildActiveModel(
 
 /// Skip the post-relax SCF when the relax pass already produced a converged
 /// potential AND no reference-JSON consumer needs the fresh result.
-fn maybeRunScf(
+fn maybe_run_scf(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
@@ -430,21 +430,21 @@ fn maybeRunScf(
         cfg.scf.compare_reference_json != null;
     if (!(cfg.scf.enabled and !(have_relax_potential and !needs_reference))) return;
 
-    const scf_start_ns = nowNs(io);
-    scf_result.* = try runScfWithRelaxWarmStart(
+    const scf_start_ns = now_ns(io);
+    scf_result.* = try run_scf_with_relax_warm_start(
         alloc,
         io,
         cfg,
         active_model,
         if (relax_result.*) |*rr| rr else null,
     );
-    timing.scf_ns = elapsedNs(io, scf_start_ns);
+    timing.scf_ns = elapsed_ns(io, scf_start_ns);
 }
 
 /// Run all post-SCF analyses that depend on a converged SCF result:
 /// stress tensor, DOS/PDOS, cube output, reference-JSON emission/compare,
 /// and DFPT phonons.
-fn runPostScfPipeline(
+fn run_post_scf_pipeline(
     alloc: std.mem.Allocator,
     io: std.Io,
     out_dir: std.Io.Dir,
@@ -458,7 +458,7 @@ fn runPostScfPipeline(
     // Stress tensor computation
     if (cfg.scf.compute_stress) {
         if (scf_result.*) |*result| {
-            try runStressTensor(alloc, io, cfg, result, active_model);
+            try run_stress_tensor(alloc, io, cfg, result, active_model);
         }
     }
 
@@ -466,7 +466,7 @@ fn runPostScfPipeline(
     if (cfg.dos.enabled) {
         if (scf_result.*) |*result| {
             if (result.wavefunctions) |wf_data| {
-                try maybeRunDos(alloc, io, out_dir, cfg, result, wf_data, species, active);
+                try maybe_run_dos(alloc, io, out_dir, cfg, result, wf_data, species, active);
             }
         }
     }
@@ -474,16 +474,16 @@ fn runPostScfPipeline(
     // Cube output
     if (cfg.output.cube) {
         if (scf_result.*) |*result| {
-            try writeCubeOutput(io, out_dir, result, active, species);
+            try write_cube_output(io, out_dir, result, active, species);
         }
     }
 
-    try handleReferenceJson(alloc, io, out_dir, cwd, cfg, scf_result.*);
+    try handle_reference_json(alloc, io, out_dir, cwd, cfg, scf_result.*);
 
     // DFPT phonon calculation
     if (cfg.dfpt.enabled) {
         if (scf_result.*) |*result| {
-            try runDfpt(alloc, io, out_dir, cfg, result, active_model);
+            try run_dfpt(alloc, io, out_dir, cfg, result, active_model);
         } else {
             return error.ScfRequired;
         }
@@ -492,7 +492,7 @@ fn runPostScfPipeline(
 
 /// Resolve the band k-path (auto-derived from the cell, or a named
 /// "G-X-W-K-G-L" expression) and generate its k-point grid.
-fn generateBandKpath(
+fn generate_band_kpath(
     alloc: std.mem.Allocator,
     cfg: config.Config,
     active: ActiveStructure,
@@ -501,13 +501,13 @@ fn generateBandKpath(
     // Resolve path_string ("auto" or "G-X-W-K-G-L") to BandPathPoint array
     var resolved_band = cfg.band;
     if (resolved_band.path_string) |ps| {
-        auto_path_result.* = try kpath.auto_kpath.resolvePathString(alloc, ps, active.cell_bohr);
+        auto_path_result.* = try kpath.auto_kpath.resolve_path_string(alloc, ps, active.cell_bohr);
         resolved_band.path = auto_path_result.*.?.points;
     }
     return kpath.generate(alloc, resolved_band, active.recip);
 }
 
-fn maybeRunRelax(
+fn maybe_run_relax(
     alloc: std.mem.Allocator,
     io: std.Io,
     out_dir: std.Io.Dir,
@@ -522,8 +522,8 @@ fn maybeRunRelax(
 ) !void {
     if (!cfg.relax.enabled) return;
 
-    const relax_start_ns = nowNs(io);
-    relax_result.* = try runRelaxAndWriteOutputs(
+    const relax_start_ns = now_ns(io);
+    relax_result.* = try run_relax_and_write_outputs(
         alloc,
         io,
         out_dir,
@@ -534,11 +534,11 @@ fn maybeRunRelax(
         recip,
         volume_bohr,
     );
-    timing.relax_ns = elapsedNs(io, relax_start_ns);
+    timing.relax_ns = elapsed_ns(io, relax_start_ns);
 }
 
 /// Run structural relaxation and dump its trajectory + final geometry files.
-fn runRelaxAndWriteOutputs(
+fn run_relax_and_write_outputs(
     alloc: std.mem.Allocator,
     io: std.Io,
     out_dir: std.Io.Dir,
@@ -549,7 +549,7 @@ fn runRelaxAndWriteOutputs(
     recip: math.Mat3,
     volume_bohr: f64,
 ) !relax.RelaxResult {
-    try logStep(io, "step: structure relaxation start");
+    try log_step(io, "step: structure relaxation start");
     var result = try relax.run(
         alloc,
         io,
@@ -564,23 +564,23 @@ fn runRelaxAndWriteOutputs(
 
     // Write relaxation output files
     const bohr_to_ang = 0.529177; // 1 Bohr = 0.529177 Angstrom
-    try relax.writeOutput(alloc, io, out_dir, &result, species, bohr_to_ang);
-    try relax.writeTrajectoryXyz(io, out_dir, &result, species, cell_bohr, bohr_to_ang);
+    try relax.write_output(alloc, io, out_dir, &result, species, bohr_to_ang);
+    try relax.write_trajectory_xyz(io, out_dir, &result, species, cell_bohr, bohr_to_ang);
 
-    try logStep(io, "step: structure relaxation done");
+    try log_step(io, "step: structure relaxation done");
     return result;
 }
 
 /// Run the SCF cycle, forwarding cached density and LOBPCG workspaces from a
 /// previous relax step if available (warm-start).
-fn runScfWithRelaxWarmStart(
+fn run_scf_with_relax_warm_start(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
     active_model: *const model_mod.Model,
     relax_result: ?*relax.RelaxResult,
 ) !scf.ScfResult {
-    try logStep(io, "step: scf start");
+    try log_step(io, "step: scf start");
     // density and kpoint_cache are borrowed (scf.run copies internally)
     // apply_caches ownership is transferred to scf.run
     const init_density: ?[]const f64 = if (relax_result) |rr| rr.final_density else null;
@@ -602,20 +602,20 @@ fn runScfWithRelaxWarmStart(
         .initial_kpoint_cache = init_kpoint_cache,
         .initial_apply_caches = init_apply_caches,
     });
-    try logStep(io, "step: scf done");
+    try log_step(io, "step: scf done");
     return result;
 }
 
-fn runStressTensor(
+fn run_stress_tensor(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
     result: *scf.ScfResult,
     active_model: *const model_mod.Model,
 ) !void {
-    try logStep(io, "step: stress tensor start");
+    try log_step(io, "step: stress tensor start");
     const stress = @import("../stress/stress.zig");
-    const stress_terms = try stress.computeStressFromScf(
+    const stress_terms = try stress.compute_stress_from_scf(
         alloc,
         io,
         result,
@@ -623,18 +623,18 @@ fn runStressTensor(
         active_model,
     );
     _ = stress_terms;
-    try logStep(io, "step: stress tensor done");
+    try log_step(io, "step: stress tensor done");
 }
 
-fn writeCubeOutput(
+fn write_cube_output(
     io: std.Io,
     out_dir: std.Io.Dir,
     result: *const scf.ScfResult,
     active: ActiveStructure,
     species: []const hamiltonian.SpeciesEntry,
 ) !void {
-    try logStep(io, "step: cube output start");
-    try cube.writeCubeFile(
+    try log_step(io, "step: cube output start");
+    try cube.write_cube_file(
         io,
         out_dir,
         "density.cube",
@@ -644,12 +644,12 @@ fn writeCubeOutput(
         active.atoms,
         species,
     );
-    try logStep(io, "step: cube output done");
+    try log_step(io, "step: cube output done");
 }
 
 /// Compute DOS (and optionally PDOS) from converged wavefunctions and write
 /// the CSV outputs into `out_dir`.
-fn maybeRunDos(
+fn maybe_run_dos(
     alloc: std.mem.Allocator,
     io: std.Io,
     out_dir: std.Io.Dir,
@@ -659,8 +659,8 @@ fn maybeRunDos(
     species: []const hamiltonian.SpeciesEntry,
     active: ActiveStructure,
 ) !void {
-    try logStep(io, "step: dos start");
-    var dos_result = try dos.computeDos(
+    try log_step(io, "step: dos start");
+    var dos_result = try dos.compute_dos(
         alloc,
         wf_data,
         cfg.dos.sigma,
@@ -676,8 +676,8 @@ fn maybeRunDos(
     else
         result.fermi_level;
     if (result.wavefunctions_down) |wf_down| {
-        try dos.writeDosCSVNamed(io, out_dir, dos_result, dos_fermi, "dos_up.csv");
-        var dos_down = try dos.computeDos(
+        try dos.write_dos_csv_named(io, out_dir, dos_result, dos_fermi, "dos_up.csv");
+        var dos_down = try dos.compute_dos(
             alloc,
             wf_down,
             cfg.dos.sigma,
@@ -688,16 +688,16 @@ fn maybeRunDos(
         );
         defer dos_down.deinit(alloc);
 
-        try dos.writeDosCSVNamed(io, out_dir, dos_down, dos_fermi, "dos_down.csv");
+        try dos.write_dos_csv_named(io, out_dir, dos_down, dos_fermi, "dos_down.csv");
     } else {
-        try dos.writeDosCSV(io, out_dir, dos_result, dos_fermi);
+        try dos.write_dos_csv(io, out_dir, dos_result, dos_fermi);
     }
-    try logStep(io, "step: dos done");
+    try log_step(io, "step: dos done");
 
     // PDOS computation
     if (cfg.dos.pdos) {
-        try logStep(io, "step: pdos start");
-        var pdos_result = try pdos_mod.computePdos(
+        try log_step(io, "step: pdos start");
+        var pdos_result = try pdos_mod.compute_pdos(
             alloc,
             wf_data,
             species,
@@ -712,14 +712,14 @@ fn maybeRunDos(
         );
         defer pdos_result.deinit(alloc);
 
-        try pdos_mod.writePdosCSV(io, out_dir, pdos_result, dos_fermi);
-        try logStep(io, "step: pdos done");
+        try pdos_mod.write_pdos_csv(io, out_dir, pdos_result, dos_fermi);
+        try log_step(io, "step: pdos done");
     }
 }
 
 /// Emit the converged SCF reference JSON, optionally comparing against a
 /// pre-existing reference and a tolerance spec.
-fn handleReferenceJson(
+fn handle_reference_json(
     alloc: std.mem.Allocator,
     io: std.Io,
     out_dir: std.Io.Dir,
@@ -738,17 +738,17 @@ fn handleReferenceJson(
     var maybe_result = scf_result;
     if (maybe_result) |*result| {
         if (cfg.scf.reference_json) |path| {
-            try linear_scaling.writeReferenceFromScfResult(io, out_dir, path, result);
+            try linear_scaling.write_reference_from_scf_result(io, out_dir, path, result);
         }
         if (cfg.scf.compare_reference_json) |ref_path| {
-            try compareToReferenceJson(alloc, io, out_dir, cwd, cfg, result, ref_path);
+            try compare_to_reference_json(alloc, io, out_dir, cwd, cfg, result, ref_path);
         } else if (cfg.scf.comparison_json != null or cfg.scf.compare_tolerance_json != null) {
             return error.MissingReferenceJson;
         }
     }
 }
 
-fn compareToReferenceJson(
+fn compare_to_reference_json(
     alloc: std.mem.Allocator,
     io: std.Io,
     out_dir: std.Io.Dir,
@@ -757,12 +757,12 @@ fn compareToReferenceJson(
     result: *scf.ScfResult,
     ref_path: []const u8,
 ) !void {
-    var reference = try linear_scaling.readReferenceJson(io, alloc, cwd, ref_path);
+    var reference = try linear_scaling.read_reference_json(io, alloc, cwd, ref_path);
     defer reference.deinit(alloc);
 
-    const report = try linear_scaling.compareReferenceToScfResult(&reference, result);
+    const report = try linear_scaling.compare_reference_to_scf_result(&reference, result);
     if (cfg.scf.comparison_json) |out_path| {
-        try linear_scaling.writeComparisonJson(io, out_dir, out_path, report);
+        try linear_scaling.write_comparison_json(io, out_dir, out_path, report);
     } else {
         return error.MissingComparisonOutput;
     }
@@ -783,7 +783,7 @@ fn compareToReferenceJson(
         );
         defer parsed_tol.deinit();
 
-        const tol_result = linear_scaling.withinScfTolerance(report, parsed_tol.value);
+        const tol_result = linear_scaling.within_scf_tolerance(report, parsed_tol.value);
         if (!tol_result.all) {
             return error.ComparisonToleranceFailed;
         }
@@ -791,7 +791,7 @@ fn compareToReferenceJson(
 }
 
 /// Run DFPT (phonon-band-along-qpath or single phonon) and write its outputs.
-fn runDfpt(
+fn run_dfpt(
     alloc: std.mem.Allocator,
     io: std.Io,
     out_dir: std.Io.Dir,
@@ -801,11 +801,11 @@ fn runDfpt(
 ) !void {
     const dfpt_mod = @import("../dfpt/dfpt.zig");
     if (cfg.dfpt.qpath_npoints > 0) {
-        try logStep(io, "step: dfpt phonon band start");
+        try log_step(io, "step: dfpt phonon band start");
         var band_result = if (cfg.dfpt.qgrid != null)
-            try dfpt_mod.runPhononBandIFC(alloc, io, cfg, result, active_model)
+            try dfpt_mod.run_phonon_band_ifc(alloc, io, cfg, result, active_model)
         else
-            try dfpt_mod.runPhononBand(
+            try dfpt_mod.run_phonon_band(
                 alloc,
                 io,
                 cfg,
@@ -815,19 +815,19 @@ fn runDfpt(
             );
         defer band_result.deinit(alloc);
 
-        try writePhononBandCsv(io, out_dir, band_result);
-        try logStep(io, "step: dfpt phonon band done");
+        try write_phonon_band_csv(io, out_dir, band_result);
+        try log_step(io, "step: dfpt phonon band done");
     } else {
-        try logStep(io, "step: dfpt phonon start");
-        var phonon = try dfpt_mod.runPhonon(alloc, io, cfg, result, active_model);
+        try log_step(io, "step: dfpt phonon start");
+        var phonon = try dfpt_mod.run_phonon(alloc, io, cfg, result, active_model);
         defer phonon.deinit(alloc);
 
-        try logStep(io, "step: dfpt phonon done");
-        try logPhononFrequencies(io, phonon.frequencies_cm1);
+        try log_step(io, "step: dfpt phonon done");
+        try log_phonon_frequencies(io, phonon.frequencies_cm1);
     }
 }
 
-fn writePhononBandCsv(
+fn write_phonon_band_csv(
     io: std.Io,
     out_dir: std.Io.Dir,
     band_result: anytype,
@@ -862,7 +862,7 @@ const output_test_config: config.Config = .{
     .units = .angstrom,
     .linalg_backend = .openblas,
     .threads = 0,
-    .cell = math.Mat3.fromRows(
+    .cell = math.Mat3.from_rows(
         .{ .x = 10.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 10.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 10.0 },
@@ -967,17 +967,17 @@ const output_test_config: config.Config = .{
     }),
 };
 
-fn testOutputConfig() config.Config {
+fn test_output_config() config.Config {
     return output_test_config;
 }
 
-test "selectActiveStructure prefers latest relax geometry and cell" {
-    const initial_cell = math.Mat3.fromRows(
+test "select_active_structure prefers latest relax geometry and cell" {
+    const initial_cell = math.Mat3.from_rows(
         .{ .x = 1.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 1.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 1.0 },
     );
-    const final_cell = math.Mat3.fromRows(
+    const final_cell = math.Mat3.from_rows(
         .{ .x = 2.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 2.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 2.0 },
@@ -1002,7 +1002,7 @@ test "selectActiveStructure prefers latest relax geometry and cell" {
         .final_volume = 8.0,
     };
 
-    const active = selectActiveStructure(
+    const active = select_active_structure(
         initial_atoms[0..],
         initial_cell,
         initial_recip,
@@ -1024,7 +1024,7 @@ test "post-relax outputs use active cell and active atoms" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const cfg = testOutputConfig();
+    const cfg = test_output_config();
     var input_atoms = [_]xyz.Atom{
         .{
             .symbol = @constCast("Si"),
@@ -1040,12 +1040,12 @@ test "post-relax outputs use active cell and active atoms" {
         },
     };
 
-    const initial_cell = math.Mat3.fromRows(
+    const initial_cell = math.Mat3.from_rows(
         .{ .x = 5.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 5.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 5.0 },
     );
-    const final_cell = math.Mat3.fromRows(
+    const final_cell = math.Mat3.from_rows(
         .{ .x = 2.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 3.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 4.0 },
@@ -1070,22 +1070,22 @@ test "post-relax outputs use active cell and active atoms" {
         .final_volume = 24.0,
     };
 
-    const active = selectActiveStructure(
+    const active = select_active_structure(
         initial_atom_data[0..],
         initial_cell,
         initial_recip,
         125.0,
         &relax_result,
     );
-    const cell_ang = active.cell_bohr.scale(math.unitsScaleToAngstrom(.bohr));
+    const cell_ang = active.cell_bohr.scale(math.units_scale_to_angstrom(.bohr));
 
-    try output.writeRunInfo(io, tmp.dir, cfg, input_atoms[0..], cell_ang);
-    try output.writeAtomsFromAtomData(
+    try output.write_run_info(io, tmp.dir, cfg, input_atoms[0..], cell_ang);
+    try output.write_atoms_from_atom_data(
         io,
         tmp.dir,
         active.atoms,
         species[0..],
-        math.unitsScaleToAngstrom(.bohr),
+        math.units_scale_to_angstrom(.bohr),
     );
 
     const run_info = try tmp.dir.readFileAlloc(io, "run_info.txt", alloc, .limited(1024 * 1024));

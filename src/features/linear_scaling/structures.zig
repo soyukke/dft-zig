@@ -2,15 +2,15 @@ const std = @import("std");
 
 const math = @import("../math/math.zig");
 
-pub fn diamondConventionalCell(a: f64) math.Mat3 {
-    return math.Mat3.fromRows(
+pub fn diamond_conventional_cell(a: f64) math.Mat3 {
+    return math.Mat3.from_rows(
         .{ .x = a, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = a, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = a },
     );
 }
 
-pub fn diamondConventionalFractional() [8]math.Vec3 {
+pub fn diamond_conventional_fractional() [8]math.Vec3 {
     return .{
         .{ .x = 0.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.5, .z = 0.5 },
@@ -23,8 +23,8 @@ pub fn diamondConventionalFractional() [8]math.Vec3 {
     };
 }
 
-pub fn diamondConventionalPositions(a: f64) [8]math.Vec3 {
-    const frac = diamondConventionalFractional();
+pub fn diamond_conventional_positions(a: f64) [8]math.Vec3 {
+    const frac = diamond_conventional_fractional();
     var positions: [8]math.Vec3 = undefined;
     for (frac, 0..) |f, i| {
         positions[i] = .{ .x = f.x * a, .y = f.y * a, .z = f.z * a };
@@ -32,12 +32,12 @@ pub fn diamondConventionalPositions(a: f64) [8]math.Vec3 {
     return positions;
 }
 
-pub fn diamondConventionalSupercell(
+pub fn diamond_conventional_supercell(
     alloc: std.mem.Allocator,
     a: f64,
     reps: [3]usize,
 ) ![]math.Vec3 {
-    const base = diamondConventionalFractional();
+    const base = diamond_conventional_fractional();
     const count = base.len * reps[0] * reps[1] * reps[2];
     const positions = try alloc.alloc(math.Vec3, count);
     var idx: usize = 0;
@@ -65,7 +65,7 @@ pub fn diamondConventionalSupercell(
 
 test "diamond conventional positions count and bounds" {
     const a = 4.0;
-    const positions = diamondConventionalPositions(a);
+    const positions = diamond_conventional_positions(a);
     try std.testing.expectEqual(@as(usize, 8), positions.len);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), positions[0].x, 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 3.0), positions[7].y, 1e-12);
@@ -75,7 +75,7 @@ test "diamond supercell count" {
     const alloc = std.testing.allocator;
     const a = 5.0;
     const reps = [3]usize{ 2, 2, 2 };
-    const positions = try diamondConventionalSupercell(alloc, a, reps);
+    const positions = try diamond_conventional_supercell(alloc, a, reps);
     defer alloc.free(positions);
 
     try std.testing.expectEqual(@as(usize, 8 * 8), positions.len);

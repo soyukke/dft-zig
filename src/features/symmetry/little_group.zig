@@ -18,15 +18,15 @@ pub const LittleGroup = struct {
     }
 
     /// Check if this little group has a specific symmetry operation (by rotation part).
-    pub fn hasOperation(self: LittleGroup, rot: symmetry.Mat3i) bool {
+    pub fn has_operation(self: LittleGroup, rot: symmetry.Mat3i) bool {
         for (self.ops) |op| {
-            if (mat3iEqual(op.rot, rot)) return true;
+            if (mat3i_equal(op.rot, rot)) return true;
         }
         return false;
     }
 
     /// Check if there's a mirror operation (det = -1, trace = 1).
-    pub fn hasMirror(self: LittleGroup) bool {
+    pub fn has_mirror(self: LittleGroup) bool {
         for (self.ops) |op| {
             if (op.rot.det() == -1 and op.rot.trace() == 1) return true;
         }
@@ -45,7 +45,7 @@ pub const LittleGroup = struct {
 ///
 /// In fractional coordinates: S_k * k_frac ≡ k_frac (mod 1)
 /// where S_k = (R^-1)^T is the reciprocal space rotation.
-pub fn computeLittleGroup(
+pub fn compute_little_group(
     alloc: std.mem.Allocator,
     k_frac: math.Vec3,
     space_group_ops: []const symmetry.SymOp,
@@ -56,10 +56,10 @@ pub fn computeLittleGroup(
 
     for (space_group_ops) |op| {
         // Apply k-space rotation: k' = S_k * k
-        const k_prime = op.k_rot.mulVec(k_frac);
+        const k_prime = op.k_rot.mul_vec(k_frac);
 
         // Check if k' ≡ k (mod 1), i.e., k' - k is a lattice vector
-        if (isEquivalentKPoint(k_prime, k_frac, tol)) {
+        if (is_equivalent_k_point(k_prime, k_frac, tol)) {
             try little_ops.append(alloc, op);
         }
     }
@@ -75,7 +75,7 @@ pub fn computeLittleGroup(
     }
 
     const ops = try little_ops.toOwnedSlice(alloc);
-    const pg_type = point_group.identifyPointGroup(ops);
+    const pg_type = point_group.identify_point_group(ops);
 
     return LittleGroup{
         .k_frac = k_frac,
@@ -85,7 +85,7 @@ pub fn computeLittleGroup(
 }
 
 /// Check if two k-points are equivalent (differ by a reciprocal lattice vector).
-fn isEquivalentKPoint(k1: math.Vec3, k2: math.Vec3, tol: f64) bool {
+fn is_equivalent_k_point(k1: math.Vec3, k2: math.Vec3, tol: f64) bool {
     const diff = math.Vec3.sub(k1, k2);
     // Each component should be close to an integer
     const dx = diff.x - std.math.round(diff.x);
@@ -95,7 +95,7 @@ fn isEquivalentKPoint(k1: math.Vec3, k2: math.Vec3, tol: f64) bool {
 }
 
 /// Check if two Mat3i are equal.
-fn mat3iEqual(a: symmetry.Mat3i, b: symmetry.Mat3i) bool {
+fn mat3i_equal(a: symmetry.Mat3i, b: symmetry.Mat3i) bool {
     var i: usize = 0;
     while (i < 3) : (i += 1) {
         var j: usize = 0;
@@ -190,7 +190,7 @@ pub const IrrepBlock = struct {
 };
 
 /// Find the mirror operation (det=-1) in the little group, if any.
-fn findMirrorOperation(little_grp: LittleGroup) ?symmetry.SymOp {
+fn find_mirror_operation(little_grp: LittleGroup) ?symmetry.SymOp {
     for (little_grp.ops) |op| {
         if (op.rot.det() == -1) return op;
     }
@@ -198,7 +198,7 @@ fn findMirrorOperation(little_grp: LittleGroup) ?symmetry.SymOp {
 }
 
 /// Classify G-vectors under a mirror into invariant indices and (G, σG) pairs.
-fn classifyGVectorsByMirrorFrac(
+fn classify_g_vectors_by_mirror_frac(
     alloc: std.mem.Allocator,
     gvecs: []const GVector,
     mirror: symmetry.SymOp,
@@ -267,7 +267,7 @@ fn classifyGVectorsByMirrorFrac(
 }
 
 /// Build the A' and A'' irrep blocks from invariant G-vectors and mirror pairs.
-fn buildMirrorIrrepBlocks(
+fn build_mirror_irrep_blocks(
     alloc: std.mem.Allocator,
     little_grp: LittleGroup,
     invariant_indices: []usize,
@@ -315,15 +315,15 @@ fn buildMirrorIrrepBlocks(
 /// - Invariant G-vectors (σG = G): belong only to A'
 /// - Paired G-vectors (σG ≠ G): form |+⟩ = (|G⟩+|σG⟩)/√2 in A'
 ///                               and |-⟩ = (|G⟩-|σG⟩)/√2 in A''
-pub fn analyzeCs(
+pub fn analyze_cs(
     alloc: std.mem.Allocator,
     gvecs: []const GVector,
     little_grp: LittleGroup,
 ) !BasisSymmetryInfo {
-    const mirror_op = findMirrorOperation(little_grp);
+    const mirror_op = find_mirror_operation(little_grp);
     if (mirror_op == null) {
         // No mirror found - return trivial classification
-        return trivialClassification(alloc, gvecs, little_grp);
+        return trivial_classification(alloc, gvecs, little_grp);
     }
     const mirror = mirror_op.?;
 
@@ -334,17 +334,17 @@ pub fn analyzeCs(
     var pair_list: std.ArrayList(GVectorPair) = .empty;
     errdefer pair_list.deinit(alloc);
 
-    try classifyGVectorsByMirrorFrac(alloc, gvecs, mirror, &invariant_list, &pair_list);
+    try classify_g_vectors_by_mirror_frac(alloc, gvecs, mirror, &invariant_list, &pair_list);
 
     const invariant_indices = try invariant_list.toOwnedSlice(alloc);
     const pairs = try pair_list.toOwnedSlice(alloc);
 
-    return try buildMirrorIrrepBlocks(alloc, little_grp, invariant_indices, pairs);
+    return try build_mirror_irrep_blocks(alloc, little_grp, invariant_indices, pairs);
 }
 
 /// Trivial classification when no useful symmetry is found.
 /// All basis functions are treated as invariant in a single A block.
-fn trivialClassification(
+fn trivial_classification(
     alloc: std.mem.Allocator,
     gvecs: []const GVector,
     little_grp: LittleGroup,
@@ -368,7 +368,7 @@ fn trivialClassification(
 }
 
 /// Classify G-vectors under the Cartesian σ_y mirror (Gy → -Gy).
-fn classifyGVectorsByCartesianY(
+fn classify_g_vectors_by_cartesian_y(
     alloc: std.mem.Allocator,
     gvecs: []const GVector,
     tol: f64,
@@ -432,7 +432,7 @@ fn classifyGVectorsByCartesianY(
 ///
 /// For 2D graphene on M-Γ path (Cartesian k_y = 0), the relevant mirror is σ_y:
 /// G_cart = (Gx, Gy, Gz) -> (Gx, -Gy, Gz)
-pub fn analyzeCartesianMirrorY(
+pub fn analyze_cartesian_mirror_y(
     alloc: std.mem.Allocator,
     gvecs: []const GVector,
     little_grp: LittleGroup,
@@ -445,16 +445,16 @@ pub fn analyzeCartesianMirrorY(
     var pair_list: std.ArrayList(GVectorPair) = .empty;
     errdefer pair_list.deinit(alloc);
 
-    try classifyGVectorsByCartesianY(alloc, gvecs, tol, &invariant_list, &pair_list);
+    try classify_g_vectors_by_cartesian_y(alloc, gvecs, tol, &invariant_list, &pair_list);
 
     const invariant_indices = try invariant_list.toOwnedSlice(alloc);
     const pairs = try pair_list.toOwnedSlice(alloc);
 
-    return try buildMirrorIrrepBlocks(alloc, little_grp, invariant_indices, pairs);
+    return try build_mirror_irrep_blocks(alloc, little_grp, invariant_indices, pairs);
 }
 
 /// Find the C3 rotation operation (det=1, trace=0) in the little group.
-fn findC3Operation(little_grp: LittleGroup) ?symmetry.SymOp {
+fn find_c3_operation(little_grp: LittleGroup) ?symmetry.SymOp {
     for (little_grp.ops) |op| {
         const det = op.rot.det();
         const trace = op.rot.trace();
@@ -464,7 +464,7 @@ fn findC3Operation(little_grp: LittleGroup) ?symmetry.SymOp {
 }
 
 /// Classify G-vectors under a C3 rotation into invariants and orbit-3 triplets.
-fn classifyGVectorsByC3(
+fn classify_g_vectors_by_c3(
     alloc: std.mem.Allocator,
     gvecs: []const GVector,
     c3: symmetry.SymOp,
@@ -484,7 +484,7 @@ fn classifyGVectorsByC3(
         const g_int = [3]i32{ g.h, g.k, g.l };
 
         // Apply C3: G' = C3.k_rot * G
-        const g2_int = applyRotation(c3.k_rot, g_int);
+        const g2_int = apply_rotation(c3.k_rot, g_int);
 
         // Check if G is invariant (C3*G = G)
         if (g2_int[0] == g_int[0] and g2_int[1] == g_int[1] and g2_int[2] == g_int[2]) {
@@ -493,7 +493,7 @@ fn classifyGVectorsByC3(
             processed[i] = true;
         } else {
             // Apply C3 again: G'' = C3^2*G
-            const g3_int = applyRotation(c3.k_rot, g2_int);
+            const g3_int = apply_rotation(c3.k_rot, g2_int);
 
             // Find G' and G'' in the basis
             var g2_idx: ?usize = null;
@@ -531,7 +531,7 @@ fn classifyGVectorsByC3(
 }
 
 /// Build the A1 and E irrep blocks from invariant G-vectors and C3 triplets.
-fn buildC3vIrrepBlocks(
+fn build_c3v_irrep_blocks(
     alloc: std.mem.Allocator,
     little_grp: LittleGroup,
     invariant_indices: []usize,
@@ -581,15 +581,15 @@ fn buildC3vIrrepBlocks(
 /// - G-vector triplets (orbit size 3): contribute 1 state to A1 and 2 states to E
 ///
 /// The E representation is 2-dimensional, causing degeneracy at K point (Dirac cone).
-pub fn analyzeC3v(
+pub fn analyze_c3v(
     alloc: std.mem.Allocator,
     gvecs: []const GVector,
     little_grp: LittleGroup,
 ) !BasisSymmetryInfo {
-    const c3_op = findC3Operation(little_grp);
+    const c3_op = find_c3_operation(little_grp);
     if (c3_op == null) {
         // No C3 found - return trivial classification
-        return trivialClassification(alloc, gvecs, little_grp);
+        return trivial_classification(alloc, gvecs, little_grp);
     }
     const c3 = c3_op.?;
 
@@ -600,16 +600,16 @@ pub fn analyzeC3v(
     var triplet_list: std.ArrayList(GVectorTriplet) = .empty;
     errdefer triplet_list.deinit(alloc);
 
-    try classifyGVectorsByC3(alloc, gvecs, c3, &invariant_list, &triplet_list);
+    try classify_g_vectors_by_c3(alloc, gvecs, c3, &invariant_list, &triplet_list);
 
     const invariant_indices = try invariant_list.toOwnedSlice(alloc);
     const triplets = try triplet_list.toOwnedSlice(alloc);
 
-    return try buildC3vIrrepBlocks(alloc, little_grp, invariant_indices, triplets);
+    return try build_c3v_irrep_blocks(alloc, little_grp, invariant_indices, triplets);
 }
 
 /// Apply rotation matrix to integer G-vector.
-fn applyRotation(rot: symmetry.Mat3i, g: [3]i32) [3]i32 {
+fn apply_rotation(rot: symmetry.Mat3i, g: [3]i32) [3]i32 {
     return [3]i32{
         rot.m[0][0] * g[0] + rot.m[0][1] * g[1] + rot.m[0][2] * g[2],
         rot.m[1][0] * g[0] + rot.m[1][1] * g[1] + rot.m[1][2] * g[2],
@@ -618,7 +618,7 @@ fn applyRotation(rot: symmetry.Mat3i, g: [3]i32) [3]i32 {
 }
 
 /// Analyze basis functions using the little group symmetry.
-pub fn analyzeBasisSymmetry(
+pub fn analyze_basis_symmetry(
     alloc: std.mem.Allocator,
     gvecs: []const GVector,
     k_frac: math.Vec3,
@@ -627,7 +627,7 @@ pub fn analyzeBasisSymmetry(
     tol: f64,
 ) !BasisSymmetryInfo {
     // Compute little group
-    var little_grp = try computeLittleGroup(alloc, k_frac, space_group_ops, tol);
+    var little_grp = try compute_little_group(alloc, k_frac, space_group_ops, tol);
     errdefer little_grp.deinit(alloc);
 
     // Check if k is on a Cartesian mirror plane (k_y ≈ 0)
@@ -636,27 +636,27 @@ pub fn analyzeBasisSymmetry(
 
     if (on_y_mirror_plane and gvecs.len > 0) {
         // Use Cartesian σ_y mirror for M-Γ path analysis
-        return try analyzeCartesianMirrorY(alloc, gvecs, little_grp, tol);
+        return try analyze_cartesian_mirror_y(alloc, gvecs, little_grp, tol);
     }
 
     // Dispatch based on point group type
     switch (little_grp.point_group_type) {
         .cs => {
             // Cs symmetry: single mirror
-            return try analyzeCs(alloc, gvecs, little_grp);
+            return try analyze_cs(alloc, gvecs, little_grp);
         },
         .c3v => {
             // C3v symmetry: 3-fold rotation + 3 mirrors (K point in graphene)
-            return try analyzeC3v(alloc, gvecs, little_grp);
+            return try analyze_c3v(alloc, gvecs, little_grp);
         },
         .c1 => {
             // No symmetry - trivial classification
-            return try trivialClassification(alloc, gvecs, little_grp);
+            return try trivial_classification(alloc, gvecs, little_grp);
         },
         else => {
             // For other point groups, use trivial classification for now
             // TODO: implement C2v, C6v, D6h analysis
-            return try trivialClassification(alloc, gvecs, little_grp);
+            return try trivial_classification(alloc, gvecs, little_grp);
         },
     }
 }
@@ -677,7 +677,7 @@ test "little group at Gamma" {
     };
 
     const k_gamma = math.Vec3{ .x = 0, .y = 0, .z = 0 };
-    var lg = try computeLittleGroup(alloc, k_gamma, &ops, 1e-6);
+    var lg = try compute_little_group(alloc, k_gamma, &ops, 1e-6);
     defer lg.deinit(alloc);
 
     try testing.expectEqual(@as(usize, 1), lg.order());
@@ -704,18 +704,18 @@ test "little group with mirror" {
 
     // k on mirror plane (ky = 0)
     const k_on_mirror = math.Vec3{ .x = 0.25, .y = 0, .z = 0 };
-    var lg = try computeLittleGroup(alloc, k_on_mirror, &ops, 1e-6);
+    var lg = try compute_little_group(alloc, k_on_mirror, &ops, 1e-6);
     defer lg.deinit(alloc);
 
     try testing.expectEqual(@as(usize, 2), lg.order());
     try testing.expectEqual(point_group.PointGroupType.cs, lg.point_group_type);
-    try testing.expect(lg.hasMirror());
+    try testing.expect(lg.has_mirror());
 
     // k off mirror plane
     const k_off_mirror = math.Vec3{ .x = 0.25, .y = 0.1, .z = 0 };
-    var lg2 = try computeLittleGroup(alloc, k_off_mirror, &ops, 1e-6);
+    var lg2 = try compute_little_group(alloc, k_off_mirror, &ops, 1e-6);
     defer lg2.deinit(alloc);
 
     try testing.expectEqual(@as(usize, 1), lg2.order());
-    try testing.expect(!lg2.hasMirror());
+    try testing.expect(!lg2.has_mirror());
 }

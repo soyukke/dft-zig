@@ -15,20 +15,20 @@ pub const libcint = @import("libcint.zig");
 pub const eri_df = @import("eri_df.zig");
 
 // Re-export key functions (s-only, legacy)
-pub const overlapSS = overlap.overlapSS;
-pub const buildOverlapMatrix = overlap.buildOverlapMatrix;
-pub const kineticSS = kinetic.kineticSS;
-pub const buildKineticMatrix = kinetic.buildKineticMatrix;
-pub const nuclearAttractionSS = nuclear.nuclearAttractionSS;
-pub const totalNuclearAttraction = nuclear.totalNuclearAttraction;
-pub const buildNuclearMatrix = nuclear.buildNuclearMatrix;
-pub const eriSSSS = eri.eriSSSS;
-pub const buildEriTable = eri.buildEriTable;
+pub const overlap_ss = overlap.overlap_ss;
+pub const build_overlap_matrix = overlap.build_overlap_matrix;
+pub const kinetic_ss = kinetic.kinetic_ss;
+pub const build_kinetic_matrix = kinetic.build_kinetic_matrix;
+pub const nuclear_attraction_ss = nuclear.nuclear_attraction_ss;
+pub const total_nuclear_attraction = nuclear.total_nuclear_attraction;
+pub const build_nuclear_matrix = nuclear.build_nuclear_matrix;
+pub const eri_ssss = eri.eri_ssss;
+pub const build_eri_table = eri.build_eri_table;
 pub const EriTable = eri.EriTable;
 
 // Re-export general (Obara-Saika) functions
 pub const GeneralEriTable = obara_saika.GeneralEriTable;
-pub const totalBasisFunctions = obara_saika.totalBasisFunctions;
+pub const total_basis_functions = obara_saika.total_basis_functions;
 
 test {
     _ = boys;

@@ -11,7 +11,7 @@ const bluestein = @import("bluestein.zig");
 const Vec2 = @Vector(2, f64);
 
 /// Complex multiplication using Vec2: (a + bi)(c + di) = (ac-bd) + (ad+bc)i
-inline fn complexMulVec2(a: Vec2, b: Vec2) Vec2 {
+inline fn complex_mul_vec2(a: Vec2, b: Vec2) Vec2 {
     // a = [re_a, im_a], b = [re_b, im_b]
     const a_re: Vec2 = @splat(a[0]);
     const a_im: Vec2 = @splat(a[1]);
@@ -22,17 +22,17 @@ inline fn complexMulVec2(a: Vec2, b: Vec2) Vec2 {
 }
 
 /// Load Complex as Vec2
-inline fn loadVec2(c: Complex) Vec2 {
+inline fn load_vec2(c: Complex) Vec2 {
     return Vec2{ c.re, c.im };
 }
 
 /// Store Vec2 as Complex
-inline fn storeVec2(v: Vec2) Complex {
+inline fn store_vec2(v: Vec2) Complex {
     return Complex.init(v[0], v[1]);
 }
 
 /// Check if n is a smooth number (composed only of factors 2, 3, 5).
-pub fn isSmoothNumber(n: usize) bool {
+pub fn is_smooth_number(n: usize) bool {
     if (n == 0) return false;
     var v = n;
     for ([_]usize{ 2, 3, 5 }) |f| {
@@ -44,7 +44,7 @@ pub fn isSmoothNumber(n: usize) bool {
 }
 
 /// Direct DFT - O(N^2) reference implementation for testing.
-pub fn dftDirect(input: []const Complex, output: []Complex, inv: bool) void {
+pub fn dft_direct(input: []const Complex, output: []Complex, inv: bool) void {
     const n = input.len;
     const sign: f64 = if (inv) 1.0 else -1.0;
     const angle_base = sign * 2.0 * std.math.pi / @as(f64, @floatFromInt(n));
@@ -145,7 +145,7 @@ fn dft2(input: *const [2]Complex, output: *[2]Complex, inv: bool) void {
 }
 
 /// DFT of size 3 (in-place version for general FFT).
-fn dft3InPlace(data: []Complex, inv: bool) void {
+fn dft3_in_place(data: []Complex, inv: bool) void {
     if (data.len != 3) return;
     const input = [3]Complex{ data[0], data[1], data[2] };
     var output: [3]Complex = undefined;
@@ -164,16 +164,16 @@ fn dft3(input: *const [3]Complex, output: *[3]Complex, inv: bool) void {
     const w3 = Vec2{ -0.5, sign * sqrt3_2 };
     const w3_2 = Vec2{ -0.5, -sign * sqrt3_2 }; // W3^2 = conj(W3)
 
-    const x0 = loadVec2(input[0]);
-    const x1 = loadVec2(input[1]);
-    const x2 = loadVec2(input[2]);
+    const x0 = load_vec2(input[0]);
+    const x1 = load_vec2(input[1]);
+    const x2 = load_vec2(input[2]);
 
     // X[0] = x0 + x1 + x2
     // X[1] = x0 + x1*W3 + x2*W3^2
     // X[2] = x0 + x1*W3^2 + x2*W3
-    output[0] = storeVec2(x0 + x1 + x2);
-    output[1] = storeVec2(x0 + complexMulVec2(x1, w3) + complexMulVec2(x2, w3_2));
-    output[2] = storeVec2(x0 + complexMulVec2(x1, w3_2) + complexMulVec2(x2, w3));
+    output[0] = store_vec2(x0 + x1 + x2);
+    output[1] = store_vec2(x0 + complex_mul_vec2(x1, w3) + complex_mul_vec2(x2, w3_2));
+    output[2] = store_vec2(x0 + complex_mul_vec2(x1, w3_2) + complex_mul_vec2(x2, w3));
 }
 
 /// DFT of size 5 - SIMD optimized.
@@ -195,46 +195,46 @@ fn dft5(input: *const [5]Complex, output: *[5]Complex, inv: bool) void {
     const w5_3 = Vec2{ c2, -sign * s2 }; // W5^3 = conj(W5^2)
     const w5_4 = Vec2{ c1, -sign * s1 }; // W5^4 = conj(W5^1)
 
-    const x0 = loadVec2(input[0]);
-    const x1 = loadVec2(input[1]);
-    const x2 = loadVec2(input[2]);
-    const x3 = loadVec2(input[3]);
-    const x4 = loadVec2(input[4]);
+    const x0 = load_vec2(input[0]);
+    const x1 = load_vec2(input[1]);
+    const x2 = load_vec2(input[2]);
+    const x3 = load_vec2(input[3]);
+    const x4 = load_vec2(input[4]);
 
     // X[k] = sum_{n=0}^{4} x[n] * W5^(nk)
-    output[0] = storeVec2(x0 + x1 + x2 + x3 + x4);
+    output[0] = store_vec2(x0 + x1 + x2 + x3 + x4);
     {
-        const t1 = complexMulVec2(x1, w5_1);
-        const t2 = complexMulVec2(x2, w5_2);
-        const t3 = complexMulVec2(x3, w5_3);
-        const t4 = complexMulVec2(x4, w5_4);
-        output[1] = storeVec2(x0 + t1 + t2 + t3 + t4);
+        const t1 = complex_mul_vec2(x1, w5_1);
+        const t2 = complex_mul_vec2(x2, w5_2);
+        const t3 = complex_mul_vec2(x3, w5_3);
+        const t4 = complex_mul_vec2(x4, w5_4);
+        output[1] = store_vec2(x0 + t1 + t2 + t3 + t4);
     }
     {
-        const t1 = complexMulVec2(x1, w5_2);
-        const t2 = complexMulVec2(x2, w5_4);
-        const t3 = complexMulVec2(x3, w5_1);
-        const t4 = complexMulVec2(x4, w5_3);
-        output[2] = storeVec2(x0 + t1 + t2 + t3 + t4);
+        const t1 = complex_mul_vec2(x1, w5_2);
+        const t2 = complex_mul_vec2(x2, w5_4);
+        const t3 = complex_mul_vec2(x3, w5_1);
+        const t4 = complex_mul_vec2(x4, w5_3);
+        output[2] = store_vec2(x0 + t1 + t2 + t3 + t4);
     }
     {
-        const t1 = complexMulVec2(x1, w5_3);
-        const t2 = complexMulVec2(x2, w5_1);
-        const t3 = complexMulVec2(x3, w5_4);
-        const t4 = complexMulVec2(x4, w5_2);
-        output[3] = storeVec2(x0 + t1 + t2 + t3 + t4);
+        const t1 = complex_mul_vec2(x1, w5_3);
+        const t2 = complex_mul_vec2(x2, w5_1);
+        const t3 = complex_mul_vec2(x3, w5_4);
+        const t4 = complex_mul_vec2(x4, w5_2);
+        output[3] = store_vec2(x0 + t1 + t2 + t3 + t4);
     }
     {
-        const t1 = complexMulVec2(x1, w5_4);
-        const t2 = complexMulVec2(x2, w5_3);
-        const t3 = complexMulVec2(x3, w5_2);
-        const t4 = complexMulVec2(x4, w5_1);
-        output[4] = storeVec2(x0 + t1 + t2 + t3 + t4);
+        const t1 = complex_mul_vec2(x1, w5_4);
+        const t2 = complex_mul_vec2(x2, w5_3);
+        const t3 = complex_mul_vec2(x3, w5_2);
+        const t4 = complex_mul_vec2(x4, w5_1);
+        output[4] = store_vec2(x0 + t1 + t2 + t3 + t4);
     }
 }
 
 /// DFT of size 5 (in-place version).
-fn dft5InPlace(data: []Complex, inv: bool) void {
+fn dft5_in_place(data: []Complex, inv: bool) void {
     if (data.len != 5) return;
     const input = [5]Complex{ data[0], data[1], data[2], data[3], data[4] };
     var output: [5]Complex = undefined;
@@ -245,26 +245,26 @@ fn dft5InPlace(data: []Complex, inv: bool) void {
 }
 
 /// DFT of size 2 (in-place version) - SIMD optimized.
-fn dft2InPlace(data: []Complex, inv: bool) void {
+fn dft2_in_place(data: []Complex, inv: bool) void {
     _ = inv;
     if (data.len != 2) return;
-    const a = loadVec2(data[0]);
-    const b = loadVec2(data[1]);
-    data[0] = storeVec2(a + b);
-    data[1] = storeVec2(a - b);
+    const a = load_vec2(data[0]);
+    const b = load_vec2(data[1]);
+    data[0] = store_vec2(a + b);
+    data[1] = store_vec2(a - b);
 }
 
 /// Small DFT dispatcher - calls the appropriate specialized DFT.
-fn smallDft(data: []Complex, inv: bool) void {
+fn small_dft(data: []Complex, inv: bool) void {
     switch (data.len) {
         1 => {}, // Nothing to do
-        2 => dft2InPlace(data, inv),
-        3 => dft3InPlace(data, inv),
-        5 => dft5InPlace(data, inv),
+        2 => dft2_in_place(data, inv),
+        3 => dft3_in_place(data, inv),
+        5 => dft5_in_place(data, inv),
         else => {
             // Fallback to direct DFT for other small sizes
             var output: [64]Complex = undefined;
-            dftDirect(data, output[0..data.len], inv);
+            dft_direct(data, output[0..data.len], inv);
             for (0..data.len) |i| {
                 data[i] = output[i];
             }
@@ -289,7 +289,7 @@ pub fn fft10(data: []Complex, inv: bool) void {
         }
         // DFT row n1
         var row: [N2]Complex = y[n1];
-        dft5InPlace(&row, inv);
+        dft5_in_place(&row, inv);
         y[n1] = row;
     }
 
@@ -310,7 +310,7 @@ pub fn fft10(data: []Complex, inv: bool) void {
     var z: [N1][N2]Complex = undefined;
     for (0..N2) |k2| {
         var col = [N1]Complex{ y[0][k2], y[1][k2] };
-        dft2InPlace(&col, inv);
+        dft2_in_place(&col, inv);
         z[0][k2] = col[0];
         z[1][k2] = col[1];
     }
@@ -346,7 +346,7 @@ pub fn fft9(data: []Complex, inv: bool) void {
         }
         // DFT row n1
         var row: [N2]Complex = y[n1];
-        dft3InPlace(&row, inv);
+        dft3_in_place(&row, inv);
         y[n1] = row;
     }
 
@@ -367,7 +367,7 @@ pub fn fft9(data: []Complex, inv: bool) void {
     var z: [N1][N2]Complex = undefined;
     for (0..N2) |k2| {
         var col = [N1]Complex{ y[0][k2], y[1][k2], y[2][k2] };
-        dft3InPlace(&col, inv);
+        dft3_in_place(&col, inv);
         for (0..N1) |k1| {
             z[k1][k2] = col[k1];
         }
@@ -405,7 +405,7 @@ pub fn fft12(data: []Complex, inv: bool) void {
         }
         // DFT row n1
         var row: [N2]Complex = y[n1];
-        dft3InPlace(&row, inv);
+        dft3_in_place(&row, inv);
         y[n1] = row;
     }
 
@@ -426,7 +426,7 @@ pub fn fft12(data: []Complex, inv: bool) void {
     var z: [N1][N2]Complex = undefined;
     for (0..N2) |k2| {
         var col = [N1]Complex{ y[0][k2], y[1][k2], y[2][k2], y[3][k2] };
-        dft4InPlace(&col, inv);
+        dft4_in_place(&col, inv);
         for (0..N1) |k1| {
             z[k1][k2] = col[k1];
         }
@@ -448,14 +448,14 @@ pub fn fft12(data: []Complex, inv: bool) void {
 }
 
 /// DFT of size 4 using radix-2 (two stages of butterflies) - SIMD optimized.
-fn dft4InPlace(data: []Complex, inv: bool) void {
+fn dft4_in_place(data: []Complex, inv: bool) void {
     if (data.len != 4) return;
 
     // Stage 1: 2 butterflies
-    const a0 = loadVec2(data[0]);
-    const a1 = loadVec2(data[1]);
-    const a2 = loadVec2(data[2]);
-    const a3 = loadVec2(data[3]);
+    const a0 = load_vec2(data[0]);
+    const a1 = load_vec2(data[1]);
+    const a2 = load_vec2(data[2]);
+    const a3 = load_vec2(data[3]);
 
     // First level: pairs (0,2) and (1,3)
     const b0 = a0 + a2;
@@ -470,14 +470,14 @@ fn dft4InPlace(data: []Complex, inv: bool) void {
     const b3_tw = Vec2{ -b3[1] * sign, b3[0] * sign };
 
     // Stage 2: final butterflies
-    data[0] = storeVec2(b0 + b1); // X[0]
-    data[1] = storeVec2(b2 + b3_tw); // X[1]
-    data[2] = storeVec2(b0 - b1); // X[2]
-    data[3] = storeVec2(b2 - b3_tw); // X[3]
+    data[0] = store_vec2(b0 + b1); // X[0]
+    data[1] = store_vec2(b2 + b3_tw); // X[1]
+    data[2] = store_vec2(b0 - b1); // X[2]
+    data[3] = store_vec2(b2 - b3_tw); // X[3]
 }
 
 /// Pick the smallest factor in {2,3,5} dividing n, or 0 if n is not smooth.
-fn pickSmoothFactor(n: usize) usize {
+fn pick_smooth_factor(n: usize) usize {
     for ([_]usize{ 2, 3, 5 }) |f| {
         if (n % f == 0) return f;
     }
@@ -485,7 +485,7 @@ fn pickSmoothFactor(n: usize) usize {
 }
 
 /// Apply Cooley-Tukey twiddle factors W_N^(n1*k2) on the (N1 x N2) matrix.
-fn applyCtTwiddles(data: []Complex, N1: usize, N2: usize, n: usize, inv: bool) void {
+fn apply_ct_twiddles(data: []Complex, N1: usize, N2: usize, n: usize, inv: bool) void {
     const sign: f64 = if (inv) 1.0 else -1.0;
     const angle_base = sign * 2.0 * std.math.pi / @as(f64, @floatFromInt(n));
 
@@ -500,10 +500,10 @@ fn applyCtTwiddles(data: []Complex, N1: usize, N2: usize, n: usize, inv: bool) v
     }
 }
 
-/// Recursive Cooley-Tukey factorization fallback for `mixedRadixFft`.
+/// Recursive Cooley-Tukey factorization fallback for `mixed_radix_fft`.
 /// N = N1 × N2 with N1 = factor. DIF ordering: n = n1 + N1*n2, k = N2*k1 + k2.
 /// Normalization is handled at the top-level public API, not here.
-fn mixedRadixFftSplit(
+fn mixed_radix_fft_split(
     data: []Complex,
     scratch: []Complex,
     factor: usize,
@@ -520,7 +520,7 @@ fn mixedRadixFftSplit(
             scratch[n2] = data[n1 + N1 * n2];
         }
         // Recursive DFT of size N2
-        mixedRadixFft(scratch[0..N2], scratch[N2..], inv);
+        mixed_radix_fft(scratch[0..N2], scratch[N2..], inv);
         // Copy back
         for (0..N2) |n2| {
             data[n1 + N1 * n2] = scratch[n2];
@@ -528,7 +528,7 @@ fn mixedRadixFftSplit(
     }
 
     // Step 2: Apply twiddle factors W_N^(n1*k2)
-    applyCtTwiddles(data, N1, N2, n, inv);
+    apply_ct_twiddles(data, N1, N2, n, inv);
 
     // Step 3: DFT each column (size N1)
     for (0..N2) |k2| {
@@ -537,7 +537,7 @@ fn mixedRadixFftSplit(
             scratch[n1] = data[n1 + N1 * k2];
         }
         // Recursive DFT of size N1
-        mixedRadixFft(scratch[0..N1], scratch[N1..], inv);
+        mixed_radix_fft(scratch[0..N1], scratch[N1..], inv);
         // Copy back to output positions: k = N2*k1 + k2
         for (0..N1) |k1| {
             data[N2 * k1 + k2] = scratch[k1];
@@ -547,32 +547,32 @@ fn mixedRadixFftSplit(
 
 /// General mixed-radix FFT for smooth numbers (2^a × 3^b × 5^c).
 /// This is a recursive implementation that factorizes N and applies Cooley-Tukey.
-pub fn mixedRadixFft(data: []Complex, scratch: []Complex, inv: bool) void {
+pub fn mixed_radix_fft(data: []Complex, scratch: []Complex, inv: bool) void {
     const n = data.len;
     if (n <= 1) return;
 
     // Use specialized implementations for small sizes
     switch (n) {
-        2 => dft2InPlace(data, inv),
-        3 => dft3InPlace(data, inv),
-        4 => dft4InPlace(data, inv),
-        5 => dft5InPlace(data, inv),
+        2 => dft2_in_place(data, inv),
+        3 => dft3_in_place(data, inv),
+        4 => dft4_in_place(data, inv),
+        5 => dft5_in_place(data, inv),
         6 => fft6(data, inv),
         9 => fft9(data, inv),
         10 => fft10(data, inv),
         12 => fft12(data, inv),
         else => {
-            const factor = pickSmoothFactor(n);
+            const factor = pick_smooth_factor(n);
             if (factor == 0) {
                 // Not a smooth number, fall back to direct DFT
-                dftDirect(data, scratch[0..n], inv);
+                dft_direct(data, scratch[0..n], inv);
                 for (0..n) |i| {
                     data[i] = scratch[i];
                 }
                 return;
             }
 
-            mixedRadixFftSplit(data, scratch, factor, inv);
+            mixed_radix_fft_split(data, scratch, factor, inv);
             // Normalize for inverse at top level only
             // Note: This is tricky for recursive calls. We'll handle normalization
             // at the top level in the public API.
@@ -581,9 +581,9 @@ pub fn mixedRadixFft(data: []Complex, scratch: []Complex, inv: bool) void {
 }
 
 /// Public API for mixed-radix FFT with automatic memory allocation.
-pub fn mixedRadixFftAlloc(alloc: std.mem.Allocator, data: []Complex, inv: bool) !void {
+pub fn mixed_radix_fft_alloc(alloc: std.mem.Allocator, data: []Complex, inv: bool) !void {
     const n = data.len;
-    if (!isSmoothNumber(n)) {
+    if (!is_smooth_number(n)) {
         return error.NotSmoothNumber;
     }
 
@@ -592,7 +592,7 @@ pub fn mixedRadixFftAlloc(alloc: std.mem.Allocator, data: []Complex, inv: bool) 
     defer alloc.free(scratch);
 
     // Perform FFT without normalization
-    mixedRadixFftNoNorm(data, scratch, inv);
+    mixed_radix_fft_no_norm(data, scratch, inv);
 
     // Apply normalization for inverse
     if (inv) {
@@ -603,11 +603,11 @@ pub fn mixedRadixFftAlloc(alloc: std.mem.Allocator, data: []Complex, inv: bool) 
     }
 }
 
-/// Recursive Cooley-Tukey factorization for `mixedRadixFftNoNorm` — uses a
+/// Recursive Cooley-Tukey factorization for `mixed_radix_fft_no_norm` — uses a
 /// disjoint `scratch[n..2n]` output buffer so column-DFT writes don't
 /// collide with the input matrix, which matters when `n` is smooth but
 /// larger than the specialized base cases.
-fn mixedRadixFftNoNormSplit(
+fn mixed_radix_fft_no_norm_split(
     data: []Complex,
     scratch: []Complex,
     factor: usize,
@@ -622,14 +622,14 @@ fn mixedRadixFftNoNormSplit(
         for (0..N2) |n2| {
             scratch[n2] = data[n1 + N1 * n2];
         }
-        mixedRadixFftNoNorm(scratch[0..N2], scratch[N2..], inv);
+        mixed_radix_fft_no_norm(scratch[0..N2], scratch[N2..], inv);
         for (0..N2) |n2| {
             data[n1 + N1 * n2] = scratch[n2];
         }
     }
 
     // Step 2: Apply twiddle factors
-    applyCtTwiddles(data, N1, N2, n, inv);
+    apply_ct_twiddles(data, N1, N2, n, inv);
 
     // Step 3: DFT each column.
     // Use scratch[n..2n] as temporary output to avoid overwriting input.
@@ -639,7 +639,7 @@ fn mixedRadixFftNoNormSplit(
         for (0..N1) |n1| {
             scratch[n1] = data[n1 + N1 * k2];
         }
-        mixedRadixFftNoNorm(scratch[0..N1], scratch[N1..n], inv);
+        mixed_radix_fft_no_norm(scratch[0..N1], scratch[N1..n], inv);
         // Store to temporary output at correct positions
         for (0..N1) |k1| {
             output[N2 * k1 + k2] = scratch[k1];
@@ -654,27 +654,27 @@ fn mixedRadixFftNoNormSplit(
 
 /// Mixed-radix FFT without normalization.
 /// Used internally and by fft.zig Plan1d wrapper.
-pub fn mixedRadixFftNoNorm(data: []Complex, scratch: []Complex, inv: bool) void {
+pub fn mixed_radix_fft_no_norm(data: []Complex, scratch: []Complex, inv: bool) void {
     const n = data.len;
     if (n <= 1) return;
 
     // Use specialized implementations for small sizes (these do NOT normalize)
     switch (n) {
-        2 => dft2InPlace(data, inv),
-        3 => dft3InPlace(data, inv),
-        4 => dft4InPlace(data, inv),
-        5 => dft5InPlace(data, inv),
+        2 => dft2_in_place(data, inv),
+        3 => dft3_in_place(data, inv),
+        4 => dft4_in_place(data, inv),
+        5 => dft5_in_place(data, inv),
         else => {
-            const factor = pickSmoothFactor(n);
+            const factor = pick_smooth_factor(n);
             if (factor == 0) {
                 // Not a smooth number, fall back to direct DFT (no normalization)
-                dftDirect(data, scratch[0..n], inv);
+                dft_direct(data, scratch[0..n], inv);
                 for (0..n) |i| {
                     data[i] = scratch[i];
                 }
                 return;
             }
-            mixedRadixFftNoNormSplit(data, scratch, factor, inv);
+            mixed_radix_fft_no_norm_split(data, scratch, factor, inv);
         },
     }
 }
@@ -682,7 +682,7 @@ pub fn mixedRadixFftNoNorm(data: []Complex, scratch: []Complex, inv: bool) void 
 // ============== Scalar versions for benchmarking ==============
 
 /// DFT of size 2 (scalar version).
-fn dft2InPlaceScalar(data: []Complex, inv: bool) void {
+fn dft2_in_place_scalar(data: []Complex, inv: bool) void {
     _ = inv;
     if (data.len != 2) return;
     const a = data[0];
@@ -692,7 +692,7 @@ fn dft2InPlaceScalar(data: []Complex, inv: bool) void {
 }
 
 /// DFT of size 3 (scalar version).
-fn dft3InPlaceScalar(data: []Complex, inv: bool) void {
+fn dft3_in_place_scalar(data: []Complex, inv: bool) void {
     if (data.len != 3) return;
     const sign: f64 = if (inv) 1.0 else -1.0;
     const sqrt3_2: f64 = 0.8660254037844386;
@@ -710,7 +710,7 @@ fn dft3InPlaceScalar(data: []Complex, inv: bool) void {
 }
 
 /// DFT of size 4 (scalar version).
-fn dft4InPlaceScalar(data: []Complex, inv: bool) void {
+fn dft4_in_place_scalar(data: []Complex, inv: bool) void {
     if (data.len != 4) return;
 
     const a0 = data[0];
@@ -734,7 +734,7 @@ fn dft4InPlaceScalar(data: []Complex, inv: bool) void {
 }
 
 /// DFT of size 5 (scalar version).
-fn dft5InPlaceScalar(data: []Complex, inv: bool) void {
+fn dft5_in_place_scalar(data: []Complex, inv: bool) void {
     if (data.len != 5) return;
     const sign: f64 = if (inv) 1.0 else -1.0;
 
@@ -786,15 +786,15 @@ fn dft5InPlaceScalar(data: []Complex, inv: bool) void {
 }
 
 /// Mixed-radix FFT without normalization (scalar version for benchmarking).
-pub fn mixedRadixFftNoNormScalar(data: []Complex, scratch: []Complex, inv: bool) void {
+pub fn mixed_radix_fft_no_norm_scalar(data: []Complex, scratch: []Complex, inv: bool) void {
     const n = data.len;
     if (n <= 1) return;
 
     switch (n) {
-        2 => dft2InPlaceScalar(data, inv),
-        3 => dft3InPlaceScalar(data, inv),
-        4 => dft4InPlaceScalar(data, inv),
-        5 => dft5InPlaceScalar(data, inv),
+        2 => dft2_in_place_scalar(data, inv),
+        3 => dft3_in_place_scalar(data, inv),
+        4 => dft4_in_place_scalar(data, inv),
+        5 => dft5_in_place_scalar(data, inv),
         else => {
             var factor: usize = 0;
             for ([_]usize{ 2, 3, 5 }) |f| {
@@ -805,7 +805,7 @@ pub fn mixedRadixFftNoNormScalar(data: []Complex, scratch: []Complex, inv: bool)
             }
 
             if (factor == 0) {
-                dftDirect(data, scratch[0..n], inv);
+                dft_direct(data, scratch[0..n], inv);
                 for (0..n) |i| {
                     data[i] = scratch[i];
                 }
@@ -819,7 +819,7 @@ pub fn mixedRadixFftNoNormScalar(data: []Complex, scratch: []Complex, inv: bool)
                 for (0..N2) |n2| {
                     scratch[n2] = data[n1 + N1 * n2];
                 }
-                mixedRadixFftNoNormScalar(scratch[0..N2], scratch[N2..], inv);
+                mixed_radix_fft_no_norm_scalar(scratch[0..N2], scratch[N2..], inv);
                 for (0..N2) |n2| {
                     data[n1 + N1 * n2] = scratch[n2];
                 }
@@ -844,7 +844,7 @@ pub fn mixedRadixFftNoNormScalar(data: []Complex, scratch: []Complex, inv: bool)
                 for (0..N1) |n1| {
                     scratch[n1] = data[n1 + N1 * k2];
                 }
-                mixedRadixFftNoNormScalar(scratch[0..N1], scratch[N1..n], inv);
+                mixed_radix_fft_no_norm_scalar(scratch[0..N1], scratch[N1..n], inv);
                 for (0..N1) |k1| {
                     output[N2 * k1 + k2] = scratch[k1];
                 }
@@ -877,7 +877,7 @@ test "dft3 vs direct" {
     };
 
     var expected: [3]Complex = undefined;
-    dftDirect(&input, &expected, false);
+    dft_direct(&input, &expected, false);
 
     var output: [3]Complex = undefined;
     dft3(&input, &output, false);
@@ -901,7 +901,7 @@ test "fft6 vs direct - simple input" {
     };
 
     var expected: [6]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
     fft6(&data, false);
 
@@ -922,7 +922,7 @@ test "fft6 vs direct - sequential input" {
     };
 
     var expected: [6]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
     fft6(&data, false);
 
@@ -943,7 +943,7 @@ test "fft6 vs direct - complex input" {
     };
 
     var expected: [6]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
     fft6(&data, false);
 
@@ -983,7 +983,7 @@ test "dft5 vs direct" {
     };
 
     var expected: [5]Complex = undefined;
-    dftDirect(&input, &expected, false);
+    dft_direct(&input, &expected, false);
 
     var output: [5]Complex = undefined;
     dft5(&input, &output, false);
@@ -1008,7 +1008,7 @@ test "fft9 vs direct" {
     };
 
     var expected: [9]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
     fft9(&data, false);
 
@@ -1056,7 +1056,7 @@ test "fft10 vs direct" {
     };
 
     var expected: [10]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
     fft10(&data, false);
 
@@ -1099,9 +1099,9 @@ test "dft4 vs direct" {
     };
 
     var expected: [4]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
-    dft4InPlace(&data, false);
+    dft4_in_place(&data, false);
 
     for (0..4) |i| {
         try std.testing.expectApproxEqAbs(data[i].re, expected[i].re, 1e-10);
@@ -1126,7 +1126,7 @@ test "fft12 vs direct" {
     };
 
     var expected: [12]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
     fft12(&data, false);
 
@@ -1162,7 +1162,7 @@ test "fft12 roundtrip" {
     }
 }
 
-test "mixedRadixFftAlloc N=8" {
+test "mixed_radix_fft_alloc N=8" {
     // 8 = 2³ - simplest composite for debugging
     const allocator = std.testing.allocator;
     var data = [8]Complex{
@@ -1177,9 +1177,9 @@ test "mixedRadixFftAlloc N=8" {
     };
 
     var expected: [8]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
-    try mixedRadixFftAlloc(allocator, &data, false);
+    try mixed_radix_fft_alloc(allocator, &data, false);
 
     for (0..8) |i| {
         try std.testing.expectApproxEqAbs(data[i].re, expected[i].re, 1e-9);
@@ -1187,7 +1187,7 @@ test "mixedRadixFftAlloc N=8" {
     }
 }
 
-test "mixedRadixFftAlloc N=24" {
+test "mixed_radix_fft_alloc N=24" {
     const allocator = std.testing.allocator;
     var data: [24]Complex = undefined;
     for (0..24) |i| {
@@ -1195,9 +1195,9 @@ test "mixedRadixFftAlloc N=24" {
     }
 
     var expected: [24]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
-    try mixedRadixFftAlloc(allocator, &data, false);
+    try mixed_radix_fft_alloc(allocator, &data, false);
 
     for (0..24) |i| {
         try std.testing.expectApproxEqAbs(data[i].re, expected[i].re, 1e-8);
@@ -1205,7 +1205,7 @@ test "mixedRadixFftAlloc N=24" {
     }
 }
 
-test "mixedRadixFftAlloc N=24 roundtrip" {
+test "mixed_radix_fft_alloc N=24 roundtrip" {
     const allocator = std.testing.allocator;
     var data: [24]Complex = undefined;
     for (0..24) |i| {
@@ -1213,8 +1213,8 @@ test "mixedRadixFftAlloc N=24 roundtrip" {
     }
     const original = data;
 
-    try mixedRadixFftAlloc(allocator, &data, false);
-    try mixedRadixFftAlloc(allocator, &data, true);
+    try mixed_radix_fft_alloc(allocator, &data, false);
+    try mixed_radix_fft_alloc(allocator, &data, true);
 
     for (0..24) |i| {
         try std.testing.expectApproxEqAbs(data[i].re, original[i].re, 1e-9);
@@ -1222,7 +1222,7 @@ test "mixedRadixFftAlloc N=24 roundtrip" {
     }
 }
 
-test "mixedRadixFftAlloc N=30" {
+test "mixed_radix_fft_alloc N=30" {
     // 30 = 2 × 3 × 5
     const allocator = std.testing.allocator;
     var data: [30]Complex = undefined;
@@ -1231,9 +1231,9 @@ test "mixedRadixFftAlloc N=30" {
     }
 
     var expected: [30]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
-    try mixedRadixFftAlloc(allocator, &data, false);
+    try mixed_radix_fft_alloc(allocator, &data, false);
 
     for (0..30) |i| {
         try std.testing.expectApproxEqAbs(data[i].re, expected[i].re, 1e-8);
@@ -1241,7 +1241,7 @@ test "mixedRadixFftAlloc N=30" {
     }
 }
 
-test "mixedRadixFftAlloc N=60" {
+test "mixed_radix_fft_alloc N=60" {
     // 60 = 2² × 3 × 5
     const allocator = std.testing.allocator;
     var data: [60]Complex = undefined;
@@ -1250,9 +1250,9 @@ test "mixedRadixFftAlloc N=60" {
     }
 
     var expected: [60]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
-    try mixedRadixFftAlloc(allocator, &data, false);
+    try mixed_radix_fft_alloc(allocator, &data, false);
 
     for (0..60) |i| {
         try std.testing.expectApproxEqAbs(data[i].re, expected[i].re, 1e-7);

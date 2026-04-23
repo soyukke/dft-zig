@@ -86,7 +86,7 @@ pub fn generate(
 ///
 /// mapping[i] = index j in basis_sk such that basis_sk.gvecs[j].hkl == G',
 /// or null if not found (cutoff boundary effect).
-pub fn buildSymmetryMapping(
+pub fn build_symmetry_mapping(
     alloc: std.mem.Allocator,
     basis_k: Basis,
     basis_sk: Basis,

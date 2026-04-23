@@ -19,57 +19,57 @@ pub const ScfComparisonReport = struct {
 
 pub const silicon_supercell_reps = [3]usize{ 2, 2, 2 };
 
-pub fn snapshotFromScfResult(result: *const scf.ScfResult) ScfSnapshot {
+pub fn snapshot_from_scf_result(result: *const scf.ScfResult) ScfSnapshot {
     return .{ .energy_terms = result.energy, .density = result.density };
 }
 
-pub fn asReference(snapshot: ScfSnapshot) reference.ReferenceData {
+pub fn as_reference(snapshot: ScfSnapshot) reference.ReferenceData {
     return .{ .energy = snapshot.energy_terms.total, .density = snapshot.density };
 }
 
-pub fn compareSnapshots(
+pub fn compare_snapshots(
     reference_snapshot: ScfSnapshot,
     candidate_snapshot: ScfSnapshot,
 ) !ScfComparisonReport {
-    const total = try reference.compareReference(
-        asReference(reference_snapshot),
-        asReference(candidate_snapshot),
+    const total = try reference.compare_reference(
+        as_reference(reference_snapshot),
+        as_reference(candidate_snapshot),
     );
-    const energy_terms = energy_compare.compareEnergyTerms(
+    const energy_terms = energy_compare.compare_energy_terms(
         reference_snapshot.energy_terms,
         candidate_snapshot.energy_terms,
     );
     return .{ .total = total, .energy_terms = energy_terms };
 }
 
-pub fn compareScfResults(
+pub fn compare_scf_results(
     reference_result: *const scf.ScfResult,
     candidate_result: *const scf.ScfResult,
 ) !ScfComparisonReport {
-    const ref_snapshot = snapshotFromScfResult(reference_result);
-    const cand_snapshot = snapshotFromScfResult(candidate_result);
-    return compareSnapshots(ref_snapshot, cand_snapshot);
+    const ref_snapshot = snapshot_from_scf_result(reference_result);
+    const cand_snapshot = snapshot_from_scf_result(candidate_result);
+    return compare_snapshots(ref_snapshot, cand_snapshot);
 }
 
-pub fn siliconConventionalSupercellCell(a: f64, reps: [3]usize) math.Mat3 {
-    return math.Mat3.fromRows(
+pub fn silicon_conventional_supercell_cell(a: f64, reps: [3]usize) math.Mat3 {
+    return math.Mat3.from_rows(
         .{ .x = a * @as(f64, @floatFromInt(reps[0])), .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = a * @as(f64, @floatFromInt(reps[1])), .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = a * @as(f64, @floatFromInt(reps[2])) },
     );
 }
 
-pub fn siliconConventional2x2x2Cell(a: f64) math.Mat3 {
-    return siliconConventionalSupercellCell(a, silicon_supercell_reps);
+pub fn silicon_conventional2x2x2_cell(a: f64) math.Mat3 {
+    return silicon_conventional_supercell_cell(a, silicon_supercell_reps);
 }
 
-pub fn buildSiliconSupercellAtoms(
+pub fn build_silicon_supercell_atoms(
     alloc: std.mem.Allocator,
     a: f64,
     reps: [3]usize,
     symbol: []const u8,
 ) ![]xyz.Atom {
-    const positions = try structures.diamondConventionalSupercell(alloc, a, reps);
+    const positions = try structures.diamond_conventional_supercell(alloc, a, reps);
     defer alloc.free(positions);
 
     const atoms = try alloc.alloc(xyz.Atom, positions.len);
@@ -85,11 +85,11 @@ pub fn buildSiliconSupercellAtoms(
     return atoms;
 }
 
-pub fn buildSiliconConventional2x2x2Atoms(alloc: std.mem.Allocator, a: f64) ![]xyz.Atom {
-    return buildSiliconSupercellAtoms(alloc, a, silicon_supercell_reps, "Si");
+pub fn build_silicon_conventional2x2x2_atoms(alloc: std.mem.Allocator, a: f64) ![]xyz.Atom {
+    return build_silicon_supercell_atoms(alloc, a, silicon_supercell_reps, "Si");
 }
 
-pub fn deinitAtoms(alloc: std.mem.Allocator, atoms: []xyz.Atom) void {
+pub fn deinit_atoms(alloc: std.mem.Allocator, atoms: []xyz.Atom) void {
     for (atoms) |atom| {
         alloc.free(atom.symbol);
     }
@@ -101,16 +101,16 @@ pub fn deinitAtoms(alloc: std.mem.Allocator, atoms: []xyz.Atom) void {
 test "silicon supercell atoms and cell" {
     const alloc = std.testing.allocator;
     const a = 5.0;
-    const cell = siliconConventional2x2x2Cell(a);
-    const atoms = try buildSiliconConventional2x2x2Atoms(alloc, a);
-    defer deinitAtoms(alloc, atoms);
+    const cell = silicon_conventional2x2x2_cell(a);
+    const atoms = try build_silicon_conventional2x2x2_atoms(alloc, a);
+    defer deinit_atoms(alloc, atoms);
 
     try std.testing.expectEqual(@as(usize, 64), atoms.len);
     try std.testing.expectApproxEqAbs(@as(f64, 10.0), cell.row(0).x, 1e-12);
-    try xyz.validateInCell(atoms, cell);
+    try xyz.validate_in_cell(atoms, cell);
 }
 
-test "compareSnapshots compares total and energy terms" {
+test "compare_snapshots compares total and energy terms" {
     const ref_density = [_]f64{ 1.0, 2.0, 3.0 };
     const cand_density = [_]f64{ 1.1, 1.9, 3.0 };
     const ref_terms = scf.EnergyTerms{
@@ -139,12 +139,12 @@ test "compareSnapshots compares total and energy terms" {
     };
     const ref_snapshot = ScfSnapshot{ .energy_terms = ref_terms, .density = ref_density[0..] };
     const cand_snapshot = ScfSnapshot{ .energy_terms = cand_terms, .density = cand_density[0..] };
-    const report = try compareSnapshots(ref_snapshot, cand_snapshot);
+    const report = try compare_snapshots(ref_snapshot, cand_snapshot);
     try std.testing.expectApproxEqAbs(@as(f64, 0.1), report.total.energy.abs, 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.2), report.energy_terms.band.abs, 1e-12);
 }
 
-test "compareSnapshots fails on mismatched density" {
+test "compare_snapshots fails on mismatched density" {
     const ref_density = [_]f64{ 1.0, 2.0 };
     const cand_density = [_]f64{ 1.0, 2.0, 3.0 };
     const terms = scf.EnergyTerms{
@@ -163,6 +163,6 @@ test "compareSnapshots fails on mismatched density" {
     const cand_snapshot = ScfSnapshot{ .energy_terms = terms, .density = cand_density[0..] };
     try std.testing.expectError(
         error.MismatchedLength,
-        compareSnapshots(ref_snapshot, cand_snapshot),
+        compare_snapshots(ref_snapshot, cand_snapshot),
     );
 }

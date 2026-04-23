@@ -25,7 +25,7 @@ pub const AuxBasisResult = struct {
 /// Build an even-tempered auxiliary basis set for testing.
 /// Generates n_per_l uncontracted shells for each l from 0 to l_max.
 /// Exponents form a geometric series: alpha_min * ratio^i.
-pub fn buildEvenTemperedAux(
+pub fn build_even_tempered_aux(
     center: math.Vec3,
     l_max: u32,
     n_per_l: usize,
@@ -63,13 +63,13 @@ var even_tempered_prims: [MAX_AUX_SHELLS]PrimitiveGaussian = undefined;
 /// Build def2-universal-JKFIT auxiliary basis for element z at given center.
 /// Returns null if element is not supported.
 /// Uses Cartesian Gaussians for all angular momenta.
-pub fn buildDef2UniversalJkfit(z: u32, center: math.Vec3) ?AuxBasisResult {
+pub fn build_def2_universal_jkfit(z: u32, center: math.Vec3) ?AuxBasisResult {
     return switch (z) {
-        1 => buildFromData(center, &h_data),
-        6 => buildFromData(center, &c_data),
-        7 => buildFromData(center, &n_data),
-        8 => buildFromData(center, &o_data),
-        9 => buildFromData(center, &f_data),
+        1 => build_from_data(center, &h_data),
+        6 => build_from_data(center, &c_data),
+        7 => build_from_data(center, &n_data),
+        8 => build_from_data(center, &o_data),
+        9 => build_from_data(center, &f_data),
         else => null,
     };
 }
@@ -79,7 +79,7 @@ const ShellData = struct {
     primitives: []const PrimitiveGaussian,
 };
 
-fn buildFromData(center: math.Vec3, data: []const ShellData) AuxBasisResult {
+fn build_from_data(center: math.Vec3, data: []const ShellData) AuxBasisResult {
     var result = AuxBasisResult{ .shells = undefined, .count = 0 };
     for (data) |sd| {
         if (result.count >= MAX_AUX_SHELLS) break;
@@ -429,7 +429,7 @@ const f_data = [_]ShellData{
 
 test "even-tempered aux basis" {
     const center = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-    const result = buildEvenTemperedAux(center, 2, 3, 0.1, 3.0);
+    const result = build_even_tempered_aux(center, 2, 3, 0.1, 3.0);
 
     // l=0: 3 shells, l=1: 3 shells, l=2: 3 shells = 9 total
     try std.testing.expectEqual(@as(usize, 9), result.count);
@@ -447,7 +447,7 @@ test "even-tempered aux basis" {
 
 test "def2-universal-jkfit H" {
     const center = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-    const result = buildDef2UniversalJkfit(1, center).?;
+    const result = build_def2_universal_jkfit(1, center).?;
     try std.testing.expectEqual(@as(usize, 6), result.count);
 
     // Count by angular momentum
@@ -462,7 +462,7 @@ test "def2-universal-jkfit H" {
 
 test "def2-universal-jkfit O" {
     const center = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-    const result = buildDef2UniversalJkfit(8, center).?;
+    const result = build_def2_universal_jkfit(8, center).?;
     try std.testing.expectEqual(@as(usize, 25), result.count);
 
     var l_count = [_]usize{ 0, 0, 0, 0, 0 };
@@ -480,23 +480,23 @@ test "def2-universal-jkfit total basis functions" {
     const center = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
 
     // H: 2×1(s) + 2×3(p) + 2×6(d) = 2 + 6 + 12 = 20 Cartesian functions
-    const h_result = buildDef2UniversalJkfit(1, center).?;
+    const h_result = build_def2_universal_jkfit(1, center).?;
     var h_nbf: usize = 0;
     for (h_result.shells[0..h_result.count]) |s| {
-        h_nbf += gaussian.numCartesian(s.l);
+        h_nbf += gaussian.num_cartesian(s.l);
     }
     try std.testing.expectEqual(@as(usize, 20), h_nbf);
 
     // O: 10×1(s) + 8×3(p) + 4×6(d) + 2×10(f) + 1×15(g) = 10+24+24+20+15 = 93
-    const o_result = buildDef2UniversalJkfit(8, center).?;
+    const o_result = build_def2_universal_jkfit(8, center).?;
     var o_nbf: usize = 0;
     for (o_result.shells[0..o_result.count]) |s| {
-        o_nbf += gaussian.numCartesian(s.l);
+        o_nbf += gaussian.num_cartesian(s.l);
     }
     try std.testing.expectEqual(@as(usize, 93), o_nbf);
 }
 
 test "def2-universal-jkfit unsupported element" {
     const center = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-    try std.testing.expect(buildDef2UniversalJkfit(26, center) == null); // Fe not supported
+    try std.testing.expect(build_def2_universal_jkfit(26, center) == null); // Fe not supported
 }

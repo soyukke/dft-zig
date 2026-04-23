@@ -120,7 +120,7 @@ const MAX_HR3D: usize = (MAX_L + 1) * (MAX_L + 1) * (MAX_L + 1);
 // 2D Recurrence helpers (same as rys_eri.zig)
 // ============================================================================
 
-fn buildG2d(
+fn build_g2d(
     nroots: usize,
     dim_ij: usize,
     dim_kl: usize,
@@ -177,7 +177,7 @@ fn buildG2d(
     }
 }
 
-fn buildG2dWeighted(
+fn build_g2d_weighted(
     nroots: usize,
     dim_ij: usize,
     dim_kl: usize,
@@ -235,15 +235,15 @@ fn buildG2dWeighted(
     }
 }
 
-fn initTwoCenterSetup(
+fn init_two_center_setup(
     shell_p: ContractedShell,
     shell_q: ContractedShell,
     output: []f64,
 ) TwoCenterSetup {
     const lp: usize = @intCast(shell_p.l);
     const lq: usize = @intCast(shell_q.l);
-    const np = basis_mod.numCartesian(shell_p.l);
-    const nq = basis_mod.numCartesian(shell_q.l);
+    const np = basis_mod.num_cartesian(shell_p.l);
+    const nq = basis_mod.num_cartesian(shell_q.l);
     const total_out = np * nq;
     std.debug.assert(output.len >= total_out);
     @memset(output[0..total_out], 0.0);
@@ -253,8 +253,8 @@ fn initTwoCenterSetup(
         .np = np,
         .nq = nq,
         .total_out = total_out,
-        .cart_p = basis_mod.cartesianExponents(shell_p.l),
-        .cart_q = basis_mod.cartesianExponents(shell_q.l),
+        .cart_p = basis_mod.cartesian_exponents(shell_p.l),
+        .cart_q = basis_mod.cartesian_exponents(shell_q.l),
         .dim_ij = lp + 1,
         .dim_kl = lq + 1,
         .nroots = (lp + lq) / 2 + 1,
@@ -264,7 +264,7 @@ fn initTwoCenterSetup(
     };
 }
 
-fn initThreeCenterSetup(
+fn init_three_center_setup(
     shell_a: ContractedShell,
     shell_b: ContractedShell,
     shell_p: ContractedShell,
@@ -273,9 +273,9 @@ fn initThreeCenterSetup(
     const la: usize = @intCast(shell_a.l);
     const lb: usize = @intCast(shell_b.l);
     const lp: usize = @intCast(shell_p.l);
-    const na = basis_mod.numCartesian(shell_a.l);
-    const nb = basis_mod.numCartesian(shell_b.l);
-    const np = basis_mod.numCartesian(shell_p.l);
+    const na = basis_mod.num_cartesian(shell_a.l);
+    const nb = basis_mod.num_cartesian(shell_b.l);
+    const np = basis_mod.num_cartesian(shell_p.l);
     const total_out = na * nb * np;
     std.debug.assert(output.len >= total_out);
     @memset(output[0..total_out], 0.0);
@@ -296,9 +296,9 @@ fn initThreeCenterSetup(
         .nb = nb,
         .np = np,
         .total_out = total_out,
-        .cart_a = basis_mod.cartesianExponents(shell_a.l),
-        .cart_b = basis_mod.cartesianExponents(shell_b.l),
-        .cart_p = basis_mod.cartesianExponents(shell_p.l),
+        .cart_a = basis_mod.cartesian_exponents(shell_a.l),
+        .cart_b = basis_mod.cartesian_exponents(shell_b.l),
+        .cart_p = basis_mod.cartesian_exponents(shell_p.l),
         .dim_ij = la + lb + 1,
         .dim_kl = lp + 1,
         .nroots = (la + lb + lp) / 2 + 1,
@@ -313,7 +313,7 @@ fn initThreeCenterSetup(
     };
 }
 
-fn fillNormalizationTable(
+fn fill_normalization_table(
     shell: ContractedShell,
     n_cart: usize,
     cart: *const [MAX_CART]AngularMomentum,
@@ -327,7 +327,7 @@ fn fillNormalizationTable(
     }
 }
 
-fn fillNormalizationTableAndMax(
+fn fill_normalization_table_and_max(
     shell: ContractedShell,
     n_cart: usize,
     cart: *const [MAX_CART]AngularMomentum,
@@ -346,7 +346,7 @@ fn fillNormalizationTableAndMax(
     }
 }
 
-fn prepareTwoCenterPrimitivePair(
+fn prepare_two_center_primitive_pair(
     workspace: *TwoCenterWorkspace,
     setup: TwoCenterSetup,
     prim_p: PrimitiveGaussian,
@@ -362,7 +362,7 @@ fn prepareTwoCenterPrimitivePair(
         .z = (prim_p.alpha * setup.p_center.z + prim_q.alpha * setup.q_center.z) / pq_sum,
     };
 
-    rys_roots_mod.rysRoots(setup.nroots, rho * setup.r2_pq, &workspace.rys_r, &workspace.rys_w);
+    rys_roots_mod.rys_roots(setup.nroots, rho * setup.r2_pq, &workspace.rys_r, &workspace.rys_w);
     for (0..setup.nroots) |r| {
         const t2 = workspace.rys_r[r];
         workspace.b00_arr[r] = 0.5 / pq_sum * t2;
@@ -377,7 +377,7 @@ fn prepareTwoCenterPrimitivePair(
         workspace.w_pref[r] = workspace.rys_w[r] * prefactor;
     }
 
-    buildG2d(
+    build_g2d(
         setup.nroots,
         setup.dim_ij,
         setup.dim_kl,
@@ -388,7 +388,7 @@ fn prepareTwoCenterPrimitivePair(
         &workspace.b00_arr,
         workspace.gx[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
     );
-    buildG2d(
+    build_g2d(
         setup.nroots,
         setup.dim_ij,
         setup.dim_kl,
@@ -399,7 +399,7 @@ fn prepareTwoCenterPrimitivePair(
         &workspace.b00_arr,
         workspace.gy[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
     );
-    buildG2dWeighted(
+    build_g2d_weighted(
         setup.nroots,
         setup.dim_ij,
         setup.dim_kl,
@@ -414,7 +414,7 @@ fn prepareTwoCenterPrimitivePair(
     return prim_p.coeff * prim_q.coeff;
 }
 
-fn accumulateTwoCenterPrimitivePair(
+fn accumulate_two_center_primitive_pair(
     workspace: *TwoCenterWorkspace,
     setup: TwoCenterSetup,
     ipp: usize,
@@ -425,7 +425,7 @@ fn accumulateTwoCenterPrimitivePair(
     norm_q: []const f64,
     output: []f64,
 ) void {
-    const coeff = prepareTwoCenterPrimitivePair(workspace, setup, prim_p, prim_q);
+    const coeff = prepare_two_center_primitive_pair(workspace, setup, prim_p, prim_q);
     for (0..setup.np) |ip| {
         const p_cart = setup.cart_p[ip];
         const px: usize = @intCast(p_cart.x);
@@ -451,7 +451,7 @@ fn accumulateTwoCenterPrimitivePair(
     }
 }
 
-fn initThreeCenterBraPair(
+fn init_three_center_bra_pair(
     shell_a: ContractedShell,
     shell_b: ContractedShell,
     prim_a: PrimitiveGaussian,
@@ -480,7 +480,7 @@ fn initThreeCenterBraPair(
     };
 }
 
-fn prepareThreeCenterPrimitivePair(
+fn prepare_three_center_primitive_pair(
     workspace: *ThreeCenterWorkspace,
     setup: ThreeCenterSetup,
     aux_center: math.Vec3,
@@ -502,7 +502,7 @@ fn prepareThreeCenterPrimitivePair(
     const diff_pq = math.Vec3.sub(bra.center, aux_center);
     const rho = bra.p_val * q_val / pq_sum;
 
-    rys_roots_mod.rysRoots(
+    rys_roots_mod.rys_roots(
         setup.nroots,
         rho * math.Vec3.dot(diff_pq, diff_pq),
         &workspace.rys_r,
@@ -522,7 +522,7 @@ fn prepareThreeCenterPrimitivePair(
         workspace.w_pref[r] = workspace.rys_w[r] * prefactor;
     }
 
-    buildG2d(
+    build_g2d(
         setup.nroots,
         setup.dim_ij,
         setup.dim_kl,
@@ -533,7 +533,7 @@ fn prepareThreeCenterPrimitivePair(
         &workspace.b00_arr,
         workspace.gx[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
     );
-    buildG2d(
+    build_g2d(
         setup.nroots,
         setup.dim_ij,
         setup.dim_kl,
@@ -544,7 +544,7 @@ fn prepareThreeCenterPrimitivePair(
         &workspace.b00_arr,
         workspace.gy[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
     );
-    buildG2dWeighted(
+    build_g2d_weighted(
         setup.nroots,
         setup.dim_ij,
         setup.dim_kl,
@@ -559,7 +559,7 @@ fn prepareThreeCenterPrimitivePair(
     return coeff_abp;
 }
 
-fn buildThreeCenterBraHrAxis(
+fn build_three_center_bra_hr_axis(
     setup: ThreeCenterSetup,
     g_axis: []const f64,
     hr3d: []f64,
@@ -587,7 +587,7 @@ fn buildThreeCenterBraHrAxis(
     }
 }
 
-fn accumulateThreeCenterRootContribution(
+fn accumulate_three_center_root_contribution(
     setup: ThreeCenterSetup,
     prim_eri: []f64,
     hr3d_x: []const f64,
@@ -618,7 +618,7 @@ fn accumulateThreeCenterRootContribution(
     }
 }
 
-fn contractThreeCenterPrimitiveOutput(
+fn contract_three_center_primitive_output(
     setup: ThreeCenterSetup,
     coeff_abp: f64,
     bra: ThreeCenterBraPair,
@@ -645,7 +645,7 @@ fn contractThreeCenterPrimitiveOutput(
     }
 }
 
-fn accumulateThreeCenterPrimitivePair(
+fn accumulate_three_center_primitive_pair(
     workspace: *ThreeCenterWorkspace,
     setup: ThreeCenterSetup,
     aux_center: math.Vec3,
@@ -657,7 +657,7 @@ fn accumulateThreeCenterPrimitivePair(
     norm_p: []const f64,
     output: []f64,
 ) void {
-    const coeff_abp = prepareThreeCenterPrimitivePair(
+    const coeff_abp = prepare_three_center_primitive_pair(
         workspace,
         setup,
         aux_center,
@@ -668,28 +668,28 @@ fn accumulateThreeCenterPrimitivePair(
     @memset(workspace.prim_eri[0..setup.total_out], 0.0);
     for (0..setup.nroots) |r| {
         const g2d_base = r * setup.dim_ij * setup.dim_kl;
-        buildThreeCenterBraHrAxis(
+        build_three_center_bra_hr_axis(
             setup,
             workspace.gx[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
             workspace.hr3d_x[0..setup.hr3d_size],
             g2d_base,
             setup.ab[0],
         );
-        buildThreeCenterBraHrAxis(
+        build_three_center_bra_hr_axis(
             setup,
             workspace.gy[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
             workspace.hr3d_y[0..setup.hr3d_size],
             g2d_base,
             setup.ab[1],
         );
-        buildThreeCenterBraHrAxis(
+        build_three_center_bra_hr_axis(
             setup,
             workspace.gz[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
             workspace.hr3d_z[0..setup.hr3d_size],
             g2d_base,
             setup.ab[2],
         );
-        accumulateThreeCenterRootContribution(
+        accumulate_three_center_root_contribution(
             setup,
             workspace.prim_eri[0..setup.total_out],
             workspace.hr3d_x[0..setup.hr3d_size],
@@ -697,7 +697,7 @@ fn accumulateThreeCenterPrimitivePair(
             workspace.hr3d_z[0..setup.hr3d_size],
         );
     }
-    contractThreeCenterPrimitiveOutput(
+    contract_three_center_primitive_output(
         setup,
         coeff_abp,
         bra,
@@ -722,24 +722,24 @@ fn accumulateThreeCenterPrimitivePair(
 ///   - Output: n_P × n_Q row-major
 ///
 /// Returns the number of integrals computed.
-pub fn contracted2CenterERI(
+pub fn contracted2_center_eri(
     shell_p: ContractedShell,
     shell_q: ContractedShell,
     output: []f64,
 ) usize {
-    const setup = initTwoCenterSetup(shell_p, shell_q, output);
+    const setup = init_two_center_setup(shell_p, shell_q, output);
     std.debug.assert(setup.nroots <= MAX_NROOTS);
 
     var norm_p: [MAX_NORM_TABLE]f64 = undefined;
     var norm_q: [MAX_NORM_TABLE]f64 = undefined;
-    fillNormalizationTable(shell_p, setup.np, &setup.cart_p, norm_p[0..]);
-    fillNormalizationTable(shell_q, setup.nq, &setup.cart_q, norm_q[0..]);
+    fill_normalization_table(shell_p, setup.np, &setup.cart_p, norm_p[0..]);
+    fill_normalization_table(shell_q, setup.nq, &setup.cart_q, norm_q[0..]);
 
     var workspace: TwoCenterWorkspace = .{};
 
     for (shell_p.primitives, 0..) |prim_p, ipp| {
         for (shell_q.primitives, 0..) |prim_q, ipq| {
-            accumulateTwoCenterPrimitivePair(
+            accumulate_two_center_primitive_pair(
                 &workspace,
                 setup,
                 ipp,
@@ -768,13 +768,13 @@ pub fn contracted2CenterERI(
 ///   - Output: n_a × n_b × n_P row-major
 ///
 /// Returns the number of integrals computed.
-pub fn contracted3CenterERI(
+pub fn contracted3_center_eri(
     shell_a: ContractedShell,
     shell_b: ContractedShell,
     shell_p: ContractedShell,
     output: []f64,
 ) usize {
-    const setup = initThreeCenterSetup(shell_a, shell_b, shell_p, output);
+    const setup = init_three_center_setup(shell_a, shell_b, shell_p, output);
     std.debug.assert(setup.nroots <= MAX_NROOTS);
 
     var norm_a: [MAX_NORM_TABLE]f64 = undefined;
@@ -782,14 +782,26 @@ pub fn contracted3CenterERI(
     var norm_p: [MAX_NORM_TABLE]f64 = undefined;
     var max_norm_a: [MAX_PRIM]f64 = undefined;
     var max_norm_b: [MAX_PRIM]f64 = undefined;
-    fillNormalizationTableAndMax(shell_a, setup.na, &setup.cart_a, norm_a[0..], max_norm_a[0..]);
-    fillNormalizationTableAndMax(shell_b, setup.nb, &setup.cart_b, norm_b[0..], max_norm_b[0..]);
-    fillNormalizationTable(shell_p, setup.np, &setup.cart_p, norm_p[0..]);
+    fill_normalization_table_and_max(
+        shell_a,
+        setup.na,
+        &setup.cart_a,
+        norm_a[0..],
+        max_norm_a[0..],
+    );
+    fill_normalization_table_and_max(
+        shell_b,
+        setup.nb,
+        &setup.cart_b,
+        norm_b[0..],
+        max_norm_b[0..],
+    );
+    fill_normalization_table(shell_p, setup.np, &setup.cart_p, norm_p[0..]);
 
     var workspace: ThreeCenterWorkspace = .{};
     for (shell_a.primitives, 0..) |prim_a, ipa| {
         for (shell_b.primitives, 0..) |prim_b, ipb| {
-            const bra = initThreeCenterBraPair(
+            const bra = init_three_center_bra_pair(
                 shell_a,
                 shell_b,
                 prim_a,
@@ -801,7 +813,7 @@ pub fn contracted3CenterERI(
                 setup.r2_ab,
             );
             for (shell_p.primitives, 0..) |prim_p, ipp| {
-                accumulateThreeCenterPrimitivePair(
+                accumulate_three_center_primitive_pair(
                     &workspace,
                     setup,
                     shell_p.center,
@@ -845,7 +857,7 @@ test "2-center ERI s-s same center" {
     };
 
     var result: [1]f64 = undefined;
-    _ = contracted2CenterERI(shell_p, shell_q, &result);
+    _ = contracted2_center_eri(shell_p, shell_q, &result);
 
     // Analytical: norm_p * norm_q * 2π^(5/2) / (p * q * sqrt(p+q))
     // where norm = (2α/π)^(3/4) for s-type
@@ -879,7 +891,7 @@ test "2-center ERI s-s different centers" {
     };
 
     var result: [1]f64 = undefined;
-    _ = contracted2CenterERI(shell_a, shell_b, &result);
+    _ = contracted2_center_eri(shell_a, shell_b, &result);
 
     // Must be positive (Coulomb repulsion between charge distributions)
     try testing.expect(result[0] > 0.0);
@@ -889,7 +901,7 @@ test "2-center ERI s-s different centers" {
     // Actually the 4-center is (s_A * 1_A | s_B * 1_B) = (s_A | s_B)
     // We verify it's smaller than the same-center case due to separation
     var result_same: [1]f64 = undefined;
-    _ = contracted2CenterERI(shell_a, shell_a, &result_same);
+    _ = contracted2_center_eri(shell_a, shell_a, &result_same);
     try testing.expect(result[0] < result_same[0]);
 }
 
@@ -913,11 +925,11 @@ test "2-center ERI symmetry (P|Q) = (Q|P)" {
 
     // (s|p) → 1×3 = 3 elements
     var result_sp: [3]f64 = undefined;
-    _ = contracted2CenterERI(shell_s, shell_p, &result_sp);
+    _ = contracted2_center_eri(shell_s, shell_p, &result_sp);
 
     // (p|s) → 3×1 = 3 elements
     var result_ps: [3]f64 = undefined;
-    _ = contracted2CenterERI(shell_p, shell_s, &result_ps);
+    _ = contracted2_center_eri(shell_p, shell_s, &result_ps);
 
     // (s|p_x) should equal (p_x|s) etc.
     for (0..3) |i| {
@@ -946,7 +958,7 @@ test "3-center ERI (ss|s) analytical" {
     };
 
     var result_3c: [1]f64 = undefined;
-    _ = contracted3CenterERI(shell_a, shell_a, shell_c, &result_3c);
+    _ = contracted3_center_eri(shell_a, shell_a, shell_c, &result_3c);
 
     // This should equal (s_A^2 | s_C), which is a 2-center integral
     // with the bra being the product s_A * s_A (which has exponent 2*alpha_A).
@@ -980,7 +992,7 @@ test "3-center ERI μν symmetry" {
 
     // (p_A p_A | s_C) → 3×3×1 = 9 elements
     var result: [9]f64 = undefined;
-    _ = contracted3CenterERI(shell_p, shell_p, shell_s, &result);
+    _ = contracted3_center_eri(shell_p, shell_p, shell_s, &result);
 
     // Check symmetry: result[ia * 3 + ib] == result[ib * 3 + ia]
     for (0..3) |ia| {
@@ -1025,7 +1037,7 @@ test "3-center ERI vs 4-center ERI" {
 
     // 3-center: (s_A p_B | s_C) → 1×3×1 = 3 elements
     var result_3c: [3]f64 = undefined;
-    _ = contracted3CenterERI(shell_a, shell_b, shell_c, &result_3c);
+    _ = contracted3_center_eri(shell_a, shell_b, shell_c, &result_3c);
 
     // 4-center with dummy s at C: (s_A p_B | s_C s_C)
     // This is NOT the same because the 4-center has s_C^2 in the ket.
@@ -1060,7 +1072,7 @@ test "3-center ERI vs 4-center ERI" {
     // Cross-check: swap a,b (with different centers) should give different result
     // since (s_A p_B | s_C) ≠ (p_B s_A | s_C) in general for non-symmetric shells
     var result_3c_swap: [3]f64 = undefined;
-    _ = contracted3CenterERI(shell_b, shell_a, shell_c, &result_3c_swap);
+    _ = contracted3_center_eri(shell_b, shell_a, shell_c, &result_3c_swap);
 
     // (s p | P) should NOT equal (p s | P) in general when the centers differ
     // Actually (μν|P) = ∫∫ χ_μ(r1) χ_ν(r1) / |r1-r2| χ_P(r2) dr1 dr2
@@ -1085,7 +1097,7 @@ test "3-center ERI vs 4-center ERI" {
     // Just verify both are non-zero and have same sign.
     const shell_d = shell_c; // same shell
     var result_4c: [3]f64 = undefined;
-    _ = rys_eri.contractedShellQuartetERI(shell_a, shell_b, shell_c, shell_d, &result_4c);
+    _ = rys_eri.contracted_shell_quartet_eri(shell_a, shell_b, shell_c, shell_d, &result_4c);
 
     for (0..3) |i| {
         // Same sign

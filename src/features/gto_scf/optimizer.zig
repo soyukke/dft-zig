@@ -71,7 +71,7 @@ pub const OptResult = struct {
 };
 
 /// Compute the RMS of a flat f64 array.
-fn vecRms(v: []const f64) f64 {
+fn vec_rms(v: []const f64) f64 {
     if (v.len == 0) return 0.0;
     var sum: f64 = 0.0;
     for (v) |x| {
@@ -81,7 +81,7 @@ fn vecRms(v: []const f64) f64 {
 }
 
 /// Compute the max absolute value in a flat f64 array.
-fn vecMaxAbs(v: []const f64) f64 {
+fn vec_max_abs(v: []const f64) f64 {
     var mx: f64 = 0.0;
     for (v) |x| {
         const a = @abs(x);
@@ -91,7 +91,7 @@ fn vecMaxAbs(v: []const f64) f64 {
 }
 
 /// Scale a vector in-place if its norm exceeds `max_norm`, preserving direction.
-fn trustRegionScale(step: []f64, max_norm: f64) void {
+fn trust_region_scale(step: []f64, max_norm: f64) void {
     var norm_sq: f64 = 0.0;
     for (step) |s| {
         norm_sq += s * s;
@@ -106,7 +106,7 @@ fn trustRegionScale(step: []f64, max_norm: f64) void {
 }
 
 /// Flatten an array of Vec3 into a contiguous f64 array [x0,y0,z0,x1,y1,z1,...].
-fn flattenVec3(alloc: std.mem.Allocator, vecs: []const Vec3) ![]f64 {
+fn flatten_vec3(alloc: std.mem.Allocator, vecs: []const Vec3) ![]f64 {
     const n = vecs.len * 3;
     const flat = try alloc.alloc(f64, n);
     for (vecs, 0..) |v, i| {
@@ -118,7 +118,7 @@ fn flattenVec3(alloc: std.mem.Allocator, vecs: []const Vec3) ![]f64 {
 }
 
 /// Unflatten a contiguous f64 array back to Vec3 array.
-fn unflattenToVec3(alloc: std.mem.Allocator, flat: []const f64) ![]Vec3 {
+fn unflatten_to_vec3(alloc: std.mem.Allocator, flat: []const f64) ![]Vec3 {
     const n_atoms = flat.len / 3;
     const vecs = try alloc.alloc(Vec3, n_atoms);
     for (0..n_atoms) |i| {
@@ -133,7 +133,7 @@ fn unflattenToVec3(alloc: std.mem.Allocator, flat: []const f64) ![]Vec3 {
 
 /// Update shell centers to match new nuclear positions.
 /// Each shell's center is set to the position of its parent atom.
-fn updateShellCenters(
+fn update_shell_centers(
     shells: []ContractedShell,
     shell_to_atom: []const usize,
     new_positions: []const Vec3,
@@ -146,7 +146,7 @@ fn updateShellCenters(
 /// Build a map from shell index to atom index.
 /// This identifies which atom each shell belongs to by matching
 /// the shell center to the closest nuclear position.
-fn buildShellToAtomMap(
+fn build_shell_to_atom_map(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
     nuc_positions: []const Vec3,
@@ -173,7 +173,7 @@ fn buildShellToAtomMap(
 /// Initialize the inverse Hessian to a scaled identity matrix.
 /// Uses a diagonal value of 1/70 Ha/Bohr^2, which corresponds to
 /// a typical bond stretch frequency of ~70 Ha/Bohr^2.
-fn initInverseHessian(alloc: std.mem.Allocator, n: usize) ![]f64 {
+fn init_inverse_hessian(alloc: std.mem.Allocator, n: usize) ![]f64 {
     const h_inv = try alloc.alloc(f64, n * n);
     @memset(h_inv, 0.0);
     const diag_val: f64 = 1.0 / 70.0; // ~ reciprocal of typical Hessian eigenvalue
@@ -186,7 +186,7 @@ fn initInverseHessian(alloc: std.mem.Allocator, n: usize) ![]f64 {
 /// Perform BFGS update of the inverse Hessian approximation.
 /// H_inv_{k+1} = (I - rho*s*y^T) * H_inv_k * (I - rho*y*s^T) + rho*s*s^T
 /// where s = x_{k+1} - x_k, y = g_{k+1} - g_k, rho = 1/(y^T s).
-fn bfgsUpdate(
+fn bfgs_update(
     alloc: std.mem.Allocator,
     h_inv: []f64,
     s_vec: []const f64,
@@ -233,7 +233,7 @@ fn bfgsUpdate(
 }
 
 /// Matrix-vector multiply: result = mat * vec.
-fn matVecMul(alloc: std.mem.Allocator, mat: []const f64, vec: []const f64, n: usize) ![]f64 {
+fn mat_vec_mul(alloc: std.mem.Allocator, mat: []const f64, vec: []const f64, n: usize) ![]f64 {
     const result = try alloc.alloc(f64, n);
     for (0..n) |i| {
         var sum: f64 = 0.0;
@@ -246,7 +246,7 @@ fn matVecMul(alloc: std.mem.Allocator, mat: []const f64, vec: []const f64, n: us
 }
 
 /// Apply positions from flat `coords` to `nuc_positions` and update shell centers.
-fn applyCoordsToPositions(
+fn apply_coords_to_positions(
     coords: []const f64,
     nuc_positions: []Vec3,
     shells: []ContractedShell,
@@ -260,11 +260,11 @@ fn applyCoordsToPositions(
             .z = coords[i * 3 + 2],
         };
     }
-    updateShellCenters(shells, shell_to_atom, nuc_positions);
+    update_shell_centers(shells, shell_to_atom, nuc_positions);
 }
 
 /// Flatten gradient Vec3 array into the provided `out` buffer.
-fn flattenGradientInto(grad: []const Vec3, out: []f64) void {
+fn flatten_gradient_into(grad: []const Vec3, out: []f64) void {
     for (grad, 0..) |g, i| {
         out[i * 3 + 0] = g.x;
         out[i * 3 + 1] = g.y;
@@ -273,7 +273,7 @@ fn flattenGradientInto(grad: []const Vec3, out: []f64) void {
 }
 
 /// Apply BFGS update, compute search direction, save history, and update coords.
-fn applyBfgsStep(
+fn apply_bfgs_step(
     alloc: std.mem.Allocator,
     h_inv: []f64,
     coords: []f64,
@@ -294,12 +294,12 @@ fn applyBfgsStep(
                 y_vec[i] = current_grad_flat[i] - pg[i];
             }
             // s = step taken in previous iteration (already saved)
-            try bfgsUpdate(alloc, h_inv, ps, y_vec, n3);
+            try bfgs_update(alloc, h_inv, ps, y_vec, n3);
         }
     }
 
     // Compute search direction: p = -H_inv * grad
-    const search_dir = try matVecMul(alloc, h_inv, current_grad_flat, n3);
+    const search_dir = try mat_vec_mul(alloc, h_inv, current_grad_flat, n3);
     defer alloc.free(search_dir);
 
     for (search_dir) |*d| {
@@ -307,7 +307,7 @@ fn applyBfgsStep(
     }
 
     // Apply trust region scaling
-    trustRegionScale(search_dir, max_step_size);
+    trust_region_scale(search_dir, max_step_size);
 
     // Save gradient for BFGS update in next iteration
     if (prev_grad.* == null) {
@@ -328,7 +328,7 @@ fn applyBfgsStep(
 }
 
 /// Package the final optimization result from loop state.
-fn packageOptResult(
+fn package_opt_result(
     alloc: std.mem.Allocator,
     nuc_positions: []const Vec3,
     current_grad_flat: []const f64,
@@ -373,7 +373,7 @@ fn packageOptResult(
 /// The `shells` array is modified in-place during optimization
 /// (centers are updated). The caller should provide a mutable copy
 /// if they need to preserve the original.
-fn runRhfScfAndGradient(
+fn run_rhf_scf_and_gradient(
     alloc: std.mem.Allocator,
     shells: []ContractedShell,
     nuc_positions: []Vec3,
@@ -390,7 +390,7 @@ fn runRhfScfAndGradient(
         scf_params.initial_density = pd;
     }
 
-    var scf_result = try gto_scf.runGeneralRhfScf(
+    var scf_result = try gto_scf.run_general_rhf_scf(
         alloc,
         shells,
         nuc_positions,
@@ -409,7 +409,7 @@ fn runRhfScfAndGradient(
     @memcpy(prev_density.*.?, scf_result.density_matrix);
 
     // Compute gradient
-    var grad_result = try gradient_mod.computeRhfGradient(
+    var grad_result = try gradient_mod.compute_rhf_gradient(
         alloc,
         shells,
         nuc_positions,
@@ -421,7 +421,7 @@ fn runRhfScfAndGradient(
     );
     defer grad_result.deinit(alloc);
 
-    flattenGradientInto(grad_result.gradients, current_grad_flat);
+    flatten_gradient_into(grad_result.gradients, current_grad_flat);
 }
 
 /// Shared state owned by the BFGS loop. Callers must call `deinit`.
@@ -440,13 +440,13 @@ const BfgsLoopState = struct {
         nuc_positions: []const Vec3,
         n3: usize,
     ) !BfgsLoopState {
-        const shell_to_atom = try buildShellToAtomMap(alloc, shells, nuc_positions);
+        const shell_to_atom = try build_shell_to_atom_map(alloc, shells, nuc_positions);
         errdefer alloc.free(shell_to_atom);
 
-        const coords = try flattenVec3(alloc, nuc_positions);
+        const coords = try flatten_vec3(alloc, nuc_positions);
         errdefer alloc.free(coords);
 
-        const h_inv = try initInverseHessian(alloc, n3);
+        const h_inv = try init_inverse_hessian(alloc, n3);
         errdefer alloc.free(h_inv);
 
         const current_grad_flat = try alloc.alloc(f64, n3);
@@ -489,7 +489,7 @@ const RhfOptContext = struct {
     params: OptParams,
 };
 
-fn runRhfOptStep(
+fn run_rhf_opt_step(
     ctx: RhfOptContext,
     scf_params: *ScfParams,
     prev_density: *?[]f64,
@@ -499,9 +499,9 @@ fn runRhfOptStep(
     energy_history: *std.ArrayList(f64),
     steps: usize,
 ) !bool {
-    applyCoordsToPositions(ctx.coords, ctx.nuc_positions, ctx.shells, ctx.shell_to_atom);
+    apply_coords_to_positions(ctx.coords, ctx.nuc_positions, ctx.shells, ctx.shell_to_atom);
 
-    try runRhfScfAndGradient(
+    try run_rhf_scf_and_gradient(
         ctx.alloc,
         ctx.shells,
         ctx.nuc_positions,
@@ -515,8 +515,8 @@ fn runRhfOptStep(
     );
     try energy_history.append(ctx.alloc, current_energy.*);
 
-    const grad_rms = vecRms(ctx.current_grad_flat);
-    const grad_max = vecMaxAbs(ctx.current_grad_flat);
+    const grad_rms = vec_rms(ctx.current_grad_flat);
+    const grad_max = vec_max_abs(ctx.current_grad_flat);
 
     logging.progress(
         ctx.params.print_progress,
@@ -528,7 +528,7 @@ fn runRhfOptStep(
         return true;
     }
 
-    try applyBfgsStep(
+    try apply_bfgs_step(
         ctx.alloc,
         ctx.h_inv,
         ctx.coords,
@@ -541,7 +541,7 @@ fn runRhfOptStep(
     return false;
 }
 
-pub fn optimizeGeometry(
+pub fn optimize_geometry(
     alloc: std.mem.Allocator,
     shells: []ContractedShell,
     nuc_positions: []Vec3,
@@ -581,7 +581,7 @@ pub fn optimizeGeometry(
     var current_energy: f64 = 0.0;
     for (0..params.max_steps) |step| {
         steps = step + 1;
-        if (try runRhfOptStep(
+        if (try run_rhf_opt_step(
             ctx,
             &scf_params,
             &prev_density,
@@ -596,7 +596,7 @@ pub fn optimizeGeometry(
         }
     }
 
-    return packageOptResult(
+    return package_opt_result(
         alloc,
         nuc_positions,
         state.current_grad_flat,
@@ -638,7 +638,7 @@ pub const KsOptParams = struct {
 /// The `shells` array is modified in-place during optimization
 /// (centers are updated). The caller should provide a mutable copy
 /// if they need to preserve the original.
-fn runKsDftAndGradient(
+fn run_ks_dft_and_gradient(
     alloc: std.mem.Allocator,
     io: std.Io,
     shells: []ContractedShell,
@@ -654,7 +654,7 @@ fn runKsDftAndGradient(
     const n_atoms = nuc_positions.len;
 
     // Run KS-DFT SCF
-    var ks_result = try kohn_sham.runKohnShamScf(
+    var ks_result = try kohn_sham.run_kohn_sham_scf(
         alloc,
         io,
         shells,
@@ -683,11 +683,11 @@ fn runKsDftAndGradient(
                 @intFromFloat(nuc_charges[i]),
         };
     }
-    const grid_points = try becke.buildMolecularGrid(alloc, becke_atoms, grid_config);
+    const grid_points = try becke.build_molecular_grid(alloc, becke_atoms, grid_config);
     defer alloc.free(grid_points);
 
     // Compute KS-DFT gradient
-    var grad_result = try gradient_mod.computeKsDftGradient(
+    var grad_result = try gradient_mod.compute_ks_dft_gradient(
         alloc,
         shells,
         nuc_positions,
@@ -701,7 +701,7 @@ fn runKsDftAndGradient(
     );
     defer grad_result.deinit(alloc);
 
-    flattenGradientInto(grad_result.gradients, current_grad_flat);
+    flatten_gradient_into(grad_result.gradients, current_grad_flat);
 }
 
 const KsOptContext = struct {
@@ -721,7 +721,7 @@ const KsOptContext = struct {
     grid_config: becke.GridConfig,
 };
 
-fn runKsOptStep(
+fn run_ks_opt_step(
     ctx: KsOptContext,
     prev_grad: *?[]f64,
     prev_step: *?[]f64,
@@ -729,9 +729,9 @@ fn runKsOptStep(
     energy_history: *std.ArrayList(f64),
     steps: usize,
 ) !bool {
-    applyCoordsToPositions(ctx.coords, ctx.nuc_positions, ctx.shells, ctx.shell_to_atom);
+    apply_coords_to_positions(ctx.coords, ctx.nuc_positions, ctx.shells, ctx.shell_to_atom);
 
-    try runKsDftAndGradient(
+    try run_ks_dft_and_gradient(
         ctx.alloc,
         ctx.io,
         ctx.shells,
@@ -746,8 +746,8 @@ fn runKsOptStep(
     );
     try energy_history.append(ctx.alloc, current_energy.*);
 
-    const grad_rms = vecRms(ctx.current_grad_flat);
-    const grad_max = vecMaxAbs(ctx.current_grad_flat);
+    const grad_rms = vec_rms(ctx.current_grad_flat);
+    const grad_max = vec_max_abs(ctx.current_grad_flat);
 
     logging.progress(
         ctx.params.print_progress,
@@ -759,7 +759,7 @@ fn runKsOptStep(
         return true;
     }
 
-    try applyBfgsStep(
+    try apply_bfgs_step(
         ctx.alloc,
         ctx.h_inv,
         ctx.coords,
@@ -772,7 +772,7 @@ fn runKsOptStep(
     return false;
 }
 
-pub fn optimizeKsDftGeometry(
+pub fn optimize_ks_dft_geometry(
     alloc: std.mem.Allocator,
     io: std.Io,
     shells: []ContractedShell,
@@ -816,7 +816,7 @@ pub fn optimizeKsDftGeometry(
     var current_energy: f64 = 0.0;
     for (0..params.max_steps) |step| {
         steps = step + 1;
-        if (try runKsOptStep(
+        if (try run_ks_opt_step(
             ctx,
             &state.prev_grad,
             &state.prev_step,
@@ -829,7 +829,7 @@ pub fn optimizeKsDftGeometry(
         }
     }
 
-    return packageOptResult(
+    return package_opt_result(
         alloc,
         nuc_positions,
         state.current_grad_flat,

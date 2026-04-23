@@ -140,7 +140,7 @@ pub const SecondRowBasis = struct {
 
 /// Look up the 1s basis for a given atomic number (H, He only).
 /// Returns null if the element is not in the STO-3G database.
-pub fn getBasis1s(z: u32) ?[]const PrimitiveGaussian {
+pub fn get_basis_1s(z: u32) ?[]const PrimitiveGaussian {
     return switch (z) {
         1 => &H_1s,
         2 => &He_1s,
@@ -150,7 +150,7 @@ pub fn getBasis1s(z: u32) ?[]const PrimitiveGaussian {
 
 /// Look up the full basis (all shells) for a given atomic number.
 /// Returns null if the element is not in the STO-3G database.
-pub fn getSecondRowBasis(z: u32) ?SecondRowBasis {
+pub fn get_second_row_basis(z: u32) ?SecondRowBasis {
     return switch (z) {
         6 => SecondRowBasis{ .inner_1s = &C_1s, .outer_2s = &C_2s, .outer_2p = &C_2p },
         7 => SecondRowBasis{ .inner_1s = &N_1s, .outer_2s = &N_2s, .outer_2p = &N_2p },
@@ -166,9 +166,9 @@ pub fn getSecondRowBasis(z: u32) ?SecondRowBasis {
 /// Returns the shells via a static buffer (max 3 shells per atom).
 pub const MAX_SHELLS_PER_ATOM = 3;
 
-pub fn buildAtomShells(z: u32, center: math.Vec3) ?[MAX_SHELLS_PER_ATOM]ContractedShell {
+pub fn build_atom_shells(z: u32, center: math.Vec3) ?[MAX_SHELLS_PER_ATOM]ContractedShell {
     // First-row atoms: just 1s
-    if (getBasis1s(z)) |prims_1s| {
+    if (get_basis_1s(z)) |prims_1s| {
         var result: [MAX_SHELLS_PER_ATOM]ContractedShell = undefined;
         result[0] = .{ .center = center, .l = 0, .primitives = prims_1s };
         // Fill unused with dummy
@@ -178,7 +178,7 @@ pub fn buildAtomShells(z: u32, center: math.Vec3) ?[MAX_SHELLS_PER_ATOM]Contract
     }
 
     // Second-row atoms
-    if (getSecondRowBasis(z)) |basis| {
+    if (get_second_row_basis(z)) |basis| {
         var result: [MAX_SHELLS_PER_ATOM]ContractedShell = undefined;
         result[0] = .{ .center = center, .l = 0, .primitives = basis.inner_1s };
         result[1] = .{ .center = center, .l = 0, .primitives = basis.outer_2s };
@@ -190,7 +190,7 @@ pub fn buildAtomShells(z: u32, center: math.Vec3) ?[MAX_SHELLS_PER_ATOM]Contract
 }
 
 /// Return number of shells for a given atomic number.
-pub fn numShellsForAtom(z: u32) ?usize {
+pub fn num_shells_for_atom(z: u32) ?usize {
     return switch (z) {
         1, 2 => 1,
         6, 7, 8, 9 => 3,

@@ -7806,7 +7806,7 @@ pub const lebedev_590 = [_]LebedevPoint{
 };
 
 /// Returns the Lebedev quadrature points for the given number of angular points.
-pub fn getLebedevGrid(n_angular: usize) []const LebedevPoint {
+pub fn get_lebedev_grid(n_angular: usize) []const LebedevPoint {
     return switch (n_angular) {
         6 => &lebedev_6,
         14 => &lebedev_14,

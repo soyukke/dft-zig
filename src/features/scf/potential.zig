@@ -12,18 +12,18 @@ const xc = @import("../xc/xc.zig");
 
 const Grid = grid_mod.Grid;
 
-const realToReciprocal = fft_grid.realToReciprocal;
-const reciprocalToReal = fft_grid.reciprocalToReal;
+const real_to_reciprocal = fft_grid.real_to_reciprocal;
+const reciprocal_to_real = fft_grid.reciprocal_to_real;
 
-const computeXcFields = xc_fields_mod.computeXcFields;
-const computeXcFieldsSpin = xc_fields_mod.computeXcFieldsSpin;
+const compute_xc_fields = xc_fields_mod.compute_xc_fields;
+const compute_xc_fields_spin = xc_fields_mod.compute_xc_fields_spin;
 
 /// Build Hartree+XC potential grid.
 /// If vxc_r_out is non-null, the real-space V_xc(r) is transferred to the caller
 /// instead of being freed (useful for NLCC force calculation).
 /// If coulomb_r_cut is non-null, the spherical cutoff Coulomb kernel is used
 /// instead of the standard periodic 8π/G² kernel (for isolated/molecular systems).
-pub fn buildPotentialGrid(
+pub fn build_potential_grid(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho: []const f64,
@@ -41,14 +41,14 @@ pub fn buildPotentialGrid(
     defer if (rho_filtered) |rf| alloc.free(rf);
 
     if (ecutrho) |ecut| {
-        rho_filtered = try filterDensityToEcutrho(alloc, grid, rho, ecut, use_rfft);
+        rho_filtered = try filter_density_to_ecutrho(alloc, grid, rho, ecut, use_rfft);
     }
     const rho_for_xc = rho_filtered orelse rho;
 
-    const rho_g = try realToReciprocal(alloc, grid, rho_for_xc, use_rfft);
+    const rho_g = try real_to_reciprocal(alloc, grid, rho_for_xc, use_rfft);
     defer alloc.free(rho_g);
 
-    const xc_fields = try computeXcFields(alloc, grid, rho_for_xc, rho_core, use_rfft, xc_func);
+    const xc_fields = try compute_xc_fields(alloc, grid, rho_for_xc, rho_core, use_rfft, xc_func);
     defer {
         if (vxc_r_out) |out| {
             out.* = xc_fields.vxc; // Transfer ownership to caller
@@ -58,7 +58,7 @@ pub fn buildPotentialGrid(
         alloc.free(xc_fields.exc);
     }
 
-    const vxc_g = try realToReciprocal(alloc, grid, xc_fields.vxc, use_rfft);
+    const vxc_g = try real_to_reciprocal(alloc, grid, xc_fields.vxc, use_rfft);
     defer alloc.free(vxc_g);
 
     const total = grid.count();
@@ -76,7 +76,7 @@ pub fn buildPotentialGrid(
         if (coulomb_r_cut) |r_cut| {
             // Isolated system: cutoff Coulomb kernel
             const g_mag = @sqrt(g.g2);
-            const kernel = coulomb.cutoffCoulombKernel(g.g2, g_mag, r_cut);
+            const kernel = coulomb.cutoff_coulomb_kernel(g.g2, g_mag, r_cut);
             vh = math.complex.scale(rho_g[g.idx], kernel);
         } else {
             if (g.g2 > 1e-12) {
@@ -109,7 +109,7 @@ pub const SpinPotentialGrids = struct {
 /// Hartree is computed from rho_total = rho_up + rho_down (same for both channels).
 /// XC potentials differ: V_H + V_xc_up, V_H + V_xc_down.
 /// If coulomb_r_cut is non-null, the spherical cutoff Coulomb kernel is used.
-pub fn buildPotentialGridSpin(
+pub fn build_potential_grid_spin(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho_up: []const f64,
@@ -130,11 +130,11 @@ pub fn buildPotentialGridSpin(
     for (0..total) |i| {
         rho_total[i] = rho_up[i] + rho_down[i];
     }
-    const rho_g = try realToReciprocal(alloc, grid, rho_total, use_rfft);
+    const rho_g = try real_to_reciprocal(alloc, grid, rho_total, use_rfft);
     defer alloc.free(rho_g);
 
     // Compute spin XC fields
-    const xc_fields = try computeXcFieldsSpin(
+    const xc_fields = try compute_xc_fields_spin(
         alloc,
         grid,
         rho_up,
@@ -157,10 +157,10 @@ pub fn buildPotentialGridSpin(
         alloc.free(xc_fields.exc);
     }
 
-    const vxc_up_g = try realToReciprocal(alloc, grid, xc_fields.vxc_up, use_rfft);
+    const vxc_up_g = try real_to_reciprocal(alloc, grid, xc_fields.vxc_up, use_rfft);
     defer alloc.free(vxc_up_g);
 
-    const vxc_down_g = try realToReciprocal(alloc, grid, xc_fields.vxc_down, use_rfft);
+    const vxc_down_g = try real_to_reciprocal(alloc, grid, xc_fields.vxc_down, use_rfft);
     defer alloc.free(vxc_down_g);
 
     // Build V_H(G) + V_xc_up(G) and V_H(G) + V_xc_down(G)
@@ -171,7 +171,7 @@ pub fn buildPotentialGridSpin(
         var vh = math.complex.init(0.0, 0.0);
         if (coulomb_r_cut) |r_cut| {
             const g_mag = @sqrt(g.g2);
-            const kernel = coulomb.cutoffCoulombKernel(g.g2, g_mag, r_cut);
+            const kernel = coulomb.cutoff_coulomb_kernel(g.g2, g_mag, r_cut);
             vh = math.complex.scale(rho_g[g.idx], kernel);
         } else {
             if (g.g2 > 1e-12) {
@@ -207,7 +207,7 @@ pub fn buildPotentialGridSpin(
 /// Build ionic local potential grid in reciprocal space.
 /// When ecutrho is specified, V_loc(G) is zeroed for |G|² >= ecutrho to match
 /// QE's spherical G-vector convention (cube corners excluded).
-pub fn buildIonicPotentialGrid(
+pub fn build_ionic_potential_grid(
     alloc: std.mem.Allocator,
     grid: Grid,
     species: []const hamiltonian.SpeciesEntry,
@@ -227,7 +227,7 @@ pub fn buildIonicPotentialGrid(
                 continue;
             }
         }
-        values[g.idx] = try hamiltonian.ionicLocalPotentialWithTable(
+        values[g.idx] = try hamiltonian.ionic_local_potential_with_table(
             g.gvec,
             species,
             atoms,
@@ -248,7 +248,7 @@ pub fn buildIonicPotentialGrid(
 }
 
 /// Build total local potential in real space.
-pub fn buildLocalPotentialReal(
+pub fn build_local_potential_real(
     alloc: std.mem.Allocator,
     grid: Grid,
     ionic: hamiltonian.PotentialGrid,
@@ -261,19 +261,19 @@ pub fn buildLocalPotentialReal(
     for (combined, 0..) |*v, i| {
         v.* = math.complex.add(ionic.values[i], extra.values[i]);
     }
-    return try reciprocalToReal(alloc, grid, combined);
+    return try reciprocal_to_real(alloc, grid, combined);
 }
 
 /// Filter real-space density to ecutrho sphere: FFT → zero |G|² >= ecutrho → IFFT.
 /// Returns a newly allocated filtered density array.
-pub fn filterDensityToEcutrho(
+pub fn filter_density_to_ecutrho(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho: []const f64,
     ecutrho: f64,
     use_rfft: bool,
 ) ![]f64 {
-    const rho_g = try realToReciprocal(alloc, grid, rho, use_rfft);
+    const rho_g = try real_to_reciprocal(alloc, grid, rho, use_rfft);
     defer alloc.free(rho_g);
 
     var it = gvec_iter.GVecIterator.init(grid);
@@ -282,5 +282,5 @@ pub fn filterDensityToEcutrho(
             rho_g[g.idx] = math.complex.init(0.0, 0.0);
         }
     }
-    return try reciprocalToReal(alloc, grid, rho_g);
+    return try reciprocal_to_real(alloc, grid, rho_g);
 }

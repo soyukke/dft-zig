@@ -36,7 +36,7 @@ pub const BlockDiagResult = struct {
 /// This approach properly handles band crossings at high-symmetry points
 /// by preventing spurious mixing between states of different symmetry.
 /// Iterate irrep blocks, diagonalize each sub-Hamiltonian, and accumulate eigenvalues + counts.
-fn accumulateBlockEigenvalues(
+fn accumulate_block_eigenvalues(
     alloc: std.mem.Allocator,
     backend: linalg.Backend,
     full_h: []math.Complex,
@@ -50,11 +50,11 @@ fn accumulateBlockEigenvalues(
         if (block_size == 0) continue;
 
         // Build sub-Hamiltonian for this irrep block
-        const h_block = try buildBlockHamiltonian(alloc, full_h, n, block);
+        const h_block = try build_block_hamiltonian(alloc, full_h, n, block);
         defer alloc.free(h_block);
 
         // Diagonalize
-        const block_values = try linalg.hermitianEigenvalues(alloc, backend, block_size, h_block);
+        const block_values = try linalg.hermitian_eigenvalues(alloc, backend, block_size, h_block);
         defer alloc.free(block_values);
 
         // Add to results
@@ -69,7 +69,7 @@ fn accumulateBlockEigenvalues(
     }
 }
 
-pub fn symmetryBlockDiagEigenvalues(
+pub fn symmetry_block_diag_eigenvalues(
     alloc: std.mem.Allocator,
     backend: linalg.Backend,
     gvecs: []const plane_wave.GVector,
@@ -81,7 +81,7 @@ pub fn symmetryBlockDiagEigenvalues(
     tol: f64,
 ) !BlockDiagResult {
     // Analyze basis symmetry
-    var sym_info = try little_group.analyzeBasisSymmetry(
+    var sym_info = try little_group.analyze_basis_symmetry(
         alloc,
         gvecs,
         k_frac,
@@ -93,7 +93,7 @@ pub fn symmetryBlockDiagEigenvalues(
 
     // If only one block with no pairs, just solve the full matrix
     if (sym_info.irrep_blocks.len <= 1 and sym_info.irrep_blocks[0].pairs.len == 0) {
-        const values = try linalg.hermitianEigenvalues(alloc, backend, n, full_h);
+        const values = try linalg.hermitian_eigenvalues(alloc, backend, n, full_h);
         const counts = try alloc.alloc(BlockDiagResult.IrrepCount, 1);
         counts[0] = .{ .irrep = .a, .count = n };
         return BlockDiagResult{
@@ -109,7 +109,7 @@ pub fn symmetryBlockDiagEigenvalues(
     var counts: std.ArrayList(BlockDiagResult.IrrepCount) = .empty;
     errdefer counts.deinit(alloc);
 
-    try accumulateBlockEigenvalues(
+    try accumulate_block_eigenvalues(
         alloc,
         backend,
         full_h,
@@ -147,7 +147,7 @@ pub fn symmetryBlockDiagEigenvalues(
 /// - Basis ordering: [|Ea_0⟩, |Eb_0⟩, |Ea_1⟩, |Eb_1⟩, ...]
 /// - |Ea_i⟩ = (2|G1_i⟩ - |G2_i⟩ - |G3_i⟩)/√6
 /// - |Eb_i⟩ = (|G2_i⟩ - |G3_i⟩)/√2
-fn buildBlockHamiltonian(
+fn build_block_hamiltonian(
     alloc: std.mem.Allocator,
     full_h: []const math.Complex,
     n: usize,
@@ -155,7 +155,7 @@ fn buildBlockHamiltonian(
 ) ![]math.Complex {
     // Check if this is a C3v block with triplets
     if (block.triplets.len > 0) {
-        return buildC3vBlockHamiltonian(alloc, full_h, n, block);
+        return build_c3v_block_hamiltonian(alloc, full_h, n, block);
     }
 
     // Original Cs/trivial implementation
@@ -177,7 +177,7 @@ fn buildBlockHamiltonian(
     while (row < block_size) : (row += 1) {
         var col: usize = 0;
         while (col < block_size) : (col += 1) {
-            const val = computeBlockElement(
+            const val = compute_block_element(
                 full_h,
                 n,
                 block,
@@ -195,7 +195,7 @@ fn buildBlockHamiltonian(
 }
 
 /// Build Hamiltonian block for C3v symmetry with triplets.
-fn buildC3vBlockHamiltonian(
+fn build_c3v_block_hamiltonian(
     alloc: std.mem.Allocator,
     full_h: []const math.Complex,
     n: usize,
@@ -224,7 +224,7 @@ fn buildC3vBlockHamiltonian(
         while (row < block_size) : (row += 1) {
             var col: usize = 0;
             while (col < block_size) : (col += 1) {
-                const val = computeEBlockElement(
+                const val = compute_e_block_element(
                     full_h,
                     n,
                     block.triplets,
@@ -242,7 +242,15 @@ fn buildC3vBlockHamiltonian(
         while (row < block_size) : (row += 1) {
             var col: usize = 0;
             while (col < block_size) : (col += 1) {
-                const val = computeA1BlockElement(full_h, n, block, row, col, num_inv, inv_sqrt3);
+                const val = compute_a1_block_element(
+                    full_h,
+                    n,
+                    block,
+                    row,
+                    col,
+                    num_inv,
+                    inv_sqrt3,
+                );
                 h_block[row + col * block_size] = val;
             }
         }
@@ -252,7 +260,7 @@ fn buildC3vBlockHamiltonian(
 }
 
 /// Compute element for E block (2D irrep from C3v triplets).
-fn computeEBlockElement(
+fn compute_e_block_element(
     full_h: []const math.Complex,
     n: usize,
     triplets: []const little_group.GVectorTriplet,
@@ -322,7 +330,7 @@ fn computeEBlockElement(
 }
 
 /// Compute element for A1 block (invariants + symmetric triplet combination).
-fn computeA1BlockElement(
+fn compute_a1_block_element(
     full_h: []const math.Complex,
     n: usize,
     block: little_group.IrrepBlock,
@@ -385,7 +393,7 @@ fn computeA1BlockElement(
 }
 
 /// Invariant-invariant element: H'(I_a, I_b) = H(I_a, I_b).
-fn blockElementInvInv(
+fn block_element_inv_inv(
     full_h: []const math.Complex,
     n: usize,
     block: little_group.IrrepBlock,
@@ -398,7 +406,7 @@ fn blockElementInvInv(
 }
 
 /// Invariant-pair element: H'(I_a, ±_b) = (H(I_a, G_b) ± H(I_a, σG_b)) / √2.
-fn blockElementInvPair(
+fn block_element_inv_pair(
     full_h: []const math.Complex,
     n: usize,
     block: little_group.IrrepBlock,
@@ -424,7 +432,7 @@ fn blockElementInvPair(
 }
 
 /// Pair-invariant element: H'(±_a, I_b) = (H(G_a, I_b) ± H(σG_a, I_b)) / √2.
-fn blockElementPairInv(
+fn block_element_pair_inv(
     full_h: []const math.Complex,
     n: usize,
     block: little_group.IrrepBlock,
@@ -450,7 +458,7 @@ fn blockElementPairInv(
 }
 
 /// Pair-pair element: H'(±_a, ±_b) = (H_gg ± H_gsg ± H_sgg + H_sgsg) / 2.
-fn blockElementPairPair(
+fn block_element_pair_pair(
     full_h: []const math.Complex,
     n: usize,
     block: little_group.IrrepBlock,
@@ -485,7 +493,7 @@ fn blockElementPairPair(
 }
 
 /// Compute a single element of the block Hamiltonian.
-fn computeBlockElement(
+fn compute_block_element(
     full_h: []const math.Complex,
     n: usize,
     block: little_group.IrrepBlock,
@@ -499,19 +507,19 @@ fn computeBlockElement(
     const col_is_inv = col < num_inv;
 
     if (row_is_inv and col_is_inv) {
-        return blockElementInvInv(full_h, n, block, row, col);
+        return block_element_inv_inv(full_h, n, block, row, col);
     } else if (row_is_inv and !col_is_inv) {
-        return blockElementInvPair(full_h, n, block, row, col, num_inv, is_even, inv_sqrt2);
+        return block_element_inv_pair(full_h, n, block, row, col, num_inv, is_even, inv_sqrt2);
     } else if (!row_is_inv and col_is_inv) {
-        return blockElementPairInv(full_h, n, block, row, col, num_inv, is_even, inv_sqrt2);
+        return block_element_pair_inv(full_h, n, block, row, col, num_inv, is_even, inv_sqrt2);
     } else {
-        return blockElementPairPair(full_h, n, block, row, col, num_inv, is_even);
+        return block_element_pair_pair(full_h, n, block, row, col, num_inv, is_even);
     }
 }
 
 /// Convenience function for band calculations.
 /// Returns just the eigenvalues sorted in ascending order.
-pub fn computeBandEigenvalues(
+pub fn compute_band_eigenvalues(
     alloc: std.mem.Allocator,
     backend: linalg.Backend,
     gvecs: []const plane_wave.GVector,
@@ -523,7 +531,7 @@ pub fn computeBandEigenvalues(
     const n = gvecs.len;
     if (n == 0) return error.NoPlaneWaves;
 
-    const result = try symmetryBlockDiagEigenvalues(
+    const result = try symmetry_block_diag_eigenvalues(
         alloc,
         backend,
         gvecs,
@@ -583,7 +591,7 @@ test "symmetry block diag - trivial case" {
 
     const k = math.Vec3{ .x = 0, .y = 0, .z = 0 };
 
-    var result = try symmetryBlockDiagEigenvalues(
+    var result = try symmetry_block_diag_eigenvalues(
         alloc,
         .zig,
         &gvecs,
@@ -683,7 +691,7 @@ test "Cs symmetry block diag - paired G-vectors" {
 
     const k = math.Vec3{ .x = 0.25, .y = 0, .z = 0 }; // On mirror plane
 
-    var result = try symmetryBlockDiagEigenvalues(
+    var result = try symmetry_block_diag_eigenvalues(
         alloc,
         .zig,
         &gvecs,

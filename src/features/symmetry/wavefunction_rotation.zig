@@ -18,7 +18,7 @@ const plane_wave = @import("../plane_wave/basis.zig");
 const symmetry = @import("symmetry.zig");
 
 /// Compute per-G-vector phase factors for the translation-rotation symmetry operation.
-fn computeRotationPhases(
+fn compute_rotation_phases(
     basis_k: plane_wave.Basis,
     symop: symmetry.SymOp,
     sk_unwrapped: math.Vec3,
@@ -65,7 +65,7 @@ fn computeRotationPhases(
 /// IBZ basis maps to index i in the target basis.
 ///
 /// sk_unwrapped: k_rot * k_ibz_frac (BEFORE BZ wrapping, used for phase).
-pub fn rotateWavefunctionsInPlace(
+pub fn rotate_wavefunctions_in_place(
     alloc: std.mem.Allocator,
     psi_k: []const []const math.Complex,
     basis_k: plane_wave.Basis,
@@ -82,7 +82,7 @@ pub fn rotateWavefunctionsInPlace(
     const phases = try alloc.alloc(math.Complex, n_pw);
     defer alloc.free(phases);
 
-    computeRotationPhases(basis_k, symop, sk_unwrapped, time_reversal, phases);
+    compute_rotation_phases(basis_k, symop, sk_unwrapped, time_reversal, phases);
 
     const wfn = try alloc.alloc([]math.Complex, n_occ);
     const wfn_const = try alloc.alloc([]const math.Complex, n_occ);

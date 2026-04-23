@@ -104,9 +104,9 @@ pub fn solve(
     var workspace = try CgWorkspace.init(alloc, n);
     defer workspace.deinit(alloc);
 
-    try initializeSolveVectors(n, vectors, nbands, opts);
-    try solveBands(alloc, op, diag, nbands, params, values, vectors, &workspace);
-    try diagonalizeCgSubspace(alloc, op, n, nbands, values, vectors);
+    try initialize_solve_vectors(n, vectors, nbands, opts);
+    try solve_bands(alloc, op, diag, nbands, params, values, vectors, &workspace);
+    try diagonalize_cg_subspace(alloc, op, n, nbands, values, vectors);
 
     return linalg.EigenDecomp{
         .values = values,
@@ -115,7 +115,7 @@ pub fn solve(
     };
 }
 
-fn initializeSolveVectors(
+fn initialize_solve_vectors(
     n: usize,
     vectors: []math.Complex,
     nbands: usize,
@@ -129,15 +129,15 @@ fn initializeSolveVectors(
             @memcpy(vectors[0 .. n * copy_cols], init_vecs[0 .. n * copy_cols]);
         }
         if (copy_cols < nbands) {
-            common.initRandomVectors(n, vectors[n * copy_cols ..], nbands - copy_cols, &seed);
+            common.init_random_vectors(n, vectors[n * copy_cols ..], nbands - copy_cols, &seed);
         }
     } else {
-        common.initRandomVectors(n, vectors, nbands, &seed);
+        common.init_random_vectors(n, vectors, nbands, &seed);
     }
-    try common.orthonormalizeAll(n, vectors, nbands, &seed);
+    try common.orthonormalize_all(n, vectors, nbands, &seed);
 }
 
-fn solveBands(
+fn solve_bands(
     alloc: std.mem.Allocator,
     op: common.Operator,
     diag: []const f64,
@@ -148,11 +148,11 @@ fn solveBands(
     workspace: *CgWorkspace,
 ) !void {
     for (0..nbands) |band| {
-        try solveBand(alloc, op, diag, band, params, values, vectors, workspace);
+        try solve_band(alloc, op, diag, band, params, values, vectors, workspace);
     }
 }
 
-fn solveBand(
+fn solve_band(
     alloc: std.mem.Allocator,
     op: common.Operator,
     diag: []const f64,
@@ -164,12 +164,12 @@ fn solveBand(
 ) !void {
     const n = op.n;
     const psi = common.column(vectors, n, band);
-    if (band > 0) _ = common.orthonormalizeVector(n, psi, vectors, band);
+    if (band > 0) _ = common.orthonormalize_vector(n, psi, vectors, band);
     try op.apply(op.ctx, psi, workspace.h_psi);
 
-    var state = BandState{ .lambda = common.innerProduct(n, psi, workspace.h_psi).r };
+    var state = BandState{ .lambda = common.inner_product(n, psi, workspace.h_psi).r };
     for (0..params.max_iter) |_| {
-        const ready = try prepareCgIteration(
+        const ready = try prepare_cg_iteration(
             op,
             diag,
             band,
@@ -181,7 +181,7 @@ fn solveBand(
         );
         if (!ready) break;
 
-        const ritz = try computeRitzResult(
+        const ritz = try compute_ritz_result(
             alloc,
             n,
             state.lambda,
@@ -189,16 +189,16 @@ fn solveBand(
             workspace,
             state.has_prev_direction,
         );
-        storePreviousBandState(psi, workspace, &state);
-        applyRitzUpdate(n, psi, workspace, ritz);
-        if (updateBandEigenvalue(&state.lambda, ritz.lambda_new, params.tol)) break;
+        store_previous_band_state(psi, workspace, &state);
+        apply_ritz_update(n, psi, workspace, ritz);
+        if (update_band_eigenvalue(&state.lambda, ritz.lambda_new, params.tol)) break;
     }
 
     values[band] = state.lambda;
-    if (band > 0) _ = common.orthonormalizeVector(n, psi, vectors, band);
+    if (band > 0) _ = common.orthonormalize_vector(n, psi, vectors, band);
 }
 
-fn prepareCgIteration(
+fn prepare_cg_iteration(
     op: common.Operator,
     diag: []const f64,
     band: usize,
@@ -212,28 +212,34 @@ fn prepareCgIteration(
     @memcpy(workspace.residual, workspace.h_psi);
     common.axpy(n, workspace.residual, psi, -state.lambda);
     orthogonalize(n, workspace.residual, vectors, band);
-    if (common.vectorNorm(n, workspace.residual) < tol) return false;
+    if (common.vector_norm(n, workspace.residual) < tol) return false;
 
     common.precondition(n, diag, state.lambda, workspace.residual, workspace.precond_buf);
     orthogonalize(n, workspace.precond_buf, vectors, band + 1);
-    updateSearchDirection(n, workspace.direction, workspace.precond_buf, workspace.residual, state);
+    update_search_direction(
+        n,
+        workspace.direction,
+        workspace.precond_buf,
+        workspace.residual,
+        state,
+    );
 
     orthogonalize(n, workspace.direction, vectors, band + 1);
-    const d_norm = common.vectorNorm(n, workspace.direction);
+    const d_norm = common.vector_norm(n, workspace.direction);
     if (d_norm < 1e-14) return false;
-    scaleVec(n, workspace.direction, 1.0 / d_norm);
+    scale_vec(n, workspace.direction, 1.0 / d_norm);
     try op.apply(op.ctx, workspace.direction, workspace.h_dir);
     return true;
 }
 
-fn updateSearchDirection(
+fn update_search_direction(
     n: usize,
     direction: []math.Complex,
     precond_buf: []const math.Complex,
     residual: []const math.Complex,
     state: *BandState,
 ) void {
-    const zr = common.innerProduct(n, precond_buf, residual).r;
+    const zr = common.inner_product(n, precond_buf, residual).r;
     if (state.has_prev_direction and state.prev_zr > 1e-30) {
         const beta = @max(0.0, zr / state.prev_zr);
         for (0..n) |i| {
@@ -246,7 +252,7 @@ fn updateSearchDirection(
     state.prev_zr = zr;
 }
 
-fn computeRitzResult(
+fn compute_ritz_result(
     alloc: std.mem.Allocator,
     n: usize,
     lambda: f64,
@@ -254,13 +260,19 @@ fn computeRitzResult(
     workspace: *CgWorkspace,
     has_prev_direction: bool,
 ) !RitzResult {
-    if (has_prev_direction and prepareThreeTermSubspace(n, psi, workspace)) {
-        if (try computeThreeTermRitzResult(alloc, n, lambda, psi, workspace)) |ritz| return ritz;
+    if (has_prev_direction and prepare_three_term_subspace(n, psi, workspace)) {
+        if (try compute_three_term_ritz_result(
+            alloc,
+            n,
+            lambda,
+            psi,
+            workspace,
+        )) |ritz| return ritz;
     }
-    return computeTwoTermRitzResult(n, lambda, psi, workspace.direction, workspace.h_dir);
+    return compute_two_term_ritz_result(n, lambda, psi, workspace.direction, workspace.h_dir);
 }
 
-fn prepareThreeTermSubspace(
+fn prepare_three_term_subspace(
     n: usize,
     psi: []const math.Complex,
     workspace: *CgWorkspace,
@@ -268,24 +280,24 @@ fn prepareThreeTermSubspace(
     @memcpy(workspace.psi_prev, workspace.psi_old);
     @memcpy(workspace.h_psi_prev, workspace.h_psi_old);
 
-    const ov_psi = common.innerProduct(n, psi, workspace.psi_prev);
+    const ov_psi = common.inner_product(n, psi, workspace.psi_prev);
     const neg_ov_psi = math.complex.init(-ov_psi.r, -ov_psi.i);
-    zaxpyComplex(n, workspace.psi_prev, psi, neg_ov_psi);
-    zaxpyComplex(n, workspace.h_psi_prev, workspace.h_psi, neg_ov_psi);
+    zaxpy_complex(n, workspace.psi_prev, psi, neg_ov_psi);
+    zaxpy_complex(n, workspace.h_psi_prev, workspace.h_psi, neg_ov_psi);
 
-    const ov_d = common.innerProduct(n, workspace.direction, workspace.psi_prev);
+    const ov_d = common.inner_product(n, workspace.direction, workspace.psi_prev);
     const neg_ov_d = math.complex.init(-ov_d.r, -ov_d.i);
-    zaxpyComplex(n, workspace.psi_prev, workspace.direction, neg_ov_d);
-    zaxpyComplex(n, workspace.h_psi_prev, workspace.h_dir, neg_ov_d);
+    zaxpy_complex(n, workspace.psi_prev, workspace.direction, neg_ov_d);
+    zaxpy_complex(n, workspace.h_psi_prev, workspace.h_dir, neg_ov_d);
 
-    const p_norm = common.vectorNorm(n, workspace.psi_prev);
+    const p_norm = common.vector_norm(n, workspace.psi_prev);
     if (p_norm <= 1e-6) return false;
-    scaleVec(n, workspace.psi_prev, 1.0 / p_norm);
-    scaleVec(n, workspace.h_psi_prev, 1.0 / p_norm);
+    scale_vec(n, workspace.psi_prev, 1.0 / p_norm);
+    scale_vec(n, workspace.h_psi_prev, 1.0 / p_norm);
     return true;
 }
 
-fn computeThreeTermRitzResult(
+fn compute_three_term_ritz_result(
     alloc: std.mem.Allocator,
     n: usize,
     lambda: f64,
@@ -293,11 +305,11 @@ fn computeThreeTermRitzResult(
     workspace: *CgWorkspace,
 ) !?RitzResult {
     const a11 = lambda;
-    const a22 = common.innerProduct(n, workspace.direction, workspace.h_dir).r;
-    const a33 = common.innerProduct(n, workspace.psi_prev, workspace.h_psi_prev).r;
-    const a12 = common.innerProduct(n, psi, workspace.h_dir);
-    const a13 = common.innerProduct(n, psi, workspace.h_psi_prev);
-    const a23 = common.innerProduct(n, workspace.direction, workspace.h_psi_prev);
+    const a22 = common.inner_product(n, workspace.direction, workspace.h_dir).r;
+    const a33 = common.inner_product(n, workspace.psi_prev, workspace.h_psi_prev).r;
+    const a12 = common.inner_product(n, psi, workspace.h_dir);
+    const a13 = common.inner_product(n, psi, workspace.h_psi_prev);
+    const a23 = common.inner_product(n, workspace.direction, workspace.h_psi_prev);
 
     var h3: [9]math.Complex = undefined;
     h3[0] = math.complex.init(a11, 0.0);
@@ -310,7 +322,7 @@ fn computeThreeTermRitzResult(
     h3[7] = a23;
     h3[8] = math.complex.init(a33, 0.0);
 
-    const sub_eig = common.hermitianEigenDecompSmall(alloc, 3, &h3) catch return null;
+    const sub_eig = common.hermitian_eigen_decomp_small(alloc, 3, &h3) catch return null;
     defer alloc.free(sub_eig.values);
     defer alloc.free(sub_eig.vectors);
 
@@ -323,7 +335,7 @@ fn computeThreeTermRitzResult(
     };
 }
 
-fn computeTwoTermRitzResult(
+fn compute_two_term_ritz_result(
     n: usize,
     lambda: f64,
     psi: []const math.Complex,
@@ -331,8 +343,8 @@ fn computeTwoTermRitzResult(
     h_dir: []const math.Complex,
 ) RitzResult {
     const a11 = lambda;
-    const a22 = common.innerProduct(n, direction, h_dir).r;
-    const a12 = common.innerProduct(n, psi, h_dir);
+    const a22 = common.inner_product(n, direction, h_dir).r;
+    const a12 = common.inner_product(n, psi, h_dir);
     const avg = 0.5 * (a11 + a22);
     const diff = 0.5 * (a11 - a22);
     const off_sq = a12.r * a12.r + a12.i * a12.i;
@@ -348,11 +360,11 @@ fn computeTwoTermRitzResult(
         result.c1 = math.complex.init(0.0, 0.0);
         result.c2 = math.complex.init(1.0, 0.0);
     }
-    normalizeTwoTermCoefficients(&result.c1, &result.c2);
+    normalize_two_term_coefficients(&result.c1, &result.c2);
     return result;
 }
 
-fn normalizeTwoTermCoefficients(c1: *math.Complex, c2: *math.Complex) void {
+fn normalize_two_term_coefficients(c1: *math.Complex, c2: *math.Complex) void {
     const c_norm = @sqrt(c1.r * c1.r + c1.i * c1.i + c2.r * c2.r + c2.i * c2.i);
     if (c_norm > 1e-30) {
         c1.* = math.complex.scale(c1.*, 1.0 / c_norm);
@@ -360,7 +372,7 @@ fn normalizeTwoTermCoefficients(c1: *math.Complex, c2: *math.Complex) void {
     }
 }
 
-fn storePreviousBandState(
+fn store_previous_band_state(
     psi: []const math.Complex,
     workspace: *CgWorkspace,
     state: *BandState,
@@ -370,7 +382,7 @@ fn storePreviousBandState(
     state.has_prev_direction = true;
 }
 
-fn applyRitzUpdate(
+fn apply_ritz_update(
     n: usize,
     psi: []math.Complex,
     workspace: *CgWorkspace,
@@ -397,24 +409,24 @@ fn applyRitzUpdate(
         }
         workspace.h_psi[i] = value;
     }
-    renormalizeBandState(n, psi, workspace.h_psi);
+    renormalize_band_state(n, psi, workspace.h_psi);
 }
 
-fn renormalizeBandState(n: usize, psi: []math.Complex, h_psi: []math.Complex) void {
-    const psi_norm = common.vectorNorm(n, psi);
+fn renormalize_band_state(n: usize, psi: []math.Complex, h_psi: []math.Complex) void {
+    const psi_norm = common.vector_norm(n, psi);
     if (psi_norm > 1e-14) {
-        scaleVec(n, psi, 1.0 / psi_norm);
-        scaleVec(n, h_psi, 1.0 / psi_norm);
+        scale_vec(n, psi, 1.0 / psi_norm);
+        scale_vec(n, h_psi, 1.0 / psi_norm);
     }
 }
 
-fn updateBandEigenvalue(lambda: *f64, lambda_new: f64, tol: f64) bool {
+fn update_band_eigenvalue(lambda: *f64, lambda_new: f64, tol: f64) bool {
     const eval_change = @abs(lambda_new - lambda.*);
     lambda.* = lambda_new;
     return eval_change < tol;
 }
 
-fn diagonalizeCgSubspace(
+fn diagonalize_cg_subspace(
     alloc: std.mem.Allocator,
     op: common.Operator,
     n: usize,
@@ -428,7 +440,7 @@ fn diagonalizeCgSubspace(
     for (0..nbands) |band| {
         try op.apply(
             op.ctx,
-            common.columnConst(vectors, n, band),
+            common.column_const(vectors, n, band),
             common.column(h_vectors, n, band),
         );
     }
@@ -436,20 +448,20 @@ fn diagonalizeCgSubspace(
     const h_sub = try alloc.alloc(math.Complex, nbands * nbands);
     defer alloc.free(h_sub);
 
-    common.buildProjected(n, vectors, h_vectors, h_sub, nbands);
+    common.build_projected(n, vectors, h_vectors, h_sub, nbands);
 
-    var sub_eig = try common.hermitianEigenDecompSmall(alloc, nbands, h_sub);
+    var sub_eig = try common.hermitian_eigen_decomp_small(alloc, nbands, h_sub);
     defer sub_eig.deinit(alloc);
 
     const rotated = try alloc.alloc(math.Complex, n * nbands);
     defer alloc.free(rotated);
 
     for (0..nbands) |band| {
-        common.combineColumns(
+        common.combine_columns(
             n,
             vectors,
             nbands,
-            common.columnConst(sub_eig.vectors, nbands, band),
+            common.column_const(sub_eig.vectors, nbands, band),
             common.column(rotated, n, band),
         );
     }
@@ -461,8 +473,8 @@ fn diagonalizeCgSubspace(
 fn orthogonalize(n: usize, v: []math.Complex, basis: []const math.Complex, m: usize) void {
     const blas_v: []blas.Complex = @ptrCast(v[0..n]);
     for (0..m) |j| {
-        const bj = common.columnConst(basis, n, j);
-        const dot = common.innerProduct(n, bj, v);
+        const bj = common.column_const(basis, n, j);
+        const dot = common.inner_product(n, bj, v);
         const neg_dot = blas.Complex.init(-dot.r, -dot.i);
         const blas_bj: []const blas.Complex = @ptrCast(bj);
         blas.zaxpy(neg_dot, blas_bj, blas_v);
@@ -470,7 +482,7 @@ fn orthogonalize(n: usize, v: []math.Complex, basis: []const math.Complex, m: us
 }
 
 /// Complex AXPY: y += alpha * x (alpha is complex)
-fn zaxpyComplex(n: usize, y: []math.Complex, x: []const math.Complex, alpha: math.Complex) void {
+fn zaxpy_complex(n: usize, y: []math.Complex, x: []const math.Complex, alpha: math.Complex) void {
     if (n == 0) return;
     const blas_alpha = blas.Complex.init(alpha.r, alpha.i);
     const blas_x: []const blas.Complex = @ptrCast(x[0..n]);
@@ -479,7 +491,7 @@ fn zaxpyComplex(n: usize, y: []math.Complex, x: []const math.Complex, alpha: mat
 }
 
 /// Scale vector: v *= alpha
-fn scaleVec(n: usize, v: []math.Complex, alpha: f64) void {
+fn scale_vec(n: usize, v: []math.Complex, alpha: f64) void {
     if (n == 0) return;
     const blas_alpha = blas.Complex.init(alpha, 0.0);
     const blas_v: []blas.Complex = @ptrCast(v[0..n]);

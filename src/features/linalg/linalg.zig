@@ -91,8 +91,16 @@ pub const RealEigenDecomp = struct {
     }
 };
 
+fn empty_eigen_decomp(alloc: std.mem.Allocator) !EigenDecomp {
+    return EigenDecomp{
+        .values = try alloc.alloc(f64, 0),
+        .vectors = try alloc.alloc(math.Complex, 0),
+        .n = 0,
+    };
+}
+
 /// Parse backend string.
-pub fn parseBackend(value: []const u8) !Backend {
+pub fn parse_backend(value: []const u8) !Backend {
     if (std.mem.eql(u8, value, "accelerate")) return .accelerate;
     if (std.mem.eql(u8, value, "openblas")) return .openblas;
     if (std.mem.eql(u8, value, "zig")) return .zig;
@@ -100,7 +108,7 @@ pub fn parseBackend(value: []const u8) !Backend {
 }
 
 /// Return backend name.
-pub fn backendName(backend: Backend) []const u8 {
+pub fn backend_name(backend: Backend) []const u8 {
     return switch (backend) {
         .accelerate => "accelerate",
         .openblas => "openblas",
@@ -109,33 +117,33 @@ pub fn backendName(backend: Backend) []const u8 {
 }
 
 /// Compute Hermitian eigenvalues using selected backend.
-pub fn hermitianEigenvalues(
+pub fn hermitian_eigenvalues(
     alloc: std.mem.Allocator,
     backend: Backend,
     n: usize,
     a: []math.Complex,
 ) ![]f64 {
     return switch (backend) {
-        .accelerate, .openblas => hermitianEigenvaluesLapack(alloc, n, a),
+        .accelerate, .openblas => hermitian_eigenvalues_lapack(alloc, n, a),
         .zig => return error.UnsupportedLinalgBackend,
     };
 }
 
 /// Compute Hermitian eigenvalues and eigenvectors using selected backend.
-pub fn hermitianEigenDecomp(
+pub fn hermitian_eigen_decomp(
     alloc: std.mem.Allocator,
     backend: Backend,
     n: usize,
     a: []math.Complex,
 ) !EigenDecomp {
     return switch (backend) {
-        .accelerate, .openblas => hermitianEigenDecompLapack(alloc, n, a),
+        .accelerate, .openblas => hermitian_eigen_decomp_lapack(alloc, n, a),
         .zig => return error.UnsupportedLinalgBackend,
     };
 }
 
 /// Compute generalized Hermitian eigenvalues using selected backend.
-pub fn hermitianGenEigenvalues(
+pub fn hermitian_gen_eigenvalues(
     alloc: std.mem.Allocator,
     backend: Backend,
     n: usize,
@@ -143,13 +151,13 @@ pub fn hermitianGenEigenvalues(
     b: []math.Complex,
 ) ![]f64 {
     return switch (backend) {
-        .accelerate, .openblas => hermitianGenEigenvaluesLapack(alloc, n, a, b),
+        .accelerate, .openblas => hermitian_gen_eigenvalues_lapack(alloc, n, a, b),
         .zig => return error.UnsupportedLinalgBackend,
     };
 }
 
 /// Compute generalized Hermitian eigenvalues and eigenvectors using selected backend.
-pub fn hermitianGenEigenDecomp(
+pub fn hermitian_gen_eigen_decomp(
     alloc: std.mem.Allocator,
     backend: Backend,
     n: usize,
@@ -157,7 +165,7 @@ pub fn hermitianGenEigenDecomp(
     b: []math.Complex,
 ) !EigenDecomp {
     return switch (backend) {
-        .accelerate, .openblas => hermitianGenEigenDecompLapack(alloc, n, a, b),
+        .accelerate, .openblas => hermitian_gen_eigen_decomp_lapack(alloc, n, a, b),
         .zig => return error.UnsupportedLinalgBackend,
     };
 }
@@ -167,7 +175,7 @@ pub fn hermitianGenEigenDecomp(
 /// Input matrices are in row-major order. On return, eigenvectors are column-major
 /// (LAPACK convention): eigenvector i is vectors[i*n .. (i+1)*n] after transpose.
 /// Eigenvalues are returned in ascending order.
-pub fn realSymmetricGenEigenDecomp(
+pub fn real_symmetric_gen_eigen_decomp(
     alloc: std.mem.Allocator,
     backend: Backend,
     n: usize,
@@ -175,7 +183,7 @@ pub fn realSymmetricGenEigenDecomp(
     b: []f64,
 ) !RealEigenDecomp {
     return switch (backend) {
-        .accelerate, .openblas => realSymmetricGenEigenDecompLapack(alloc, n, a, b),
+        .accelerate, .openblas => real_symmetric_gen_eigen_decomp_lapack(alloc, n, a, b),
         .zig => return error.UnsupportedLinalgBackend,
     };
 }
@@ -184,14 +192,14 @@ pub fn realSymmetricGenEigenDecomp(
 /// Solves A·x = λ·x where A is real symmetric.
 /// Input matrix is in row-major order (for symmetric, same as column-major).
 /// Eigenvalues are returned in ascending order.
-pub fn realSymmetricEigenDecomp(
+pub fn real_symmetric_eigen_decomp(
     alloc: std.mem.Allocator,
     backend: Backend,
     n: usize,
     a: []f64,
 ) !RealEigenDecomp {
     return switch (backend) {
-        .accelerate, .openblas => realSymmetricEigenDecompLapack(alloc, n, a),
+        .accelerate, .openblas => real_symmetric_eigen_decomp_lapack(alloc, n, a),
         .zig => return error.UnsupportedLinalgBackend,
     };
 }
@@ -201,7 +209,7 @@ pub fn realSymmetricEigenDecomp(
 /// row-major == column-major, so no transposition is needed on input.
 /// On output, eigenvectors are stored as columns of A (column-major),
 /// which means eigenvector j occupies elements a[j*n..j*n+n] in the flat array.
-fn realSymmetricGenEigenDecompLapack(
+fn real_symmetric_gen_eigen_decomp_lapack(
     alloc: std.mem.Allocator,
     n: usize,
     a: []f64,
@@ -286,7 +294,7 @@ fn realSymmetricGenEigenDecompLapack(
 
 /// Compute real symmetric eigenvalues and eigenvectors using LAPACK (dsyev_).
 /// Standard eigenvalue problem: A·x = λ·x.
-fn realSymmetricEigenDecompLapack(
+fn real_symmetric_eigen_decomp_lapack(
     alloc: std.mem.Allocator,
     n: usize,
     a: []f64,
@@ -357,7 +365,7 @@ fn realSymmetricEigenDecompLapack(
 }
 
 /// Compute Hermitian eigenvalues using LAPACK.
-fn hermitianEigenvaluesLapack(alloc: std.mem.Allocator, n: usize, a: []math.Complex) ![]f64 {
+fn hermitian_eigenvalues_lapack(alloc: std.mem.Allocator, n: usize, a: []math.Complex) ![]f64 {
     lapack_mutex.lock();
     defer lapack_mutex.unlock();
 
@@ -428,18 +436,16 @@ fn hermitianEigenvaluesLapack(alloc: std.mem.Allocator, n: usize, a: []math.Comp
 }
 
 /// Compute Hermitian eigenvalues and eigenvectors using LAPACK.
-fn hermitianEigenDecompLapack(alloc: std.mem.Allocator, n: usize, a: []math.Complex) !EigenDecomp {
+fn hermitian_eigen_decomp_lapack(
+    alloc: std.mem.Allocator,
+    n: usize,
+    a: []math.Complex,
+) !EigenDecomp {
     lapack_mutex.lock();
     defer lapack_mutex.unlock();
 
     if (a.len != n * n) return error.InvalidMatrixSize;
-    if (n == 0) {
-        return EigenDecomp{
-            .values = try alloc.alloc(f64, 0),
-            .vectors = try alloc.alloc(math.Complex, 0),
-            .n = 0,
-        };
-    }
+    if (n == 0) return empty_eigen_decomp(alloc);
 
     const matrix = try alloc.alloc(math.Complex, n * n);
     errdefer alloc.free(matrix);
@@ -499,7 +505,7 @@ fn hermitianEigenDecompLapack(alloc: std.mem.Allocator, n: usize, a: []math.Comp
 }
 
 /// Compute generalized Hermitian eigenvalues using LAPACK.
-fn hermitianGenEigenvaluesLapack(
+fn hermitian_gen_eigenvalues_lapack(
     alloc: std.mem.Allocator,
     n: usize,
     a: []math.Complex,
@@ -580,7 +586,7 @@ fn hermitianGenEigenvaluesLapack(
 }
 
 /// Compute generalized Hermitian eigenvalues and eigenvectors using LAPACK.
-fn hermitianGenEigenDecompLapack(
+fn hermitian_gen_eigen_decomp_lapack(
     alloc: std.mem.Allocator,
     n: usize,
     a: []math.Complex,

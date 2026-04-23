@@ -12,11 +12,11 @@ const basis = @import("../basis/basis.zig");
 
 const PrimitiveGaussian = basis.PrimitiveGaussian;
 const ContractedShell = basis.ContractedShell;
-const normalizationS = basis.normalizationS;
+const normalization_s = basis.normalization_s;
 
 /// Compute kinetic energy integral between two contracted s-type shells.
 /// Returns the integral in Hartree atomic units.
-pub fn kineticSS(shell_a: ContractedShell, shell_b: ContractedShell) f64 {
+pub fn kinetic_ss(shell_a: ContractedShell, shell_b: ContractedShell) f64 {
     std.debug.assert(shell_a.l == 0 and shell_b.l == 0);
 
     var result: f64 = 0.0;
@@ -24,9 +24,9 @@ pub fn kineticSS(shell_a: ContractedShell, shell_b: ContractedShell) f64 {
     const r2 = math.Vec3.dot(diff, diff);
 
     for (shell_a.primitives) |prim_a| {
-        const na = normalizationS(prim_a.alpha);
+        const na = normalization_s(prim_a.alpha);
         for (shell_b.primitives) |prim_b| {
-            const nb = normalizationS(prim_b.alpha);
+            const nb = normalization_s(prim_b.alpha);
             const a = prim_a.alpha;
             const b = prim_b.alpha;
             const p = a + b;
@@ -48,13 +48,13 @@ pub fn kineticSS(shell_a: ContractedShell, shell_b: ContractedShell) f64 {
 
 /// Build the full kinetic energy matrix T for a set of s-type shells.
 /// Returns a flat row-major n×n matrix.
-pub fn buildKineticMatrix(alloc: std.mem.Allocator, shells: []const ContractedShell) ![]f64 {
+pub fn build_kinetic_matrix(alloc: std.mem.Allocator, shells: []const ContractedShell) ![]f64 {
     const n = shells.len;
     const mat = try alloc.alloc(f64, n * n);
     for (0..n) |i| {
         for (0..n) |j| {
             if (j >= i) {
-                mat[i * n + j] = kineticSS(shells[i], shells[j]);
+                mat[i * n + j] = kinetic_ss(shells[i], shells[j]);
                 mat[j * n + i] = mat[i * n + j];
             }
         }
@@ -71,7 +71,7 @@ test "kinetic energy positive" {
         .l = 0,
         .primitives = &sto3g.H_1s,
     };
-    const t = kineticSS(shell, shell);
+    const t = kinetic_ss(shell, shell);
     // Kinetic energy of hydrogen 1s should be positive
     try testing.expect(t > 0.0);
     // STO-3G H 1s kinetic energy ≈ 0.7600 Hartree

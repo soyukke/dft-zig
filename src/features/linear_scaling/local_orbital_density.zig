@@ -26,7 +26,7 @@ pub const DensityPipelineOptions = struct {
     electrons: ?f64 = null,
 };
 
-pub fn buildDensityFromCenters(
+pub fn build_density_from_centers(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
     cell: math.Mat3,
@@ -34,7 +34,7 @@ pub fn buildDensityFromCenters(
     opts: DensityPipelineOptions,
 ) !DensityPipelineResult {
     if (centers.len == 0) return error.InvalidShape;
-    var overlap = try local_orbital.buildOverlapCsrFromCenters(
+    var overlap = try local_orbital.build_overlap_csr_from_centers(
         alloc,
         centers,
         opts.sigma,
@@ -43,7 +43,7 @@ pub fn buildDensityFromCenters(
         cell,
     );
     errdefer overlap.deinit(alloc);
-    var density = try density_matrix.mcWeenyNonOrthogonal(
+    var density = try density_matrix.mc_weeny_non_orthogonal(
         alloc,
         overlap,
         overlap,
@@ -52,7 +52,7 @@ pub fn buildDensityFromCenters(
     );
     errdefer density.deinit(alloc);
     if (opts.electrons) |target| {
-        try density_matrix.normalizeTraceOverlap(&density, overlap, target);
+        try density_matrix.normalize_trace_overlap(&density, overlap, target);
     }
     return .{ .overlap = overlap, .density = density, .iterations = opts.iterations };
 }
@@ -65,7 +65,7 @@ test "density pipeline preserves symmetry" {
         .{ .x = 0.0, .y = 1.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 1.0 },
     };
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 3.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 3.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 3.0 },
@@ -78,14 +78,14 @@ test "density pipeline preserves symmetry" {
         .threshold = 0.0,
         .electrons = 4.0,
     };
-    var result = try buildDensityFromCenters(alloc, centers[0..], cell, pbc, opts);
+    var result = try build_density_from_centers(alloc, centers[0..], cell, pbc, opts);
     defer result.deinit(alloc);
 
     try std.testing.expectApproxEqAbs(
-        result.density.valueAt(0, 1),
-        result.density.valueAt(1, 0),
+        result.density.value_at(0, 1),
+        result.density.value_at(1, 0),
         1e-12,
     );
-    const trace_val = try density_matrix.traceOverlap(result.density, result.overlap);
+    const trace_val = try density_matrix.trace_overlap(result.density, result.overlap);
     try std.testing.expectApproxEqAbs(@as(f64, 4.0), trace_val, 1e-10);
 }

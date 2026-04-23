@@ -11,7 +11,7 @@ const Grid = stress_util.Grid;
 
 /// Accumulate Σ_I V_form and V'_form contributions at a single G-vector.
 /// Returns (vloc_rho_re, dvloc_rho_re).
-fn accumulateLocalGSpeciesContribs(
+fn accumulate_local_g_species_contribs(
     g_vec: math.Vec3,
     g_norm: f64,
     rho_val: math.Complex,
@@ -27,16 +27,16 @@ fn accumulateLocalGSpeciesContribs(
         const v_loc = if (ff_tables) |tables|
             tables[atom.species_index].eval(g_norm)
         else
-            hamiltonian.localFormFactor(&species[atom.species_index], g_norm, local_cfg);
+            hamiltonian.local_form_factor(&species[atom.species_index], g_norm, local_cfg);
 
         const dv_loc = if (ff_tables) |tables|
-            tables[atom.species_index].evalDeriv(g_norm)
+            tables[atom.species_index].eval_deriv(g_norm)
         else blk: {
             // Numerical derivative
             const dq: f64 = 0.01;
             const sp = &species[atom.species_index];
-            const vp = hamiltonian.localFormFactor(sp, g_norm + dq, local_cfg);
-            const vm = hamiltonian.localFormFactor(sp, g_norm - dq, local_cfg);
+            const vp = hamiltonian.local_form_factor(sp, g_norm + dq, local_cfg);
+            const vm = hamiltonian.local_form_factor(sp, g_norm - dq, local_cfg);
             break :blk (vp - vm) / (2.0 * dq);
         };
 
@@ -58,7 +58,7 @@ fn accumulateLocalGSpeciesContribs(
 /// Local pseudopotential stress:
 /// σ_αβ = -(E_loc/Ω) δ_αβ
 ///         - (1/Ω) Σ_{G≠0} (G_αG_β/|G|) × Σ_I V'_form(|G|) × Re[ρ*(G) S_I(G)]
-pub fn localStress(
+pub fn local_stress(
     grid: Grid,
     rho_g: []const math.Complex,
     species: []const hamiltonian.SpeciesEntry,
@@ -68,7 +68,7 @@ pub fn localStress(
     inv_volume: f64,
     ecutrho: f64,
 ) Stress3x3 {
-    var sigma = stress_util.zeroStress();
+    var sigma = stress_util.zero_stress();
 
     // Accumulate E_loc = Σ_{G≠0} V_form(|G|) × Re[ρ(G) exp(+iGR)] internally.
     // For PAW, rho_g is the augmented density ρ̃+n̂, giving the correct evloc.
@@ -87,7 +87,7 @@ pub fn localStress(
         const rho_val = rho_g[g.idx];
         const gv = [3]f64{ g.gvec.x, g.gvec.y, g.gvec.z };
 
-        const contribs = accumulateLocalGSpeciesContribs(
+        const contribs = accumulate_local_g_species_contribs(
             g.gvec,
             g_norm,
             rho_val,

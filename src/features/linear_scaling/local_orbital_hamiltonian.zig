@@ -32,7 +32,7 @@ pub const HamiltonianGridOptions = struct {
     threshold: f64 = 0.0,
 };
 
-pub fn buildHamiltonianFromCenters(
+pub fn build_hamiltonian_from_centers(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
     cell: math.Mat3,
@@ -40,7 +40,7 @@ pub fn buildHamiltonianFromCenters(
     opts: HamiltonianOptions,
 ) !HamiltonianResult {
     if (centers.len == 0) return error.InvalidShape;
-    var overlap = try local_orbital.buildOverlapCsrFromCenters(
+    var overlap = try local_orbital.build_overlap_csr_from_centers(
         alloc,
         centers,
         opts.sigma,
@@ -50,7 +50,7 @@ pub fn buildHamiltonianFromCenters(
     );
     errdefer overlap.deinit(alloc);
 
-    var kinetic = try local_orbital.buildKineticCsrFromCenters(
+    var kinetic = try local_orbital.build_kinetic_csr_from_centers(
         alloc,
         centers,
         opts.sigma,
@@ -61,9 +61,9 @@ pub fn buildHamiltonianFromCenters(
     defer kinetic.deinit(alloc);
 
     if (opts.kinetic_scale != 1.0) {
-        sparse.scaleInPlace(&kinetic, opts.kinetic_scale);
+        sparse.scale_in_place(&kinetic, opts.kinetic_scale);
     }
-    const hamiltonian = try sparse.addScaled(
+    const hamiltonian = try sparse.add_scaled(
         alloc,
         kinetic,
         1.0,
@@ -74,7 +74,7 @@ pub fn buildHamiltonianFromCenters(
     return .{ .overlap = overlap, .hamiltonian = hamiltonian };
 }
 
-pub fn buildHamiltonianFromCentersWithGrid(
+pub fn build_hamiltonian_from_centers_with_grid(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
     pbc: neighbor_list.Pbc,
@@ -82,7 +82,7 @@ pub fn buildHamiltonianFromCentersWithGrid(
     opts: HamiltonianGridOptions,
 ) !HamiltonianResult {
     if (centers.len == 0) return error.InvalidShape;
-    var overlap = try local_orbital.buildOverlapCsrFromCenters(
+    var overlap = try local_orbital.build_overlap_csr_from_centers(
         alloc,
         centers,
         opts.sigma,
@@ -92,7 +92,7 @@ pub fn buildHamiltonianFromCentersWithGrid(
     );
     errdefer overlap.deinit(alloc);
 
-    var kinetic = try local_orbital.buildKineticCsrFromCenters(
+    var kinetic = try local_orbital.build_kinetic_csr_from_centers(
         alloc,
         centers,
         opts.sigma,
@@ -103,9 +103,9 @@ pub fn buildHamiltonianFromCentersWithGrid(
     defer kinetic.deinit(alloc);
 
     if (opts.kinetic_scale != 1.0) {
-        sparse.scaleInPlace(&kinetic, opts.kinetic_scale);
+        sparse.scale_in_place(&kinetic, opts.kinetic_scale);
     }
-    var local = try local_orbital_potential.buildLocalPotentialCsrFromCenters(
+    var local = try local_orbital_potential.build_local_potential_csr_from_centers(
         alloc,
         centers,
         opts.sigma,
@@ -115,17 +115,17 @@ pub fn buildHamiltonianFromCentersWithGrid(
     );
     defer local.deinit(alloc);
 
-    const hamiltonian = try sparse.addScaled(alloc, kinetic, 1.0, local, 1.0, opts.threshold);
+    const hamiltonian = try sparse.add_scaled(alloc, kinetic, 1.0, local, 1.0, opts.threshold);
     return .{ .overlap = overlap, .hamiltonian = hamiltonian };
 }
 
-test "buildHamiltonianFromCenters combines kinetic and local potential" {
+test "build_hamiltonian_from_centers combines kinetic and local potential" {
     const alloc = std.testing.allocator;
     const centers = [_]math.Vec3{
         .{ .x = 0.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.5, .y = 0.0, .z = 0.0 },
     };
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 5.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 5.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 5.0 },
@@ -138,7 +138,7 @@ test "buildHamiltonianFromCenters combines kinetic and local potential" {
         .kinetic_scale = 1.0,
         .threshold = 0.0,
     };
-    var result = try buildHamiltonianFromCenters(alloc, centers[0..], cell, pbc, opts);
+    var result = try build_hamiltonian_from_centers(alloc, centers[0..], cell, pbc, opts);
     defer result.deinit(alloc);
 
     const alpha = 1.0 / (opts.sigma * opts.sigma);
@@ -147,18 +147,18 @@ test "buildHamiltonianFromCenters combines kinetic and local potential" {
         .{ .center = centers[1], .alpha = alpha, .cutoff = opts.cutoff },
     };
     const expected_diag =
-        local_orbital.kineticIntegral(orbitals[0], orbitals[0]) +
-        opts.local_potential * local_orbital.overlapIntegral(orbitals[0], orbitals[0]);
+        local_orbital.kinetic_integral(orbitals[0], orbitals[0]) +
+        opts.local_potential * local_orbital.overlap_integral(orbitals[0], orbitals[0]);
     const expected_off =
-        local_orbital.kineticIntegral(orbitals[0], orbitals[1]) +
-        opts.local_potential * local_orbital.overlapIntegral(orbitals[0], orbitals[1]);
-    try std.testing.expectApproxEqAbs(expected_diag, result.hamiltonian.valueAt(0, 0), 1e-10);
-    try std.testing.expectApproxEqAbs(expected_off, result.hamiltonian.valueAt(0, 1), 1e-10);
+        local_orbital.kinetic_integral(orbitals[0], orbitals[1]) +
+        opts.local_potential * local_orbital.overlap_integral(orbitals[0], orbitals[1]);
+    try std.testing.expectApproxEqAbs(expected_diag, result.hamiltonian.value_at(0, 0), 1e-10);
+    try std.testing.expectApproxEqAbs(expected_off, result.hamiltonian.value_at(0, 1), 1e-10);
 }
 
-test "buildHamiltonianFromCentersWithGrid matches constant potential" {
+test "build_hamiltonian_from_centers_with_grid matches constant potential" {
     const alloc = std.testing.allocator;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 10.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 10.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 10.0 },
@@ -185,7 +185,7 @@ test "buildHamiltonianFromCentersWithGrid matches constant potential" {
         .kinetic_scale = 1.0,
         .threshold = 0.0,
     };
-    var result = try buildHamiltonianFromCentersWithGrid(alloc, centers[0..], pbc, grid, opts);
+    var result = try build_hamiltonian_from_centers_with_grid(alloc, centers[0..], pbc, grid, opts);
     defer result.deinit(alloc);
 
     const alpha = 1.0 / (opts.sigma * opts.sigma);
@@ -194,11 +194,11 @@ test "buildHamiltonianFromCentersWithGrid matches constant potential" {
         .{ .center = centers[1], .alpha = alpha, .cutoff = opts.cutoff },
     };
     const expected_diag =
-        local_orbital.kineticIntegral(orbitals[0], orbitals[0]) +
-        0.4 * local_orbital.overlapIntegral(orbitals[0], orbitals[0]);
+        local_orbital.kinetic_integral(orbitals[0], orbitals[0]) +
+        0.4 * local_orbital.overlap_integral(orbitals[0], orbitals[0]);
     const expected_off =
-        local_orbital.kineticIntegral(orbitals[0], orbitals[1]) +
-        0.4 * local_orbital.overlapIntegral(orbitals[0], orbitals[1]);
-    try std.testing.expectApproxEqAbs(expected_diag, result.hamiltonian.valueAt(0, 0), 2e-2);
-    try std.testing.expectApproxEqAbs(expected_off, result.hamiltonian.valueAt(0, 1), 2e-2);
+        local_orbital.kinetic_integral(orbitals[0], orbitals[1]) +
+        0.4 * local_orbital.overlap_integral(orbitals[0], orbitals[1]);
+    try std.testing.expectApproxEqAbs(expected_diag, result.hamiltonian.value_at(0, 0), 2e-2);
+    try std.testing.expectApproxEqAbs(expected_off, result.hamiltonian.value_at(0, 1), 2e-2);
 }

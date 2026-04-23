@@ -29,7 +29,7 @@ pub const Perturbation = struct {
 /// V_loc^(1)(G) = -i × G_α × V_form(|G|) × exp(-iG·τ_I) / Ω
 ///
 /// Returns a complex array over the full FFT grid.
-pub fn buildLocalPerturbation(
+pub fn build_local_perturbation(
     alloc: std.mem.Allocator,
     grid: Grid,
     atom: hamiltonian.AtomData,
@@ -52,13 +52,13 @@ pub fn buildLocalPerturbation(
         }
 
         const g_norm = math.Vec3.norm(g.gvec);
-        const g_alpha = gComponent(g.gvec, direction);
+        const g_alpha = g_component(g.gvec, direction);
 
         // V_form(|G|)
         const v_loc = if (ff_tables) |tables|
             tables[atom.species_index].eval(g_norm)
         else
-            hamiltonian.localFormFactor(&species[atom.species_index], g_norm, local_cfg);
+            hamiltonian.local_form_factor(&species[atom.species_index], g_norm, local_cfg);
 
         // exp(-iG·τ_I)
         const phase = math.complex.expi(-math.Vec3.dot(g.gvec, atom.position));
@@ -78,7 +78,7 @@ pub fn buildLocalPerturbation(
 ///
 /// Same structure as V_loc^(1) but uses the core charge form factor.
 /// Returns a complex array over the full FFT grid.
-pub fn buildCorePerturbation(
+pub fn build_core_perturbation(
     alloc: std.mem.Allocator,
     grid: Grid,
     atom: hamiltonian.AtomData,
@@ -107,13 +107,13 @@ pub fn buildCorePerturbation(
         }
 
         const g_norm = math.Vec3.norm(g.gvec);
-        const g_alpha = gComponent(g.gvec, direction);
+        const g_alpha = g_component(g.gvec, direction);
 
         // ρ_core_form(|G|)
         const rho_core_g = if (rho_core_tables) |tables|
             tables[atom.species_index].eval(g_norm)
         else
-            form_factor.rhoCoreG(sp.upf.*, g_norm);
+            form_factor.rho_core_g(sp.upf.*, g_norm);
 
         // exp(-iG·τ_I)
         const phase = math.complex.expi(-math.Vec3.dot(g.gvec, atom.position));
@@ -127,7 +127,7 @@ pub fn buildCorePerturbation(
 }
 
 /// Build V_H^(1)(G) = 8π × ρ^(1)(G) / G²  (Rydberg, G≠0).
-pub fn buildHartreePerturbation(
+pub fn build_hartree_perturbation(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho1_g: []const math.Complex,
@@ -149,7 +149,7 @@ pub fn buildHartreePerturbation(
 }
 
 /// Build V_xc^(1)(r) = f_xc(r) × ρ^(1)(r) in real space.
-pub fn buildXcPerturbation(
+pub fn build_xc_perturbation(
     alloc: std.mem.Allocator,
     fxc_r: []const f64,
     rho1_r: []const f64,
@@ -167,13 +167,13 @@ pub fn buildXcPerturbation(
 /// For GGA/PBE: V_xc^(1) = f_nn·n¹ + f_nσ·σ¹
 ///                         - 2·∇·[f_nσ·n¹·∇n₀ + f_σσ·σ¹·∇n₀ + v_σ·∇n¹]
 ///   where σ¹ = 2·(∇n₀·∇n¹)
-pub fn buildXcPerturbationFull(
+pub fn build_xc_perturbation_full(
     alloc: std.mem.Allocator,
     gs: GroundState,
     rho1_r: []const f64,
 ) ![]f64 {
     if (gs.xc_func == .lda_pz) {
-        return buildXcPerturbation(alloc, gs.fxc_r, rho1_r);
+        return build_xc_perturbation(alloc, gs.fxc_r, rho1_r);
     }
 
     // GGA (PBE) path
@@ -187,8 +187,8 @@ pub fn buildXcPerturbationFull(
     const gn0_y = gs.grad_n0_y.?;
     const gn0_z = gs.grad_n0_z.?;
 
-    // 1. ∇n¹ = gradientFromReal(n¹)
-    var grad1 = try scf_mod.gradientFromReal(alloc, grid, rho1_r, false);
+    // 1. ∇n¹ = gradient_from_real(n¹)
+    var grad1 = try scf_mod.gradient_from_real(alloc, grid, rho1_r, false);
     defer grad1.deinit(alloc);
 
     // 2. σ¹(r) = 2·Σ_α (∂n₀/∂x_α)(∂n¹/∂x_α)
@@ -219,8 +219,8 @@ pub fn buildXcPerturbationFull(
         az[i] = (fns_n1 + fss_s1) * gn0_z[i] + v_s[i] * grad1.z[i];
     }
 
-    // 5. div_A = divergenceFromReal(A_x, A_y, A_z)
-    const div_a = try scf_mod.divergenceFromReal(alloc, grid, ax, ay, az, false);
+    // 5. div_A = divergence_from_real(A_x, A_y, A_z)
+    const div_a = try scf_mod.divergence_from_real(alloc, grid, ax, ay, az, false);
     defer alloc.free(div_a);
 
     // 6. result = direct - 2·div_A
@@ -234,13 +234,13 @@ pub fn buildXcPerturbationFull(
 /// Build V_xc^(1)(r) for both LDA and GGA functionals (complex, q≠0 version).
 /// For LDA: V_xc^(1) = f_xc × n¹
 /// For GGA/PBE: same formula as real version, but n¹(r) is complex.
-pub fn buildXcPerturbationFullComplex(
+pub fn build_xc_perturbation_full_complex(
     alloc: std.mem.Allocator,
     gs: GroundState,
     rho1_r: []const math.Complex,
 ) ![]math.Complex {
     if (gs.xc_func == .lda_pz) {
-        return buildXcPerturbationComplex(alloc, gs.fxc_r, rho1_r);
+        return build_xc_perturbation_complex(alloc, gs.fxc_r, rho1_r);
     }
 
     // GGA (PBE) path — complex version
@@ -254,8 +254,8 @@ pub fn buildXcPerturbationFullComplex(
     const gn0_y = gs.grad_n0_y.?;
     const gn0_z = gs.grad_n0_z.?;
 
-    // 1. ∇n¹ = gradientFromComplex(n¹)
-    var grad1 = try gradientFromComplex(alloc, grid, rho1_r);
+    // 1. ∇n¹ = gradient_from_complex(n¹)
+    var grad1 = try gradient_from_complex(alloc, grid, rho1_r);
     defer grad1.deinit(alloc);
 
     // Compute all terms
@@ -308,8 +308,8 @@ pub fn buildXcPerturbationFullComplex(
         );
     }
 
-    // 5. div_A = divergenceFromComplex(A_x, A_y, A_z)
-    const div_a = try divergenceFromComplex(alloc, grid, ax, ay, az);
+    // 5. div_A = divergence_from_complex(A_x, A_y, A_z)
+    const div_a = try divergence_from_complex(alloc, grid, ax, ay, az);
     defer alloc.free(div_a);
 
     // 6. result -= 2·div_A
@@ -333,7 +333,7 @@ const ComplexGradient = struct {
     }
 };
 
-fn gradientFromComplex(
+fn gradient_from_complex(
     alloc: std.mem.Allocator,
     grid: Grid,
     values_r: []const math.Complex,
@@ -348,7 +348,7 @@ fn gradientFromComplex(
     const values_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(values_g);
 
-    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, values_r_copy, values_g, null);
+    try scf_mod.fft_complex_to_reciprocal_in_place(alloc, grid, values_r_copy, values_g, null);
 
     const gx_g = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(gx_g);
@@ -370,23 +370,23 @@ fn gradientFromComplex(
     // IFFT each component back to real space
     const gx_r = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(gx_r);
-    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, gx_g, gx_r, null);
+    try scf_mod.fft_reciprocal_to_complex_in_place(alloc, grid, gx_g, gx_r, null);
     alloc.free(gx_g);
 
     const gy_r = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(gy_r);
-    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, gy_g, gy_r, null);
+    try scf_mod.fft_reciprocal_to_complex_in_place(alloc, grid, gy_g, gy_r, null);
     alloc.free(gy_g);
 
     const gz_r = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(gz_r);
-    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, gz_g, gz_r, null);
+    try scf_mod.fft_reciprocal_to_complex_in_place(alloc, grid, gz_g, gz_r, null);
     alloc.free(gz_g);
 
     return .{ .x = gx_r, .y = gy_r, .z = gz_r };
 }
 
-fn divergenceFromComplex(
+fn divergence_from_complex(
     alloc: std.mem.Allocator,
     grid: Grid,
     bx: []const math.Complex,
@@ -403,7 +403,7 @@ fn divergenceFromComplex(
     const bx_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(bx_g);
 
-    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, bx_copy, bx_g, null);
+    try scf_mod.fft_complex_to_reciprocal_in_place(alloc, grid, bx_copy, bx_g, null);
 
     const by_copy = try alloc.alloc(math.Complex, total);
     defer alloc.free(by_copy);
@@ -412,7 +412,7 @@ fn divergenceFromComplex(
     const by_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(by_g);
 
-    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, by_copy, by_g, null);
+    try scf_mod.fft_complex_to_reciprocal_in_place(alloc, grid, by_copy, by_g, null);
 
     const bz_copy = try alloc.alloc(math.Complex, total);
     defer alloc.free(bz_copy);
@@ -421,7 +421,7 @@ fn divergenceFromComplex(
     const bz_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(bz_g);
 
-    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, bz_copy, bz_g, null);
+    try scf_mod.fft_complex_to_reciprocal_in_place(alloc, grid, bz_copy, bz_g, null);
 
     const div_g = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(div_g);
@@ -442,12 +442,12 @@ fn divergenceFromComplex(
 
     // IFFT back to real space
     const div_r = try alloc.alloc(math.Complex, total);
-    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, div_g, div_r, null);
+    try scf_mod.fft_reciprocal_to_complex_in_place(alloc, grid, div_g, div_r, null);
     alloc.free(div_g);
     return div_r;
 }
 
-fn applyNonlocalDijCoefficients(
+fn apply_nonlocal_dij_coefficients(
     entry: anytype,
     coeffs: []const f64,
     coeff: []const math.Complex,
@@ -474,7 +474,7 @@ fn applyNonlocalDijCoefficients(
     }
 }
 
-fn fillGammaPhaseProducts(
+fn fill_gamma_phase_products(
     gvecs: []const plane_wave.GVector,
     atom_position: math.Vec3,
     x: []const math.Complex,
@@ -488,7 +488,7 @@ fn fillGammaPhaseProducts(
     }
 }
 
-fn projectGammaDerivativeBra(
+fn project_gamma_derivative_bra(
     entry: anytype,
     gvecs: []const plane_wave.GVector,
     direction: usize,
@@ -505,7 +505,7 @@ fn projectGammaDerivativeBra(
             const phi = entry.phi[phi_start .. phi_start + entry.g_count];
             var sum = math.complex.init(0.0, 0.0);
             for (0..gvecs.len) |g| {
-                const g_alpha = gComponent(gvecs[g].kpg, direction);
+                const g_alpha = g_component(gvecs[g].kpg, direction);
                 const term = math.complex.scale(work_xphase[g], phi[g] * g_alpha);
                 sum = math.complex.add(sum, term);
             }
@@ -514,7 +514,7 @@ fn projectGammaDerivativeBra(
     }
 }
 
-fn projectGammaBra(
+fn project_gamma_bra(
     entry: anytype,
     work_xphase: []const math.Complex,
     coeff: []math.Complex,
@@ -536,7 +536,7 @@ fn projectGammaBra(
     }
 }
 
-fn reconstructGammaBraDerivative(
+fn reconstruct_gamma_bra_derivative(
     entry: anytype,
     work_phase: []const math.Complex,
     coeff2: []const math.Complex,
@@ -562,7 +562,7 @@ fn reconstructGammaBraDerivative(
     }
 }
 
-fn reconstructGammaKetDerivative(
+fn reconstruct_gamma_ket_derivative(
     entry: anytype,
     gvecs: []const plane_wave.GVector,
     direction: usize,
@@ -581,7 +581,7 @@ fn reconstructGammaKetDerivative(
             while (m_idx < m_count) : (m_idx += 1) {
                 const phi_val = entry.phi[(offset + m_idx) * entry.g_count + g];
                 const c = coeff2[offset + m_idx];
-                const g_alpha = gComponent(gvecs[g].kpg, direction);
+                const g_alpha = g_component(gvecs[g].kpg, direction);
                 const weighted = math.complex.scale(c, phi_val * g_alpha);
                 accum = math.complex.add(accum, math.complex.init(weighted.i, -weighted.r));
             }
@@ -592,7 +592,7 @@ fn reconstructGammaKetDerivative(
     }
 }
 
-fn projectQDerivativeBra(
+fn project_q_derivative_bra(
     entry: anytype,
     gvecs: []const plane_wave.GVector,
     atom_position: math.Vec3,
@@ -612,7 +612,7 @@ fn projectQDerivativeBra(
             for (0..gvecs.len) |g| {
                 const kpg = gvecs[g].kpg;
                 const phase = math.complex.expi(math.Vec3.dot(kpg, atom_position));
-                const g_alpha = gComponent(kpg, direction);
+                const g_alpha = g_component(kpg, direction);
                 const term = math.complex.scale(
                     math.complex.mul(
                         math.complex.mul(x[g], phase),
@@ -627,7 +627,7 @@ fn projectQDerivativeBra(
     }
 }
 
-fn projectQBra(
+fn project_q_bra(
     entry: anytype,
     gvecs: []const plane_wave.GVector,
     atom_position: math.Vec3,
@@ -655,7 +655,7 @@ fn projectQBra(
     }
 }
 
-fn reconstructQBraDerivative(
+fn reconstruct_q_bra_derivative(
     entry: anytype,
     gvecs: []const plane_wave.GVector,
     atom_position: math.Vec3,
@@ -682,7 +682,7 @@ fn reconstructQBraDerivative(
     }
 }
 
-fn reconstructQKetDerivative(
+fn reconstruct_q_ket_derivative(
     entry: anytype,
     gvecs: []const plane_wave.GVector,
     atom_position: math.Vec3,
@@ -704,7 +704,7 @@ fn reconstructQKetDerivative(
                 accum = math.complex.add(accum, math.complex.scale(c, phi_val));
             }
         }
-        const gpq_alpha = gComponent(gvecs[g].kpg, direction);
+        const gpq_alpha = g_component(gvecs[g].kpg, direction);
         const weighted = math.complex.scale(accum, gpq_alpha);
         const neg_i_weighted = math.complex.init(weighted.i, -weighted.r);
         const phase_conj = math.complex.expi(-math.Vec3.dot(gvecs[g].kpg, atom_position));
@@ -728,7 +728,7 @@ fn reconstructQKetDerivative(
 ///              + φ_βm(k+G) e^{-i(k+G)·τ} ⟨-i(k+G)_α × φ_β'm(k+G) e^{-i(k+G)·τ}|ψ⟩]
 ///
 /// This is symmetric: both the ket and bra projectors get the -iG_α derivative.
-pub fn applyNonlocalPerturbation(
+pub fn apply_nonlocal_perturbation(
     gvecs: []const plane_wave.GVector,
     atoms: []const hamiltonian.AtomData,
     nonlocal_ctx: anytype, // NonlocalContext from apply.zig
@@ -756,14 +756,14 @@ pub fn applyNonlocalPerturbation(
         for (atoms, 0..) |atom, atom_idx| {
             if (atom.species_index != entry.species_index) continue;
             if (atom_idx != perturbed_atom) continue;
-            fillGammaPhaseProducts(gvecs, atom.position, x, work_phase, work_xphase);
-            projectGammaDerivativeBra(entry, gvecs, direction, work_xphase, coeff);
-            applyNonlocalDijCoefficients(entry, coeffs, coeff, coeff2);
-            reconstructGammaBraDerivative(entry, work_phase, coeff2, inv_volume, out);
+            fill_gamma_phase_products(gvecs, atom.position, x, work_phase, work_xphase);
+            project_gamma_derivative_bra(entry, gvecs, direction, work_xphase, coeff);
+            apply_nonlocal_dij_coefficients(entry, coeffs, coeff, coeff2);
+            reconstruct_gamma_bra_derivative(entry, work_phase, coeff2, inv_volume, out);
 
-            projectGammaBra(entry, work_xphase, coeff);
-            applyNonlocalDijCoefficients(entry, coeffs, coeff, coeff2);
-            reconstructGammaKetDerivative(
+            project_gamma_bra(entry, work_xphase, coeff);
+            apply_nonlocal_dij_coefficients(entry, coeffs, coeff, coeff2);
+            reconstruct_gamma_ket_derivative(
                 entry,
                 gvecs,
                 direction,
@@ -784,7 +784,7 @@ pub fn applyNonlocalPerturbation(
 ///
 /// Input ψ_k is in k-basis (n_pw_k), output is in k+q-basis (n_pw_kq).
 /// Phase factors use G (cart) for both bra and ket (NOT G+k or G'+q).
-pub fn applyNonlocalPerturbationQ(
+pub fn apply_nonlocal_perturbation_q(
     alloc: std.mem.Allocator,
     gvecs_k: []const plane_wave.GVector,
     gvecs_kq: []const plane_wave.GVector,
@@ -819,13 +819,20 @@ pub fn applyNonlocalPerturbationQ(
         for (atoms, 0..) |atom, atom_idx| {
             if (atom.species_index != entry_k.species_index) continue;
             if (atom_idx != perturbed_atom) continue;
-            projectQDerivativeBra(entry_k, gvecs_k, atom.position, direction, x, coeff);
-            applyNonlocalDijCoefficients(entry_k, coeffs, coeff, coeff2);
-            reconstructQBraDerivative(entry_kq, gvecs_kq, atom.position, coeff2, inv_volume, out);
+            project_q_derivative_bra(entry_k, gvecs_k, atom.position, direction, x, coeff);
+            apply_nonlocal_dij_coefficients(entry_k, coeffs, coeff, coeff2);
+            reconstruct_q_bra_derivative(
+                entry_kq,
+                gvecs_kq,
+                atom.position,
+                coeff2,
+                inv_volume,
+                out,
+            );
 
-            projectQBra(entry_k, gvecs_k, atom.position, x, coeff);
-            applyNonlocalDijCoefficients(entry_k, coeffs, coeff, coeff2);
-            reconstructQKetDerivative(
+            project_q_bra(entry_k, gvecs_k, atom.position, x, coeff);
+            apply_nonlocal_dij_coefficients(entry_k, coeffs, coeff, coeff2);
+            reconstruct_q_ket_derivative(
                 entry_kq,
                 gvecs_kq,
                 atom.position,
@@ -843,7 +850,7 @@ pub fn applyNonlocalPerturbationQ(
 /// V_loc^(1)_q(G) = -i × (G+q)_α × V_form(|G+q|) × exp(-i(G+q)·τ_I) / Ω
 ///
 /// Key difference from q=0: G → G+q everywhere.
-pub fn buildLocalPerturbationQ(
+pub fn build_local_perturbation_q(
     alloc: std.mem.Allocator,
     grid: Grid,
     atom: hamiltonian.AtomData,
@@ -864,7 +871,7 @@ pub fn buildLocalPerturbationQ(
         // G+q vector
         const gpq = math.Vec3.add(g.gvec, q_cart);
         const gpq_norm = math.Vec3.norm(gpq);
-        const gpq_alpha = gComponent(gpq, direction);
+        const gpq_alpha = g_component(gpq, direction);
 
         // Skip only when |G+q| ≈ 0 (i.e. G=0 at q=0).
         // For q≠0, G=0 gives |G+q| = |q| > 0, which is a valid contribution.
@@ -879,7 +886,7 @@ pub fn buildLocalPerturbationQ(
         const v_loc = if (ff_tables) |tables|
             tables[atom.species_index].eval(gpq_norm)
         else
-            hamiltonian.localFormFactor(&species[atom.species_index], gpq_norm, local_cfg);
+            hamiltonian.local_form_factor(&species[atom.species_index], gpq_norm, local_cfg);
 
         // exp(-i(G+q)·τ_I)
         const phase = math.complex.expi(-math.Vec3.dot(gpq, atom.position));
@@ -895,7 +902,7 @@ pub fn buildLocalPerturbationQ(
 /// Build ρ^(1)_core(G) for q≠0 perturbation.
 ///
 /// ρ^(1)_core,q(G) = -i × (G+q)_α × ρ_core_form(|G+q|) × exp(-i(G+q)·τ_I) / Ω
-pub fn buildCorePerturbationQ(
+pub fn build_core_perturbation_q(
     alloc: std.mem.Allocator,
     grid: Grid,
     atom: hamiltonian.AtomData,
@@ -920,7 +927,7 @@ pub fn buildCorePerturbationQ(
     while (it.next()) |g| {
         const gpq = math.Vec3.add(g.gvec, q_cart);
         const gpq_norm = math.Vec3.norm(gpq);
-        const gpq_alpha = gComponent(gpq, direction);
+        const gpq_alpha = g_component(gpq, direction);
 
         // Skip only when |G+q| ≈ 0 (i.e. G=0 at q=0).
         // For q≠0, G=0 gives |G+q| = |q| > 0 → valid contribution.
@@ -932,7 +939,7 @@ pub fn buildCorePerturbationQ(
         const rho_core_g = if (rho_core_tables) |tables|
             tables[atom.species_index].eval(gpq_norm)
         else
-            form_factor.rhoCoreG(sp.upf.*, gpq_norm);
+            form_factor.rho_core_g(sp.upf.*, gpq_norm);
 
         const phase = math.complex.expi(-math.Vec3.dot(gpq, atom.position));
         const temp = math.complex.scale(phase, gpq_alpha * rho_core_g * inv_volume);
@@ -943,7 +950,7 @@ pub fn buildCorePerturbationQ(
 }
 
 /// Build V_H^(1)(G) = 8π × ρ^(1)(G) / |G+q|²  for q≠0.
-pub fn buildHartreePerturbationQ(
+pub fn build_hartree_perturbation_q(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho1_g: []const math.Complex,
@@ -972,7 +979,7 @@ pub fn buildHartreePerturbationQ(
 
 /// Build V_xc^(1)(r) = f_xc(r) × ρ^(1)(r) in real space (complex version for q≠0).
 /// For q≠0, ρ^(1)(r) is complex.
-pub fn buildXcPerturbationComplex(
+pub fn build_xc_perturbation_complex(
     alloc: std.mem.Allocator,
     fxc_r: []const f64,
     rho1_r: []const math.Complex,
@@ -986,7 +993,7 @@ pub fn buildXcPerturbationComplex(
 }
 
 /// Extract the alpha-component of a vector.
-pub fn gComponent(v: math.Vec3, direction: usize) f64 {
+pub fn g_component(v: math.Vec3, direction: usize) f64 {
     return switch (direction) {
         0 => v.x,
         1 => v.y,
@@ -1002,7 +1009,7 @@ pub fn gComponent(v: math.Vec3, direction: usize) f64 {
 test "V_loc perturbation finite difference" {
     const io = std.testing.io;
     const alloc = std.testing.allocator;
-    try test_support.requireFile(io, "pseudo/Si.upf");
+    try test_support.require_file(io, "pseudo/Si.upf");
 
     // Simple cubic grid
     const a = 10.0;
@@ -1043,7 +1050,7 @@ test "V_loc perturbation finite difference" {
     defer parsed.deinit(alloc);
 
     var parsed_items = [_]pseudo.Parsed{parsed};
-    const species = try hamiltonian.buildSpeciesEntries(alloc, parsed_items[0..]);
+    const species = try hamiltonian.build_species_entries(alloc, parsed_items[0..]);
     defer {
         for (species) |*entry| {
             entry.deinit();
@@ -1056,7 +1063,7 @@ test "V_loc perturbation finite difference" {
 
     // Build perturbation for x-direction
     const local_cfg = local_potential.LocalPotentialConfig.init(.short_range, 0.0);
-    const vloc1 = try buildLocalPerturbation(alloc, grid, atom, species, 0, local_cfg, null);
+    const vloc1 = try build_local_perturbation(alloc, grid, atom, species, 0, local_cfg, null);
     defer alloc.free(vloc1);
 
     // Finite difference: (V_loc(τ+δ) - V_loc(τ-δ)) / (2δ)
@@ -1078,14 +1085,14 @@ test "V_loc perturbation finite difference" {
     while (it2.next()) |g| {
         if (g.gh == 0 and g.gk == 0 and g.gl == 0) continue;
 
-        const vp = try hamiltonian.ionicLocalPotential(
+        const vp = try hamiltonian.ionic_local_potential(
             g.gvec,
             species,
             atoms_plus[0..],
             inv_vol,
             local_cfg,
         );
-        const vm = try hamiltonian.ionicLocalPotential(
+        const vm = try hamiltonian.ionic_local_potential(
             g.gvec,
             species,
             atoms_minus[0..],
@@ -1148,7 +1155,7 @@ test "V_H perturbation basic properties" {
     const g0_idx = 1 + 3 * (1 + 3 * 1); // (0,0,0) maps to index (1,1,1)
     rho1_g[g0_idx] = math.complex.init(0.0, 0.0);
 
-    const vh1 = try buildHartreePerturbation(alloc, grid, rho1_g);
+    const vh1 = try build_hartree_perturbation(alloc, grid, rho1_g);
     defer alloc.free(vh1);
 
     // V_H^(1)(G=0) should be 0
@@ -1181,7 +1188,7 @@ test "V_xc perturbation" {
         rho1_r[i] = 0.01 * @as(f64, @floatFromInt(i + 1));
     }
 
-    const vxc1 = try buildXcPerturbation(alloc, fxc_r, rho1_r);
+    const vxc1 = try build_xc_perturbation(alloc, fxc_r, rho1_r);
     defer alloc.free(vxc1);
 
     for (0..n) |i| {

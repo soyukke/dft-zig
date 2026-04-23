@@ -6,7 +6,7 @@ pub const GridRequirement = struct {
     nz: usize,
 };
 
-pub fn gridRequirement(gvecs: []basis.GVector) GridRequirement {
+pub fn grid_requirement(gvecs: []basis.GVector) GridRequirement {
     var max_h: usize = 0;
     var max_k: usize = 0;
     var max_l: usize = 0;

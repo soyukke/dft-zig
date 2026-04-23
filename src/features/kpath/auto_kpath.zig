@@ -33,7 +33,7 @@ pub const AutoKPathResult = struct {
 
 /// Detect Bravais lattice type from cell vectors (in Bohr).
 /// Uses metric tensor eigenvalues and angles.
-pub fn detectBravaisLattice(cell: math.Mat3) !BravaisLattice {
+pub fn detect_bravais_lattice(cell: math.Mat3) !BravaisLattice {
     const a1 = cell.row(0);
     const a2 = cell.row(1);
     const a3 = cell.row(2);
@@ -98,7 +98,7 @@ pub fn detectBravaisLattice(cell: math.Mat3) !BravaisLattice {
 
 /// Standard high-symmetry k-path for a given Bravais lattice.
 /// Returns path points in fractional coordinates (Setyawan-Curtarolo convention).
-pub fn getStandardKPath(alloc: std.mem.Allocator, lattice: BravaisLattice) !AutoKPathResult {
+pub fn get_standard_k_path(alloc: std.mem.Allocator, lattice: BravaisLattice) !AutoKPathResult {
     const default_path: []const u8 = switch (lattice) {
         .cub => "G-X-M-G-R",
         .fcc => "G-X-W-K-G-L",
@@ -106,18 +106,18 @@ pub fn getStandardKPath(alloc: std.mem.Allocator, lattice: BravaisLattice) !Auto
         .hex, .hex60 => "G-M-K-G-A",
         .tet => "G-X-M-G-Z",
     };
-    return parsePathString(alloc, default_path, lattice);
+    return parse_path_string(alloc, default_path, lattice);
 }
 
 /// Parse a path string like "G-X-W-K-G-L" into BandPathPoint array.
 /// Looks up labels in the standard table for the given lattice.
 /// Supports "|" as segment separator (non-continuous path marker, ignored for now).
-pub fn parsePathString(
+pub fn parse_path_string(
     alloc: std.mem.Allocator,
     path_str: []const u8,
     lattice: BravaisLattice,
 ) !AutoKPathResult {
-    const table: []const HighSymPoint = getHighSymTable(lattice);
+    const table: []const HighSymPoint = get_high_sym_table(lattice);
 
     var points_list: std.ArrayList(config.BandPathPoint) = .empty;
     errdefer {
@@ -131,7 +131,7 @@ pub fn parsePathString(
         const label = std.mem.trim(u8, label_raw, " ");
         if (label.len == 0) continue;
 
-        const k = findHighSymPoint(table, label) orelse return error.UnknownHighSymmetryPoint;
+        const k = find_high_sym_point(table, label) orelse return error.UnknownHighSymmetryPoint;
         try points_list.append(alloc, .{
             .label = try alloc.dupe(u8, label),
             .k = k,
@@ -143,7 +143,7 @@ pub fn parsePathString(
     return .{ .points = try points_list.toOwnedSlice(alloc) };
 }
 
-fn getHighSymTable(lattice: BravaisLattice) []const HighSymPoint {
+fn get_high_sym_table(lattice: BravaisLattice) []const HighSymPoint {
     return switch (lattice) {
         .cub => &.{
             .{ .label = "G", .k = .{ .x = 0.0, .y = 0.0, .z = 0.0 } },
@@ -192,7 +192,7 @@ fn getHighSymTable(lattice: BravaisLattice) []const HighSymPoint {
     };
 }
 
-fn findHighSymPoint(table: []const HighSymPoint, label: []const u8) ?math.Vec3 {
+fn find_high_sym_point(table: []const HighSymPoint, label: []const u8) ?math.Vec3 {
     for (table) |pt| {
         if (std.mem.eql(u8, pt.label, label)) return pt.k;
     }
@@ -202,18 +202,18 @@ fn findHighSymPoint(table: []const HighSymPoint, label: []const u8) ?math.Vec3 {
 /// Resolve a path string to BandPathPoint array.
 /// - "auto": detect Bravais lattice from cell and use standard path
 /// - "G-X-W-K-G-L": parse label string and look up coordinates
-pub fn resolvePathString(
+pub fn resolve_path_string(
     alloc: std.mem.Allocator,
     path_str: []const u8,
     cell_bohr: math.Mat3,
 ) !AutoKPathResult {
-    const lattice = try detectBravaisLattice(cell_bohr);
+    const lattice = try detect_bravais_lattice(cell_bohr);
 
     if (std.mem.eql(u8, path_str, "auto")) {
-        return getStandardKPath(alloc, lattice);
+        return get_standard_k_path(alloc, lattice);
     }
 
-    return parsePathString(alloc, path_str, lattice);
+    return parse_path_string(alloc, path_str, lattice);
 }
 
 // ============================================================
@@ -224,67 +224,67 @@ const testing = std.testing;
 
 // --- Task 1: Bravais lattice detection ---
 
-test "detectBravaisLattice: simple cubic" {
+test "detect_bravais_lattice: simple cubic" {
     // a=b=c=10 Bohr, all 90 degrees
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 10.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 10.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 10.0 },
     );
-    try testing.expectEqual(BravaisLattice.cub, try detectBravaisLattice(cell));
+    try testing.expectEqual(BravaisLattice.cub, try detect_bravais_lattice(cell));
 }
 
-test "detectBravaisLattice: FCC primitive" {
+test "detect_bravais_lattice: FCC primitive" {
     // FCC primitive vectors: a/2 * (0,1,1), (1,0,1), (1,1,0)
     const a = 10.26; // Si lattice constant in Bohr
     const h = a / 2.0;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 0.0, .y = h, .z = h },
         .{ .x = h, .y = 0.0, .z = h },
         .{ .x = h, .y = h, .z = 0.0 },
     );
-    try testing.expectEqual(BravaisLattice.fcc, try detectBravaisLattice(cell));
+    try testing.expectEqual(BravaisLattice.fcc, try detect_bravais_lattice(cell));
 }
 
-test "detectBravaisLattice: BCC primitive" {
+test "detect_bravais_lattice: BCC primitive" {
     // BCC primitive vectors: a/2 * (-1,1,1), (1,-1,1), (1,1,-1)
     const a = 5.0;
     const h = a / 2.0;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = -h, .y = h, .z = h },
         .{ .x = h, .y = -h, .z = h },
         .{ .x = h, .y = h, .z = -h },
     );
-    try testing.expectEqual(BravaisLattice.bcc, try detectBravaisLattice(cell));
+    try testing.expectEqual(BravaisLattice.bcc, try detect_bravais_lattice(cell));
 }
 
-test "detectBravaisLattice: hexagonal" {
+test "detect_bravais_lattice: hexagonal" {
     // Hex: a1=(a,0,0), a2=(-a/2, a*sqrt3/2, 0), a3=(0,0,c)
     const a = 4.65; // Graphene
     const c = 20.0;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = a, .y = 0.0, .z = 0.0 },
         .{ .x = -a / 2.0, .y = a * @sqrt(3.0) / 2.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = c },
     );
-    try testing.expectEqual(BravaisLattice.hex, try detectBravaisLattice(cell));
+    try testing.expectEqual(BravaisLattice.hex, try detect_bravais_lattice(cell));
 }
 
-test "detectBravaisLattice: tetragonal" {
+test "detect_bravais_lattice: tetragonal" {
     // a == b != c, all 90 degrees
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 5.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 5.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 8.0 },
     );
-    try testing.expectEqual(BravaisLattice.tet, try detectBravaisLattice(cell));
+    try testing.expectEqual(BravaisLattice.tet, try detect_bravais_lattice(cell));
 }
 
 // --- Task 2: Standard k-path generation ---
 
-test "getStandardKPath: FCC has 6 points G-X-W-K-G-L" {
+test "get_standard_k_path: FCC has 6 points G-X-W-K-G-L" {
     const alloc = testing.allocator;
-    var result = try getStandardKPath(alloc, .fcc);
+    var result = try get_standard_k_path(alloc, .fcc);
     defer result.deinit(alloc);
 
     try testing.expectEqual(@as(usize, 6), result.points.len);
@@ -306,9 +306,9 @@ test "getStandardKPath: FCC has 6 points G-X-W-K-G-L" {
     try testing.expectApproxEqAbs(@as(f64, 0.5), result.points[5].k.z, 1e-10);
 }
 
-test "getStandardKPath: HEX has 5 points G-M-K-G-A" {
+test "get_standard_k_path: HEX has 5 points G-M-K-G-A" {
     const alloc = testing.allocator;
-    var result = try getStandardKPath(alloc, .hex);
+    var result = try get_standard_k_path(alloc, .hex);
     defer result.deinit(alloc);
 
     try testing.expectEqual(@as(usize, 5), result.points.len);
@@ -324,9 +324,9 @@ test "getStandardKPath: HEX has 5 points G-M-K-G-A" {
     try testing.expectApproxEqAbs(@as(f64, 0.0), result.points[2].k.z, 1e-10);
 }
 
-test "getStandardKPath: BCC has 5 points G-H-N-G-P" {
+test "get_standard_k_path: BCC has 5 points G-H-N-G-P" {
     const alloc = testing.allocator;
-    var result = try getStandardKPath(alloc, .bcc);
+    var result = try get_standard_k_path(alloc, .bcc);
     defer result.deinit(alloc);
 
     try testing.expectEqual(@as(usize, 5), result.points.len);
@@ -339,9 +339,9 @@ test "getStandardKPath: BCC has 5 points G-H-N-G-P" {
 
 // --- Task 3: Path string parser ---
 
-test "parsePathString: G-X-W-K-G-L for FCC" {
+test "parse_path_string: G-X-W-K-G-L for FCC" {
     const alloc = testing.allocator;
-    var result = try parsePathString(alloc, "G-X-W-K-G-L", .fcc);
+    var result = try parse_path_string(alloc, "G-X-W-K-G-L", .fcc);
     defer result.deinit(alloc);
 
     try testing.expectEqual(@as(usize, 6), result.points.len);
@@ -355,9 +355,9 @@ test "parsePathString: G-X-W-K-G-L for FCC" {
     try testing.expectApproxEqAbs(@as(f64, 0.5), result.points[1].k.z, 1e-10);
 }
 
-test "parsePathString: with | separator" {
+test "parse_path_string: with | separator" {
     const alloc = testing.allocator;
-    var result = try parsePathString(alloc, "G-X-W|K-G-L", .fcc);
+    var result = try parse_path_string(alloc, "G-X-W|K-G-L", .fcc);
     defer result.deinit(alloc);
 
     try testing.expectEqual(@as(usize, 6), result.points.len);
@@ -365,21 +365,21 @@ test "parsePathString: with | separator" {
     try testing.expectEqualStrings("K", result.points[3].label);
 }
 
-test "parsePathString: unknown label returns error" {
+test "parse_path_string: unknown label returns error" {
     const alloc = testing.allocator;
-    const result = parsePathString(alloc, "G-X-INVALID", .fcc);
+    const result = parse_path_string(alloc, "G-X-INVALID", .fcc);
     try testing.expectError(error.UnknownHighSymmetryPoint, result);
 }
 
-test "parsePathString: single point returns error" {
+test "parse_path_string: single point returns error" {
     const alloc = testing.allocator;
-    const result = parsePathString(alloc, "G", .fcc);
+    const result = parse_path_string(alloc, "G", .fcc);
     try testing.expectError(error.InsufficientPathPoints, result);
 }
 
-test "parsePathString: hex G-M-K-G-A" {
+test "parse_path_string: hex G-M-K-G-A" {
     const alloc = testing.allocator;
-    var result = try parsePathString(alloc, "G-M-K-G-A", .hex);
+    var result = try parse_path_string(alloc, "G-M-K-G-A", .hex);
     defer result.deinit(alloc);
 
     try testing.expectEqual(@as(usize, 5), result.points.len);
@@ -388,18 +388,18 @@ test "parsePathString: hex G-M-K-G-A" {
     try testing.expectApproxEqAbs(@as(f64, 0.0), result.points[1].k.y, 1e-10);
 }
 
-// --- Task 4: resolvePathString integration ---
+// --- Task 4: resolve_path_string integration ---
 
-test "resolvePathString: auto for FCC Si cell" {
+test "resolve_path_string: auto for FCC Si cell" {
     const alloc = testing.allocator;
     const a = 10.26;
     const h = a / 2.0;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 0.0, .y = h, .z = h },
         .{ .x = h, .y = 0.0, .z = h },
         .{ .x = h, .y = h, .z = 0.0 },
     );
-    var result = try resolvePathString(alloc, "auto", cell);
+    var result = try resolve_path_string(alloc, "auto", cell);
     defer result.deinit(alloc);
 
     // FCC auto path: G-X-W-K-G-L (6 points)
@@ -408,16 +408,16 @@ test "resolvePathString: auto for FCC Si cell" {
     try testing.expectEqualStrings("L", result.points[5].label);
 }
 
-test "resolvePathString: explicit path string for FCC" {
+test "resolve_path_string: explicit path string for FCC" {
     const alloc = testing.allocator;
     const a = 10.26;
     const h = a / 2.0;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 0.0, .y = h, .z = h },
         .{ .x = h, .y = 0.0, .z = h },
         .{ .x = h, .y = h, .z = 0.0 },
     );
-    var result = try resolvePathString(alloc, "G-L-W-G", cell);
+    var result = try resolve_path_string(alloc, "G-L-W-G", cell);
     defer result.deinit(alloc);
 
     try testing.expectEqual(@as(usize, 4), result.points.len);
@@ -427,16 +427,16 @@ test "resolvePathString: explicit path string for FCC" {
     try testing.expectEqualStrings("G", result.points[3].label);
 }
 
-test "resolvePathString: auto for hexagonal graphene cell" {
+test "resolve_path_string: auto for hexagonal graphene cell" {
     const alloc = testing.allocator;
     const a = 4.65;
     const c = 20.0;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = a, .y = 0.0, .z = 0.0 },
         .{ .x = -a / 2.0, .y = a * @sqrt(3.0) / 2.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = c },
     );
-    var result = try resolvePathString(alloc, "auto", cell);
+    var result = try resolve_path_string(alloc, "auto", cell);
     defer result.deinit(alloc);
 
     // HEX auto path: G-M-K-G-A (5 points)

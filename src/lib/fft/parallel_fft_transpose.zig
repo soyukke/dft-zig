@@ -117,7 +117,7 @@ pub const TransposePlan3d = struct {
             allocator.free(self.z);
         }
 
-        fn initAll(
+        fn init_all(
             self: *WorkspacePools,
             allocator: std.mem.Allocator,
             nx: usize,
@@ -139,7 +139,7 @@ pub const TransposePlan3d = struct {
         }
     };
 
-    fn allocWorkspacePools(allocator: std.mem.Allocator, num_threads: usize) !WorkspacePools {
+    fn alloc_workspace_pools(allocator: std.mem.Allocator, num_threads: usize) !WorkspacePools {
         const x = try allocator.alloc(ThreadWorkspace, num_threads);
         errdefer allocator.free(x);
 
@@ -154,7 +154,7 @@ pub const TransposePlan3d = struct {
 
     /// Spawn `threads.len` worker threads, joining any successfully spawned
     /// threads on partial-failure after signalling shutdown.
-    fn spawnWorkerThreads(
+    fn spawn_worker_threads(
         state: *ThreadPoolState,
         threads: []std.Thread,
         pools: WorkspacePools,
@@ -171,7 +171,7 @@ pub const TransposePlan3d = struct {
             }
         }
         for (0..threads.len) |i| {
-            threads[i] = try std.Thread.spawn(.{}, workerThread, .{
+            threads[i] = try std.Thread.spawn(.{}, worker_thread, .{
                 state,
                 &pools.x[i],
                 &pools.y[i],
@@ -188,10 +188,10 @@ pub const TransposePlan3d = struct {
         ny: usize,
         nz: usize,
     ) !TransposePlan3d {
-        return initWithThreads(allocator, io, nx, ny, nz, 0);
+        return init_with_threads(allocator, io, nx, ny, nz, 0);
     }
 
-    pub fn initWithThreads(
+    pub fn init_with_threads(
         allocator: std.mem.Allocator,
         io: std.Io,
         nx: usize,
@@ -204,10 +204,10 @@ pub const TransposePlan3d = struct {
         const cpu_count = std.Thread.getCpuCount() catch 4;
         const num_threads = if (num_threads_hint == 0) @min(cpu_count, 16) else num_threads_hint;
 
-        var pools = try allocWorkspacePools(allocator, num_threads);
+        var pools = try alloc_workspace_pools(allocator, num_threads);
         errdefer pools.deinit(allocator);
 
-        try pools.initAll(allocator, nx, ny, nz);
+        try pools.init_all(allocator, nx, ny, nz);
 
         // Allocate transpose buffer
         const buffer = try allocator.alloc(Complex, nx * ny * nz);
@@ -223,7 +223,7 @@ pub const TransposePlan3d = struct {
         const threads = try allocator.alloc(std.Thread, num_threads);
         errdefer allocator.free(threads);
 
-        try spawnWorkerThreads(state, threads, pools);
+        try spawn_worker_threads(state, threads, pools);
 
         return .{
             .nx = nx,
@@ -281,28 +281,28 @@ pub const TransposePlan3d = struct {
         if (data.len != nx * ny * nz) return;
 
         // Step 1: FFT along x-axis (data is xyz, x is contiguous)
-        self.dispatchFft(.fft_x, data, nx, ny * nz, inv);
+        self.dispatch_fft(.fft_x, data, nx, ny * nz, inv);
 
         // Step 2: Transpose xyz -> yxz
-        self.dispatchTranspose(.transpose_xyz_yxz, data, self.buffer);
+        self.dispatch_transpose(.transpose_xyz_yxz, data, self.buffer);
 
         // Step 3: FFT along y-axis (buffer is yxz, y is contiguous)
-        self.dispatchFft(.fft_y, self.buffer, ny, nx * nz, inv);
+        self.dispatch_fft(.fft_y, self.buffer, ny, nx * nz, inv);
 
         // Step 4: Transpose yxz -> zxy
-        self.dispatchTranspose(.transpose_yxz_zxy, self.buffer, data);
+        self.dispatch_transpose(.transpose_yxz_zxy, self.buffer, data);
 
         // Step 5: FFT along z-axis (data is zxy, z is contiguous)
-        self.dispatchFft(.fft_z, data, nz, nx * ny, inv);
+        self.dispatch_fft(.fft_z, data, nz, nx * ny, inv);
 
         // Step 6: Transpose zxy -> xyz
-        self.dispatchTranspose(.transpose_zxy_xyz, data, self.buffer);
+        self.dispatch_transpose(.transpose_zxy_xyz, data, self.buffer);
 
         // Copy result back to data
         @memcpy(data, self.buffer);
     }
 
-    fn dispatchFft(
+    fn dispatch_fft(
         self: *TransposePlan3d,
         task: TaskType,
         data: []Complex,
@@ -334,7 +334,7 @@ pub const TransposePlan3d = struct {
         self.state.mutex.unlock(self.state.io);
     }
 
-    fn dispatchTranspose(
+    fn dispatch_transpose(
         self: *TransposePlan3d,
         task: TaskType,
         src: []Complex,
@@ -346,7 +346,7 @@ pub const TransposePlan3d = struct {
         self.state.task = task;
         self.state.src = src;
         self.state.dst = dst;
-        self.state.total_work = self.computeTransposeWork(task);
+        self.state.total_work = self.compute_transpose_work(task);
         self.state.next_work_item.store(0, .seq_cst);
         self.state.barrier_count.store(0, .seq_cst);
 
@@ -362,7 +362,7 @@ pub const TransposePlan3d = struct {
         self.state.mutex.unlock(self.state.io);
     }
 
-    fn computeTransposeWork(self: *TransposePlan3d, task: TaskType) usize {
+    fn compute_transpose_work(self: *TransposePlan3d, task: TaskType) usize {
         return switch (task) {
             .transpose_xyz_yxz => self.ny * self.nz, // parallelize over y*z
             .transpose_yxz_zxy => self.nz * self.nx, // parallelize over z*x
@@ -372,7 +372,7 @@ pub const TransposePlan3d = struct {
     }
 
     /// Execute a single work item for the current task on behalf of one worker.
-    fn runWorkItem(
+    fn run_work_item(
         state: *ThreadPoolState,
         task: @TypeOf(state.task),
         src: @TypeOf(state.src),
@@ -385,20 +385,20 @@ pub const TransposePlan3d = struct {
         ws_z: *ThreadWorkspace,
     ) void {
         switch (task) {
-            .fft_x => if (src) |s| processFftAxis(s, axis_size, item, inv, ws_x),
-            .fft_y => if (src) |s| processFftAxis(s, axis_size, item, inv, ws_y),
-            .fft_z => if (src) |s| processFftAxis(s, axis_size, item, inv, ws_z),
+            .fft_x => if (src) |s| process_fft_axis(s, axis_size, item, inv, ws_x),
+            .fft_y => if (src) |s| process_fft_axis(s, axis_size, item, inv, ws_y),
+            .fft_z => if (src) |s| process_fft_axis(s, axis_size, item, inv, ws_z),
             .transpose_xyz_yxz => if (src != null and dst != null)
-                transposeXyzToYxz(state, src.?, dst.?, item),
+                transpose_xyz_to_yxz(state, src.?, dst.?, item),
             .transpose_yxz_zxy => if (src != null and dst != null)
-                transposeYxzToZxy(state, src.?, dst.?, item),
+                transpose_yxz_to_zxy(state, src.?, dst.?, item),
             .transpose_zxy_xyz => if (src != null and dst != null)
-                transposeZxyToXyz(state, src.?, dst.?, item),
+                transpose_zxy_to_xyz(state, src.?, dst.?, item),
             else => {},
         }
     }
 
-    fn workerThread(
+    fn worker_thread(
         state: *ThreadPoolState,
         ws_x: *ThreadWorkspace,
         ws_y: *ThreadWorkspace,
@@ -430,7 +430,7 @@ pub const TransposePlan3d = struct {
             while (true) {
                 const item = state.next_work_item.fetchAdd(1, .seq_cst);
                 if (item >= state.total_work) break;
-                runWorkItem(state, task, src, dst, inv, axis_size, item, ws_x, ws_y, ws_z);
+                run_work_item(state, task, src, dst, inv, axis_size, item, ws_x, ws_y, ws_z);
             }
 
             // Barrier
@@ -443,7 +443,7 @@ pub const TransposePlan3d = struct {
         }
     }
 
-    fn processFftAxis(
+    fn process_fft_axis(
         data: []Complex,
         axis_size: usize,
         item: usize,
@@ -459,7 +459,7 @@ pub const TransposePlan3d = struct {
     }
 
     // xyz[x + nx*(y + ny*z)] -> yxz[y + ny*(x + nx*z)]
-    fn transposeXyzToYxz(
+    fn transpose_xyz_to_yxz(
         state: *ThreadPoolState,
         src: []Complex,
         dst: []Complex,
@@ -478,7 +478,7 @@ pub const TransposePlan3d = struct {
     }
 
     // yxz[y + ny*(x + nx*z)] -> zxy[z + nz*(x + nx*y)]
-    fn transposeYxzToZxy(
+    fn transpose_yxz_to_zxy(
         state: *ThreadPoolState,
         src: []Complex,
         dst: []Complex,
@@ -498,7 +498,7 @@ pub const TransposePlan3d = struct {
     }
 
     // zxy[z + nz*(x + nx*y)] -> xyz[x + nx*(y + ny*z)]
-    fn transposeZxyToXyz(
+    fn transpose_zxy_to_xyz(
         state: *ThreadPoolState,
         src: []Complex,
         dst: []Complex,
@@ -524,7 +524,7 @@ test "TransposePlan3d roundtrip" {
     const io = std.testing.io;
     const allocator = std.testing.allocator;
 
-    var plan = try TransposePlan3d.initWithThreads(allocator, io, 8, 8, 8, 4);
+    var plan = try TransposePlan3d.init_with_threads(allocator, io, 8, 8, 8, 4);
     defer plan.deinit();
 
     var data: [512]Complex = undefined;
@@ -548,7 +548,7 @@ test "TransposePlan3d matches sequential" {
     const allocator = std.testing.allocator;
     const Plan3d = @import("fft.zig").Plan3d;
 
-    var trans_plan = try TransposePlan3d.initWithThreads(allocator, io, 8, 8, 8, 4);
+    var trans_plan = try TransposePlan3d.init_with_threads(allocator, io, 8, 8, 8, 4);
     defer trans_plan.deinit();
 
     var seq_plan = try Plan3d.init(allocator, 8, 8, 8);
@@ -577,7 +577,7 @@ test "TransposePlan3d non-cubic" {
     const Plan3d = @import("fft.zig").Plan3d;
 
     // Test with 24x24x24 (non-power-of-2)
-    var trans_plan = try TransposePlan3d.initWithThreads(allocator, io, 24, 24, 24, 4);
+    var trans_plan = try TransposePlan3d.init_with_threads(allocator, io, 24, 24, 24, 4);
     defer trans_plan.deinit();
 
     var seq_plan = try Plan3d.init(allocator, 24, 24, 24);

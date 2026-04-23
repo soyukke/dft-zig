@@ -60,7 +60,7 @@ pub const KPointDfptData = struct {
     n_occ_kq: usize,
 
     pub fn deinit(self: *KPointDfptData, alloc: std.mem.Allocator) void {
-        self.deinitQOnly(alloc);
+        self.deinit_q_only(alloc);
         for (self.wavefunctions_k) |w| alloc.free(w);
         alloc.free(self.wavefunctions_k);
         alloc.free(self.wavefunctions_k_const);
@@ -73,7 +73,7 @@ pub const KPointDfptData = struct {
 
     /// Deinit only the q-dependent data (k+q basis, wavefunctions, etc.).
     /// Used when k-data is owned by KPointGsData and shared.
-    pub fn deinitQOnly(self: *KPointDfptData, alloc: std.mem.Allocator) void {
+    pub fn deinit_q_only(self: *KPointDfptData, alloc: std.mem.Allocator) void {
         for (self.occ_kq) |w| alloc.free(w);
         alloc.free(self.occ_kq);
         alloc.free(self.occ_kq_const);
@@ -130,7 +130,7 @@ const KqOccupations = struct {
     }
 };
 
-fn initKqSetup(
+fn init_kq_setup(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -151,7 +151,7 @@ fn initKqSetup(
 
     const apply_ctx_kq = try alloc.create(scf_mod.ApplyContext);
     errdefer alloc.destroy(apply_ctx_kq);
-    apply_ctx_kq.* = try scf_mod.ApplyContext.initWithWorkspaces(
+    apply_ctx_kq.* = try scf_mod.ApplyContext.init_with_workspaces(
         alloc,
         io,
         grid,
@@ -177,7 +177,7 @@ fn initKqSetup(
     };
 }
 
-fn copyGammaOccupations(
+fn copy_gamma_occupations(
     alloc: std.mem.Allocator,
     kg: *const KPointGsData,
     n_pw_kq: usize,
@@ -198,7 +198,7 @@ fn copyGammaOccupations(
     return .{ .occ_kq = occ_kq, .occ_kq_const = occ_kq_const, .n_occ_kq = n_occ_kq };
 }
 
-fn solveKqOccupations(
+fn solve_kq_occupations(
     alloc: std.mem.Allocator,
     cfg: config_mod.Config,
     kg: *const KPointGsData,
@@ -225,10 +225,10 @@ fn solveKqOccupations(
     const op_kq = iterative.Operator{
         .n = n_pw_kq,
         .ctx = @ptrCast(apply_ctx_kq),
-        .apply = &scf_mod.applyHamiltonian,
-        .apply_batch = &scf_mod.applyHamiltonianBatched,
+        .apply = &scf_mod.apply_hamiltonian,
+        .apply_batch = &scf_mod.apply_hamiltonian_batched,
     };
-    var eig_kq = try iterative.hermitianEigenDecompIterative(
+    var eig_kq = try iterative.hermitian_eigen_decomp_iterative(
         alloc,
         cfg.linalg_backend,
         op_kq,
@@ -246,7 +246,7 @@ fn solveKqOccupations(
     return .{ .occ_kq = occ_kq, .occ_kq_const = occ_kq_const, .n_occ_kq = n_occ_kq };
 }
 
-fn initKqOccupations(
+fn init_kq_occupations(
     alloc: std.mem.Allocator,
     cfg: config_mod.Config,
     kg: *const KPointGsData,
@@ -254,11 +254,11 @@ fn initKqOccupations(
     apply_ctx_kq: *scf_mod.ApplyContext,
     is_q_gamma: bool,
 ) !KqOccupations {
-    if (is_q_gamma) return copyGammaOccupations(alloc, kg, basis_kq.gvecs.len);
-    return solveKqOccupations(alloc, cfg, kg, basis_kq, apply_ctx_kq);
+    if (is_q_gamma) return copy_gamma_occupations(alloc, kg, basis_kq.gvecs.len);
+    return solve_kq_occupations(alloc, cfg, kg, basis_kq, apply_ctx_kq);
 }
 
-fn buildKPointDfptData(
+fn build_k_point_dfpt_data(
     kg: *const KPointGsData,
     setup: KqSetup,
     occupations: KqOccupations,
@@ -288,7 +288,7 @@ fn buildKPointDfptData(
 /// Build KPointDfptData array from precomputed ground-state data for a given q-point.
 /// The k-point data (basis, wavefunctions, eigenvalues) is shared from KPointGsData.
 /// Only the k+q data (basis_kq, occ_kq, etc.) is newly allocated per q-point.
-pub fn buildKPointDfptDataFromGS(
+pub fn build_k_point_dfpt_data_from_gs(
     alloc: std.mem.Allocator,
     io: std.Io,
     kgs: []const KPointGsData,
@@ -307,7 +307,7 @@ pub fn buildKPointDfptDataFromGS(
     var kpts = try alloc.alloc(KPointDfptData, n_kpts);
     var built: usize = 0;
     errdefer {
-        for (0..built) |i| kpts[i].deinitQOnly(alloc);
+        for (0..built) |i| kpts[i].deinit_q_only(alloc);
         alloc.free(kpts);
     }
 
@@ -317,7 +317,7 @@ pub fn buildKPointDfptDataFromGS(
             .y = kg.k_cart.y + q_cart.y,
             .z = kg.k_cart.z + q_cart.z,
         };
-        var setup = try initKqSetup(
+        var setup = try init_kq_setup(
             alloc,
             io,
             cfg,
@@ -332,7 +332,7 @@ pub fn buildKPointDfptDataFromGS(
         );
         errdefer setup.deinit(alloc);
 
-        var occupations = try initKqOccupations(
+        var occupations = try init_kq_occupations(
             alloc,
             cfg,
             kg,
@@ -342,7 +342,7 @@ pub fn buildKPointDfptDataFromGS(
         );
         errdefer occupations.deinit(alloc);
 
-        kpts[ik] = buildKPointDfptData(kg, setup, occupations);
+        kpts[ik] = build_k_point_dfpt_data(kg, setup, occupations);
         built = ik + 1;
     }
 

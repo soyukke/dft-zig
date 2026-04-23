@@ -22,18 +22,18 @@ const SmearingShared = kpoints_mod.SmearingShared;
 const SmearingWorker = kpoints_mod.SmearingWorker;
 const ScfProfile = logging.ScfProfile;
 
-const computeKpointEigenData = kpoints_mod.computeKpointEigenData;
-const findFermiLevel = kpoints_mod.findFermiLevel;
-const accumulateKpointDensitySmearing = kpoints_mod.accumulateKpointDensitySmearing;
-const smearingWorker = kpoints_mod.smearingWorker;
-const kpointThreadCount = kpoints_mod.kpointThreadCount;
+const compute_kpoint_eigen_data = kpoints_mod.compute_kpoint_eigen_data;
+const find_fermi_level = kpoints_mod.find_fermi_level;
+const accumulate_kpoint_density_smearing = kpoints_mod.accumulate_kpoint_density_smearing;
+const smearing_worker = kpoints_mod.smearing_worker;
+const kpoint_thread_count = kpoints_mod.kpoint_thread_count;
 
-const logKpoint = logging.logKpoint;
-const logProfile = logging.logProfile;
-const logEigenvalues = logging.logEigenvalues;
-const logLocalPotentialMean = logging.logLocalPotentialMean;
-const logFermiDiag = logging.logFermiDiag;
-const mergeProfile = logging.mergeProfile;
+const log_kpoint = logging.log_kpoint;
+const log_profile = logging.log_profile;
+const log_eigenvalues = logging.log_eigenvalues;
+const log_local_potential_mean = logging.log_local_potential_mean;
+const log_fermi_diag = logging.log_fermi_diag;
+const merge_profile = logging.merge_profile;
 
 pub const DensityResult = struct {
     rho: []f64,
@@ -93,17 +93,17 @@ const SmearingRun = struct {
     used_parallel: bool = false,
 };
 
-pub fn smearingActive(cfg: *const config.Config) bool {
+pub fn smearing_active(cfg: *const config.Config) bool {
     return cfg.scf.smearing != .none and cfg.scf.smear_ry > 0.0;
 }
 
 var debug_gamma_dense_logged: bool = false;
 
-fn isGammaKpoint(kp: KPoint) bool {
+fn is_gamma_kpoint(kp: KPoint) bool {
     return math.Vec3.norm(kp.k_cart) < 1e-8;
 }
 
-pub fn computeDensitySmearing(
+pub fn compute_density_smearing(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -129,7 +129,7 @@ pub fn computeDensitySmearing(
     paw_tabs: ?[]const paw_mod.PawTab,
     paw_rhoij: ?*paw_mod.RhoIJ,
 ) !DensityResult {
-    var run = try initSmearingRun(
+    var run = try init_smearing_run(
         alloc,
         io,
         cfg,
@@ -155,16 +155,16 @@ pub fn computeDensitySmearing(
         paw_rhoij,
     );
     errdefer alloc.free(run.rho);
-    defer deinitSmearingEigenData(alloc, run.eigen_data, run.filled, run.used_parallel);
+    defer deinit_smearing_eigen_data(alloc, run.eigen_data, run.filled, run.used_parallel);
     defer alloc.free(run.eigen_data);
 
-    try maybeLogSmearingLocalPotential(
+    try maybe_log_smearing_local_potential(
         run.input.io,
         run.input.cfg,
         run.input.potential,
         run.input.local_r,
     );
-    const collected = try collectSmearingEigenDataFromInput(
+    const collected = try collect_smearing_eigen_data_from_input(
         alloc,
         run.input,
         &run.profile_total,
@@ -173,17 +173,21 @@ pub fn computeDensitySmearing(
     run.filled = collected.filled;
     run.used_parallel = collected.used_parallel;
 
-    try maybeLogSmearingGammaDiagnosticsFromInput(alloc, run.input, run.eigen_data[0..run.filled]);
+    try maybe_log_smearing_gamma_diagnostics_from_input(
+        alloc,
+        run.input,
+        run.eigen_data[0..run.filled],
+    );
 
-    const energy_range = computeSmearingEnergyRange(run.eigen_data[0..run.filled]);
-    const mu = findFermiLevel(
+    const energy_range = compute_smearing_energy_range(run.eigen_data[0..run.filled]);
+    const mu = find_fermi_level(
         nelec,
         cfg.scf.smear_ry,
         cfg.scf.smearing,
         run.eigen_data[0..run.filled],
     );
-    try maybeLogSmearingFermiDiag(io, cfg, nelec, mu, energy_range);
-    try accumulateSmearingDensityResultsFromInput(
+    try maybe_log_smearing_fermi_diag(io, cfg, nelec, mu, energy_range);
+    try accumulate_smearing_density_results_from_input(
         alloc,
         run.input,
         mu,
@@ -196,10 +200,10 @@ pub fn computeDensitySmearing(
     );
 
     if (cfg.scf.profile and !cfg.scf.quiet) {
-        try logProfile(io, run.profile_total, kpoints.len);
+        try log_profile(io, run.profile_total, kpoints.len);
     }
 
-    return finishSmearingResult(
+    return finish_smearing_result(
         run.rho,
         run.band_energy,
         run.nonlocal_energy,
@@ -208,7 +212,7 @@ pub fn computeDensitySmearing(
     );
 }
 
-fn deinitSmearingEigenData(
+fn deinit_smearing_eigen_data(
     alloc: std.mem.Allocator,
     eigen_data: []KpointEigenData,
     filled: usize,
@@ -220,7 +224,7 @@ fn deinitSmearingEigenData(
     }
 }
 
-fn initSmearingRun(
+fn init_smearing_run(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -251,7 +255,7 @@ fn initSmearingRun(
     @memset(rho, 0.0);
 
     return .{
-        .input = buildSmearingInput(
+        .input = build_smearing_input(
             io,
             cfg,
             grid,
@@ -281,7 +285,7 @@ fn initSmearingRun(
     };
 }
 
-fn buildSmearingInput(
+fn build_smearing_input(
     io: std.Io,
     cfg: *const config.Config,
     grid: Grid,
@@ -333,7 +337,7 @@ fn buildSmearingInput(
     };
 }
 
-fn maybeLogSmearingFermiDiag(
+fn maybe_log_smearing_fermi_diag(
     io: std.Io,
     cfg: *const config.Config,
     nelec: f64,
@@ -341,7 +345,7 @@ fn maybeLogSmearingFermiDiag(
     energy_range: SmearingEnergyRange,
 ) !void {
     if (!cfg.scf.debug_fermi) return;
-    try logFermiDiag(
+    try log_fermi_diag(
         io,
         energy_range.min_energy,
         energy_range.max_energy,
@@ -349,12 +353,12 @@ fn maybeLogSmearingFermiDiag(
         nelec,
         energy_range.min_nbands,
         energy_range.max_nbands,
-        config.smearingName(cfg.scf.smearing),
+        config.smearing_name(cfg.scf.smearing),
         cfg.scf.smear_ry,
     );
 }
 
-fn finishSmearingResult(
+fn finish_smearing_result(
     rho: []f64,
     band_energy: f64,
     nonlocal_energy: f64,
@@ -370,13 +374,13 @@ fn finishSmearingResult(
     };
 }
 
-fn collectSmearingEigenDataFromInput(
+fn collect_smearing_eigen_data_from_input(
     alloc: std.mem.Allocator,
     input: SmearingInput,
     profile_total: *ScfProfile,
     eigen_data: []KpointEigenData,
 ) !SmearingCollectResult {
-    return try collectSmearingEigenData(
+    return try collect_smearing_eigen_data(
         alloc,
         input.io,
         input.cfg,
@@ -405,12 +409,12 @@ fn collectSmearingEigenDataFromInput(
     );
 }
 
-fn maybeLogSmearingGammaDiagnosticsFromInput(
+fn maybe_log_smearing_gamma_diagnostics_from_input(
     alloc: std.mem.Allocator,
     input: SmearingInput,
     eigen_data: []const KpointEigenData,
 ) !void {
-    try maybeLogSmearingGammaDiagnostics(
+    try maybe_log_smearing_gamma_diagnostics(
         alloc,
         input.io,
         input.cfg,
@@ -435,7 +439,7 @@ fn maybeLogSmearingGammaDiagnosticsFromInput(
     );
 }
 
-fn accumulateSmearingDensityResultsFromInput(
+fn accumulate_smearing_density_results_from_input(
     alloc: std.mem.Allocator,
     input: SmearingInput,
     mu: f64,
@@ -446,7 +450,7 @@ fn accumulateSmearingDensityResultsFromInput(
     nonlocal_energy: *f64,
     entropy_energy: *f64,
 ) !void {
-    try accumulateSmearingDensityResults(
+    try accumulate_smearing_density_results(
         alloc,
         input.io,
         input.cfg,
@@ -467,7 +471,7 @@ fn accumulateSmearingDensityResultsFromInput(
     );
 }
 
-fn maybeLogSmearingLocalPotential(
+fn maybe_log_smearing_local_potential(
     io: std.Io,
     cfg: *const config.Config,
     potential: hamiltonian.PotentialGrid,
@@ -480,12 +484,12 @@ fn maybeLogSmearingLocalPotential(
             sum += value;
         }
         const mean_local = sum / @as(f64, @floatFromInt(values.len));
-        const pot_g0 = potential.valueAt(0, 0, 0);
-        try logLocalPotentialMean(io, "scf", mean_local, "pot_g0", pot_g0.r);
+        const pot_g0 = potential.value_at(0, 0, 0);
+        try log_local_potential_mean(io, "scf", mean_local, "pot_g0", pot_g0.r);
     }
 }
 
-fn collectSmearingEigenData(
+fn collect_smearing_eigen_data(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -512,10 +516,10 @@ fn collectSmearingEigenData(
     profile_total: *ScfProfile,
     eigen_data: []KpointEigenData,
 ) !SmearingCollectResult {
-    const thread_count = kpointThreadCount(kpoints.len, cfg.scf.kpoint_threads);
+    const thread_count = kpoint_thread_count(kpoints.len, cfg.scf.kpoint_threads);
     if (thread_count <= 1) {
         return .{
-            .filled = try collectSmearingEigenDataSequential(
+            .filled = try collect_smearing_eigen_data_sequential(
                 alloc,
                 io,
                 cfg,
@@ -545,7 +549,7 @@ fn collectSmearingEigenData(
             .used_parallel = false,
         };
     }
-    try collectSmearingEigenDataParallel(
+    try collect_smearing_eigen_data_parallel(
         alloc,
         io,
         cfg,
@@ -576,7 +580,7 @@ fn collectSmearingEigenData(
     return .{ .filled = kpoints.len, .used_parallel = true };
 }
 
-fn collectSmearingEigenDataSequential(
+fn collect_smearing_eigen_data_sequential(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -603,7 +607,7 @@ fn collectSmearingEigenDataSequential(
     profile_ptr: ?*ScfProfile,
     eigen_data: []KpointEigenData,
 ) !usize {
-    var shared_fft_plan = try fft.Fft3dPlan.initWithBackend(
+    var shared_fft_plan = try fft.Fft3dPlan.init_with_backend(
         alloc,
         io,
         grid.nx,
@@ -616,9 +620,9 @@ fn collectSmearingEigenDataSequential(
     var filled: usize = 0;
     for (kpoints, 0..) |kp, kidx| {
         if (!cfg.scf.quiet) {
-            try logKpoint(io, kidx, kpoints.len);
+            try log_kpoint(io, kidx, kpoints.len);
         }
-        eigen_data[kidx] = try computeKpointEigenData(
+        eigen_data[kidx] = try compute_kpoint_eigen_data(
             alloc,
             io,
             cfg,
@@ -642,7 +646,7 @@ fn collectSmearingEigenDataSequential(
             &kpoint_cache[kidx],
             profile_ptr,
             shared_fft_plan,
-            selectApplyCache(apply_caches, kidx),
+            select_apply_cache(apply_caches, kidx),
             radial_tables,
             paw_tabs,
         );
@@ -651,7 +655,7 @@ fn collectSmearingEigenDataSequential(
     return filled;
 }
 
-fn collectSmearingEigenDataParallel(
+fn collect_smearing_eigen_data_parallel(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -679,11 +683,17 @@ fn collectSmearingEigenDataParallel(
     profile_total: *ScfProfile,
     eigen_data: []KpointEigenData,
 ) !void {
-    const profiles = try initSmearingProfiles(alloc, thread_count, cfg.scf.profile);
+    const profiles = try init_smearing_profiles(alloc, thread_count, cfg.scf.profile);
     defer if (profiles) |values| alloc.free(values);
 
-    const fft_plans = try initSmearingFftPlans(alloc, io, grid, cfg.scf.fft_backend, thread_count);
-    defer deinitSmearingFftPlans(alloc, fft_plans);
+    const fft_plans = try init_smearing_fft_plans(
+        alloc,
+        io,
+        grid,
+        cfg.scf.fft_backend,
+        thread_count,
+    );
+    defer deinit_smearing_fft_plans(alloc, fft_plans);
 
     var next_index = std.atomic.Value(usize).init(0);
     var stop = std.atomic.Value(u8).init(0);
@@ -723,16 +733,16 @@ fn collectSmearingEigenDataParallel(
         .err_mutex = &err_mutex,
         .log_mutex = &log_mutex,
     };
-    try runSmearingWorkers(alloc, thread_count, &shared);
+    try run_smearing_workers(alloc, thread_count, &shared);
     if (worker_error) |err| return err;
     if (profiles) |values| {
         for (values) |thread_profile| {
-            mergeProfile(profile_total, thread_profile);
+            merge_profile(profile_total, thread_profile);
         }
     }
 }
 
-fn initSmearingProfiles(
+fn init_smearing_profiles(
     alloc: std.mem.Allocator,
     thread_count: usize,
     enabled: bool,
@@ -745,7 +755,7 @@ fn initSmearingProfiles(
     return profiles;
 }
 
-fn initSmearingFftPlans(
+fn init_smearing_fft_plans(
     alloc: std.mem.Allocator,
     io: std.Io,
     grid: Grid,
@@ -755,7 +765,7 @@ fn initSmearingFftPlans(
     const fft_plans = try alloc.alloc(fft.Fft3dPlan, thread_count);
     errdefer alloc.free(fft_plans);
     for (fft_plans) |*plan| {
-        plan.* = try fft.Fft3dPlan.initWithBackend(
+        plan.* = try fft.Fft3dPlan.init_with_backend(
             alloc,
             io,
             grid.nx,
@@ -767,14 +777,14 @@ fn initSmearingFftPlans(
     return fft_plans;
 }
 
-fn deinitSmearingFftPlans(alloc: std.mem.Allocator, fft_plans: []fft.Fft3dPlan) void {
+fn deinit_smearing_fft_plans(alloc: std.mem.Allocator, fft_plans: []fft.Fft3dPlan) void {
     for (fft_plans) |*plan| {
         plan.deinit(alloc);
     }
     alloc.free(fft_plans);
 }
 
-fn runSmearingWorkers(
+fn run_smearing_workers(
     alloc: std.mem.Allocator,
     thread_count: usize,
     shared: *SmearingShared,
@@ -788,14 +798,14 @@ fn runSmearingWorkers(
     var t: usize = 0;
     while (t < thread_count) : (t += 1) {
         workers[t] = .{ .shared = shared, .thread_index = t };
-        threads[t] = try std.Thread.spawn(.{}, smearingWorker, .{&workers[t]});
+        threads[t] = try std.Thread.spawn(.{}, smearing_worker, .{&workers[t]});
     }
     for (threads) |thread| {
         thread.join();
     }
 }
 
-fn selectApplyCache(
+fn select_apply_cache(
     apply_caches: ?[]apply.KpointApplyCache,
     kidx: usize,
 ) ?*apply.KpointApplyCache {
@@ -805,7 +815,7 @@ fn selectApplyCache(
     return null;
 }
 
-fn maybeLogSmearingGammaDiagnostics(
+fn maybe_log_smearing_gamma_diagnostics(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -829,8 +839,8 @@ fn maybeLogSmearingGammaDiagnostics(
     eigen_data: []const KpointEigenData,
 ) !void {
     if (!cfg.scf.debug_fermi) return;
-    if (!(try logGammaEigenvaluesFromEntries(io, eigen_data))) {
-        try logComputedGammaEigenvalues(
+    if (!(try log_gamma_eigenvalues_from_entries(io, eigen_data))) {
+        try log_computed_gamma_eigenvalues(
             alloc,
             io,
             cfg,
@@ -855,7 +865,7 @@ fn maybeLogSmearingGammaDiagnostics(
     }
     if (!debug_gamma_dense_logged) {
         debug_gamma_dense_logged = true;
-        try logDenseGammaEigenvalues(
+        try log_dense_gamma_eigenvalues(
             alloc,
             io,
             cfg,
@@ -869,17 +879,17 @@ fn maybeLogSmearingGammaDiagnostics(
     }
 }
 
-fn logGammaEigenvaluesFromEntries(io: std.Io, eigen_data: []const KpointEigenData) !bool {
+fn log_gamma_eigenvalues_from_entries(io: std.Io, eigen_data: []const KpointEigenData) !bool {
     for (eigen_data) |entry| {
-        if (isGammaKpoint(entry.kpoint)) {
-            try logEigenvalues(io, "scf", "gamma", entry.values, entry.nbands);
+        if (is_gamma_kpoint(entry.kpoint)) {
+            try log_eigenvalues(io, "scf", "gamma", entry.values, entry.nbands);
             return true;
         }
     }
     return false;
 }
 
-fn buildGammaKpoint() KPoint {
+fn build_gamma_kpoint() KPoint {
     return .{
         .k_frac = .{ .x = 0.0, .y = 0.0, .z = 0.0 },
         .k_cart = .{ .x = 0.0, .y = 0.0, .z = 0.0 },
@@ -887,7 +897,7 @@ fn buildGammaKpoint() KPoint {
     };
 }
 
-fn logComputedGammaEigenvalues(
+fn log_computed_gamma_eigenvalues(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -912,12 +922,12 @@ fn logComputedGammaEigenvalues(
     var gamma_cache = KpointCache{};
     defer gamma_cache.deinit();
 
-    const gamma_data = try computeKpointEigenData(
+    const gamma_data = try compute_kpoint_eigen_data(
         alloc,
         io,
         cfg,
         grid,
-        buildGammaKpoint(),
+        build_gamma_kpoint(),
         species,
         atoms,
         recip,
@@ -945,10 +955,10 @@ fn logComputedGammaEigenvalues(
         gamma_deinit.deinit(alloc);
     }
 
-    try logEigenvalues(io, "scf", "gamma*", gamma_data.values, gamma_data.nbands);
+    try log_eigenvalues(io, "scf", "gamma*", gamma_data.values, gamma_data.nbands);
 }
 
-fn logDenseGammaEigenvalues(
+fn log_dense_gamma_eigenvalues(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -959,10 +969,10 @@ fn logDenseGammaEigenvalues(
     species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
 ) !void {
-    var basis = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, buildGammaKpoint().k_cart);
+    var basis = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, build_gamma_kpoint().k_cart);
     defer basis.deinit(alloc);
 
-    const h = try hamiltonian.buildHamiltonian(
+    const h = try hamiltonian.build_hamiltonian(
         alloc,
         basis.gvecs,
         species,
@@ -973,7 +983,7 @@ fn logDenseGammaEigenvalues(
     );
     defer alloc.free(h);
 
-    var eig = try linalg.hermitianEigenDecomp(
+    var eig = try linalg.hermitian_eigen_decomp(
         alloc,
         cfg.linalg_backend,
         basis.gvecs.len,
@@ -981,10 +991,16 @@ fn logDenseGammaEigenvalues(
     );
     defer eig.deinit(alloc);
 
-    try logEigenvalues(io, "scf", "gamma_dense", eig.values, @min(cfg.band.nbands, eig.values.len));
+    try log_eigenvalues(
+        io,
+        "scf",
+        "gamma_dense",
+        eig.values,
+        @min(cfg.band.nbands, eig.values.len),
+    );
 }
 
-fn computeSmearingEnergyRange(eigen_data: []const KpointEigenData) SmearingEnergyRange {
+fn compute_smearing_energy_range(eigen_data: []const KpointEigenData) SmearingEnergyRange {
     if (eigen_data.len == 0) {
         return .{
             .min_energy = 0.0,
@@ -1010,7 +1026,7 @@ fn computeSmearingEnergyRange(eigen_data: []const KpointEigenData) SmearingEnerg
     return range;
 }
 
-fn accumulateSmearingDensityResults(
+fn accumulate_smearing_density_results(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -1030,7 +1046,7 @@ fn accumulateSmearingDensityResults(
     entropy_energy: *f64,
 ) !void {
     for (eigen_data, 0..) |entry, kidx| {
-        try accumulateKpointDensitySmearing(
+        try accumulate_kpoint_density_smearing(
             alloc,
             io,
             cfg,
@@ -1047,7 +1063,7 @@ fn accumulateSmearingDensityResults(
             nonlocal_energy,
             entropy_energy,
             profile_ptr,
-            selectApplyCache(apply_caches, kidx),
+            select_apply_cache(apply_caches, kidx),
             paw_rhoij,
             atoms,
         );

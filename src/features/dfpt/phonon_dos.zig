@@ -15,18 +15,18 @@ pub const PhononDosResult = struct {
 };
 
 /// Compare function for lowerBound/upperBound: context is the target value.
-fn compareF64(context: f64, item: f64) std.math.Order {
+fn compare_f64(context: f64, item: f64) std.math.Order {
     return std.math.order(context, item);
 }
 
 /// Gaussian delta: (1/(σ√(2π))) × exp(-x²/(2σ²))
-inline fn gaussianDelta(x: f64, inv_sigma_sqrt2pi: f64, inv_2sigma2: f64) f64 {
+inline fn gaussian_delta(x: f64, inv_sigma_sqrt2pi: f64, inv_2sigma2: f64) f64 {
     return inv_sigma_sqrt2pi * @exp(-x * x * inv_2sigma2);
 }
 
 /// Compute phonon DOS from IFC by interpolating on a dense q-mesh.
 /// Uses Gaussian broadening: g(ω) = (1/N_q) Σ_{n,q} δ_σ(ω - ω_n(q))
-pub fn computePhononDos(
+pub fn compute_phonon_dos(
     alloc: std.mem.Allocator,
     ifc_data: *const ifc_mod.IFC,
     masses: []const f64,
@@ -64,10 +64,10 @@ pub fn computePhononDos(
                 defer alloc.free(dyn_q);
 
                 // Mass-weight (in-place)
-                dynmat_mod.massWeightComplex(dyn_q, n_atoms, masses);
+                dynmat_mod.mass_weight_complex(dyn_q, n_atoms, masses);
 
                 // Eigenvalues only (no eigenvectors needed for DOS)
-                const freq_cm1 = try dynmat_mod.eigenvaluesComplex(alloc, dyn_q, dim);
+                const freq_cm1 = try dynmat_mod.eigenvalues_complex(alloc, dyn_q, dim);
                 defer alloc.free(freq_cm1);
 
                 for (0..dim) |m| {
@@ -105,12 +105,12 @@ pub fn computePhononDos(
         frequencies[i] = f;
 
         // Binary search for [f - cutoff, f + cutoff] range
-        const lo = std.sort.lowerBound(f64, sorted_freqs, f - cutoff, compareF64);
-        const hi = std.sort.upperBound(f64, sorted_freqs, f + cutoff, compareF64);
+        const lo = std.sort.lowerBound(f64, sorted_freqs, f - cutoff, compare_f64);
+        const hi = std.sort.upperBound(f64, sorted_freqs, f + cutoff, compare_f64);
 
         var d: f64 = 0.0;
         for (sorted_freqs[lo..hi]) |af| {
-            d += gaussianDelta(f - af, inv_sigma_sqrt2pi, inv_2sigma2);
+            d += gaussian_delta(f - af, inv_sigma_sqrt2pi, inv_2sigma2);
         }
         dos[i] = d * inv_nq;
     }
@@ -122,7 +122,7 @@ pub fn computePhononDos(
 }
 
 /// Write phonon DOS to CSV file.
-pub fn writePhononDosCsv(io: std.Io, dir: std.Io.Dir, result: PhononDosResult) !void {
+pub fn write_phonon_dos_csv(io: std.Io, dir: std.Io.Dir, result: PhononDosResult) !void {
     const file = try dir.createFile(io, "phonon_dos.csv", .{});
     defer file.close(io);
 

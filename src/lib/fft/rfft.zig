@@ -56,7 +56,7 @@ pub const RealPlan = struct {
     /// Unpack the half-length spectrum Z into the full-length X via pair-wise
     /// recombination: X[k] = E[k] + W_N^k*O[k] and X[N/2-k] = conj(E[k]) +
     /// W_N^{N/2-k}*conj(O[k]).
-    fn forwardUnpackPairs(self: *const RealPlan, complex_output: []Complex, half_n: usize) void {
+    fn forward_unpack_pairs(self: *const RealPlan, complex_output: []Complex, half_n: usize) void {
         var k: usize = 1;
         while (k < half_n - k) : (k += 1) {
             const zk = complex_output[k];
@@ -122,7 +122,7 @@ pub const RealPlan = struct {
         complex_output[half_n] = Complex.init(z0.re - z0.im, 0);
 
         // Process pairs (k, N/2-k) together to avoid overwrite issues.
-        self.forwardUnpackPairs(complex_output, half_n);
+        self.forward_unpack_pairs(complex_output, half_n);
 
         // Handle middle element if N/2 is even (k = N/4)
         if (half_n % 2 == 0) {
@@ -139,7 +139,7 @@ pub const RealPlan = struct {
 
     /// Pack the full-length spectrum X back into the half-length Z = E + i*O
     /// via pair-wise recombination.
-    fn inversePackPairs(
+    fn inverse_pack_pairs(
         self: *const RealPlan,
         complex_input: []const Complex,
         z: []Complex,
@@ -203,7 +203,7 @@ pub const RealPlan = struct {
         //   Z[0] = E[0] + i*O[0]
         z[0] = Complex.init((x0.re + x_half.re) / 2.0, (x0.re - x_half.re) / 2.0);
 
-        self.inversePackPairs(complex_input, z, half_n);
+        self.inverse_pack_pairs(complex_input, z, half_n);
 
         // Handle middle element if half_n is even.
         // For the middle element W_N^{N/4} = -i, so X[mid] = E[mid] - i*O[mid]

@@ -81,7 +81,7 @@ const atomic_mass_table = [_]AtomicMassEntry{
 };
 
 /// Look up atomic mass in AMU from element symbol.
-pub fn atomicMass(symbol: []const u8) f64 {
+pub fn atomic_mass(symbol: []const u8) f64 {
     for (atomic_mass_table) |entry| {
         if (std.mem.eql(u8, symbol, entry.sym)) {
             return entry.mass;
@@ -89,7 +89,7 @@ pub fn atomicMass(symbol: []const u8) f64 {
     }
     // Fallback: return a reasonable default and log warning
     if (!builtin.is_test) {
-        runtime_logging.debugPrint(
+        runtime_logging.debug_print(
             .warn,
             .warn,
             "dfpt: WARNING: unknown element '{s}', using mass=1.0 AMU\n",
@@ -99,10 +99,10 @@ pub fn atomicMass(symbol: []const u8) f64 {
     return 1.0;
 }
 
-test "atomicMass lookups" {
-    try std.testing.expectApproxEqRel(atomicMass("Si"), 28.085, 1e-6);
-    try std.testing.expectApproxEqRel(atomicMass("C"), 12.011, 1e-6);
-    try std.testing.expectApproxEqRel(atomicMass("Fe"), 55.845, 1e-6);
+test "atomic_mass lookups" {
+    try std.testing.expectApproxEqRel(atomic_mass("Si"), 28.085, 1e-6);
+    try std.testing.expectApproxEqRel(atomic_mass("C"), 12.011, 1e-6);
+    try std.testing.expectApproxEqRel(atomic_mass("Fe"), 55.845, 1e-6);
     // Unknown element returns 1.0
-    try std.testing.expectApproxEqRel(atomicMass("Xx"), 1.0, 1e-6);
+    try std.testing.expectApproxEqRel(atomic_mass("Xx"), 1.0, 1e-6);
 }

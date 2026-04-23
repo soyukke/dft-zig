@@ -7,7 +7,7 @@ const gvec_iter = @import("gvec_iter.zig");
 pub const Grid = grid_mod.Grid;
 
 /// Mix densities by linear mixing.
-pub fn mixDensity(rho: []f64, rho_new: []const f64, beta: f64) void {
+pub fn mix_density(rho: []f64, rho_new: []const f64, beta: f64) void {
     for (rho, 0..) |value, i| {
         rho[i] = (1.0 - beta) * value + beta * rho_new[i];
     }
@@ -16,7 +16,7 @@ pub fn mixDensity(rho: []f64, rho_new: []const f64, beta: f64) void {
 /// Mix densities with Kerker preconditioning.
 /// Kerker kernel: K(G) = G² / (G² + q0²)
 /// This suppresses long-wavelength (small G) charge oscillations.
-pub fn mixDensityKerker(
+pub fn mix_density_kerker(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho: []f64,
@@ -36,7 +36,7 @@ pub fn mixDensityKerker(
     }
 
     // FFT to reciprocal space
-    const delta_rho_g = try fft_grid.realToReciprocal(alloc, grid, delta_rho, use_rfft);
+    const delta_rho_g = try fft_grid.real_to_reciprocal(alloc, grid, delta_rho, use_rfft);
     defer alloc.free(delta_rho_g);
 
     // Apply Kerker kernel in reciprocal space
@@ -49,7 +49,7 @@ pub fn mixDensityKerker(
     }
 
     // IFFT back to real space
-    const delta_rho_precond = try fft_grid.reciprocalToReal(alloc, grid, delta_rho_g);
+    const delta_rho_precond = try fft_grid.reciprocal_to_real(alloc, grid, delta_rho_g);
     defer alloc.free(delta_rho_precond);
 
     // Mix: ρ = ρ_old + β × K(Δρ)
@@ -142,7 +142,7 @@ pub const PulayMixer = struct {
         rhs[m] = -1.0;
 
         // Solve linear system B * c = rhs
-        const coeffs = try solvePulaySystem(self.alloc, B, rhs, matrix_size);
+        const coeffs = try solve_pulay_system(self.alloc, B, rhs, matrix_size);
         defer self.alloc.free(coeffs);
 
         // Compute optimal density: rho = sum_i c_i * (rho_i + beta * R_i)
@@ -160,7 +160,7 @@ pub const PulayMixer = struct {
     /// Mix using Pulay/DIIS with a pre-computed (preconditioned) residual.
     /// The caller is responsible for computing and preconditioning the residual.
     /// Ownership of precond_residual is transferred to the mixer.
-    pub fn mixWithResidual(
+    pub fn mix_with_residual(
         self: *PulayMixer,
         rho: []f64,
         precond_residual: []f64,
@@ -221,7 +221,7 @@ pub const PulayMixer = struct {
         B[m * matrix_size + m] = 0.0;
         rhs[m] = -1.0;
 
-        const coeffs = try solvePulaySystem(self.alloc, B, rhs, matrix_size);
+        const coeffs = try solve_pulay_system(self.alloc, B, rhs, matrix_size);
         defer self.alloc.free(coeffs);
 
         // Compute optimal: rho = sum_i c_i * (rho_i + beta * PR_i)
@@ -238,7 +238,7 @@ pub const PulayMixer = struct {
 
     /// Mix density using Pulay/DIIS with Kerker preconditioning.
     /// Kerker suppresses long-wavelength charge oscillations for faster convergence.
-    pub fn mixKerkerPulay(
+    pub fn mix_kerker_pulay(
         self: *PulayMixer,
         rho: []f64,
         rho_new: []const f64,
@@ -257,7 +257,7 @@ pub const PulayMixer = struct {
         }
 
         // Apply Kerker preconditioning to residual
-        const precond_residual = try applyKerkerPreconditioner(
+        const precond_residual = try apply_kerker_preconditioner(
             self.alloc,
             grid,
             residual,
@@ -315,7 +315,7 @@ pub const PulayMixer = struct {
         B[m * matrix_size + m] = 0.0;
         rhs_vec[m] = -1.0;
 
-        const coeffs = try solvePulaySystem(self.alloc, B, rhs_vec, matrix_size);
+        const coeffs = try solve_pulay_system(self.alloc, B, rhs_vec, matrix_size);
         defer self.alloc.free(coeffs);
 
         // Compute optimal density: rho = sum_i c_i * (rho_i + beta * PR_i)
@@ -333,7 +333,7 @@ pub const PulayMixer = struct {
 
 /// Apply Kerker preconditioner to a residual vector.
 /// Returns a new allocated array with the preconditioned residual.
-fn applyKerkerPreconditioner(
+fn apply_kerker_preconditioner(
     alloc: std.mem.Allocator,
     grid: Grid,
     residual: []const f64,
@@ -343,7 +343,7 @@ fn applyKerkerPreconditioner(
     const q0_sq = q0 * q0;
 
     // FFT to reciprocal space
-    const res_g = try fft_grid.realToReciprocal(alloc, grid, residual, use_rfft);
+    const res_g = try fft_grid.real_to_reciprocal(alloc, grid, residual, use_rfft);
     defer alloc.free(res_g);
 
     // Apply Kerker kernel in reciprocal space
@@ -354,7 +354,7 @@ fn applyKerkerPreconditioner(
     }
 
     // IFFT back to real space
-    return fft_grid.reciprocalToReal(alloc, grid, res_g);
+    return fft_grid.reciprocal_to_real(alloc, grid, res_g);
 }
 
 /// Apply ABINIT-style model dielectric preconditioner to a G-space potential residual.
@@ -363,11 +363,11 @@ fn applyKerkerPreconditioner(
 /// Modifies residual_g in place. No FFTs needed since input is already in G-space.
 ///
 /// Corresponds to ABINIT's moddiel subroutine (m_prcref.F90) with diemix=1.
-/// The mixing parameter (beta/diemix) is applied separately in PulayMixer.mixWithResidual().
+/// The mixing parameter (beta/diemix) is applied separately in PulayMixer.mix_with_residual().
 ///
 /// Note: For metals with very large diemac (>1e4), G=0 is nearly zeroed (P≈0),
 /// which may cause slow convergence of the macroscopic potential component.
-pub fn applyModelDielectricPreconditioner(
+pub fn apply_model_dielectric_preconditioner(
     grid: Grid,
     residual_g: []math.Complex,
     diemac: f64,
@@ -389,7 +389,7 @@ pub fn applyModelDielectricPreconditioner(
 }
 
 /// Solve the Pulay linear system using simple Gaussian elimination.
-fn solvePulaySystem(alloc: std.mem.Allocator, B: []f64, rhs: []f64, size: usize) ![]f64 {
+fn solve_pulay_system(alloc: std.mem.Allocator, B: []f64, rhs: []f64, size: usize) ![]f64 {
     // Copy matrix and rhs for in-place solving
     const A = try alloc.alloc(f64, size * size);
     defer alloc.free(A);
@@ -493,7 +493,7 @@ pub const ComplexPulayMixer = struct {
 
     /// Mix complex arrays using Pulay/DIIS with pre-computed (preconditioned) residual.
     /// Ownership of precond_residual is transferred to the mixer.
-    pub fn mixWithResidual(
+    pub fn mix_with_residual(
         self: *ComplexPulayMixer,
         rho: []math.Complex,
         precond_residual: []math.Complex,
@@ -555,7 +555,7 @@ pub const ComplexPulayMixer = struct {
         B[m * matrix_size + m] = 0.0;
         rhs[m] = -1.0;
 
-        const coeffs = try solvePulaySystem(self.alloc, B, rhs, matrix_size);
+        const coeffs = try solve_pulay_system(self.alloc, B, rhs, matrix_size);
         defer self.alloc.free(coeffs);
 
         // Compute optimal: rho = sum_i c_i * (rho_i + beta * PR_i)

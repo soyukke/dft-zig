@@ -166,7 +166,7 @@ pub const FftwPlan3d = struct {
     }
 
     /// Check if FFTW backend is available
-    pub fn isAvailable() bool {
+    pub fn is_available() bool {
         return enable_fftw;
     }
 };

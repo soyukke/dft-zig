@@ -16,7 +16,7 @@ const math = @import("../math/math.zig");
 /// Compute the electronic energy: E_elec = ½ Tr[P(H_core + F)].
 ///
 /// All matrices are row-major n×n.
-pub fn electronicEnergy(
+pub fn electronic_energy(
     n: usize,
     p: []const f64,
     h_core: []const f64,
@@ -39,7 +39,7 @@ pub fn electronicEnergy(
 /// Compute the nuclear repulsion energy V_nn = Σ_{A<B} Z_A Z_B / R_AB.
 ///
 /// Uses Hartree atomic units.
-pub fn nuclearRepulsionEnergy(
+pub fn nuclear_repulsion_energy(
     nuc_positions: []const math.Vec3,
     nuc_charges: []const f64,
 ) f64 {
@@ -58,7 +58,7 @@ pub fn nuclearRepulsionEnergy(
 }
 
 /// Compute total RHF energy: E_total = E_elec + V_nn.
-pub fn totalEnergy(
+pub fn total_energy(
     n: usize,
     p: []const f64,
     h_core: []const f64,
@@ -66,8 +66,8 @@ pub fn totalEnergy(
     nuc_positions: []const math.Vec3,
     nuc_charges: []const f64,
 ) f64 {
-    const e_elec = electronicEnergy(n, p, h_core, f);
-    const v_nn = nuclearRepulsionEnergy(nuc_positions, nuc_charges);
+    const e_elec = electronic_energy(n, p, h_core, f);
+    const v_nn = nuclear_repulsion_energy(nuc_positions, nuc_charges);
     return e_elec + v_nn;
 }
 
@@ -79,7 +79,7 @@ test "nuclear repulsion H2" {
         .{ .x = 1.4, .y = 0.0, .z = 0.0 },
     };
     const charges = [_]f64{ 1.0, 1.0 };
-    const v_nn = nuclearRepulsionEnergy(&positions, &charges);
+    const v_nn = nuclear_repulsion_energy(&positions, &charges);
     try testing.expectApproxEqAbs(v_nn, 1.0 / 1.4, 1e-12);
 }
 
@@ -90,6 +90,6 @@ test "electronic energy with identity-like matrices" {
     const p = [_]f64{ 1.0, 0.0, 0.0, 1.0 };
     const h = [_]f64{ -1.5, 0.0, 0.0, -1.5 };
     const f = [_]f64{ -0.5, 0.0, 0.0, -0.5 };
-    const e = electronicEnergy(n, &p, &h, &f);
+    const e = electronic_energy(n, &p, &h, &f);
     try std.testing.expectApproxEqAbs(e, 0.5 * 2.0 * (-1.5 + -0.5), 1e-12);
 }

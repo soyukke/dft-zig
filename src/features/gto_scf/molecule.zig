@@ -52,36 +52,36 @@ const elements = [_]ElementData{
 
 /// Convert element symbol to atomic number.
 /// Case-insensitive: "H", "h", "He", "he", "HE" all work.
-pub fn symbolToZ(symbol: []const u8) ?u32 {
+pub fn symbol_to_z(symbol: []const u8) ?u32 {
     if (symbol.len == 0 or symbol.len > 2) return null;
     for (elements) |e| {
-        if (eqlIgnoreCase(e.symbol, symbol)) return e.z;
+        if (eql_ignore_case(e.symbol, symbol)) return e.z;
     }
     return null;
 }
 
 /// Convert atomic number to element symbol.
-pub fn zToSymbol(z: u32) ?[]const u8 {
+pub fn z_to_symbol(z: u32) ?[]const u8 {
     if (z == 0 or z > elements.len) return null;
     return elements[z - 1].symbol;
 }
 
 /// Get atomic mass in AMU for a given atomic number.
-pub fn atomicMass(z: u32) ?f64 {
+pub fn atomic_mass(z: u32) ?f64 {
     if (z == 0 or z > elements.len) return null;
     return elements[z - 1].mass;
 }
 
 /// Case-insensitive string comparison.
-fn eqlIgnoreCase(a: []const u8, b: []const u8) bool {
+fn eql_ignore_case(a: []const u8, b: []const u8) bool {
     if (a.len != b.len) return false;
     for (a, b) |ca, cb| {
-        if (toLower(ca) != toLower(cb)) return false;
+        if (to_lower(ca) != to_lower(cb)) return false;
     }
     return true;
 }
 
-fn toLower(c: u8) u8 {
+fn to_lower(c: u8) u8 {
     return if (c >= 'A' and c <= 'Z') c + 32 else c;
 }
 
@@ -151,7 +151,7 @@ pub const ParseError = error{
 /// ```
 ///
 /// The `charge` parameter specifies the molecular charge (0 for neutral).
-fn parseAtomLine(
+fn parse_atom_line(
     line: []const u8,
     out_position: *Vec3,
     out_charge: *f64,
@@ -163,7 +163,7 @@ fn parseAtomLine(
     var tokens = std.mem.tokenizeAny(u8, trimmed, &std.ascii.whitespace);
 
     const symbol = tokens.next() orelse return ParseError.InvalidFormat;
-    const z = symbolToZ(symbol) orelse return ParseError.UnknownElement;
+    const z = symbol_to_z(symbol) orelse return ParseError.UnknownElement;
 
     const x_str = tokens.next() orelse return ParseError.InvalidCoordinate;
     const y_str = tokens.next() orelse return ParseError.InvalidCoordinate;
@@ -184,7 +184,7 @@ fn parseAtomLine(
     return z;
 }
 
-pub fn parseXyzString(
+pub fn parse_xyz_string(
     alloc: std.mem.Allocator,
     input: []const u8,
     basis_set: BasisSet,
@@ -193,7 +193,7 @@ pub fn parseXyzString(
     var lines_iter = std.mem.splitScalar(u8, input, '\n');
 
     // Line 1: atom count
-    const count_line = skipEmpty(&lines_iter) orelse return ParseError.InvalidFormat;
+    const count_line = skip_empty(&lines_iter) orelse return ParseError.InvalidFormat;
     const trimmed_count = std.mem.trim(u8, count_line, &std.ascii.whitespace);
     const n_atoms = std.fmt.parseInt(usize, trimmed_count, 10) catch
         return ParseError.InvalidAtomCount;
@@ -218,7 +218,7 @@ pub fn parseXyzString(
     // Parse atom lines
     for (0..n_atoms) |i| {
         const line = lines_iter.next() orelse return ParseError.InvalidFormat;
-        const z = try parseAtomLine(line, &positions[i], &charges[i], &atomic_numbers[i]);
+        const z = try parse_atom_line(line, &positions[i], &charges[i], &atomic_numbers[i]);
         total_z += z;
     }
 
@@ -229,7 +229,7 @@ pub fn parseXyzString(
     const n_electrons: usize = @intCast(n_electrons_signed);
 
     // Build shells
-    const shells = try buildShells(alloc, atomic_numbers, positions, basis_set);
+    const shells = try build_shells(alloc, atomic_numbers, positions, basis_set);
     errdefer alloc.free(shells);
 
     return .{
@@ -244,7 +244,7 @@ pub fn parseXyzString(
 }
 
 /// Skip empty lines and return the first non-empty line.
-fn skipEmpty(iter: *std.mem.SplitIterator(u8, .scalar)) ?[]const u8 {
+fn skip_empty(iter: *std.mem.SplitIterator(u8, .scalar)) ?[]const u8 {
     while (iter.next()) |line| {
         const trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
         if (trimmed.len > 0) return trimmed;
@@ -256,7 +256,7 @@ fn skipEmpty(iter: *std.mem.SplitIterator(u8, .scalar)) ?[]const u8 {
 ///
 /// The file should be in standard XYZ format (Angstrom coordinates).
 /// The `charge` parameter specifies the molecular charge (0 for neutral).
-pub fn loadXyzFile(
+pub fn load_xyz_file(
     alloc: std.mem.Allocator,
     io: std.Io,
     path: []const u8,
@@ -266,7 +266,7 @@ pub fn loadXyzFile(
     const content = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .limited(1024 * 1024));
     defer alloc.free(content);
 
-    return parseXyzString(alloc, content, basis_set, charge);
+    return parse_xyz_string(alloc, content, basis_set, charge);
 }
 
 // ============================================================================
@@ -277,7 +277,7 @@ pub fn loadXyzFile(
 const MAX_SHELLS_PER_ATOM = 8; // 6-31G(2df,p) has up to 8
 
 /// Build contracted shells for all atoms with the specified basis set.
-pub fn buildShells(
+pub fn build_shells(
     alloc: std.mem.Allocator,
     atomic_numbers: []const u32,
     positions: []const Vec3,
@@ -288,7 +288,7 @@ pub fn buildShells(
     // First pass: count total shells
     var total_shells: usize = 0;
     for (atomic_numbers) |z| {
-        const count = shellCountForAtom(z, basis_set) orelse
+        const count = shell_count_for_atom(z, basis_set) orelse
             return ParseError.UnsupportedElement;
         total_shells += count;
     }
@@ -299,7 +299,7 @@ pub fn buildShells(
     // Second pass: populate shells
     var idx: usize = 0;
     for (atomic_numbers, positions) |z, pos| {
-        const count = appendAtomShells(z, pos, basis_set, shells[idx..]) orelse
+        const count = append_atom_shells(z, pos, basis_set, shells[idx..]) orelse
             return ParseError.UnsupportedElement;
         idx += count;
     }
@@ -309,16 +309,16 @@ pub fn buildShells(
 }
 
 /// Get number of shells for an atom in a given basis set.
-fn shellCountForAtom(z: u32, basis_set: BasisSet) ?usize {
+fn shell_count_for_atom(z: u32, basis_set: BasisSet) ?usize {
     return switch (basis_set) {
-        .sto_3g => sto3g.numShellsForAtom(z),
+        .sto_3g => sto3g.num_shells_for_atom(z),
         .@"6-31g" => blk: {
-            const data = basis631g.buildAtomShells(z, .{ .x = 0, .y = 0, .z = 0 }) orelse
+            const data = basis631g.build_atom_shells(z, .{ .x = 0, .y = 0, .z = 0 }) orelse
                 break :blk null;
             break :blk data.count;
         },
         .@"6-31g_2dfp" => blk: {
-            const data = basis631g_2dfp.buildAtomShells(z, .{ .x = 0, .y = 0, .z = 0 }) orelse
+            const data = basis631g_2dfp.build_atom_shells(z, .{ .x = 0, .y = 0, .z = 0 }) orelse
                 break :blk null;
             break :blk data.count;
         },
@@ -326,25 +326,25 @@ fn shellCountForAtom(z: u32, basis_set: BasisSet) ?usize {
 }
 
 /// Append shells for one atom into the buffer. Returns number of shells written.
-fn appendAtomShells(z: u32, center: Vec3, basis_set: BasisSet, buf: []ContractedShell) ?usize {
+fn append_atom_shells(z: u32, center: Vec3, basis_set: BasisSet, buf: []ContractedShell) ?usize {
     switch (basis_set) {
         .sto_3g => {
-            const atom_shells = sto3g.buildAtomShells(z, center) orelse return null;
-            const count = sto3g.numShellsForAtom(z) orelse return null;
+            const atom_shells = sto3g.build_atom_shells(z, center) orelse return null;
+            const count = sto3g.num_shells_for_atom(z) orelse return null;
             for (0..count) |i| {
                 buf[i] = atom_shells[i];
             }
             return count;
         },
         .@"6-31g" => {
-            const data = basis631g.buildAtomShells(z, center) orelse return null;
+            const data = basis631g.build_atom_shells(z, center) orelse return null;
             for (0..data.count) |i| {
                 buf[i] = data.shells[i];
             }
             return data.count;
         },
         .@"6-31g_2dfp" => {
-            const data = basis631g_2dfp.buildAtomShells(z, center) orelse return null;
+            const data = basis631g_2dfp.build_atom_shells(z, center) orelse return null;
             for (0..data.count) |i| {
                 buf[i] = data.shells[i];
             }
@@ -357,48 +357,48 @@ fn appendAtomShells(z: u32, center: Vec3, basis_set: BasisSet, buf: []Contracted
 // Tests
 // ============================================================================
 
-test "symbolToZ basic elements" {
+test "symbol_to_z basic elements" {
     const testing = std.testing;
-    try testing.expectEqual(@as(?u32, 1), symbolToZ("H"));
-    try testing.expectEqual(@as(?u32, 6), symbolToZ("C"));
-    try testing.expectEqual(@as(?u32, 8), symbolToZ("O"));
-    try testing.expectEqual(@as(?u32, 7), symbolToZ("N"));
-    try testing.expectEqual(@as(?u32, 9), symbolToZ("F"));
-    try testing.expectEqual(@as(?u32, 2), symbolToZ("He"));
+    try testing.expectEqual(@as(?u32, 1), symbol_to_z("H"));
+    try testing.expectEqual(@as(?u32, 6), symbol_to_z("C"));
+    try testing.expectEqual(@as(?u32, 8), symbol_to_z("O"));
+    try testing.expectEqual(@as(?u32, 7), symbol_to_z("N"));
+    try testing.expectEqual(@as(?u32, 9), symbol_to_z("F"));
+    try testing.expectEqual(@as(?u32, 2), symbol_to_z("He"));
 }
 
-test "symbolToZ case insensitive" {
+test "symbol_to_z case insensitive" {
     const testing = std.testing;
-    try testing.expectEqual(@as(?u32, 1), symbolToZ("h"));
-    try testing.expectEqual(@as(?u32, 2), symbolToZ("he"));
-    try testing.expectEqual(@as(?u32, 2), symbolToZ("HE"));
-    try testing.expectEqual(@as(?u32, 6), symbolToZ("c"));
+    try testing.expectEqual(@as(?u32, 1), symbol_to_z("h"));
+    try testing.expectEqual(@as(?u32, 2), symbol_to_z("he"));
+    try testing.expectEqual(@as(?u32, 2), symbol_to_z("HE"));
+    try testing.expectEqual(@as(?u32, 6), symbol_to_z("c"));
 }
 
-test "symbolToZ unknown element" {
+test "symbol_to_z unknown element" {
     const testing = std.testing;
-    try testing.expectEqual(@as(?u32, null), symbolToZ("Xx"));
-    try testing.expectEqual(@as(?u32, null), symbolToZ(""));
-    try testing.expectEqual(@as(?u32, null), symbolToZ("Abc"));
+    try testing.expectEqual(@as(?u32, null), symbol_to_z("Xx"));
+    try testing.expectEqual(@as(?u32, null), symbol_to_z(""));
+    try testing.expectEqual(@as(?u32, null), symbol_to_z("Abc"));
 }
 
-test "zToSymbol" {
+test "z_to_symbol" {
     const testing = std.testing;
-    try testing.expectEqualStrings("H", zToSymbol(1).?);
-    try testing.expectEqualStrings("C", zToSymbol(6).?);
-    try testing.expectEqualStrings("O", zToSymbol(8).?);
-    try testing.expectEqual(@as(?[]const u8, null), zToSymbol(0));
-    try testing.expectEqual(@as(?[]const u8, null), zToSymbol(100));
+    try testing.expectEqualStrings("H", z_to_symbol(1).?);
+    try testing.expectEqualStrings("C", z_to_symbol(6).?);
+    try testing.expectEqualStrings("O", z_to_symbol(8).?);
+    try testing.expectEqual(@as(?[]const u8, null), z_to_symbol(0));
+    try testing.expectEqual(@as(?[]const u8, null), z_to_symbol(100));
 }
 
-test "atomicMass" {
+test "atomic_mass" {
     const testing = std.testing;
-    try testing.expectApproxEqAbs(1.00794, atomicMass(1).?, 1e-4);
-    try testing.expectApproxEqAbs(15.999, atomicMass(8).?, 1e-3);
-    try testing.expectEqual(@as(?f64, null), atomicMass(0));
+    try testing.expectApproxEqAbs(1.00794, atomic_mass(1).?, 1e-4);
+    try testing.expectApproxEqAbs(15.999, atomic_mass(8).?, 1e-3);
+    try testing.expectEqual(@as(?f64, null), atomic_mass(0));
 }
 
-test "parseXyzString H2O STO-3G" {
+test "parse_xyz_string H2O STO-3G" {
     const testing = std.testing;
     const alloc = testing.allocator;
 
@@ -410,7 +410,7 @@ test "parseXyzString H2O STO-3G" {
         \\H  0.000000 -0.757160 -0.469483
     ;
 
-    var mol = try parseXyzString(alloc, xyz, .sto_3g, 0);
+    var mol = try parse_xyz_string(alloc, xyz, .sto_3g, 0);
     defer mol.deinit();
 
     try testing.expectEqual(@as(usize, 3), mol.n_atoms);
@@ -428,7 +428,7 @@ test "parseXyzString H2O STO-3G" {
     try testing.expectApproxEqAbs(0.117370 * angstrom_to_bohr, mol.positions[0].z, 1e-6);
 }
 
-test "parseXyzString H2 6-31G" {
+test "parse_xyz_string H2 6-31G" {
     const testing = std.testing;
     const alloc = testing.allocator;
 
@@ -439,7 +439,7 @@ test "parseXyzString H2 6-31G" {
         \\H  0.0  0.0  0.74
     ;
 
-    var mol = try parseXyzString(alloc, xyz, .@"6-31g", 0);
+    var mol = try parse_xyz_string(alloc, xyz, .@"6-31g", 0);
     defer mol.deinit();
 
     try testing.expectEqual(@as(usize, 2), mol.n_atoms);
@@ -448,7 +448,7 @@ test "parseXyzString H2 6-31G" {
     try testing.expectEqual(@as(usize, 4), mol.shells.len);
 }
 
-test "parseXyzString charged molecule" {
+test "parse_xyz_string charged molecule" {
     const testing = std.testing;
     const alloc = testing.allocator;
 
@@ -459,12 +459,12 @@ test "parseXyzString charged molecule" {
     ;
 
     // H+ has 0 electrons with charge +1
-    const result = parseXyzString(alloc, xyz, .sto_3g, 1);
+    const result = parse_xyz_string(alloc, xyz, .sto_3g, 1);
     // Should fail because 0 electrons is invalid
     try testing.expectError(ParseError.InvalidFormat, result);
 }
 
-test "buildShells STO-3G H2O" {
+test "build_shells STO-3G H2O" {
     const testing = std.testing;
     const alloc = testing.allocator;
 
@@ -475,7 +475,7 @@ test "buildShells STO-3G H2O" {
     };
     const atomic_numbers = [_]u32{ 8, 1, 1 };
 
-    const shells = try buildShells(alloc, &atomic_numbers, &positions, .sto_3g);
+    const shells = try build_shells(alloc, &atomic_numbers, &positions, .sto_3g);
     defer alloc.free(shells);
 
     // O: 3 shells (1s, 2s, 2p), H: 1 shell each = 5

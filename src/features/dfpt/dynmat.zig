@@ -41,18 +41,18 @@ pub const PhononResult = struct {
     }
 };
 
-fn complexAbs2(z: math.Complex) f64 {
+fn complex_abs2(z: math.Complex) f64 {
     return z.r * z.r + z.i * z.i;
 }
 
-fn normalizeReal2(v0: f64, v1: f64) [2]f64 {
+fn normalize_real2(v0: f64, v1: f64) [2]f64 {
     const norm = std.math.sqrt(v0 * v0 + v1 * v1);
     if (norm < 1e-14) return .{ 1.0, 0.0 };
     return .{ v0 / norm, v1 / norm };
 }
 
-fn normalizeComplex2(v0: math.Complex, v1: math.Complex) [2]math.Complex {
-    const norm = std.math.sqrt(complexAbs2(v0) + complexAbs2(v1));
+fn normalize_complex2(v0: math.Complex, v1: math.Complex) [2]math.Complex {
+    const norm = std.math.sqrt(complex_abs2(v0) + complex_abs2(v1));
     if (norm < 1e-14) return .{ math.complex.init(1.0, 0.0), math.complex.init(0.0, 0.0) };
     return .{
         math.complex.scale(v0, 1.0 / norm),
@@ -60,7 +60,7 @@ fn normalizeComplex2(v0: math.Complex, v1: math.Complex) [2]math.Complex {
     };
 }
 
-fn phononResultEmpty(alloc: std.mem.Allocator) !PhononResult {
+fn phonon_result_empty(alloc: std.mem.Allocator) !PhononResult {
     return .{
         .omega2 = try alloc.alloc(f64, 0),
         .frequencies_cm1 = try alloc.alloc(f64, 0),
@@ -69,7 +69,7 @@ fn phononResultEmpty(alloc: std.mem.Allocator) !PhononResult {
     };
 }
 
-fn phononResultTrivial(alloc: std.mem.Allocator, lambda: f64) !PhononResult {
+fn phonon_result_trivial(alloc: std.mem.Allocator, lambda: f64) !PhononResult {
     const omega2 = try alloc.alloc(f64, 1);
     errdefer alloc.free(omega2);
 
@@ -77,7 +77,7 @@ fn phononResultTrivial(alloc: std.mem.Allocator, lambda: f64) !PhononResult {
     const freq = try alloc.alloc(f64, 1);
     errdefer alloc.free(freq);
 
-    freq[0] = omega2ToCm1(omega2[0]);
+    freq[0] = omega2_to_cm1(omega2[0]);
     const eigenvectors = try alloc.alloc(f64, 1);
     errdefer alloc.free(eigenvectors);
 
@@ -85,13 +85,13 @@ fn phononResultTrivial(alloc: std.mem.Allocator, lambda: f64) !PhononResult {
     return .{ .omega2 = omega2, .frequencies_cm1 = freq, .eigenvectors = eigenvectors, .dim = 1 };
 }
 
-fn diagonalizeRealSymmetricSmall(
+fn diagonalize_real_symmetric_small(
     alloc: std.mem.Allocator,
     dynmat: []const f64,
     dim: usize,
 ) !PhononResult {
-    if (dim == 0) return phononResultEmpty(alloc);
-    if (dim == 1) return phononResultTrivial(alloc, dynmat[0]);
+    if (dim == 0) return phonon_result_empty(alloc);
+    if (dim == 1) return phonon_result_trivial(alloc, dynmat[0]);
 
     const a = dynmat[0];
     const b = dynmat[1];
@@ -110,20 +110,20 @@ fn diagonalizeRealSymmetricSmall(
     const freq = try alloc.alloc(f64, 2);
     errdefer alloc.free(freq);
 
-    freq[0] = omega2ToCm1(lambda0);
-    freq[1] = omega2ToCm1(lambda1);
+    freq[0] = omega2_to_cm1(lambda0);
+    freq[1] = omega2_to_cm1(lambda1);
 
     const eigenvectors = try alloc.alloc(f64, 4);
     errdefer alloc.free(eigenvectors);
 
     const v0 = if (@abs(b) > 1e-14)
-        normalizeReal2(b, lambda0 - a)
+        normalize_real2(b, lambda0 - a)
     else if (a <= d)
         [2]f64{ 1.0, 0.0 }
     else
         [2]f64{ 0.0, 1.0 };
     const v1 = if (@abs(b) > 1e-14)
-        normalizeReal2(b, lambda1 - a)
+        normalize_real2(b, lambda1 - a)
     else if (a <= d)
         [2]f64{ 0.0, 1.0 }
     else
@@ -137,7 +137,7 @@ fn diagonalizeRealSymmetricSmall(
     return .{ .omega2 = omega2, .frequencies_cm1 = freq, .eigenvectors = eigenvectors, .dim = 2 };
 }
 
-fn complexPhononResultEmpty(alloc: std.mem.Allocator) !ComplexPhononResult {
+fn complex_phonon_result_empty(alloc: std.mem.Allocator) !ComplexPhononResult {
     return .{
         .omega2 = try alloc.alloc(f64, 0),
         .frequencies_cm1 = try alloc.alloc(f64, 0),
@@ -146,7 +146,7 @@ fn complexPhononResultEmpty(alloc: std.mem.Allocator) !ComplexPhononResult {
     };
 }
 
-fn complexPhononResultTrivial(alloc: std.mem.Allocator, lambda: f64) !ComplexPhononResult {
+fn complex_phonon_result_trivial(alloc: std.mem.Allocator, lambda: f64) !ComplexPhononResult {
     const omega2 = try alloc.alloc(f64, 1);
     errdefer alloc.free(omega2);
 
@@ -154,7 +154,7 @@ fn complexPhononResultTrivial(alloc: std.mem.Allocator, lambda: f64) !ComplexPho
     const freq = try alloc.alloc(f64, 1);
     errdefer alloc.free(freq);
 
-    freq[0] = omega2ToCm1(omega2[0]);
+    freq[0] = omega2_to_cm1(omega2[0]);
     const eigenvectors = try alloc.alloc(math.Complex, 1);
     errdefer alloc.free(eigenvectors);
 
@@ -162,19 +162,19 @@ fn complexPhononResultTrivial(alloc: std.mem.Allocator, lambda: f64) !ComplexPho
     return .{ .omega2 = omega2, .frequencies_cm1 = freq, .eigenvectors = eigenvectors, .dim = 1 };
 }
 
-fn diagonalizeComplexHermitianSmall(
+fn diagonalize_complex_hermitian_small(
     alloc: std.mem.Allocator,
     dynmat_c: []const math.Complex,
     dim: usize,
 ) !ComplexPhononResult {
-    if (dim == 0) return complexPhononResultEmpty(alloc);
-    if (dim == 1) return complexPhononResultTrivial(alloc, dynmat_c[0].r);
+    if (dim == 0) return complex_phonon_result_empty(alloc);
+    if (dim == 1) return complex_phonon_result_trivial(alloc, dynmat_c[0].r);
 
     const a = dynmat_c[0].r;
     const b = dynmat_c[1];
     const d = dynmat_c[3].r;
     const trace = a + d;
-    const gap = std.math.sqrt((a - d) * (a - d) + 4.0 * complexAbs2(b));
+    const gap = std.math.sqrt((a - d) * (a - d) + 4.0 * complex_abs2(b));
     const lambda0 = 0.5 * (trace - gap);
     const lambda1 = 0.5 * (trace + gap);
 
@@ -187,20 +187,20 @@ fn diagonalizeComplexHermitianSmall(
     const freq = try alloc.alloc(f64, 2);
     errdefer alloc.free(freq);
 
-    freq[0] = omega2ToCm1(lambda0);
-    freq[1] = omega2ToCm1(lambda1);
+    freq[0] = omega2_to_cm1(lambda0);
+    freq[1] = omega2_to_cm1(lambda1);
 
     const eigenvectors = try alloc.alloc(math.Complex, 4);
     errdefer alloc.free(eigenvectors);
 
-    const v0 = if (complexAbs2(b) > 1e-28)
-        normalizeComplex2(b, math.complex.init(lambda0 - a, 0.0))
+    const v0 = if (complex_abs2(b) > 1e-28)
+        normalize_complex2(b, math.complex.init(lambda0 - a, 0.0))
     else if (a <= d)
         [2]math.Complex{ math.complex.init(1.0, 0.0), math.complex.init(0.0, 0.0) }
     else
         [2]math.Complex{ math.complex.init(0.0, 0.0), math.complex.init(1.0, 0.0) };
-    const v1 = if (complexAbs2(b) > 1e-28)
-        normalizeComplex2(b, math.complex.init(lambda1 - a, 0.0))
+    const v1 = if (complex_abs2(b) > 1e-28)
+        normalize_complex2(b, math.complex.init(lambda1 - a, 0.0))
     else if (a <= d)
         [2]math.Complex{ math.complex.init(0.0, 0.0), math.complex.init(1.0, 0.0) }
     else
@@ -218,7 +218,7 @@ fn diagonalizeComplexHermitianSmall(
 /// For each atom I and directions α,β:
 ///   D_{Iα,Iβ} = -Σ_{J≠I} D_{Iα,Jβ}
 /// This ensures translational invariance: Σ_J D_{Iα,Jβ} = 0.
-pub fn applyASR(dynmat: []f64, n_atoms: usize) void {
+pub fn apply_asr(dynmat: []f64, n_atoms: usize) void {
     const dim = 3 * n_atoms;
     for (0..n_atoms) |i| {
         for (0..3) |alpha| {
@@ -237,7 +237,7 @@ pub fn applyASR(dynmat: []f64, n_atoms: usize) void {
 /// Divide by masses to get mass-weighted dynamical matrix.
 /// D̃_{Iα,Jβ} = D_{Iα,Jβ} / √(M_I × M_J)
 /// Masses in AMU.
-pub fn massWeight(dynmat: []f64, n_atoms: usize, masses: []const f64) void {
+pub fn mass_weight(dynmat: []f64, n_atoms: usize, masses: []const f64) void {
     const dim = 3 * n_atoms;
     for (0..n_atoms) |i| {
         for (0..n_atoms) |j| {
@@ -257,7 +257,7 @@ pub fn massWeight(dynmat: []f64, n_atoms: usize, masses: []const f64) void {
 ///
 /// Units: 1 Ry = 2.1798723611e-18 J, 1 bohr = 5.29177249e-11 m, 1 amu = 1.6605402e-27 kg
 /// c = 2.99792458e10 cm/s
-pub fn omega2ToCm1(omega2: f64) f64 {
+pub fn omega2_to_cm1(omega2: f64) f64 {
     const ry_to_j = 2.1798723611e-18;
     const bohr_to_m = 5.29177249e-11;
     const amu_to_kg = 1.6605402e-27;
@@ -279,8 +279,8 @@ pub fn omega2ToCm1(omega2: f64) f64 {
 /// Diagonalize a real symmetric dynamical matrix using LAPACK dsyev.
 pub fn diagonalize(alloc: std.mem.Allocator, dynmat: []const f64, dim: usize) !PhononResult {
     if (dynmat.len != dim * dim) return error.InvalidMatrixSize;
-    if (dim <= 2) return diagonalizeRealSymmetricSmall(alloc, dynmat, dim);
-    var eig = try linalg.realSymmetricEigenDecomp(alloc, .accelerate, dim, @constCast(dynmat));
+    if (dim <= 2) return diagonalize_real_symmetric_small(alloc, dynmat, dim);
+    var eig = try linalg.real_symmetric_eigen_decomp(alloc, .accelerate, dim, @constCast(dynmat));
     errdefer eig.deinit(alloc);
 
     // Convert to cm⁻¹
@@ -288,7 +288,7 @@ pub fn diagonalize(alloc: std.mem.Allocator, dynmat: []const f64, dim: usize) !P
     errdefer alloc.free(freq);
 
     for (0..dim) |i| {
-        freq[i] = omega2ToCm1(eig.values[i]);
+        freq[i] = omega2_to_cm1(eig.values[i]);
     }
 
     return .{
@@ -301,7 +301,7 @@ pub fn diagonalize(alloc: std.mem.Allocator, dynmat: []const f64, dim: usize) !P
 
 /// Divide by masses to get mass-weighted dynamical matrix (complex version).
 /// D̃_{Iα,Jβ} = D_{Iα,Jβ} / √(M_I × M_J)
-pub fn massWeightComplex(dynmat_c: []math.Complex, n_atoms: usize, masses: []const f64) void {
+pub fn mass_weight_complex(dynmat_c: []math.Complex, n_atoms: usize, masses: []const f64) void {
     const dim = 3 * n_atoms;
     for (0..n_atoms) |i| {
         for (0..n_atoms) |j| {
@@ -319,18 +319,18 @@ pub fn massWeightComplex(dynmat_c: []math.Complex, n_atoms: usize, masses: []con
 }
 
 /// Diagonalize a complex Hermitian dynamical matrix using LAPACK zheev.
-pub fn diagonalizeComplex(
+pub fn diagonalize_complex(
     alloc: std.mem.Allocator,
     dynmat_c: []const math.Complex,
     dim: usize,
 ) !ComplexPhononResult {
     if (dynmat_c.len != dim * dim) return error.InvalidMatrixSize;
-    if (dim <= 2) return diagonalizeComplexHermitianSmall(alloc, dynmat_c, dim);
+    if (dim <= 2) return diagonalize_complex_hermitian_small(alloc, dynmat_c, dim);
     const dynmat_copy = try alloc.alloc(math.Complex, dynmat_c.len);
     defer alloc.free(dynmat_copy);
 
     @memcpy(dynmat_copy, dynmat_c);
-    var eig = try linalg.hermitianEigenDecomp(alloc, .accelerate, dim, dynmat_copy);
+    var eig = try linalg.hermitian_eigen_decomp(alloc, .accelerate, dim, dynmat_copy);
     errdefer eig.deinit(alloc);
 
     // Convert to cm⁻¹
@@ -338,7 +338,7 @@ pub fn diagonalizeComplex(
     errdefer alloc.free(freq);
 
     for (0..dim) |i| {
-        freq[i] = omega2ToCm1(eig.values[i]);
+        freq[i] = omega2_to_cm1(eig.values[i]);
     }
 
     return .{
@@ -351,10 +351,10 @@ pub fn diagonalizeComplex(
 
 /// Compute only eigenvalues (frequencies) of a complex Hermitian dynamical matrix.
 /// Uses zheev with jobz='N' (no eigenvectors), ~2-3x faster than full diagonalization.
-pub fn eigenvaluesComplex(alloc: std.mem.Allocator, dynmat_c: []math.Complex, dim: usize) ![]f64 {
+pub fn eigenvalues_complex(alloc: std.mem.Allocator, dynmat_c: []math.Complex, dim: usize) ![]f64 {
     if (dynmat_c.len != dim * dim) return error.InvalidMatrixSize;
     if (dim <= 2) {
-        const result = try diagonalizeComplexHermitianSmall(alloc, dynmat_c, dim);
+        const result = try diagonalize_complex_hermitian_small(alloc, dynmat_c, dim);
         defer alloc.free(result.omega2);
         defer alloc.free(result.eigenvectors);
 
@@ -364,12 +364,12 @@ pub fn eigenvaluesComplex(alloc: std.mem.Allocator, dynmat_c: []math.Complex, di
     defer alloc.free(dynmat_copy);
 
     @memcpy(dynmat_copy, dynmat_c);
-    const omega2 = try linalg.hermitianEigenvalues(alloc, .accelerate, dim, dynmat_copy);
+    const omega2 = try linalg.hermitian_eigenvalues(alloc, .accelerate, dim, dynmat_copy);
     errdefer alloc.free(omega2);
 
     // Convert to cm⁻¹ in-place (reuse eigenvalue array)
     for (0..dim) |i| {
-        omega2[i] = omega2ToCm1(omega2[i]);
+        omega2[i] = omega2_to_cm1(omega2[i]);
     }
 
     return omega2;
@@ -384,7 +384,7 @@ pub fn eigenvaluesComplex(alloc: std.mem.Allocator, dynmat_c: []math.Complex, di
 /// where atom j is the image of atom i under S (rot + trans).
 /// Also returns the translation vectors needed to bring the image back to
 /// the fundamental unit cell (for phase factors at q≠0).
-pub fn buildIndsym(
+pub fn build_indsym(
     alloc: std.mem.Allocator,
     symops: []const symmetry_mod.SymOp,
     atoms: []const hamiltonian.AtomData,
@@ -435,7 +435,7 @@ pub fn buildIndsym(
 
         for (0..natom) |iatom| {
             // Apply rotation + translation in fractional coords
-            const rotated = rot.mulVec(atom_fracs[iatom]);
+            const rotated = rot.mul_vec(atom_fracs[iatom]);
             const image = math.Vec3{
                 .x = rotated.x + trans.x,
                 .y = rotated.y + trans.y,
@@ -472,7 +472,7 @@ pub fn buildIndsym(
             }
             if (!found) {
                 // This should not happen if symmetry operations are valid
-                @panic("buildIndsym: atom mapping failed");
+                @panic("build_indsym: atom mapping failed");
             }
         }
     }
@@ -483,7 +483,7 @@ pub fn buildIndsym(
 /// Convert a fractional-coordinate rotation matrix to Cartesian coordinates.
 /// R_cart = L R_frac L^{-1} where L is the lattice matrix (columns = lattice vectors).
 /// In our convention, cell.m[i][j] = a_i component j, so L = cell^T.
-pub fn fracRotToCart(rot: symmetry_mod.Mat3i, cell: math.Mat3) [3][3]f64 {
+pub fn frac_rot_to_cart(rot: symmetry_mod.Mat3i, cell: math.Mat3) [3][3]f64 {
     // L = cell^T (columns are lattice vectors a1, a2, a3)
     // L^{-1} can be computed via recip: L^{-1} = (cell^T)^{-1}
     // But it's easier to use: recip^T / (2π) = L^{-T}^{-1}...
@@ -559,7 +559,7 @@ pub fn fracRotToCart(rot: symmetry_mod.Mat3i, cell: math.Mat3) [3][3]f64 {
 ///
 /// The symmetrized matrix preserves the crystal symmetry and ensures
 /// D(α,I; β,J) = D*(β,J; α,I) (Hermiticity).
-pub fn symmetrizeDynmatComplex(
+pub fn symmetrize_dynmat_complex(
     alloc: std.mem.Allocator,
     dynmat: []math.Complex,
     n_atoms: usize,
@@ -587,7 +587,7 @@ pub fn symmetrizeDynmatComplex(
         // Check if this symmetry operation belongs to the little group of q:
         // S^T q ≡ q (mod G), i.e., (S^T q - q) must be integer
         const rot = symops[isym].rot;
-        const sq = symmetry_mod.Mat3i.transpose(rot).mulVec(q_frac);
+        const sq = symmetry_mod.Mat3i.transpose(rot).mul_vec(q_frac);
         const dq_x = sq.x - q_frac.x;
         const dq_y = sq.y - q_frac.y;
         const dq_z = sq.z - q_frac.z;
@@ -600,7 +600,7 @@ pub fn symmetrizeDynmatComplex(
         }
 
         // Compute Cartesian rotation matrix for this symmetry operation
-        const r_cart = fracRotToCart(symops[isym].rot, cell_bohr);
+        const r_cart = frac_rot_to_cart(symops[isym].rot, cell_bohr);
 
         for (0..n_atoms) |iatom| {
             for (0..n_atoms) |jatom| {
@@ -658,7 +658,7 @@ pub fn symmetrizeDynmatComplex(
 /// Apply acoustic sum rule to a complex dynamical matrix at Γ-point.
 /// For each atom I and directions α,β:
 ///   D_{Iα,Iβ} = -Σ_{J≠I} D_{Iα,Jβ}
-pub fn applyASRComplex(dynmat: []math.Complex, n_atoms: usize) void {
+pub fn apply_asr_complex(dynmat: []math.Complex, n_atoms: usize) void {
     const dim = 3 * n_atoms;
     for (0..n_atoms) |i| {
         for (0..3) |alpha| {
@@ -695,7 +695,7 @@ pub const IrreducibleAtomInfo = struct {
 
 /// Find indices of symmetry operations in the little group of q.
 /// The little group consists of operations S where S^T q ≡ q (mod G).
-fn findLittleGroupIndices(
+fn find_little_group_indices(
     alloc: std.mem.Allocator,
     symops: []const symmetry_mod.SymOp,
     q_frac: math.Vec3,
@@ -706,7 +706,7 @@ fn findLittleGroupIndices(
 
     for (symops, 0..) |sym, isym| {
         const rot = sym.rot;
-        const sq = symmetry_mod.Mat3i.transpose(rot).mulVec(q_frac);
+        const sq = symmetry_mod.Mat3i.transpose(rot).mul_vec(q_frac);
         const dq_x = sq.x - q_frac.x;
         const dq_y = sq.y - q_frac.y;
         const dq_z = sq.z - q_frac.z;
@@ -724,14 +724,14 @@ fn findLittleGroupIndices(
 /// The little group consists of symmetry operations S where S^T q ≡ q (mod G).
 /// Atoms related by little group operations share an orbit; the smallest index
 /// in each orbit is the representative (irreducible) atom.
-pub fn findIrreducibleAtoms(
+pub fn find_irreducible_atoms(
     alloc: std.mem.Allocator,
     symops: []const symmetry_mod.SymOp,
     indsym: []const []const usize,
     n_atoms: usize,
     q_frac: math.Vec3,
 ) !IrreducibleAtomInfo {
-    var little_group = try findLittleGroupIndices(alloc, symops, q_frac);
+    var little_group = try find_little_group_indices(alloc, symops, q_frac);
     defer little_group.deinit(alloc);
 
     // For each atom, find the representative (smallest index in orbit under little group)
@@ -807,7 +807,7 @@ pub const IrreduciblePertInfo = struct {
 /// Find irreducible perturbations (atom, direction) under the little group of q.
 /// A perturbation (I, α) is mapped by symmetry S to (S(I), Σ_γ R_cart[α][γ] × e_γ).
 /// Two perturbations are equivalent if they lie in the same orbit under these mappings.
-pub fn findIrreduciblePerturbations(
+pub fn find_irreducible_perturbations(
     alloc: std.mem.Allocator,
     symops: []const symmetry_mod.SymOp,
     indsym: []const []const usize,
@@ -817,7 +817,7 @@ pub fn findIrreduciblePerturbations(
 ) !IrreduciblePertInfo {
     const dim = 3 * n_atoms;
 
-    var little_group = try findLittleGroupIndices(alloc, symops, q_frac);
+    var little_group = try find_little_group_indices(alloc, symops, q_frac);
     defer little_group.deinit(alloc);
 
     const pert_to_irr = try alloc.alloc(usize, dim);
@@ -848,7 +848,7 @@ pub fn findIrreduciblePerturbations(
 
         for (little_group.items) |isym| {
             const mapped_atom = indsym[isym][ia];
-            const r_cart = fracRotToCart(symops[isym].rot, cell_bohr);
+            const r_cart = frac_rot_to_cart(symops[isym].rot, cell_bohr);
 
             // S maps (ia, dir) to (mapped_atom, Σ_γ R_cart[·][dir] × e_γ)
             // The mapped direction is a linear combination: row = R_cart[·][dir]
@@ -942,7 +942,7 @@ pub fn findIrreduciblePerturbations(
 /// For non-irreducible atom J with S(J) = I_irr:
 ///   D_{block}(I, J) = R × D_{block}(S(I), I_irr) × R^T
 /// At Γ-point, phase factor = 1.
-pub fn reconstructDynmatColumnsReal(
+pub fn reconstruct_dynmat_columns_real(
     dynmat: []f64,
     n_atoms: usize,
     irr_info: IrreducibleAtomInfo,
@@ -958,7 +958,7 @@ pub fn reconstructDynmatColumnsReal(
         // S maps jatom -> irr_atom: indsym[isym][jatom] == irr_atom
         const irr_atom = irr_info.atom_to_irr[jatom];
         const isym = irr_info.atom_sym_idx[jatom];
-        const r_cart = fracRotToCart(symops[isym].rot, cell_bohr);
+        const r_cart = frac_rot_to_cart(symops[isym].rot, cell_bohr);
 
         for (0..n_atoms) |iatom| {
             // S(iatom) under the same symmetry operation
@@ -984,7 +984,7 @@ pub fn reconstructDynmatColumnsReal(
 
 /// Reconstruct dynamical matrix columns for non-irreducible atoms (q≠0, complex).
 /// Includes phase factor exp(-i 2π q·(shift_I - shift_J)).
-pub fn reconstructDynmatColumnsComplex(
+pub fn reconstruct_dynmat_columns_complex(
     dynmat: []math.Complex,
     n_atoms: usize,
     irr_info: IrreducibleAtomInfo,
@@ -1002,7 +1002,7 @@ pub fn reconstructDynmatColumnsComplex(
 
         const irr_atom = irr_info.atom_to_irr[jatom];
         const isym = irr_info.atom_sym_idx[jatom];
-        const r_cart = fracRotToCart(symops[isym].rot, cell_bohr);
+        const r_cart = frac_rot_to_cart(symops[isym].rot, cell_bohr);
 
         for (0..n_atoms) |iatom| {
             const si = indsym[isym][iatom];
@@ -1053,7 +1053,7 @@ test "ASR enforces zero acoustic sum" {
         0.0,  -0.1, -0.7, 0.0,  0.2,  0.9,
     };
 
-    applyASR(&dynmat, 2);
+    apply_asr(&dynmat, 2);
 
     // Check: Σ_J D_{Iα,Jβ} = 0 for all I, α, β
     const dim = 6;
@@ -1073,16 +1073,16 @@ test "ASR enforces zero acoustic sum" {
 test "omega2 to cm-1 conversion" {
     // Test with a known value: Si optical mode ~521 cm⁻¹
     // ω² ≈ 3.5e-3 Ry/(bohr²·amu) for Si optical mode (approximate)
-    const freq = omega2ToCm1(3.5e-3);
+    const freq = omega2_to_cm1(3.5e-3);
     // Should be in the right ballpark (hundreds of cm⁻¹)
     try std.testing.expect(freq > 100.0);
     try std.testing.expect(freq < 1000.0);
 
     // Zero frequency for acoustic
-    try std.testing.expectApproxEqAbs(omega2ToCm1(0.0), 0.0, 1e-15);
+    try std.testing.expectApproxEqAbs(omega2_to_cm1(0.0), 0.0, 1e-15);
 
     // Imaginary frequency returns negative
-    try std.testing.expect(omega2ToCm1(-1e-4) < 0.0);
+    try std.testing.expect(omega2_to_cm1(-1e-4) < 0.0);
 }
 
 test "diagonalize simple matrix" {
@@ -1105,7 +1105,7 @@ test "diagonalize simple matrix" {
     try std.testing.expectApproxEqRel(result.omega2[1], expected_2, 1e-10);
 }
 
-test "diagonalizeComplex Hermitian matrix" {
+test "diagonalize_complex Hermitian matrix" {
     const alloc = std.testing.allocator;
 
     // 2×2 Hermitian matrix: [[2, 1-i], [1+i, 3]]
@@ -1114,7 +1114,7 @@ test "diagonalizeComplex Hermitian matrix" {
         math.complex.init(1.0, 1.0), math.complex.init(3.0, 0.0),
     };
 
-    var result = try diagonalizeComplex(alloc, &mat, 2);
+    var result = try diagonalize_complex(alloc, &mat, 2);
     defer result.deinit(alloc);
 
     // Eigenvalues of [[2, 1-i], [1+i, 3]]:
@@ -1124,7 +1124,7 @@ test "diagonalizeComplex Hermitian matrix" {
     try std.testing.expectApproxEqRel(result.omega2[1], 4.0, 1e-10);
 }
 
-test "diagonalizeComplex real Hermitian matches dsyev" {
+test "diagonalize_complex real Hermitian matches dsyev" {
     const alloc = std.testing.allocator;
 
     // Same matrix as the real test, but as complex with zero imaginary part
@@ -1140,7 +1140,7 @@ test "diagonalizeComplex real Hermitian matches dsyev" {
     var result_real = try diagonalize(alloc, &mat_real, 2);
     defer result_real.deinit(alloc);
 
-    var result_complex = try diagonalizeComplex(alloc, &mat_complex, 2);
+    var result_complex = try diagonalize_complex(alloc, &mat_complex, 2);
     defer result_complex.deinit(alloc);
 
     for (0..2) |i| {

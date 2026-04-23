@@ -20,8 +20,8 @@ const wfn_rot = @import("../../symmetry/wavefunction_rotation.zig");
 
 const dfpt = @import("../dfpt.zig");
 const GroundState = dfpt.GroundState;
-const logDfpt = dfpt.logDfpt;
-const logDfptInfo = dfpt.logDfptInfo;
+const log_dfpt = dfpt.log_dfpt;
+const log_dfpt_info = dfpt.log_dfpt_info;
 
 const Grid = scf_mod.Grid;
 
@@ -71,7 +71,7 @@ pub const KPointGsData = struct {
     }
 };
 
-fn initApplyContext(
+fn init_apply_context(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -103,7 +103,7 @@ fn initApplyContext(
     return apply_ctx;
 }
 
-fn solveOccupiedStates(
+fn solve_occupied_states(
     alloc: std.mem.Allocator,
     cfg: config_mod.Config,
     gs: *const GroundState,
@@ -120,10 +120,10 @@ fn solveOccupiedStates(
     const op = iterative.Operator{
         .n = n_pw,
         .ctx = @ptrCast(apply_ctx),
-        .apply = &scf_mod.applyHamiltonian,
-        .apply_batch = &scf_mod.applyHamiltonianBatched,
+        .apply = &scf_mod.apply_hamiltonian,
+        .apply_batch = &scf_mod.apply_hamiltonian_batched,
     };
-    var eig = try iterative.hermitianEigenDecompIterative(
+    var eig = try iterative.hermitian_eigen_decomp_iterative(
         alloc,
         cfg.linalg_backend,
         op,
@@ -161,7 +161,7 @@ fn solveOccupiedStates(
     };
 }
 
-fn solveDirectKpoint(
+fn solve_direct_kpoint(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -180,7 +180,7 @@ fn solveDirectKpoint(
     var map_k = try scf_mod.PwGridMap.init(alloc, @constCast(basis_k.gvecs), grid);
     errdefer map_k.deinit(alloc);
 
-    const apply_ctx_k = try initApplyContext(
+    const apply_ctx_k = try init_apply_context(
         alloc,
         io,
         cfg,
@@ -196,7 +196,7 @@ fn solveDirectKpoint(
         alloc.destroy(apply_ctx_k);
     }
 
-    var occupied = try solveOccupiedStates(alloc, cfg, gs, &basis_k, apply_ctx_k);
+    var occupied = try solve_occupied_states(alloc, cfg, gs, &basis_k, apply_ctx_k);
     errdefer occupied.deinit(alloc);
 
     return .{
@@ -214,7 +214,7 @@ fn solveDirectKpoint(
     };
 }
 
-fn solveIbzKpoint(
+fn solve_ibz_kpoint(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -230,7 +230,7 @@ fn solveIbzKpoint(
     var basis = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, k_cart);
     errdefer basis.deinit(alloc);
 
-    const apply_ctx = try initApplyContext(
+    const apply_ctx = try init_apply_context(
         alloc,
         io,
         cfg,
@@ -246,7 +246,7 @@ fn solveIbzKpoint(
         alloc.destroy(apply_ctx);
     }
 
-    var occupied = try solveOccupiedStates(alloc, cfg, gs, &basis, apply_ctx);
+    var occupied = try solve_occupied_states(alloc, cfg, gs, &basis, apply_ctx);
     errdefer occupied.deinit(alloc);
 
     apply_ctx.deinit(alloc);
@@ -261,7 +261,7 @@ fn solveIbzKpoint(
     };
 }
 
-fn buildRotatedBasis(
+fn build_rotated_basis(
     alloc: std.mem.Allocator,
     ibz_basis: plane_wave.Basis,
     symop: symmetry.SymOp,
@@ -274,7 +274,7 @@ fn buildRotatedBasis(
     const b1 = recip.row(0);
     const b2 = recip.row(1);
     const b3 = recip.row(2);
-    const sk_unwrapped = symop.k_rot.mulVec(ibz_frac);
+    const sk_unwrapped = symop.k_rot.mul_vec(ibz_frac);
     const sign_i: i32 = if (time_reversed) -1 else 1;
     const sign_f: f64 = if (time_reversed) -1.0 else 1.0;
     const delta_hkl = [3]i32{
@@ -318,7 +318,7 @@ fn buildRotatedBasis(
     };
 }
 
-fn expandIbzKpoint(
+fn expand_ibz_kpoint(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -334,8 +334,8 @@ fn expandIbzKpoint(
     ibz: *const IbzKData,
     full_kp: symmetry.KPoint,
 ) !KPointGsData {
-    const found = findSymopForKpoint(symops, ibz_frac, full_kp.k_frac, 1e-6);
-    var rotated = try buildRotatedBasis(
+    const found = find_symop_for_kpoint(symops, ibz_frac, full_kp.k_frac, 1e-6);
+    var rotated = try build_rotated_basis(
         alloc,
         ibz.basis,
         found.symop,
@@ -350,7 +350,7 @@ fn expandIbzKpoint(
     var map_k = try scf_mod.PwGridMap.init(alloc, @constCast(rotated.basis.gvecs), grid);
     errdefer map_k.deinit(alloc);
 
-    const apply_ctx_k = try initApplyContext(
+    const apply_ctx_k = try init_apply_context(
         alloc,
         io,
         cfg,
@@ -366,7 +366,7 @@ fn expandIbzKpoint(
         alloc.destroy(apply_ctx_k);
     }
 
-    const rot_result = try wfn_rot.rotateWavefunctionsInPlace(
+    const rot_result = try wfn_rot.rotate_wavefunctions_in_place(
         alloc,
         ibz.wavefunctions_const,
         ibz.basis,
@@ -403,7 +403,7 @@ fn expandIbzKpoint(
 /// Generates the full Monkhorst-Pack mesh (no symmetry reduction) and
 /// solves the eigenvalue problem at each k-point using the SCF potential.
 /// This is equivalent to ABINIT's kptopt=3 for DFPT calculations.
-pub fn prepareFullBZKpoints(
+pub fn prepare_full_bz_kpoints(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -421,11 +421,11 @@ pub fn prepareFullBZKpoints(
         .y = cfg.scf.kmesh_shift[1],
         .z = cfg.scf.kmesh_shift[2],
     };
-    const full_kpts = try mesh_mod.generateKmesh(alloc, kmesh, recip, shift);
+    const full_kpts = try mesh_mod.generate_kmesh(alloc, kmesh, recip, shift);
     defer alloc.free(full_kpts);
 
     const n_kpts = full_kpts.len;
-    logDfptInfo(
+    log_dfpt_info(
         "dfpt_band: generating full BZ k-mesh: {d}x{d}x{d} = {d} k-points\n",
         .{ kmesh[0], kmesh[1], kmesh[2], n_kpts },
     );
@@ -438,7 +438,7 @@ pub fn prepareFullBZKpoints(
     }
 
     for (full_kpts, 0..) |kp, ik| {
-        kgs_data[ik] = try solveDirectKpoint(
+        kgs_data[ik] = try solve_direct_kpoint(
             alloc,
             io,
             cfg,
@@ -454,7 +454,7 @@ pub fn prepareFullBZKpoints(
         built = ik + 1;
 
         if (ik == 0 or (ik + 1) % 16 == 0 or ik + 1 == n_kpts) {
-            logDfpt("dfpt_band: prepared k-point {d}/{d}\n", .{ ik + 1, n_kpts });
+            log_dfpt("dfpt_band: prepared k-point {d}/{d}\n", .{ ik + 1, n_kpts });
         }
     }
 
@@ -465,7 +465,7 @@ pub fn prepareFullBZKpoints(
 /// Solves eigenvalue problem only at IBZ k-points, then rotates wavefunctions
 /// to the full BZ using symmetry operations. This ensures ε tensor isotropy
 /// for cubic systems and reduces computation by the symmetry factor.
-pub fn prepareFullBZKpointsFromIBZ(
+pub fn prepare_full_bz_kpoints_from_ibz(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -487,24 +487,31 @@ pub fn prepareFullBZKpointsFromIBZ(
     const total = kmesh[0] * kmesh[1] * kmesh[2];
 
     // Get symmetry operations
-    const symops = try symmetry_mod.getSymmetryOps(alloc, cell_bohr, atoms, 1e-5);
+    const symops = try symmetry_mod.get_symmetry_ops(alloc, cell_bohr, atoms, 1e-5);
     defer alloc.free(symops);
 
-    logDfptInfo("dfpt_ibz: {d} symmetry operations\n", .{symops.len});
+    log_dfpt_info("dfpt_ibz: {d} symmetry operations\n", .{symops.len});
 
     // Filter symmetry ops compatible with k-mesh
-    const kmesh_ops = try reduction.filterSymOpsForKmesh(alloc, symops, kmesh, shift, 1e-8);
+    const kmesh_ops = try reduction.filter_sym_ops_for_kmesh(alloc, symops, kmesh, shift, 1e-8);
     defer alloc.free(kmesh_ops);
 
     // Get IBZ→full BZ mapping
-    var mapping = try reduction.reduceKmeshWithMapping(alloc, kmesh, shift, kmesh_ops, recip, true);
+    var mapping = try reduction.reduce_kmesh_with_mapping(
+        alloc,
+        kmesh,
+        shift,
+        kmesh_ops,
+        recip,
+        true,
+    );
     defer mapping.deinit(alloc);
 
     const n_ibz = mapping.ibz_kpoints.len;
-    logDfptInfo("dfpt_ibz: {d} IBZ k-points -> {d} full BZ k-points\n", .{ n_ibz, total });
+    log_dfpt_info("dfpt_ibz: {d} IBZ k-points -> {d} full BZ k-points\n", .{ n_ibz, total });
 
     // Generate full BZ mesh for reference (to get k_frac/k_cart for each full point)
-    const full_kpts = try mesh_mod.generateKmesh(alloc, kmesh, recip, shift);
+    const full_kpts = try mesh_mod.generate_kmesh(alloc, kmesh, recip, shift);
     defer alloc.free(full_kpts);
 
     const ibz_data = try alloc.alloc(IbzKData, n_ibz);
@@ -515,7 +522,7 @@ pub fn prepareFullBZKpointsFromIBZ(
     }
 
     for (mapping.ibz_kpoints, 0..) |kp, i_ibz| {
-        ibz_data[i_ibz] = try solveIbzKpoint(
+        ibz_data[i_ibz] = try solve_ibz_kpoint(
             alloc,
             io,
             cfg,
@@ -530,7 +537,7 @@ pub fn prepareFullBZKpointsFromIBZ(
         );
         ibz_built = i_ibz + 1;
 
-        logDfpt(
+        log_dfpt(
             "dfpt_ibz: solved IBZ k-point {d}/{d} (n_pw={d})\n",
             .{ i_ibz + 1, n_ibz, ibz_data[i_ibz].basis.gvecs.len },
         );
@@ -545,7 +552,7 @@ pub fn prepareFullBZKpointsFromIBZ(
 
     for (0..total) |i_full| {
         const i_ibz = mapping.full_to_ibz[i_full];
-        kgs_data[i_full] = try expandIbzKpoint(
+        kgs_data[i_full] = try expand_ibz_kpoint(
             alloc,
             io,
             cfg,
@@ -564,7 +571,7 @@ pub fn prepareFullBZKpointsFromIBZ(
         full_built = i_full + 1;
 
         if (i_full == 0 or (i_full + 1) % 16 == 0 or i_full + 1 == total) {
-            logDfpt("dfpt_ibz: expanded k-point {d}/{d}\n", .{ i_full + 1, total });
+            log_dfpt("dfpt_ibz: expanded k-point {d}/{d}\n", .{ i_full + 1, total });
         }
     }
 
@@ -577,9 +584,9 @@ const SymopMatch = struct {
 };
 
 /// Find the symmetry operation that maps k_ibz to k_full: k_rot * k_ibz ≡ ±k_full (mod 1).
-/// This is necessary because the grid-based mapIndex in reduceKmesh may assign incorrect
+/// This is necessary because the grid-based map_index in reduce_kmesh may assign incorrect
 /// symops for non-orthogonal reciprocal lattices.
-fn findSymopForKpoint(
+fn find_symop_for_kpoint(
     ops: []const symmetry.SymOp,
     k_ibz_frac: math.Vec3,
     k_full_frac: math.Vec3,
@@ -587,7 +594,7 @@ fn findSymopForKpoint(
 ) SymopMatch {
     // Try without time reversal first
     for (ops) |op| {
-        const sk = op.k_rot.mulVec(k_ibz_frac);
+        const sk = op.k_rot.mul_vec(k_ibz_frac);
         const dx = sk.x - k_full_frac.x;
         const dy = sk.y - k_full_frac.y;
         const dz = sk.z - k_full_frac.z;
@@ -600,7 +607,7 @@ fn findSymopForKpoint(
     }
     // Try with time reversal: -k_rot * k_ibz ≡ k_full (mod 1)
     for (ops) |op| {
-        const sk = op.k_rot.mulVec(k_ibz_frac);
+        const sk = op.k_rot.mul_vec(k_ibz_frac);
         const dx = -sk.x - k_full_frac.x;
         const dy = -sk.y - k_full_frac.y;
         const dz = -sk.z - k_full_frac.z;

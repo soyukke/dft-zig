@@ -1,10 +1,10 @@
 //! Dynamical-matrix construction for a single q-point.
 //!
 //! Two top-level builders live here:
-//!   - buildQDynmat        — reference single-k builder (currently dead code,
+//!   - build_q_dynmat        — reference single-k builder (currently dead code,
 //!                           retained alongside its single-k solver).
-//!   - buildQDynmatMultiK  — multi-k production path used by runPhononBand
-//!                           and runPhononBandIFC.
+//!   - build_q_dynmat_multi_k  — multi-k production path used by run_phonon_band
+//!                           and run_phonon_band_ifc.
 //!
 //! Each builder combines the q≠0 contributions (electronic, nonlocal
 //! response, NLCC cross) with the k-/q-independent self-energy + Ewald
@@ -28,20 +28,20 @@ const dynmat_mod = dfpt.dynmat;
 const dynmat_contrib = dfpt.dynmat_contrib;
 const GroundState = dfpt.GroundState;
 const PerturbationResult = dfpt.PerturbationResult;
-const logDfpt = dfpt.logDfpt;
+const log_dfpt = dfpt.log_dfpt;
 
 const kpt_dfpt = @import("kpt_dfpt.zig");
 const KPointDfptData = kpt_dfpt.KPointDfptData;
 const MultiKPertResult = kpt_dfpt.MultiKPertResult;
 
 const dynmat_elem_q = @import("dynmat_elem_q.zig");
-const computeElecDynmatElementQ = dynmat_elem_q.computeElecDynmatElementQ;
-const computeNonlocalResponseDynmatQ = dynmat_elem_q.computeNonlocalResponseDynmatQ;
-const computeNlccCrossDynmatQ = dynmat_elem_q.computeNlccCrossDynmatQ;
+const compute_elec_dynmat_element_q = dynmat_elem_q.compute_elec_dynmat_element_q;
+const compute_nonlocal_response_dynmat_q = dynmat_elem_q.compute_nonlocal_response_dynmat_q;
+const compute_nlcc_cross_dynmat_q = dynmat_elem_q.compute_nlcc_cross_dynmat_q;
 
 const Grid = scf_mod.Grid;
 
-fn allocDynmat(
+fn alloc_dynmat(
     alloc: std.mem.Allocator,
     dim: usize,
 ) ![]math.Complex {
@@ -50,7 +50,7 @@ fn allocDynmat(
     return dyn;
 }
 
-fn addComplexDynmat(
+fn add_complex_dynmat(
     dst: []math.Complex,
     src: []const math.Complex,
 ) void {
@@ -60,7 +60,7 @@ fn addComplexDynmat(
     }
 }
 
-fn addRealDynmat(
+fn add_real_dynmat(
     dst: []math.Complex,
     src: []const f64,
 ) void {
@@ -70,7 +70,7 @@ fn addRealDynmat(
     }
 }
 
-fn collectRho1Grids(
+fn collect_rho1_grids(
     alloc: std.mem.Allocator,
     pert_results: anytype,
     dim: usize,
@@ -84,7 +84,7 @@ fn collectRho1Grids(
     return rho1_val_gs;
 }
 
-fn fillElectronicDynmat(
+fn fill_electronic_dynmat(
     dyn_q: []math.Complex,
     dim: usize,
     vloc1_gs: []const []math.Complex,
@@ -93,7 +93,7 @@ fn fillElectronicDynmat(
 ) void {
     for (0..dim) |i| {
         for (0..dim) |j| {
-            dyn_q[i * dim + j] = computeElecDynmatElementQ(
+            dyn_q[i * dim + j] = compute_elec_dynmat_element_q(
                 vloc1_gs[i],
                 pert_results[j].rho1_g,
                 volume,
@@ -102,7 +102,7 @@ fn fillElectronicDynmat(
     }
 }
 
-fn fillIrreducibleElectronicDynmat(
+fn fill_irreducible_electronic_dynmat(
     dyn_q: []math.Complex,
     dim: usize,
     vloc1_gs: []const []math.Complex,
@@ -113,7 +113,7 @@ fn fillIrreducibleElectronicDynmat(
     for (0..dim) |i| {
         for (0..dim) |j| {
             if (!irr_info.is_irreducible[j / 3]) continue;
-            dyn_q[i * dim + j] = computeElecDynmatElementQ(
+            dyn_q[i * dim + j] = compute_elec_dynmat_element_q(
                 vloc1_gs[i],
                 pert_results[j].rho1_g,
                 volume,
@@ -122,7 +122,7 @@ fn fillIrreducibleElectronicDynmat(
     }
 }
 
-fn addSingleKNlccCrossContribution(
+fn add_single_k_nlcc_cross_contribution(
     alloc: std.mem.Allocator,
     dyn_q: []math.Complex,
     dim: usize,
@@ -135,10 +135,10 @@ fn addSingleKNlccCrossContribution(
 ) !void {
     if (gs.rho_core == null) return;
 
-    const rho1_val_gs = try collectRho1Grids(alloc, pert_results, dim);
+    const rho1_val_gs = try collect_rho1_grids(alloc, pert_results, dim);
     defer alloc.free(rho1_val_gs);
 
-    const nlcc_cross = try computeNlccCrossDynmatQ(
+    const nlcc_cross = try compute_nlcc_cross_dynmat_q(
         alloc,
         grid,
         gs,
@@ -149,11 +149,11 @@ fn addSingleKNlccCrossContribution(
     );
     defer alloc.free(nlcc_cross);
 
-    logDfpt(
+    log_dfpt(
         "dfptQ_dyn: D_nlcc_cross(0x,0x)=({e:.6},{e:.6})\n",
         .{ nlcc_cross[0].r, nlcc_cross[0].i },
     );
-    logDfpt(
+    log_dfpt(
         "dfptQ_dyn: D_nlcc_cross(1x,1x)=({e:.6},{e:.6})" ++
             " D_nlcc_cross(1x,0x)=({e:.6},{e:.6})\n",
         .{
@@ -163,10 +163,10 @@ fn addSingleKNlccCrossContribution(
             nlcc_cross[3 * dim].i,
         },
     );
-    addComplexDynmat(dyn_q, nlcc_cross);
+    add_complex_dynmat(dyn_q, nlcc_cross);
 }
 
-fn addMultiKNlccCrossContribution(
+fn add_multi_k_nlcc_cross_contribution(
     alloc: std.mem.Allocator,
     dyn_q: []math.Complex,
     dim: usize,
@@ -180,10 +180,10 @@ fn addMultiKNlccCrossContribution(
 ) !void {
     if (rho_core == null) return;
 
-    const rho1_val_gs = try collectRho1Grids(alloc, pert_results, dim);
+    const rho1_val_gs = try collect_rho1_grids(alloc, pert_results, dim);
     defer alloc.free(rho1_val_gs);
 
-    const nlcc_cross = try computeNlccCrossDynmatQ(
+    const nlcc_cross = try compute_nlcc_cross_dynmat_q(
         alloc,
         grid,
         gs,
@@ -194,14 +194,14 @@ fn addMultiKNlccCrossContribution(
     );
     defer alloc.free(nlcc_cross);
 
-    logDfpt(
+    log_dfpt(
         "dfptQ_mk_dyn: D_nlcc_cross(0x,0x)=({e:.6},{e:.6})\n",
         .{ nlcc_cross[0].r, nlcc_cross[0].i },
     );
-    addComplexDynmat(dyn_q, nlcc_cross);
+    add_complex_dynmat(dyn_q, nlcc_cross);
 }
 
-fn addSingleKQIndependentTerms(
+fn add_single_kq_independent_terms(
     alloc: std.mem.Allocator,
     dyn_q: []math.Complex,
     dim: usize,
@@ -216,7 +216,7 @@ fn addSingleKQIndependentTerms(
     vxc_g: ?[]const math.Complex,
     n_atoms: usize,
 ) !void {
-    const ewald_dyn_q = try ewald2.ewaldDynmatQ(
+    const ewald_dyn_q = try ewald2.ewald_dynmat_q(
         alloc,
         cell_bohr,
         recip,
@@ -226,11 +226,11 @@ fn addSingleKQIndependentTerms(
     );
     defer alloc.free(ewald_dyn_q);
 
-    logDfpt(
+    log_dfpt(
         "dfptQ_dyn: D_ewald(0x,0x)=({e:.6},{e:.6}) D_ewald(0x,1x)=({e:.6},{e:.6}) [Ha]\n",
         .{ ewald_dyn_q[0].r, ewald_dyn_q[0].i, ewald_dyn_q[3].r, ewald_dyn_q[3].i },
     );
-    logDfpt(
+    log_dfpt(
         "dfptQ_dyn: D_ewald(0x,0y)=({e:.6},{e:.6}) D_ewald(0y,0y)=({e:.6},{e:.6}) [Ha]\n",
         .{
             ewald_dyn_q[1].r,
@@ -239,21 +239,21 @@ fn addSingleKQIndependentTerms(
             ewald_dyn_q[dim + 1].i,
         },
     );
-    logDfpt("dfptQ_dyn: D_ewald full [Ha]:\n", .{});
+    log_dfpt("dfptQ_dyn: D_ewald full [Ha]:\n", .{});
     for (0..dim) |row| {
         for (0..dim) |col| {
-            logDfpt(
+            log_dfpt(
                 "  ({e:.6},{e:.6})",
                 .{ ewald_dyn_q[row * dim + col].r, ewald_dyn_q[row * dim + col].i },
             );
         }
-        logDfpt("\n", .{});
+        log_dfpt("\n", .{});
     }
     for (dyn_q, ewald_dyn_q) |*value, addend| {
         value.* = math.complex.add(value.*, math.complex.scale(addend, 2.0));
     }
 
-    const self_dyn_real = try dynmat_contrib.computeSelfEnergyDynmat(
+    const self_dyn_real = try dynmat_contrib.compute_self_energy_dynmat(
         alloc,
         grid,
         gs.species,
@@ -264,24 +264,24 @@ fn addSingleKQIndependentTerms(
     );
     defer alloc.free(self_dyn_real);
 
-    logDfpt(
+    log_dfpt(
         "dfptQ_dyn: D_self(0x,0x)={e:.6} D_self(0x,1x)={e:.6}\n",
         .{ self_dyn_real[0], self_dyn_real[3] },
     );
-    addRealDynmat(dyn_q, self_dyn_real);
+    add_real_dynmat(dyn_q, self_dyn_real);
 
-    const nl_self_real = try dynmat_contrib.computeNonlocalSelfEnergyDynmat(alloc, gs, n_atoms);
+    const nl_self_real = try dynmat_contrib.compute_nonlocal_self_energy_dynmat(alloc, gs, n_atoms);
     defer alloc.free(nl_self_real);
 
-    logDfpt(
+    log_dfpt(
         "dfptQ_dyn: D_nl_self(0x,0x)={e:.6} D_nl_self(0x,1x)={e:.6}\n",
         .{ nl_self_real[0], nl_self_real[3] },
     );
-    addRealDynmat(dyn_q, nl_self_real);
+    add_real_dynmat(dyn_q, nl_self_real);
 
     if (gs.rho_core == null) return;
     if (vxc_g) |vg| {
-        const nlcc_self_real = try dynmat_contrib.computeNlccSelfDynmat(
+        const nlcc_self_real = try dynmat_contrib.compute_nlcc_self_dynmat(
             alloc,
             grid,
             gs.species,
@@ -291,12 +291,12 @@ fn addSingleKQIndependentTerms(
         );
         defer alloc.free(nlcc_self_real);
 
-        logDfpt("dfptQ_dyn: D_nlcc_self(0x,0x)={e:.6}\n", .{nlcc_self_real[0]});
-        addRealDynmat(dyn_q, nlcc_self_real);
+        log_dfpt("dfptQ_dyn: D_nlcc_self(0x,0x)={e:.6}\n", .{nlcc_self_real[0]});
+        add_real_dynmat(dyn_q, nlcc_self_real);
     }
 }
 
-fn addMultiKQIndependentTerms(
+fn add_multi_kq_independent_terms(
     alloc: std.mem.Allocator,
     dyn_q: []math.Complex,
     kpts: []KPointDfptData,
@@ -320,7 +320,7 @@ fn addMultiKQIndependentTerms(
 ) !void {
     const dim = 3 * n_atoms;
 
-    const ewald_dyn_q = try ewald2.ewaldDynmatQ(
+    const ewald_dyn_q = try ewald2.ewald_dynmat_q(
         alloc,
         cell_bohr,
         recip,
@@ -330,7 +330,7 @@ fn addMultiKQIndependentTerms(
     );
     defer alloc.free(ewald_dyn_q);
 
-    logDfpt(
+    log_dfpt(
         "dfptQ_mk_dyn: D_ewald(0x,0x)=({e:.6},{e:.6}) [Ha]\n",
         .{ ewald_dyn_q[0].r, ewald_dyn_q[0].i },
     );
@@ -338,7 +338,7 @@ fn addMultiKQIndependentTerms(
         value.* = math.complex.add(value.*, math.complex.scale(addend, 2.0));
     }
 
-    const self_dyn_real = try dynmat_contrib.computeSelfEnergyDynmat(
+    const self_dyn_real = try dynmat_contrib.compute_self_energy_dynmat(
         alloc,
         grid,
         species,
@@ -349,18 +349,24 @@ fn addMultiKQIndependentTerms(
     );
     defer alloc.free(self_dyn_real);
 
-    logDfpt("dfptQ_mk_dyn: D_self(0x,0x)={e:.6}\n", .{self_dyn_real[0]});
-    addRealDynmat(dyn_q, self_dyn_real);
+    log_dfpt("dfptQ_mk_dyn: D_self(0x,0x)={e:.6}\n", .{self_dyn_real[0]});
+    add_real_dynmat(dyn_q, self_dyn_real);
 
-    const nl_self_real = try computeNonlocalSelfDynmatMultiK(alloc, kpts, atoms, n_atoms, volume);
+    const nl_self_real = try compute_nonlocal_self_dynmat_multi_k(
+        alloc,
+        kpts,
+        atoms,
+        n_atoms,
+        volume,
+    );
     defer alloc.free(nl_self_real);
 
-    logDfpt("dfptQ_mk_dyn: D_nl_self(0x,0x)={e:.6}\n", .{nl_self_real[0]});
-    addRealDynmat(dyn_q, nl_self_real);
+    log_dfpt("dfptQ_mk_dyn: D_nl_self(0x,0x)={e:.6}\n", .{nl_self_real[0]});
+    add_real_dynmat(dyn_q, nl_self_real);
 
     if (rho_core != null) {
         if (vxc_g) |vg| {
-            const nlcc_self_real = try dynmat_contrib.computeNlccSelfDynmat(
+            const nlcc_self_real = try dynmat_contrib.compute_nlcc_self_dynmat(
                 alloc,
                 grid,
                 species,
@@ -370,8 +376,8 @@ fn addMultiKQIndependentTerms(
             );
             defer alloc.free(nlcc_self_real);
 
-            logDfpt("dfptQ_mk_dyn: D_nlcc_self(0x,0x)={e:.6}\n", .{nlcc_self_real[0]});
-            addRealDynmat(dyn_q, nlcc_self_real);
+            log_dfpt("dfptQ_mk_dyn: D_nlcc_self(0x,0x)={e:.6}\n", .{nlcc_self_real[0]});
+            add_real_dynmat(dyn_q, nlcc_self_real);
         }
     }
 
@@ -381,7 +387,7 @@ fn addMultiKQIndependentTerms(
     defer alloc.free(atomic_numbers);
 
     for (atoms, 0..) |atom, i| {
-        atomic_numbers[i] = d3_params.atomicNumber(species[atom.species_index].symbol) orelse 0;
+        atomic_numbers[i] = d3_params.atomic_number(species[atom.species_index].symbol) orelse 0;
     }
     var damping_params = d3_params.pbe_d3bj;
     if (vdw_cfg.s6) |v| damping_params.s6 = v;
@@ -389,7 +395,7 @@ fn addMultiKQIndependentTerms(
     if (vdw_cfg.a1) |v| damping_params.a1 = v;
     if (vdw_cfg.a2) |v| damping_params.a2 = v;
 
-    const d3_dyn_q = try d3.computeDynmatQ(
+    const d3_dyn_q = try d3.compute_dynmat_q(
         alloc,
         atomic_numbers,
         positions,
@@ -401,12 +407,12 @@ fn addMultiKQIndependentTerms(
     );
     defer alloc.free(d3_dyn_q);
 
-    logDfpt("dfptQ_mk_dyn: D_d3(0x,0x)=({e:.6},{e:.6})\n", .{ d3_dyn_q[0].r, d3_dyn_q[0].i });
-    addComplexDynmat(dyn_q, d3_dyn_q);
+    log_dfpt("dfptQ_mk_dyn: D_d3(0x,0x)=({e:.6},{e:.6})\n", .{ d3_dyn_q[0].r, d3_dyn_q[0].i });
+    add_complex_dynmat(dyn_q, d3_dyn_q);
     _ = dim;
 }
 
-fn fillPhaseFactors(
+fn fill_phase_factors(
     phase: []math.Complex,
     gvecs: []const plane_wave.GVector,
     atom_position: math.Vec3,
@@ -416,7 +422,7 @@ fn fillPhaseFactors(
     }
 }
 
-fn projectNonlocalSelfEntry(
+fn project_nonlocal_self_entry(
     entry: anytype,
     phase: []const math.Complex,
     gvecs: []const plane_wave.GVector,
@@ -473,7 +479,7 @@ fn projectNonlocalSelfEntry(
     }
 }
 
-fn accumulateNonlocalSelfEntry(
+fn accumulate_nonlocal_self_entry(
     dyn: []f64,
     dim: usize,
     atom_idx: usize,
@@ -521,7 +527,7 @@ fn accumulateNonlocalSelfEntry(
 /// Build the full complex dynamical matrix for a finite q-point.
 /// Combines electronic, nonlocal, NLCC, Ewald, and self-energy contributions.
 /// All (I,J) pairs are computed explicitly; no Hermitianization needed.
-pub fn buildQDynmat(
+pub fn build_q_dynmat(
     alloc: std.mem.Allocator,
     gs: GroundState,
     pert_results: []PerturbationResult,
@@ -541,16 +547,16 @@ pub fn buildQDynmat(
 ) ![]math.Complex {
     const n_atoms = gs.atoms.len;
     const dim = 3 * n_atoms;
-    const dyn_q = try allocDynmat(alloc, dim);
+    const dyn_q = try alloc_dynmat(alloc, dim);
     errdefer alloc.free(dyn_q);
-    fillElectronicDynmat(dyn_q, dim, vloc1_gs, pert_results, volume);
-    logDfpt(
+    fill_electronic_dynmat(dyn_q, dim, vloc1_gs, pert_results, volume);
+    log_dfpt(
         "dfptQ_dyn: D_elec(0x,0x)=({e:.6},{e:.6}) D_elec(0x,1x)=({e:.6},{e:.6})\n",
         .{ dyn_q[0].r, dyn_q[0].i, dyn_q[3].r, dyn_q[3].i },
     );
 
     // Nonlocal response contribution (monochromatic)
-    const nl_resp_q = try computeNonlocalResponseDynmatQ(
+    const nl_resp_q = try compute_nonlocal_response_dynmat_q(
         alloc,
         gs,
         pert_results,
@@ -560,11 +566,11 @@ pub fn buildQDynmat(
     );
     defer alloc.free(nl_resp_q);
 
-    logDfpt(
+    log_dfpt(
         "dfptQ_dyn: D_nl_resp(0x,0x)=({e:.6},{e:.6}) D_nl_resp(0x,1x)=({e:.6},{e:.6})\n",
         .{ nl_resp_q[0].r, nl_resp_q[0].i, nl_resp_q[3].r, nl_resp_q[3].i },
     );
-    logDfpt(
+    log_dfpt(
         "dfptQ_dyn: D_nl_resp(1x,0x)=({e:.6},{e:.6}) D_nl_resp(1x,1x)=({e:.6},{e:.6})\n",
         .{
             nl_resp_q[3 * dim].r,
@@ -574,12 +580,12 @@ pub fn buildQDynmat(
         },
     );
     // Print D_elec for atom1 block too
-    logDfpt(
+    log_dfpt(
         "dfptQ_dyn: D_elec(1x,0x)=({e:.6},{e:.6}) D_elec(1x,1x)=({e:.6},{e:.6})\n",
         .{ dyn_q[3 * dim].r, dyn_q[3 * dim].i, dyn_q[3 * dim + 3].r, dyn_q[3 * dim + 3].i },
     );
-    addComplexDynmat(dyn_q, nl_resp_q);
-    try addSingleKNlccCrossContribution(
+    add_complex_dynmat(dyn_q, nl_resp_q);
+    try add_single_k_nlcc_cross_contribution(
         alloc,
         dyn_q,
         dim,
@@ -590,7 +596,7 @@ pub fn buildQDynmat(
         n_atoms,
         irr_info,
     );
-    try addSingleKQIndependentTerms(
+    try add_single_kq_independent_terms(
         alloc,
         dyn_q,
         dim,
@@ -605,7 +611,7 @@ pub fn buildQDynmat(
         vxc_g,
         n_atoms,
     );
-    logDfpt(
+    log_dfpt(
         "dfptQ_dyn: total(0x,0x)=({e:.6},{e:.6}) total(0x,1x)=({e:.6},{e:.6})" ++
             " total(0x,1y)=({e:.6},{e:.6})\n",
         .{ dyn_q[0].r, dyn_q[0].i, dyn_q[3].r, dyn_q[3].i, dyn_q[4].r, dyn_q[4].i },
@@ -616,7 +622,7 @@ pub fn buildQDynmat(
 
 /// Compute nonlocal response dynmat D_nl_resp summed over all k-points.
 /// D(Iα,Jβ) = Σ_k wtk × 4 × Σ_n ⟨dV_nl_{Iα,q} ψ^(0)_{n,k} | δψ_{n,k,Jβ}⟩
-pub fn computeNonlocalResponseDynmatQMultiK(
+pub fn compute_nonlocal_response_dynmat_q_multi_k(
     alloc: std.mem.Allocator,
     kpts: []KPointDfptData,
     pert_results: []MultiKPertResult,
@@ -641,7 +647,7 @@ pub fn computeNonlocalResponseDynmatQMultiK(
             const ia = i / 3;
             const dir_a = i % 3;
             for (0..kd.n_occ) |n| {
-                try perturbation.applyNonlocalPerturbationQ(
+                try perturbation.apply_nonlocal_perturbation_q(
                     alloc,
                     kd.basis_k.gvecs,
                     kd.basis_kq.gvecs,
@@ -679,7 +685,7 @@ pub fn computeNonlocalResponseDynmatQMultiK(
 
 /// Compute nonlocal self-energy dynmat D_nl_self summed over all k-points.
 /// This term only contributes to diagonal (I=J) blocks.
-pub fn computeNonlocalSelfDynmatMultiK(
+pub fn compute_nonlocal_self_dynmat_multi_k(
     alloc: std.mem.Allocator,
     kpts: []KPointDfptData,
     atoms: []const hamiltonian.AtomData,
@@ -718,8 +724,8 @@ pub fn computeNonlocalSelfDynmatMultiK(
                 if (atom.species_index != entry.species_index) continue;
 
                 for (0..kd.n_occ) |n| {
-                    fillPhaseFactors(phase, kd.basis_k.gvecs, atom.position);
-                    projectNonlocalSelfEntry(
+                    fill_phase_factors(phase, kd.basis_k.gvecs, atom.position);
+                    project_nonlocal_self_entry(
                         entry,
                         phase,
                         kd.basis_k.gvecs,
@@ -728,7 +734,7 @@ pub fn computeNonlocalSelfDynmatMultiK(
                         proj_alpha,
                         proj_alpha_beta,
                     );
-                    accumulateNonlocalSelfEntry(
+                    accumulate_nonlocal_self_entry(
                         dyn,
                         dim,
                         atom_idx,
@@ -748,7 +754,7 @@ pub fn computeNonlocalSelfDynmatMultiK(
 
 /// Build the full complex dynamical matrix for a finite q-point with multiple k-points.
 /// Combines electronic, nonlocal, NLCC, Ewald, and self-energy contributions.
-pub fn buildQDynmatMultiK(
+pub fn build_q_dynmat_multi_k(
     alloc: std.mem.Allocator,
     kpts: []KPointDfptData,
     pert_results: []MultiKPertResult,
@@ -775,11 +781,11 @@ pub fn buildQDynmatMultiK(
     const n_atoms = atoms.len;
     const dim = 3 * n_atoms;
 
-    const dyn_q = try allocDynmat(alloc, dim);
+    const dyn_q = try alloc_dynmat(alloc, dim);
     errdefer alloc.free(dyn_q);
-    fillIrreducibleElectronicDynmat(dyn_q, dim, vloc1_gs, pert_results, volume, irr_info);
-    logDfpt("dfptQ_mk_dyn: D_elec(0x,0x)=({e:.6},{e:.6})\n", .{ dyn_q[0].r, dyn_q[0].i });
-    const nl_resp_q = try computeNonlocalResponseDynmatQMultiK(
+    fill_irreducible_electronic_dynmat(dyn_q, dim, vloc1_gs, pert_results, volume, irr_info);
+    log_dfpt("dfptQ_mk_dyn: D_elec(0x,0x)=({e:.6},{e:.6})\n", .{ dyn_q[0].r, dyn_q[0].i });
+    const nl_resp_q = try compute_nonlocal_response_dynmat_q_multi_k(
         alloc,
         kpts,
         pert_results,
@@ -790,12 +796,12 @@ pub fn buildQDynmatMultiK(
     );
     defer alloc.free(nl_resp_q);
 
-    logDfpt(
+    log_dfpt(
         "dfptQ_mk_dyn: D_nl_resp(0x,0x)=({e:.6},{e:.6})\n",
         .{ nl_resp_q[0].r, nl_resp_q[0].i },
     );
-    addComplexDynmat(dyn_q, nl_resp_q);
-    try addMultiKNlccCrossContribution(
+    add_complex_dynmat(dyn_q, nl_resp_q);
+    try add_multi_k_nlcc_cross_contribution(
         alloc,
         dyn_q,
         dim,
@@ -807,7 +813,7 @@ pub fn buildQDynmatMultiK(
         irr_info,
         rho_core,
     );
-    try addMultiKQIndependentTerms(
+    try add_multi_kq_independent_terms(
         alloc,
         dyn_q,
         kpts,
@@ -829,7 +835,7 @@ pub fn buildQDynmatMultiK(
         vdw_cfg,
         n_atoms,
     );
-    logDfpt("dfptQ_mk_dyn: total(0x,0x)=({e:.6},{e:.6})\n", .{ dyn_q[0].r, dyn_q[0].i });
+    log_dfpt("dfptQ_mk_dyn: total(0x,0x)=({e:.6},{e:.6})\n", .{ dyn_q[0].r, dyn_q[0].i });
 
     return dyn_q;
 }

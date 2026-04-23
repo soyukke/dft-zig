@@ -57,7 +57,7 @@ pub const PwGridMap = struct {
 
     /// Build direct PW->FFT index mapping for fused scatter/gather.
     /// Eliminates the full-grid remap+scale loops (32K ops -> 2K ops).
-    pub fn buildFftIndices(
+    pub fn build_fft_indices(
         self: *PwGridMap,
         alloc: std.mem.Allocator,
         fft_index_map: []const usize,
@@ -92,7 +92,7 @@ pub const PwGridMap = struct {
     }
 
     /// Scatter PW coefficients directly to FFT-ordered buffer with scaling.
-    pub fn scatterFft(
+    pub fn scatter_fft(
         self: PwGridMap,
         coeffs: []const math.Complex,
         fft_data: []math.Complex,
@@ -105,7 +105,7 @@ pub const PwGridMap = struct {
     }
 
     /// Gather PW coefficients directly from FFT-ordered buffer with scaling.
-    pub fn gatherFft(
+    pub fn gather_fft(
         self: PwGridMap,
         fft_data: []const math.Complex,
         out: []math.Complex,

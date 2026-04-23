@@ -30,21 +30,23 @@ pub const Grid = grid_mod.Grid;
 pub const KPoint = symmetry.KPoint;
 
 const ApplyContext = apply.ApplyContext;
-const applyHamiltonian = apply.applyHamiltonian;
-const applyHamiltonianBatched = apply.applyHamiltonianBatched;
-const applyNonlocalPotential = apply.applyNonlocalPotential;
+const apply_hamiltonian = apply.apply_hamiltonian;
+const apply_hamiltonian_batched = apply.apply_hamiltonian_batched;
+const apply_nonlocal_potential = apply.apply_nonlocal_potential;
 const ScfProfile = logging.ScfProfile;
-const logKpoint = logging.logKpoint;
-const logIterativeGridTooSmall = logging.logIterativeGridTooSmall;
-const profileStart = logging.profileStart;
-const profileAdd = logging.profileAdd;
+const log_kpoint = logging.log_kpoint;
+const log_iterative_grid_too_small = logging.log_iterative_grid_too_small;
+const profile_start = logging.profile_start;
+const profile_add = logging.profile_add;
 const PwGridMap = pw_grid_map.PwGridMap;
-const gridRequirement = grid_requirements.gridRequirement;
-const nextFftSize = fft_sizing.nextFftSize;
-const fftReciprocalToComplexInPlace = fft_grid.fftReciprocalToComplexInPlace;
-const fftReciprocalToComplexInPlaceMapped = fft_grid.fftReciprocalToComplexInPlaceMapped;
-const fftComplexToReciprocalInPlace = fft_grid.fftComplexToReciprocalInPlace;
-const fftComplexToReciprocalInPlaceMapped = fft_grid.fftComplexToReciprocalInPlaceMapped;
+const grid_requirement = grid_requirements.grid_requirement;
+const next_fft_size = fft_sizing.next_fft_size;
+const fft_reciprocal_to_complex_in_place = fft_grid.fft_reciprocal_to_complex_in_place;
+const fft_reciprocal_to_complex_in_place_mapped =
+    fft_grid.fft_reciprocal_to_complex_in_place_mapped;
+const fft_complex_to_reciprocal_in_place = fft_grid.fft_complex_to_reciprocal_in_place;
+const fft_complex_to_reciprocal_in_place_mapped =
+    fft_grid.fft_complex_to_reciprocal_in_place_mapped;
 
 pub const KpointCache = struct {
     n: usize = 0,
@@ -76,7 +78,7 @@ pub const KpointCache = struct {
         @memcpy(self.vectors, values[0..total]);
     }
 
-    pub fn storeEigenvalues(self: *KpointCache, values: []const f64) !void {
+    pub fn store_eigenvalues(self: *KpointCache, values: []const f64) !void {
         if (self.eigenvalues.len != values.len) {
             if (self.eigenvalues.len > 0) {
                 std.heap.c_allocator.free(self.eigenvalues);
@@ -131,7 +133,7 @@ pub const KpointWorker = struct {
     thread_index: usize,
 };
 
-fn setWorkerError(shared: *KpointShared, err: anyerror) void {
+fn set_worker_error(shared: *KpointShared, err: anyerror) void {
     shared.err_mutex.lockUncancelable(shared.io);
     defer shared.err_mutex.unlock(shared.io);
 
@@ -140,8 +142,8 @@ fn setWorkerError(shared: *KpointShared, err: anyerror) void {
     }
 }
 
-/// Dispatch computeKpointContribution for the given k-point index.
-fn dispatchKpointContribution(
+/// Dispatch compute_kpoint_contribution for the given k-point index.
+fn dispatch_kpoint_contribution(
     shared: anytype,
     thread_index: usize,
     idx: usize,
@@ -155,7 +157,7 @@ fn dispatchKpointContribution(
         shared.fft_plans[thread_index]
     else
         null;
-    try computeKpointContribution(
+    try compute_kpoint_contribution(
         kalloc,
         shared.io,
         shared.cfg,
@@ -190,7 +192,7 @@ fn dispatchKpointContribution(
     );
 }
 
-pub fn kpointWorker(worker: *KpointWorker) void {
+pub fn kpoint_worker(worker: *KpointWorker) void {
     const shared = worker.shared;
     const thread_index = worker.thread_index;
     const start = thread_index * shared.ngrid;
@@ -212,12 +214,12 @@ pub fn kpointWorker(worker: *KpointWorker) void {
 
         if (!shared.cfg.scf.quiet) {
             shared.log_mutex.lockUncancelable(shared.io);
-            logKpoint(shared.io, idx, shared.kpoints.len) catch {};
+            log_kpoint(shared.io, idx, shared.kpoints.len) catch {};
             shared.log_mutex.unlock(shared.io);
         }
         _ = arena.reset(.retain_capacity);
         const kalloc = arena.allocator();
-        dispatchKpointContribution(
+        dispatch_kpoint_contribution(
             shared,
             thread_index,
             idx,
@@ -227,7 +229,7 @@ pub fn kpointWorker(worker: *KpointWorker) void {
             &local_nonlocal,
             profile_ptr,
         ) catch |err| {
-            setWorkerError(shared, err);
+            set_worker_error(shared, err);
             shared.stop.store(1, .release);
             break;
         };
@@ -240,7 +242,7 @@ pub fn kpointWorker(worker: *KpointWorker) void {
     }
 }
 
-pub fn kpointThreadCount(total: usize, cfg_threads: usize) usize {
+pub fn kpoint_thread_count(total: usize, cfg_threads: usize) usize {
     if (total <= 1) return 1;
     if (cfg_threads > 0) return @min(total, cfg_threads);
     const cpu_count = std.Thread.getCpuCount() catch 1;
@@ -288,7 +290,7 @@ pub const SmearingWorker = struct {
     thread_index: usize,
 };
 
-fn setSmearingWorkerError(shared: *SmearingShared, err: anyerror) void {
+fn set_smearing_worker_error(shared: *SmearingShared, err: anyerror) void {
     shared.err_mutex.lockUncancelable(shared.io);
     defer shared.err_mutex.unlock(shared.io);
 
@@ -297,8 +299,8 @@ fn setSmearingWorkerError(shared: *SmearingShared, err: anyerror) void {
     }
 }
 
-/// Dispatch computeKpointEigenData for the given k-point index.
-fn dispatchKpointEigenData(
+/// Dispatch compute_kpoint_eigen_data for the given k-point index.
+fn dispatch_kpoint_eigen_data(
     shared: anytype,
     thread_index: usize,
     idx: usize,
@@ -309,7 +311,7 @@ fn dispatchKpointEigenData(
         shared.fft_plans[thread_index]
     else
         null;
-    return try computeKpointEigenData(
+    return try compute_kpoint_eigen_data(
         kalloc,
         shared.io,
         shared.cfg,
@@ -340,7 +342,7 @@ fn dispatchKpointEigenData(
 }
 
 /// Copy eigendata from arena to persistent c_allocator buffers.
-fn persistEigenResult(
+fn persist_eigen_result(
     eigen_result: anytype,
 ) !struct { values: []f64, vectors: []math.Complex, nonlocal: ?[]f64 } {
     const values = try std.heap.c_allocator.alloc(f64, eigen_result.nbands);
@@ -361,7 +363,7 @@ fn persistEigenResult(
     return .{ .values = values, .vectors = vectors, .nonlocal = nonlocal_vals };
 }
 
-pub fn smearingWorker(worker: *SmearingWorker) void {
+pub fn smearing_worker(worker: *SmearingWorker) void {
     const shared = worker.shared;
     const thread_index = worker.thread_index;
 
@@ -378,26 +380,26 @@ pub fn smearingWorker(worker: *SmearingWorker) void {
 
         if (!shared.cfg.scf.quiet) {
             shared.log_mutex.lockUncancelable(shared.io);
-            logKpoint(shared.io, idx, shared.kpoints.len) catch {};
+            log_kpoint(shared.io, idx, shared.kpoints.len) catch {};
             shared.log_mutex.unlock(shared.io);
         }
         _ = arena.reset(.retain_capacity);
         const kalloc = arena.allocator();
 
-        const eigen_result = dispatchKpointEigenData(
+        const eigen_result = dispatch_kpoint_eigen_data(
             shared,
             thread_index,
             idx,
             kalloc,
             profile_ptr,
         ) catch |err| {
-            setSmearingWorkerError(shared, err);
+            set_smearing_worker_error(shared, err);
             shared.stop.store(1, .release);
             break;
         };
 
-        const persisted = persistEigenResult(eigen_result) catch |err| {
-            setSmearingWorkerError(shared, err);
+        const persisted = persist_eigen_result(eigen_result) catch |err| {
+            set_smearing_worker_error(shared, err);
             shared.stop.store(1, .release);
             break;
         };
@@ -418,7 +420,7 @@ pub fn smearingWorker(worker: *SmearingWorker) void {
 }
 
 /// Build or refresh the apply-cache entry for this k-point and wrap it in an ApplyContext.
-fn applyContextFromCacheOrBuild(
+fn apply_context_from_cache_or_build(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -438,7 +440,7 @@ fn applyContextFromCacheOrBuild(
     paw_tabs: ?[]const paw_mod.PawTab,
 ) !ApplyContext {
     if (apply_cache) |ac| {
-        try refreshApplyCache(
+        try refresh_apply_cache(
             ac,
             grid,
             basis_gvecs,
@@ -448,7 +450,7 @@ fn applyContextFromCacheOrBuild(
             radial_tables,
             paw_tabs,
         );
-        return try initApplyContextWithCache(
+        return try init_apply_context_with_cache(
             alloc,
             io,
             cfg,
@@ -465,7 +467,7 @@ fn applyContextFromCacheOrBuild(
         );
     }
     if (shared_fft_plan) |plan| {
-        return try ApplyContext.initWithFftPlan(
+        return try ApplyContext.init_with_fft_plan(
             alloc,
             io,
             grid,
@@ -498,7 +500,7 @@ fn applyContextFromCacheOrBuild(
     );
 }
 
-fn refreshApplyCache(
+fn refresh_apply_cache(
     ac: *apply.KpointApplyCache,
     grid: Grid,
     basis_gvecs: []plane_wave.GVector,
@@ -508,11 +510,11 @@ fn refreshApplyCache(
     radial_tables: ?[]const nonlocal.RadialTableSet,
     paw_tabs: ?[]const paw_mod.PawTab,
 ) !void {
-    if (ac.isValid(basis_gvecs.len)) return;
+    if (ac.is_valid(basis_gvecs.len)) return;
 
     ac.nonlocal_ctx = if (nonlocal_enabled)
         (if (paw_tabs) |tabs|
-            try apply.buildNonlocalContextPaw(
+            try apply.build_nonlocal_context_paw(
                 ac.cache_alloc,
                 species,
                 basis_gvecs,
@@ -520,24 +522,24 @@ fn refreshApplyCache(
                 tabs,
             )
         else if (radial_tables) |tables|
-            try apply.buildNonlocalContextWithTables(
+            try apply.build_nonlocal_context_with_tables(
                 ac.cache_alloc,
                 species,
                 basis_gvecs,
                 tables,
             )
         else
-            try apply.buildNonlocalContextPub(ac.cache_alloc, species, basis_gvecs))
+            try apply.build_nonlocal_context_pub(ac.cache_alloc, species, basis_gvecs))
     else
         null;
     ac.map = try PwGridMap.init(ac.cache_alloc, basis_gvecs, grid);
     if (fft_index_map) |idx_map| {
-        try ac.map.?.buildFftIndices(ac.cache_alloc, idx_map);
+        try ac.map.?.build_fft_indices(ac.cache_alloc, idx_map);
     }
     ac.basis_len = basis_gvecs.len;
 }
 
-fn initApplyContextWithCache(
+fn init_apply_context_with_cache(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -553,7 +555,7 @@ fn initApplyContextWithCache(
     ac: *apply.KpointApplyCache,
 ) !ApplyContext {
     if (shared_fft_plan) |plan| {
-        return try ApplyContext.initWithCache(
+        return try ApplyContext.init_with_cache(
             alloc,
             io,
             grid,
@@ -570,7 +572,7 @@ fn initApplyContextWithCache(
             false,
         );
     }
-    const new_plan = try fft.Fft3dPlan.initWithBackend(
+    const new_plan = try fft.Fft3dPlan.init_with_backend(
         alloc,
         io,
         grid.nx,
@@ -578,7 +580,7 @@ fn initApplyContextWithCache(
         grid.nz,
         cfg.scf.fft_backend,
     );
-    return try ApplyContext.initWithCache(
+    return try ApplyContext.init_with_cache(
         alloc,
         io,
         grid,
@@ -597,7 +599,7 @@ fn initApplyContextWithCache(
 }
 
 /// Run iterative (LOBPCG/CG) eigendecomposition using a fresh ApplyContext stored in apply_ctx_out.
-fn runIterativeEigenDecomp(
+fn run_iterative_eigen_decomp(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -630,7 +632,7 @@ fn runIterativeEigenDecomp(
         diag[i] = g.kinetic;
     }
     const local_values = local_r orelse return error.InvalidGrid;
-    const ctx = try applyContextFromCacheOrBuild(
+    const ctx = try apply_context_from_cache_or_build(
         alloc,
         io,
         cfg,
@@ -650,13 +652,13 @@ fn runIterativeEigenDecomp(
         paw_tabs,
     );
     apply_ctx_out.* = ctx;
-    const has_paw_overlap = if (ctx.nonlocal_ctx) |nc| nc.hasPawOverlap() else false;
+    const has_paw_overlap = if (ctx.nonlocal_ctx) |nc| nc.has_paw_overlap() else false;
     const op = iterative.Operator{
         .n = basis_gvecs.len,
         .ctx = &apply_ctx_out.*.?,
-        .apply = applyHamiltonian,
-        .apply_batch = applyHamiltonianBatched,
-        .apply_s = if (has_paw_overlap) apply.applyOverlap else null,
+        .apply = apply_hamiltonian,
+        .apply_batch = apply_hamiltonian_batched,
+        .apply_s = if (has_paw_overlap) apply.apply_overlap else null,
     };
     const opts = iterative.Options{
         .max_iter = iter_max_iter,
@@ -668,9 +670,9 @@ fn runIterativeEigenDecomp(
         .init_vectors_cols = init_cols,
     };
     if (use_cg) {
-        return try iterative.hermitianEigenDecompCG(alloc, op, diag, nbands, opts);
+        return try iterative.hermitian_eigen_decomp_cg(alloc, op, diag, nbands, opts);
     }
-    return try iterative.hermitianEigenDecompIterative(
+    return try iterative.hermitian_eigen_decomp_iterative(
         alloc,
         cfg.linalg_backend,
         op,
@@ -680,8 +682,8 @@ fn runIterativeEigenDecomp(
     );
 }
 
-/// Dense-solver eigendecomposition; uses buildHamiltonian + optional buildOverlapMatrix for PAW.
-fn runDenseEigenDecomp(
+/// Dense-solver eigendecomposition; uses build_hamiltonian + optional build_overlap_matrix for PAW.
+fn run_dense_eigen_decomp(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -694,8 +696,8 @@ fn runDenseEigenDecomp(
     has_qij: bool,
     profile_ptr: ?*ScfProfile,
 ) !linalg.EigenDecomp {
-    const h_start = if (profile_ptr != null) profileStart(io) else null;
-    const h = try hamiltonian.buildHamiltonian(
+    const h_start = if (profile_ptr != null) profile_start(io) else null;
+    const h = try hamiltonian.build_hamiltonian(
         alloc,
         basis_gvecs,
         species,
@@ -704,22 +706,22 @@ fn runDenseEigenDecomp(
         local_cfg,
         potential,
     );
-    if (profile_ptr) |p| profileAdd(io, &p.h_build_ns, h_start);
+    if (profile_ptr) |p| profile_add(io, &p.h_build_ns, h_start);
     defer alloc.free(h);
 
     if (has_qij) {
-        const s_start = if (profile_ptr != null) profileStart(io) else null;
-        const s = try hamiltonian.buildOverlapMatrix(
+        const s_start = if (profile_ptr != null) profile_start(io) else null;
+        const s = try hamiltonian.build_overlap_matrix(
             alloc,
             basis_gvecs,
             species,
             atoms,
             inv_volume,
         );
-        if (profile_ptr) |p| profileAdd(io, &p.s_build_ns, s_start);
+        if (profile_ptr) |p| profile_add(io, &p.s_build_ns, s_start);
         defer alloc.free(s);
 
-        return try linalg.hermitianGenEigenDecomp(
+        return try linalg.hermitian_gen_eigen_decomp(
             alloc,
             cfg.linalg_backend,
             basis_gvecs.len,
@@ -727,7 +729,7 @@ fn runDenseEigenDecomp(
             s,
         );
     }
-    return try linalg.hermitianEigenDecomp(
+    return try linalg.hermitian_eigen_decomp(
         alloc,
         cfg.linalg_backend,
         basis_gvecs.len,
@@ -736,7 +738,7 @@ fn runDenseEigenDecomp(
 }
 
 /// Generate plane-wave basis with optional timing profile.
-fn generateBasisProfiled(
+fn generate_basis_profiled(
     alloc: std.mem.Allocator,
     io: std.Io,
     recip: math.Mat3,
@@ -744,14 +746,14 @@ fn generateBasisProfiled(
     k_cart: math.Vec3,
     profile_ptr: ?*ScfProfile,
 ) !plane_wave.Basis {
-    const basis_start = if (profile_ptr != null) profileStart(io) else null;
+    const basis_start = if (profile_ptr != null) profile_start(io) else null;
     const basis = try plane_wave.generate(alloc, recip, ecut_ry, k_cart);
-    if (profile_ptr) |p| profileAdd(io, &p.basis_ns, basis_start);
+    if (profile_ptr) |p| profile_add(io, &p.basis_ns, basis_start);
     return basis;
 }
 
 /// Decide whether to use the iterative solver (respecting auto mode and grid fit).
-fn chooseIterativeSolver(
+fn choose_iterative_solver(
     io: std.Io,
     cfg: *const config.Config,
     grid: Grid,
@@ -763,7 +765,7 @@ fn chooseIterativeSolver(
         use_iterative = false;
     }
     if (use_iterative) {
-        const req = gridRequirement(basis_gvecs);
+        const req = grid_requirement(basis_gvecs);
         if (req.nx > grid.nx or req.ny > grid.ny or req.nz > grid.nz) {
             if (iterative_grid_warning_logged.cmpxchgStrong(
                 0,
@@ -771,14 +773,14 @@ fn chooseIterativeSolver(
                 .acquire,
                 .acquire,
             ) == null) {
-                try logIterativeGridTooSmall(
+                try log_iterative_grid_too_small(
                     io,
                     req.nx,
                     req.ny,
                     req.nz,
-                    nextFftSize(req.nx),
-                    nextFftSize(req.ny),
-                    nextFftSize(req.nz),
+                    next_fft_size(req.nx),
+                    next_fft_size(req.ny),
+                    next_fft_size(req.nz),
                 );
             }
             use_iterative = false;
@@ -788,7 +790,7 @@ fn chooseIterativeSolver(
 }
 
 /// Build the nonlocal matrix for dense solver paths; returns null for iterative or no nonlocal.
-fn buildVnlIfNeeded(
+fn build_vnl_if_needed(
     alloc: std.mem.Allocator,
     io: std.Io,
     basis_gvecs: []plane_wave.GVector,
@@ -800,9 +802,15 @@ fn buildVnlIfNeeded(
     profile_ptr: ?*ScfProfile,
 ) !?[]math.Complex {
     if (use_iterative or !nonlocal_enabled) return null;
-    const vnl_start = if (profile_ptr != null) profileStart(io) else null;
-    const mat = try hamiltonian.buildNonlocalMatrix(alloc, basis_gvecs, species, atoms, inv_volume);
-    if (profile_ptr) |p| profileAdd(io, &p.vnl_build_ns, vnl_start);
+    const vnl_start = if (profile_ptr != null) profile_start(io) else null;
+    const mat = try hamiltonian.build_nonlocal_matrix(
+        alloc,
+        basis_gvecs,
+        species,
+        atoms,
+        inv_volume,
+    );
+    if (profile_ptr) |p| profile_add(io, &p.vnl_build_ns, vnl_start);
     return mat;
 }
 
@@ -812,7 +820,7 @@ const InitVectors = struct {
     init_cols: usize,
 };
 
-fn pickInitVectors(
+fn pick_init_vectors(
     cache: *const KpointCache,
     basis_len: usize,
     nbands: usize,
@@ -837,7 +845,7 @@ const DensityBuffers = struct {
     plan: ?fft.Fft3dPlan,
 };
 
-fn allocateDensityBuffers(
+fn allocate_density_buffers(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -848,7 +856,7 @@ fn allocateDensityBuffers(
     const map = try PwGridMap.init(alloc, basis_gvecs, grid);
     const recip = try alloc.alloc(math.Complex, total);
     const real = try alloc.alloc(math.Complex, total);
-    const plan = try fft.Fft3dPlan.initWithBackend(
+    const plan = try fft.Fft3dPlan.init_with_backend(
         alloc,
         io,
         grid.nx,
@@ -859,7 +867,7 @@ fn allocateDensityBuffers(
     return .{ .map = map, .recip = recip, .real = real, .plan = plan };
 }
 
-fn deinitDensityBuffers(alloc: std.mem.Allocator, bufs: *DensityBuffers) void {
+fn deinit_density_buffers(alloc: std.mem.Allocator, bufs: *DensityBuffers) void {
     if (bufs.plan) |*plan| plan.deinit(alloc);
     if (bufs.map) |*m| m.deinit(alloc);
     if (bufs.recip) |buf| alloc.free(buf);
@@ -883,7 +891,7 @@ const SolvedKpoint = struct {
     }
 };
 
-fn runKpointSolve(
+fn run_kpoint_solve(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -914,13 +922,13 @@ fn runKpointSolve(
     apply_ctx: *?ApplyContext,
 ) !linalg.EigenDecomp {
     const init = if (loose_init)
-        pickInitVectorsLoose(cache, basis_gvecs.len, nbands, use_iterative, reuse_vectors)
+        pick_init_vectors_loose(cache, basis_gvecs.len, nbands, use_iterative, reuse_vectors)
     else
-        pickInitVectors(cache, basis_gvecs.len, nbands, use_iterative, reuse_vectors);
+        pick_init_vectors(cache, basis_gvecs.len, nbands, use_iterative, reuse_vectors);
     const use_cg = (cfg.scf.solver == .cg);
-    const eig_start = if (profile_ptr != null) profileStart(io) else null;
+    const eig_start = if (profile_ptr != null) profile_start(io) else null;
     const eig = if (use_iterative)
-        try runIterativeEigenDecomp(
+        try run_iterative_eigen_decomp(
             alloc,
             io,
             cfg,
@@ -947,7 +955,7 @@ fn runKpointSolve(
             apply_ctx,
         )
     else
-        try runDenseEigenDecomp(
+        try run_dense_eigen_decomp(
             alloc,
             io,
             cfg,
@@ -960,11 +968,11 @@ fn runKpointSolve(
             has_qij,
             profile_ptr,
         );
-    if (profile_ptr) |p| profileAdd(io, &p.eig_ns, eig_start);
+    if (profile_ptr) |p| profile_add(io, &p.eig_ns, eig_start);
     return eig;
 }
 
-fn solveKpoint(
+fn solve_kpoint(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -993,7 +1001,7 @@ fn solveKpoint(
     paw_tabs: ?[]const paw_mod.PawTab,
     loose_init: bool,
 ) !SolvedKpoint {
-    var basis = try generateBasisProfiled(
+    var basis = try generate_basis_profiled(
         alloc,
         io,
         recip,
@@ -1009,14 +1017,14 @@ fn solveKpoint(
     var apply_ctx: ?ApplyContext = null;
     errdefer if (apply_ctx) |*ctx| ctx.deinit(alloc);
 
-    const use_iterative = try chooseIterativeSolver(
+    const use_iterative = try choose_iterative_solver(
         io,
         cfg,
         grid,
         basis.gvecs,
         use_iterative_config,
     );
-    const vnl = try buildVnlIfNeeded(
+    const vnl = try build_vnl_if_needed(
         alloc,
         io,
         basis.gvecs,
@@ -1029,7 +1037,7 @@ fn solveKpoint(
     );
     errdefer if (vnl) |mat| alloc.free(mat);
 
-    var eig = try runKpointSolve(
+    var eig = try run_kpoint_solve(
         alloc,
         io,
         cfg,
@@ -1072,7 +1080,7 @@ fn solveKpoint(
     };
 }
 
-pub fn computeKpointContribution(
+pub fn compute_kpoint_contribution(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -1105,7 +1113,7 @@ pub fn computeKpointContribution(
     paw_tabs: ?[]const paw_mod.PawTab,
     paw_rhoij: ?*paw_mod.RhoIJ,
 ) !void {
-    var solved = try solveKpoint(
+    var solved = try solve_kpoint(
         alloc,
         io,
         cfg,
@@ -1137,10 +1145,10 @@ pub fn computeKpointContribution(
     defer solved.deinit(alloc);
 
     // FFT now supports arbitrary sizes via Bluestein's algorithm
-    var dbufs = try allocateDensityBuffers(alloc, io, cfg, grid, solved.basis.gvecs);
-    defer deinitDensityBuffers(alloc, &dbufs);
+    var dbufs = try allocate_density_buffers(alloc, io, cfg, grid, solved.basis.gvecs);
+    defer deinit_density_buffers(alloc, &dbufs);
 
-    try accumulateBandContributions(
+    try accumulate_band_contributions(
         alloc,
         io,
         cfg,
@@ -1168,7 +1176,7 @@ pub fn computeKpointContribution(
         paw_rhoij,
     );
 
-    try storeEigResult(
+    try store_eig_result(
         cache,
         solved.basis.gvecs.len,
         solved.nbands,
@@ -1177,7 +1185,7 @@ pub fn computeKpointContribution(
     );
 }
 
-fn storeEigResult(
+fn store_eig_result(
     cache: *KpointCache,
     basis_len: usize,
     nbands: usize,
@@ -1188,11 +1196,11 @@ fn storeEigResult(
         try cache.store(basis_len, nbands, eig.vectors);
     }
     // Always save eigenvalues for potential use in constructing WavefunctionData
-    try cache.storeEigenvalues(eig.values[0..nbands]);
+    try cache.store_eigenvalues(eig.values[0..nbands]);
 }
 
 /// Accumulate rhoij contribution for a single band from either cached or fresh nonlocal context.
-fn accumulateBandPawRhoIJ(
+fn accumulate_band_paw_rho_ij(
     alloc: std.mem.Allocator,
     apply_cache: ?*apply.KpointApplyCache,
     apply_ctx: *?ApplyContext,
@@ -1206,7 +1214,7 @@ fn accumulateBandPawRhoIJ(
     if (apply_cache) |ac| {
         if (ac.nonlocal_ctx) |*nl| {
             if (nl.has_paw) {
-                try apply.accumulatePawRhoIJ(
+                try apply.accumulate_paw_rho_ij(
                     alloc,
                     nl,
                     basis_gvecs,
@@ -1223,7 +1231,7 @@ fn accumulateBandPawRhoIJ(
     if (apply_ctx.*) |*ctx| {
         if (ctx.nonlocal_ctx) |*nl| {
             if (nl.has_paw) {
-                try apply.accumulatePawRhoIJ(
+                try apply.accumulate_paw_rho_ij(
                     alloc,
                     nl,
                     basis_gvecs,
@@ -1239,7 +1247,7 @@ fn accumulateBandPawRhoIJ(
 }
 
 /// Per-band band-energy, nonlocal-energy, density and (optionally) PAW rhoij accumulation.
-fn accumulateBandContributions(
+fn accumulate_band_contributions(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -1279,19 +1287,19 @@ fn accumulateBandContributions(
         const w = kp.weight * occ * spin_factor;
         band_energy.* += w * eig.values[band];
         if (vnl) |mat| {
-            const e_nl = bandNonlocalEnergy(basis_gvecs.len, mat, eig.vectors, band);
+            const e_nl = band_nonlocal_energy(basis_gvecs.len, mat, eig.vectors, band);
             nonlocal_energy.* += w * e_nl;
         } else if (apply_ctx.*) |*ctx| {
             if (ctx.nonlocal_ctx != null) {
                 const psi = eig.vectors[band * basis_gvecs.len .. (band + 1) * basis_gvecs.len];
-                try applyNonlocalPotential(ctx, psi, ctx.work_vec);
-                const e_nl = innerProduct(basis_gvecs.len, psi, ctx.work_vec).r;
+                try apply_nonlocal_potential(ctx, psi, ctx.work_vec);
+                const e_nl = inner_product(basis_gvecs.len, psi, ctx.work_vec).r;
                 nonlocal_energy.* += w * e_nl;
             }
         }
-        const density_start = if (profile_ptr != null) profileStart(io) else null;
+        const density_start = if (profile_ptr != null) profile_start(io) else null;
         const coeffs = eig.vectors[band * basis_gvecs.len .. (band + 1) * basis_gvecs.len];
-        try accumulateBandDensityFft(
+        try accumulate_band_density_fft(
             alloc,
             grid,
             density_map.?,
@@ -1304,10 +1312,10 @@ fn accumulateBandContributions(
             inv_volume,
             rho,
         );
-        if (profile_ptr) |p| profileAdd(io, &p.density_ns, density_start);
+        if (profile_ptr) |p| profile_add(io, &p.density_ns, density_start);
 
         if (paw_rhoij) |rij| {
-            try accumulateBandPawRhoIJ(
+            try accumulate_band_paw_rho_ij(
                 alloc,
                 apply_cache,
                 apply_ctx,
@@ -1339,7 +1347,7 @@ pub const KpointEigenData = struct {
 };
 
 /// Pick warm-start init vectors for smearing path where cache.nbands can exceed nbands.
-fn pickInitVectorsLoose(
+fn pick_init_vectors_loose(
     cache: *const KpointCache,
     basis_len: usize,
     nbands: usize,
@@ -1357,7 +1365,7 @@ fn pickInitVectorsLoose(
 }
 
 /// Compute per-band nonlocal expectation values for the smearing path.
-fn computeNonlocalBandEntries(
+fn compute_nonlocal_band_entries(
     alloc: std.mem.Allocator,
     nbands: usize,
     basis_len: usize,
@@ -1371,22 +1379,22 @@ fn computeNonlocalBandEntries(
     @memset(entries, 0.0);
     if (vnl) |mat| {
         for (entries, 0..) |*value, band| {
-            value.* = bandNonlocalEnergy(basis_len, mat, vectors, band);
+            value.* = band_nonlocal_energy(basis_len, mat, vectors, band);
         }
     } else if (apply_ctx.*) |*ctx| {
         if (ctx.nonlocal_ctx != null) {
             var band: usize = 0;
             while (band < nbands) : (band += 1) {
                 const psi = vectors[band * basis_len .. (band + 1) * basis_len];
-                try applyNonlocalPotential(ctx, psi, ctx.work_vec);
-                entries[band] = innerProduct(basis_len, psi, ctx.work_vec).r;
+                try apply_nonlocal_potential(ctx, psi, ctx.work_vec);
+                entries[band] = inner_product(basis_len, psi, ctx.work_vec).r;
             }
         }
     }
     return entries;
 }
 
-pub fn computeKpointEigenData(
+pub fn compute_kpoint_eigen_data(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -1414,7 +1422,7 @@ pub fn computeKpointEigenData(
     radial_tables: ?[]const nonlocal.RadialTableSet,
     paw_tabs: ?[]const paw_mod.PawTab,
 ) !KpointEigenData {
-    var solved = try solveKpoint(
+    var solved = try solve_kpoint(
         alloc,
         io,
         cfg,
@@ -1445,7 +1453,7 @@ pub fn computeKpointEigenData(
     );
     defer solved.deinit(alloc);
 
-    return try finalizeEigenData(
+    return try finalize_eigen_data(
         alloc,
         kp,
         solved.eig,
@@ -1461,7 +1469,7 @@ pub fn computeKpointEigenData(
 
 /// Copy eig result to persistent storage, compute nonlocal-band entries,
 /// update cache, return result.
-fn finalizeEigenData(
+fn finalize_eigen_data(
     alloc: std.mem.Allocator,
     kp: KPoint,
     eig: linalg.EigenDecomp,
@@ -1473,14 +1481,14 @@ fn finalizeEigenData(
     cache: *KpointCache,
     store_vectors: bool,
 ) !KpointEigenData {
-    const dup = try duplicateEigResult(alloc, eig, basis_len, nbands);
+    const dup = try duplicate_eig_result(alloc, eig, basis_len, nbands);
     errdefer {
         alloc.free(dup.values);
         alloc.free(dup.vectors);
     }
     var nonlocal_band: ?[]f64 = null;
     if (nonlocal_enabled) {
-        nonlocal_band = try computeNonlocalBandEntries(
+        nonlocal_band = try compute_nonlocal_band_entries(
             alloc,
             nbands,
             basis_len,
@@ -1489,7 +1497,7 @@ fn finalizeEigenData(
             apply_ctx,
         );
     }
-    try maybeStoreEigenInCache(
+    try maybe_store_eigen_in_cache(
         cache,
         basis_len,
         nbands,
@@ -1508,7 +1516,7 @@ fn finalizeEigenData(
 }
 
 /// Save eigenvectors (if allowed) and eigenvalues into the per-kpoint cache.
-fn maybeStoreEigenInCache(
+fn maybe_store_eigen_in_cache(
     cache: *KpointCache,
     basis_len: usize,
     nbands: usize,
@@ -1520,12 +1528,12 @@ fn maybeStoreEigenInCache(
         try cache.store(basis_len, nbands, vectors);
     }
     if (nbands >= cache.eigenvalues.len) {
-        try cache.storeEigenvalues(values[0..nbands]);
+        try cache.store_eigenvalues(values[0..nbands]);
     }
 }
 
 /// Allocate and copy eig.values[0..nbands] and eig.vectors[0..basis_len*nbands] to new buffers.
-fn duplicateEigResult(
+fn duplicate_eig_result(
     alloc: std.mem.Allocator,
     eig: linalg.EigenDecomp,
     basis_len: usize,
@@ -1543,7 +1551,7 @@ fn duplicateEigResult(
     return .{ .values = values, .vectors = vectors };
 }
 
-pub fn accumulateKpointDensitySmearing(
+pub fn accumulate_kpoint_density_smearing(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -1564,7 +1572,7 @@ pub fn accumulateKpointDensitySmearing(
     paw_rhoij: ?*paw_mod.RhoIJ,
     atoms: ?[]const hamiltonian.AtomData,
 ) !void {
-    return accumulateKpointDensitySmearingSpin(
+    return accumulate_kpoint_density_smearing_spin(
         alloc,
         io,
         cfg,
@@ -1590,7 +1598,7 @@ pub fn accumulateKpointDensitySmearing(
 
 /// Spin-factor parameterized version.
 /// Process one band for the smearing-spin density accumulation.
-fn accumulateSmearingBand(
+fn accumulate_smearing_band(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -1614,9 +1622,9 @@ fn accumulateSmearingBand(
     paw_rhoij: ?*paw_mod.RhoIJ,
     atoms: ?[]const hamiltonian.AtomData,
 ) !void {
-    const occ = smearingOcc(cfg.scf.smearing, data.values[band], mu, sigma);
+    const occ = smearing_occ(cfg.scf.smearing, data.values[band], mu, sigma);
     // Accumulate entropy term: -T*S = sigma * sum[f*ln(f) + (1-f)*ln(1-f)]
-    const entropy_contrib = kp.weight * spin_factor * sigma * smearingEntropy(occ);
+    const entropy_contrib = kp.weight * spin_factor * sigma * smearing_entropy(occ);
     entropy_energy.* += entropy_contrib;
     if (occ <= 0.0) return;
     const weight = kp.weight * occ * spin_factor;
@@ -1624,9 +1632,9 @@ fn accumulateSmearingBand(
     if (data.nonlocal) |entries| {
         nonlocal_energy.* += weight * entries[band];
     }
-    const density_start = if (profile_ptr != null) profileStart(io) else null;
+    const density_start = if (profile_ptr != null) profile_start(io) else null;
     const coeffs = data.vectors[band * basis_gvecs.len .. (band + 1) * basis_gvecs.len];
-    try accumulateBandDensityFft(
+    try accumulate_band_density_fft(
         alloc,
         grid,
         dbufs.map.?,
@@ -1639,13 +1647,13 @@ fn accumulateSmearingBand(
         inv_volume,
         rho,
     );
-    if (profile_ptr) |p| profileAdd(io, &p.density_ns, density_start);
+    if (profile_ptr) |p| profile_add(io, &p.density_ns, density_start);
 
     if (paw_rhoij) |rij| {
         if (apply_cache) |ac| {
             if (ac.nonlocal_ctx) |*nl| {
                 if (nl.has_paw) {
-                    try apply.accumulatePawRhoIJ(
+                    try apply.accumulate_paw_rho_ij(
                         alloc,
                         nl,
                         basis_gvecs,
@@ -1661,7 +1669,7 @@ fn accumulateSmearingBand(
     }
 }
 
-pub fn accumulateKpointDensitySmearingSpin(
+pub fn accumulate_kpoint_density_smearing_spin(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -1689,12 +1697,12 @@ pub fn accumulateKpointDensitySmearingSpin(
     if (basis.gvecs.len != data.basis_len) return error.InvalidBasis;
 
     const inv_volume = 1.0 / volume;
-    var dbufs = try allocateDensityBuffers(alloc, io, cfg, grid, basis.gvecs);
-    defer deinitDensityBuffers(alloc, &dbufs);
+    var dbufs = try allocate_density_buffers(alloc, io, cfg, grid, basis.gvecs);
+    defer deinit_density_buffers(alloc, &dbufs);
 
     var band: usize = 0;
     while (band < data.nbands) : (band += 1) {
-        try accumulateSmearingBand(
+        try accumulate_smearing_band(
             alloc,
             io,
             cfg,
@@ -1721,7 +1729,7 @@ pub fn accumulateKpointDensitySmearingSpin(
     }
 }
 
-fn accumulateBandDensity(
+fn accumulate_band_density(
     grid: Grid,
     gvecs: []plane_wave.GVector,
     vectors: []math.Complex,
@@ -1764,7 +1772,7 @@ fn accumulateBandDensity(
     }
 }
 
-fn accumulateBandDensityFft(
+fn accumulate_band_density_fft(
     alloc: std.mem.Allocator,
     grid: Grid,
     map: PwGridMap,
@@ -1779,9 +1787,16 @@ fn accumulateBandDensityFft(
 ) !void {
     map.scatter(coeffs, work_recip);
     if (fft_index_map) |idx_map| {
-        try fftReciprocalToComplexInPlaceMapped(alloc, grid, idx_map, work_recip, work_real, plan);
+        try fft_reciprocal_to_complex_in_place_mapped(
+            alloc,
+            grid,
+            idx_map,
+            work_recip,
+            work_real,
+            plan,
+        );
     } else {
-        try fftReciprocalToComplexInPlace(alloc, grid, work_recip, work_real, plan);
+        try fft_reciprocal_to_complex_in_place(alloc, grid, work_recip, work_real, plan);
     }
     for (work_real, 0..) |psi, i| {
         const density = (psi.r * psi.r + psi.i * psi.i) * inv_volume;
@@ -1789,7 +1804,7 @@ fn accumulateBandDensityFft(
     }
 }
 
-fn bandNonlocalEnergy(
+fn band_nonlocal_energy(
     n: usize,
     vnl: []const math.Complex,
     vectors: []const math.Complex,
@@ -1811,7 +1826,7 @@ fn bandNonlocalEnergy(
     return sum.r;
 }
 
-fn innerProduct(n: usize, a: []const math.Complex, b: []const math.Complex) math.Complex {
+fn inner_product(n: usize, a: []const math.Complex, b: []const math.Complex) math.Complex {
     var sum = math.complex.init(0.0, 0.0);
     var i: usize = 0;
     while (i < n) : (i += 1) {
@@ -1820,7 +1835,7 @@ fn innerProduct(n: usize, a: []const math.Complex, b: []const math.Complex) math
     return sum;
 }
 
-fn smearingOcc(method: config.SmearingMethod, energy: f64, mu: f64, sigma: f64) f64 {
+fn smearing_occ(method: config.SmearingMethod, energy: f64, mu: f64, sigma: f64) f64 {
     if (sigma <= 0.0) return if (energy <= mu) 1.0 else 0.0;
     if (method == .none) return if (energy <= mu) 1.0 else 0.0;
     return 1.0 / (1.0 + std.math.exp((energy - mu) / sigma));
@@ -1828,24 +1843,24 @@ fn smearingOcc(method: config.SmearingMethod, energy: f64, mu: f64, sigma: f64) 
 
 /// Compute entropy contribution for a given occupation number.
 /// Returns -[f*ln(f) + (1-f)*ln(1-f)] which is always >= 0.
-fn smearingEntropy(occ: f64) f64 {
+fn smearing_entropy(occ: f64) f64 {
     const eps = 1e-12;
     if (occ <= eps or occ >= 1.0 - eps) return 0.0;
     return -(occ * @log(occ) + (1.0 - occ) * @log(1.0 - occ));
 }
 
-fn electronCountForMu(
+fn electron_count_for_mu(
     mu: f64,
     sigma: f64,
     method: config.SmearingMethod,
     data: []const KpointEigenData,
 ) f64 {
-    return electronCountForMuSpin(mu, sigma, method, data, 2.0);
+    return electron_count_for_mu_spin(mu, sigma, method, data, 2.0);
 }
 
 /// Electron count with configurable spin factor
 /// (1.0 for spin-polarized per-channel, 2.0 for unpolarized).
-pub fn electronCountForMuSpin(
+pub fn electron_count_for_mu_spin(
     mu: f64,
     sigma: f64,
     method: config.SmearingMethod,
@@ -1856,25 +1871,25 @@ pub fn electronCountForMuSpin(
     for (data) |entry| {
         const weight = spin_factor * entry.kpoint.weight;
         for (entry.values[0..entry.nbands]) |energy| {
-            count += weight * smearingOcc(method, energy, mu, sigma);
+            count += weight * smearing_occ(method, energy, mu, sigma);
         }
     }
     return count;
 }
 
-pub fn findFermiLevel(
+pub fn find_fermi_level(
     nelec: f64,
     sigma: f64,
     method: config.SmearingMethod,
     data: []const KpointEigenData,
 ) f64 {
-    return findFermiLevelSpin(nelec, sigma, method, data, null, 2.0);
+    return find_fermi_level_spin(nelec, sigma, method, data, null, 2.0);
 }
 
 /// Find Fermi level for spin-polarized calculation.
 /// Both spin channels' eigendata are passed; spin_factor should be 1.0.
 /// If data_down is null, only data_up is used (equivalent to unpolarized with given spin_factor).
-pub fn findFermiLevelSpin(
+pub fn find_fermi_level_spin(
     nelec: f64,
     sigma: f64,
     method: config.SmearingMethod,
@@ -1901,22 +1916,22 @@ pub fn findFermiLevelSpin(
     var padding = @max(10.0 * sigma, 1e-3);
     var low = min_energy - padding;
     var high = max_energy + padding;
-    var count_low = electronCountForMuSpin(low, sigma, method, data_up, spin_factor);
-    var count_high = electronCountForMuSpin(high, sigma, method, data_up, spin_factor);
+    var count_low = electron_count_for_mu_spin(low, sigma, method, data_up, spin_factor);
+    var count_high = electron_count_for_mu_spin(high, sigma, method, data_up, spin_factor);
     if (data_down) |dd| {
-        count_low += electronCountForMuSpin(low, sigma, method, dd, spin_factor);
-        count_high += electronCountForMuSpin(high, sigma, method, dd, spin_factor);
+        count_low += electron_count_for_mu_spin(low, sigma, method, dd, spin_factor);
+        count_high += electron_count_for_mu_spin(high, sigma, method, dd, spin_factor);
     }
     var expand: usize = 0;
     while ((count_low > nelec or count_high < nelec) and expand < 12) : (expand += 1) {
         padding *= 2.0;
         low = min_energy - padding;
         high = max_energy + padding;
-        count_low = electronCountForMuSpin(low, sigma, method, data_up, spin_factor);
-        count_high = electronCountForMuSpin(high, sigma, method, data_up, spin_factor);
+        count_low = electron_count_for_mu_spin(low, sigma, method, data_up, spin_factor);
+        count_high = electron_count_for_mu_spin(high, sigma, method, data_up, spin_factor);
         if (data_down) |dd| {
-            count_low += electronCountForMuSpin(low, sigma, method, dd, spin_factor);
-            count_high += electronCountForMuSpin(high, sigma, method, dd, spin_factor);
+            count_low += electron_count_for_mu_spin(low, sigma, method, dd, spin_factor);
+            count_high += electron_count_for_mu_spin(high, sigma, method, dd, spin_factor);
         }
     }
     var left = low;
@@ -1924,9 +1939,9 @@ pub fn findFermiLevelSpin(
     var iter: usize = 0;
     while (iter < 80) : (iter += 1) {
         const mid = 0.5 * (left + right);
-        var count = electronCountForMuSpin(mid, sigma, method, data_up, spin_factor);
+        var count = electron_count_for_mu_spin(mid, sigma, method, data_up, spin_factor);
         if (data_down) |dd| {
-            count += electronCountForMuSpin(mid, sigma, method, dd, spin_factor);
+            count += electron_count_for_mu_spin(mid, sigma, method, dd, spin_factor);
         }
         if (@abs(count - nelec) < 1e-8) return mid;
         if (count > nelec) {

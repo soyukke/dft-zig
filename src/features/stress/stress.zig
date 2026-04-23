@@ -34,8 +34,8 @@ pub const StressTerms = struct {
     ewald: Stress3x3,
     psp_core: Stress3x3,
     nlcc: Stress3x3,
-    augmentation: Stress3x3 = zeroStress(),
-    onsite: Stress3x3 = zeroStress(),
+    augmentation: Stress3x3 = zero_stress(),
+    onsite: Stress3x3 = zero_stress(),
 };
 
 pub const Grid = struct {
@@ -50,11 +50,11 @@ pub const Grid = struct {
     volume: f64,
 };
 
-pub fn zeroStress() Stress3x3 {
+pub fn zero_stress() Stress3x3 {
     return .{ .{ 0, 0, 0 }, .{ 0, 0, 0 }, .{ 0, 0, 0 } };
 }
 
-pub fn addStress(a: Stress3x3, b: Stress3x3) Stress3x3 {
+pub fn add_stress(a: Stress3x3, b: Stress3x3) Stress3x3 {
     var r: Stress3x3 = undefined;
     for (0..3) |i| {
         for (0..3) |j| {
@@ -64,7 +64,7 @@ pub fn addStress(a: Stress3x3, b: Stress3x3) Stress3x3 {
     return r;
 }
 
-fn scaleStress(s: Stress3x3, f: f64) Stress3x3 {
+fn scale_stress(s: Stress3x3, f: f64) Stress3x3 {
     var r: Stress3x3 = undefined;
     for (0..3) |i| {
         for (0..3) |j| {
@@ -76,7 +76,7 @@ fn scaleStress(s: Stress3x3, f: f64) Stress3x3 {
 
 /// Compute ∂Y_lm(q̂)/∂q_α for real spherical harmonics.
 /// Returns [3]f64 for (x, y, z) components.
-pub fn dYlm_dq(l: i32, m: i32, qx: f64, qy: f64, qz: f64, q_mag: f64) [3]f64 {
+pub fn d_ylm_dq(l: i32, m: i32, qx: f64, qy: f64, qz: f64, q_mag: f64) [3]f64 {
     if (q_mag < 1e-15) return .{ 0, 0, 0 };
     const inv_q = 1.0 / q_mag;
     const inv_q2 = inv_q * inv_q;
@@ -130,13 +130,13 @@ pub fn dYlm_dq(l: i32, m: i32, qx: f64, qy: f64, qz: f64, q_mag: f64) [3]f64 {
     }
 
     if (l == 3) {
-        return dYlm_dq_numerical(l, m, qx, qy, qz, q_mag, inv_q2);
+        return d_ylm_dq_numerical(l, m, qx, qy, qz, q_mag, inv_q2);
     }
 
     return .{ 0, 0, 0 };
 }
 
-fn dYlm_dq_numerical(l: i32, m: i32, qx: f64, qy: f64, qz: f64, q_mag: f64, inv_q2: f64) [3]f64 {
+fn d_ylm_dq_numerical(l: i32, m: i32, qx: f64, qy: f64, qz: f64, q_mag: f64, inv_q2: f64) [3]f64 {
     _ = inv_q2;
     const delta = q_mag * 1e-5;
     var result = [3]f64{ 0, 0, 0 };
@@ -146,17 +146,17 @@ fn dYlm_dq_numerical(l: i32, m: i32, qx: f64, qy: f64, qz: f64, q_mag: f64, inv_
         var qm = q;
         qp[dir] += delta;
         qm[dir] -= delta;
-        const yp = nonlocal.realSphericalHarmonic(l, m, qp[0], qp[1], qp[2]);
-        const ym = nonlocal.realSphericalHarmonic(l, m, qm[0], qm[1], qm[2]);
+        const yp = nonlocal.real_spherical_harmonic(l, m, qp[0], qp[1], qp[2]);
+        const ym = nonlocal.real_spherical_harmonic(l, m, qm[0], qm[1], qm[2]);
         result[dir] = (yp - ym) / (2.0 * delta);
     }
     return result;
 }
 
-fn printStress(name: []const u8, sigma: Stress3x3, _: f64) void {
+fn print_stress(name: []const u8, sigma: Stress3x3, _: f64) void {
     const ry_to_gpa = 14710.507; // 1 Ry/Bohr³ = 14710.507 GPa
     const pressure = -(sigma[0][0] + sigma[1][1] + sigma[2][2]) / 3.0 * ry_to_gpa;
-    runtime_logging.debugPrint(
+    runtime_logging.debug_print(
         .info,
         .info,
         "Stress {s:12} (GPa): {d:10.4} {d:10.4} {d:10.4}" ++
@@ -178,13 +178,13 @@ fn printStress(name: []const u8, sigma: Stress3x3, _: f64) void {
 }
 
 /// Convert stress tensor to pressure in GPa.
-pub fn pressureGPa(sigma: Stress3x3) f64 {
+pub fn pressure_g_pa(sigma: Stress3x3) f64 {
     const ry_to_gpa = 14710.507;
     return -(sigma[0][0] + sigma[1][1] + sigma[2][2]) / 3.0 * ry_to_gpa;
 }
 
 /// Compute the 3×3 inverse of a cell matrix by the adjugate formula.
-fn invertCellMatrix(cell: math.Mat3) [3][3]f64 {
+fn invert_cell_matrix(cell: math.Mat3) [3][3]f64 {
     const c = cell.m;
     const det_c = c[0][0] * (c[1][1] * c[2][2] - c[1][2] * c[2][1]) -
         c[0][1] * (c[1][0] * c[2][2] - c[1][2] * c[2][0]) +
@@ -205,7 +205,7 @@ fn invertCellMatrix(cell: math.Mat3) [3][3]f64 {
 }
 
 /// Build the Cartesian rotation matrix r_cart = cell^T × R × cell^{-T} from a symmetry op.
-fn symRotationToCartesian(
+fn sym_rotation_to_cartesian(
     cell: math.Mat3,
     c_inv: [3][3]f64,
     op_rot: [3][3]i32,
@@ -236,7 +236,7 @@ fn symRotationToCartesian(
 }
 
 /// Accumulate R × σ × R^T into `result`.
-fn accumulateRotatedStress(result: *Stress3x3, r_cart: [3][3]f64, sigma: Stress3x3) void {
+fn accumulate_rotated_stress(result: *Stress3x3, r_cart: [3][3]f64, sigma: Stress3x3) void {
     var rs: [3][3]f64 = undefined;
     for (0..3) |i| {
         for (0..3) |j| {
@@ -258,19 +258,19 @@ fn accumulateRotatedStress(result: *Stress3x3, r_cart: [3][3]f64, sigma: Stress3
     }
 }
 
-pub fn symmetrizeStress(
+pub fn symmetrize_stress(
     sigma: Stress3x3,
     sym_ops: []const @import("../symmetry/symmetry.zig").SymOp,
     cell: math.Mat3,
 ) Stress3x3 {
     if (sym_ops.len == 0) return sigma;
 
-    const c_inv = invertCellMatrix(cell);
+    const c_inv = invert_cell_matrix(cell);
 
-    var result = zeroStress();
+    var result = zero_stress();
     for (sym_ops) |op| {
-        const r_cart = symRotationToCartesian(cell, c_inv, op.rot.m);
-        accumulateRotatedStress(&result, r_cart, sigma);
+        const r_cart = sym_rotation_to_cartesian(cell, c_inv, op.rot.m);
+        accumulate_rotated_stress(&result, r_cart, sigma);
     }
 
     const inv_n = 1.0 / @as(f64, @floatFromInt(sym_ops.len));
@@ -283,13 +283,13 @@ pub fn symmetrizeStress(
 }
 
 /// Convert FFT index to frequency.
-fn indexToFreq(i: usize, n: usize) i32 {
+fn index_to_freq(i: usize, n: usize) i32 {
     const half = (n - 1) / 2;
     return if (i <= half) @as(i32, @intCast(i)) else @as(i32, @intCast(i)) - @as(i32, @intCast(n));
 }
 
 /// FFT real-space density to G-space (reordered to grid layout).
-fn densityToReciprocal(
+fn density_to_reciprocal(
     alloc: std.mem.Allocator,
     io: std.Io,
     grid: Grid,
@@ -311,7 +311,7 @@ fn densityToReciprocal(
         data[i] = math.complex.init(d, 0.0);
     }
 
-    var plan = try fft.Fft3dPlan.initWithBackend(alloc, io, nx, ny, nz, fft_backend);
+    var plan = try fft.Fft3dPlan.init_with_backend(alloc, io, nx, ny, nz, fft_backend);
     defer plan.deinit(alloc);
 
     plan.forward(data);
@@ -326,9 +326,9 @@ fn densityToReciprocal(
         while (y < ny) : (y += 1) {
             var x: usize = 0;
             while (x < nx) : (x += 1) {
-                const fh = indexToFreq(x, nx);
-                const fk = indexToFreq(y, ny);
-                const fl = indexToFreq(z, nz);
+                const fh = index_to_freq(x, nx);
+                const fk = index_to_freq(y, ny);
+                const fl = index_to_freq(z, nz);
                 const th = @as(usize, @intCast(fh - grid.min_h));
                 const tk = @as(usize, @intCast(fk - grid.min_k));
                 const tl = @as(usize, @intCast(fl - grid.min_l));
@@ -343,7 +343,7 @@ fn densityToReciprocal(
 }
 
 /// FFT the given real-space density into G-space using scf's helper.
-fn realToReciprocalForStress(
+fn real_to_reciprocal_for_stress(
     alloc: std.mem.Allocator,
     grid: Grid,
     aug: []const f64,
@@ -359,11 +359,11 @@ fn realToReciprocalForStress(
         .recip = grid.recip,
         .volume = grid.volume,
     };
-    return try scf.realToReciprocal(alloc, fft_obj, aug, false);
+    return try scf.real_to_reciprocal(alloc, fft_obj, aug, false);
 }
 
 /// Compute kinetic stress, summing spin-up and optional spin-down channels.
-fn kineticStressTotal(
+fn kinetic_stress_total(
     alloc: std.mem.Allocator,
     wavefunctions: ?scf.WavefunctionData,
     wavefunctions_down: ?scf.WavefunctionData,
@@ -371,22 +371,22 @@ fn kineticStressTotal(
     inv_volume: f64,
     sf: f64,
 ) !Stress3x3 {
-    var sigma_kin = try kinetic_stress.kineticStress(alloc, wavefunctions, recip, inv_volume, sf);
+    var sigma_kin = try kinetic_stress.kinetic_stress(alloc, wavefunctions, recip, inv_volume, sf);
     if (wavefunctions_down) |wf_down| {
-        const sigma_kin_down = try kinetic_stress.kineticStress(
+        const sigma_kin_down = try kinetic_stress.kinetic_stress(
             alloc,
             wf_down,
             recip,
             inv_volume,
             1.0,
         );
-        sigma_kin = addStress(sigma_kin, sigma_kin_down);
+        sigma_kin = add_stress(sigma_kin, sigma_kin_down);
     }
     return sigma_kin;
 }
 
 /// Compute nonlocal stress, summing spin-up and optional spin-down channels.
-fn nonlocalStressTotal(
+fn nonlocal_stress_total(
     alloc: std.mem.Allocator,
     wavefunctions: ?scf.WavefunctionData,
     wavefunctions_down: ?scf.WavefunctionData,
@@ -400,7 +400,7 @@ fn nonlocalStressTotal(
     paw_tabs: ?[]const paw_mod.PawTab,
     sf: f64,
 ) !Stress3x3 {
-    var sigma_nonlocal = try nonlocal_stress.nonlocalStress(
+    var sigma_nonlocal = try nonlocal_stress.nonlocal_stress(
         alloc,
         wavefunctions,
         species,
@@ -414,7 +414,7 @@ fn nonlocalStressTotal(
         sf,
     );
     if (wavefunctions_down) |wf_down| {
-        const sigma_nl_down = try nonlocal_stress.nonlocalStress(
+        const sigma_nl_down = try nonlocal_stress.nonlocal_stress(
             alloc,
             wf_down,
             species,
@@ -427,13 +427,13 @@ fn nonlocalStressTotal(
             paw_tabs,
             1.0,
         );
-        sigma_nonlocal = addStress(sigma_nonlocal, sigma_nl_down);
+        sigma_nonlocal = add_stress(sigma_nonlocal, sigma_nl_down);
     }
     return sigma_nonlocal;
 }
 
 /// Compute Ewald ion-ion stress in Rydberg units for the given atoms.
-fn ewaldIonIonStress(
+fn ewald_ion_ion_stress(
     alloc: std.mem.Allocator,
     grid: Grid,
     species: []const hamiltonian.SpeciesEntry,
@@ -457,42 +457,42 @@ fn ewaldIonIonStress(
         .tol = ewald_cfg.tol,
         .quiet = true,
     };
-    const sigma_ewald_raw = try ewald.ionIonStress(
+    const sigma_ewald_raw = try ewald.ion_ion_stress(
         grid.cell,
         grid.recip,
         charges,
         positions,
         ew_params,
     );
-    return scaleStress(sigma_ewald_raw, 2.0);
+    return scale_stress(sigma_ewald_raw, 2.0);
 }
 
 /// Print all stress components when not in quiet mode.
-fn printStressComponents(
+fn print_stress_components(
     volume: f64,
     terms: StressTerms,
     paw_tabs: ?[]const paw_mod.PawTab,
 ) void {
-    printStress("Ewald", terms.ewald, volume);
-    printStress("Kinetic", terms.kinetic, volume);
-    printStress("Hartree", terms.hartree, volume);
-    printStress("XC", terms.xc, volume);
-    printStress("Local", terms.local, volume);
-    printStress("Nonlocal", terms.nonlocal, volume);
-    printStress("PSP core", terms.psp_core, volume);
-    printStress("NLCC", terms.nlcc, volume);
+    print_stress("Ewald", terms.ewald, volume);
+    print_stress("Kinetic", terms.kinetic, volume);
+    print_stress("Hartree", terms.hartree, volume);
+    print_stress("XC", terms.xc, volume);
+    print_stress("Local", terms.local, volume);
+    print_stress("Nonlocal", terms.nonlocal, volume);
+    print_stress("PSP core", terms.psp_core, volume);
+    print_stress("NLCC", terms.nlcc, volume);
     if (paw_tabs != null) {
-        printStress("Augment", terms.augmentation, volume);
-        printStress("On-site", terms.onsite, volume);
+        print_stress("Augment", terms.augmentation, volume);
+        print_stress("On-site", terms.onsite, volume);
     }
-    printStress("TOTAL", terms.total, volume);
+    print_stress("TOTAL", terms.total, volume);
 }
 
 /// Sum all individual stress contributions into a single total tensor.
-fn sumStressTerms(parts: []const Stress3x3) Stress3x3 {
-    var total = zeroStress();
+fn sum_stress_terms(parts: []const Stress3x3) Stress3x3 {
+    var total = zero_stress();
     for (parts) |t| {
-        total = addStress(total, t);
+        total = add_stress(total, t);
     }
     return total;
 }
@@ -509,7 +509,7 @@ const StressDensityInputs = struct {
     ) !StressDensityInputs {
         return .{
             .rho_g_aug = if (rho_aug) |aug|
-                try realToReciprocalForStress(alloc, grid, aug)
+                try real_to_reciprocal_for_stress(alloc, grid, aug)
             else
                 null,
             .rho_for_xc = rho_aug orelse rho_r,
@@ -520,7 +520,7 @@ const StressDensityInputs = struct {
         if (self.rho_g_aug) |rho_g_aug| alloc.free(rho_g_aug);
     }
 
-    fn reciprocalDensity(
+    fn reciprocal_density(
         self: StressDensityInputs,
         rho_g: []const math.Complex,
     ) []const math.Complex {
@@ -553,15 +553,15 @@ const WavefunctionStressContributions = struct {
     nonlocal: Stress3x3,
 };
 
-fn pspCoreStress(psp_core_energy: f64, inv_volume: f64) Stress3x3 {
-    var sigma = zeroStress();
+fn psp_core_stress(psp_core_energy: f64, inv_volume: f64) Stress3x3 {
+    var sigma = zero_stress();
     for (0..3) |a| sigma[a][a] = -psp_core_energy * inv_volume;
     return sigma;
 }
 
-fn buildStressTerms(contrib: StressContributions) StressTerms {
+fn build_stress_terms(contrib: StressContributions) StressTerms {
     return .{
-        .total = sumStressTerms(&[_]Stress3x3{
+        .total = sum_stress_terms(&[_]Stress3x3{
             contrib.ewald,
             contrib.kinetic,
             contrib.hartree,
@@ -586,7 +586,7 @@ fn buildStressTerms(contrib: StressContributions) StressTerms {
     };
 }
 
-fn computeDensityStressContributions(
+fn compute_density_stress_contributions(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho_g: []const math.Complex,
@@ -602,16 +602,16 @@ fn computeDensityStressContributions(
     ecutrho: f64,
 ) !DensityStressContributions {
     const inv_volume = 1.0 / grid.volume;
-    const reciprocal_density = density_inputs.reciprocalDensity(rho_g);
+    const reciprocal_density = density_inputs.reciprocal_density(rho_g);
     return .{
-        .hartree = hartree_stress.hartreeStress(
+        .hartree = hartree_stress.hartree_stress(
             grid,
             reciprocal_density,
             energy.hartree,
             inv_volume,
             ecutrho,
         ),
-        .xc = try xc_stress.xcStress(
+        .xc = try xc_stress.xc_stress(
             alloc,
             grid,
             density_inputs.rho_for_xc,
@@ -620,7 +620,7 @@ fn computeDensityStressContributions(
             energy.vxc_rho,
             xc_func,
         ),
-        .local = local_stress.localStress(
+        .local = local_stress.local_stress(
             grid,
             reciprocal_density,
             species,
@@ -630,7 +630,7 @@ fn computeDensityStressContributions(
             inv_volume,
             ecutrho,
         ),
-        .nlcc = try nlcc_stress.nlccStress(
+        .nlcc = try nlcc_stress.nlcc_stress(
             alloc,
             grid,
             density_inputs.rho_for_xc,
@@ -644,7 +644,7 @@ fn computeDensityStressContributions(
     };
 }
 
-fn computeWavefunctionStressContributions(
+fn compute_wavefunction_stress_contributions(
     alloc: std.mem.Allocator,
     grid: Grid,
     species: []const hamiltonian.SpeciesEntry,
@@ -660,7 +660,7 @@ fn computeWavefunctionStressContributions(
     const inv_volume = 1.0 / volume;
     const sf: f64 = if (wavefunctions_down != null) 1.0 else 2.0;
     return .{
-        .kinetic = try kineticStressTotal(
+        .kinetic = try kinetic_stress_total(
             alloc,
             wavefunctions,
             wavefunctions_down,
@@ -668,7 +668,7 @@ fn computeWavefunctionStressContributions(
             inv_volume,
             sf,
         ),
-        .nonlocal = try nonlocalStressTotal(
+        .nonlocal = try nonlocal_stress_total(
             alloc,
             wavefunctions,
             wavefunctions_down,
@@ -685,7 +685,7 @@ fn computeWavefunctionStressContributions(
     };
 }
 
-pub fn computeStress(
+pub fn compute_stress(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho_g: []const math.Complex,
@@ -716,7 +716,7 @@ pub fn computeStress(
     var density_inputs = try StressDensityInputs.init(alloc, grid, rho_r, rho_aug);
     defer density_inputs.deinit(alloc);
 
-    const density_terms = try computeDensityStressContributions(
+    const density_terms = try compute_density_stress_contributions(
         alloc,
         grid,
         rho_g,
@@ -731,7 +731,7 @@ pub fn computeStress(
         rho_core_tables,
         ecutrho,
     );
-    const wavefunction_terms = try computeWavefunctionStressContributions(
+    const wavefunction_terms = try compute_wavefunction_stress_contributions(
         alloc,
         grid,
         species,
@@ -743,16 +743,16 @@ pub fn computeStress(
         paw_dij_m,
         paw_tabs,
     );
-    const terms = buildStressTerms(.{
-        .ewald = try ewaldIonIonStress(alloc, grid, species, atoms, ewald_cfg),
+    const terms = build_stress_terms(.{
+        .ewald = try ewald_ion_ion_stress(alloc, grid, species, atoms, ewald_cfg),
         .kinetic = wavefunction_terms.kinetic,
         .hartree = density_terms.hartree,
         .xc = density_terms.xc,
         .local = density_terms.local,
         .nonlocal = wavefunction_terms.nonlocal,
-        .psp_core = pspCoreStress(energy.psp_core, inv_volume),
+        .psp_core = psp_core_stress(energy.psp_core, inv_volume),
         .nlcc = density_terms.nlcc,
-        .augmentation = try augmentation_stress.augmentationStress(
+        .augmentation = try augmentation_stress.augmentation_stress(
             alloc,
             grid,
             potential_values,
@@ -762,10 +762,10 @@ pub fn computeStress(
             inv_volume,
             ecutrho,
         ),
-        .onsite = zeroStress(),
+        .onsite = zero_stress(),
     });
 
-    if (!quiet) printStressComponents(volume, terms, paw_tabs);
+    if (!quiet) print_stress_components(volume, terms, paw_tabs);
 
     return terms;
 }
@@ -804,7 +804,7 @@ const StressPawBuffers = struct {
     }
 };
 
-fn initLocalFormFactorTables(
+fn init_local_form_factor_tables(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
     local_cfg: local_potential.LocalPotentialConfig,
@@ -827,7 +827,7 @@ fn initLocalFormFactorTables(
     return tables;
 }
 
-fn initRhoCoreTables(
+fn init_rho_core_tables(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
     ff_q_max: f64,
@@ -837,7 +837,7 @@ fn initRhoCoreTables(
     var init_count: usize = 0;
     errdefer for (tables[0..init_count]) |*t| t.deinit(alloc);
     for (species, 0..) |entry, si| {
-        tables[si] = try form_factor.RadialFormFactorTable.initRhoCore(
+        tables[si] = try form_factor.RadialFormFactorTable.init_rho_core(
             alloc,
             entry.upf.*,
             ff_q_max,
@@ -847,7 +847,7 @@ fn initRhoCoreTables(
     return tables;
 }
 
-fn initStressRadialTables(
+fn init_stress_radial_tables(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
     ff_q_max: f64,
@@ -869,7 +869,7 @@ fn initStressRadialTables(
     return tables;
 }
 
-fn initStressTableSet(
+fn init_stress_table_set(
     alloc: std.mem.Allocator,
     cell: math.Mat3,
     species: []const hamiltonian.SpeciesEntry,
@@ -879,19 +879,19 @@ fn initStressTableSet(
 ) !StressTableSet {
     const local_cfg = local_potential.resolve(local_potential_cfg, ewald_alpha, cell);
     const ff_q_max = 2.0 * @sqrt(ecut_ry) + 1.0;
-    const ff_tables = try initLocalFormFactorTables(alloc, species, local_cfg, ff_q_max);
+    const ff_tables = try init_local_form_factor_tables(alloc, species, local_cfg, ff_q_max);
     errdefer {
         for (ff_tables) |*t| t.deinit(alloc);
         alloc.free(ff_tables);
     }
 
-    const rho_core_tables = try initRhoCoreTables(alloc, species, ff_q_max);
+    const rho_core_tables = try init_rho_core_tables(alloc, species, ff_q_max);
     errdefer {
         for (rho_core_tables) |*t| t.deinit(alloc);
         alloc.free(rho_core_tables);
     }
 
-    const radial_tables = try initStressRadialTables(alloc, species, ff_q_max);
+    const radial_tables = try init_stress_radial_tables(alloc, species, ff_q_max);
     errdefer {
         for (radial_tables) |*t| t.deinit(alloc);
         alloc.free(radial_tables);
@@ -905,16 +905,16 @@ fn initStressTableSet(
     };
 }
 
-fn stressDensityCutoff(ecut_ry: f64, grid_scale: f64) f64 {
+fn stress_density_cutoff(ecut_ry: f64, grid_scale: f64) f64 {
     const gs = if (grid_scale > 0.0) grid_scale else 1.0;
     return ecut_ry * gs * gs;
 }
 
-fn isPawStressEnabled(scf_result: *const scf.ScfResult) bool {
+fn is_paw_stress_enabled(scf_result: *const scf.ScfResult) bool {
     return scf_result.paw_tabs != null and scf_result.paw_rhoij != null;
 }
 
-fn initStressPotentialValues(
+fn init_stress_potential_values(
     alloc: std.mem.Allocator,
     scf_result: *const scf.ScfResult,
 ) ![]math.Complex {
@@ -931,19 +931,19 @@ fn initStressPotentialValues(
     return pot_vals;
 }
 
-fn initStressPawBuffers(
+fn init_stress_paw_buffers(
     alloc: std.mem.Allocator,
     grid: Grid,
     scf_result: *const scf.ScfResult,
     atoms: []const hamiltonian.AtomData,
     ecutrho: f64,
 ) !StressPawBuffers {
-    if (!isPawStressEnabled(scf_result)) return .{};
+    if (!is_paw_stress_enabled(scf_result)) return .{};
 
     const rho_aug = try alloc.alloc(f64, scf_result.density.len);
     errdefer alloc.free(rho_aug);
     @memcpy(rho_aug, scf_result.density);
-    try augmentation_stress.buildAugmentedDensity(
+    try augmentation_stress.build_augmented_density(
         alloc,
         grid,
         rho_aug,
@@ -955,12 +955,12 @@ fn initStressPawBuffers(
 
     return .{
         .rho_aug = rho_aug,
-        .pot_vals = try initStressPotentialValues(alloc, scf_result),
+        .pot_vals = try init_stress_potential_values(alloc, scf_result),
     };
 }
 
-fn recomputeStressTotal(terms: *StressTerms) void {
-    terms.total = sumStressTerms(&[_]Stress3x3{
+fn recompute_stress_total(terms: *StressTerms) void {
+    terms.total = sum_stress_terms(&[_]Stress3x3{
         terms.ewald,
         terms.kinetic,
         terms.hartree,
@@ -974,25 +974,25 @@ fn recomputeStressTotal(terms: *StressTerms) void {
     });
 }
 
-fn symmetrizeStressTerms(
+fn symmetrize_stress_terms(
     terms: *StressTerms,
     sym_ops: []const @import("../symmetry/symmetry.zig").SymOp,
     cell: math.Mat3,
 ) void {
-    terms.kinetic = symmetrizeStress(terms.kinetic, sym_ops, cell);
-    terms.hartree = symmetrizeStress(terms.hartree, sym_ops, cell);
-    terms.xc = symmetrizeStress(terms.xc, sym_ops, cell);
-    terms.local = symmetrizeStress(terms.local, sym_ops, cell);
-    terms.nonlocal = symmetrizeStress(terms.nonlocal, sym_ops, cell);
-    terms.ewald = symmetrizeStress(terms.ewald, sym_ops, cell);
-    terms.psp_core = symmetrizeStress(terms.psp_core, sym_ops, cell);
-    terms.nlcc = symmetrizeStress(terms.nlcc, sym_ops, cell);
-    terms.augmentation = symmetrizeStress(terms.augmentation, sym_ops, cell);
-    terms.onsite = symmetrizeStress(terms.onsite, sym_ops, cell);
-    recomputeStressTotal(terms);
+    terms.kinetic = symmetrize_stress(terms.kinetic, sym_ops, cell);
+    terms.hartree = symmetrize_stress(terms.hartree, sym_ops, cell);
+    terms.xc = symmetrize_stress(terms.xc, sym_ops, cell);
+    terms.local = symmetrize_stress(terms.local, sym_ops, cell);
+    terms.nonlocal = symmetrize_stress(terms.nonlocal, sym_ops, cell);
+    terms.ewald = symmetrize_stress(terms.ewald, sym_ops, cell);
+    terms.psp_core = symmetrize_stress(terms.psp_core, sym_ops, cell);
+    terms.nlcc = symmetrize_stress(terms.nlcc, sym_ops, cell);
+    terms.augmentation = symmetrize_stress(terms.augmentation, sym_ops, cell);
+    terms.onsite = symmetrize_stress(terms.onsite, sym_ops, cell);
+    recompute_stress_total(terms);
 }
 
-fn maybeSymmetrizeStressTerms(
+fn maybe_symmetrize_stress_terms(
     alloc: std.mem.Allocator,
     terms: *StressTerms,
     cell: math.Mat3,
@@ -1004,17 +1004,17 @@ fn maybeSymmetrizeStressTerms(
     if (!symmetry_enabled) return;
 
     const symmetry_import = @import("../symmetry/symmetry.zig");
-    const sym_ops = try symmetry_import.getSymmetryOps(alloc, cell, atoms, 1e-5);
+    const sym_ops = try symmetry_import.get_symmetry_ops(alloc, cell, atoms, 1e-5);
     defer alloc.free(sym_ops);
 
     if (sym_ops.len <= 1) return;
-    symmetrizeStressTerms(terms, sym_ops, cell);
-    if (!quiet) printStress("TOTAL (sym)", terms.total, volume);
+    symmetrize_stress_terms(terms, sym_ops, cell);
+    if (!quiet) print_stress("TOTAL (sym)", terms.total, volume);
 }
 
 /// High-level stress computation from SCF result.
 /// Builds required form factor and radial tables internally.
-pub fn computeStressFromScf(
+pub fn compute_stress_from_scf(
     alloc: std.mem.Allocator,
     io: std.Io,
     scf_result: *const scf.ScfResult,
@@ -1034,10 +1034,16 @@ pub fn computeStressFromScf(
         .recip = scf_result.grid.recip,
         .volume = scf_result.grid.volume,
     };
-    const rho_g = try densityToReciprocal(alloc, io, grid, scf_result.density, cfg.scf.fft_backend);
+    const rho_g = try density_to_reciprocal(
+        alloc,
+        io,
+        grid,
+        scf_result.density,
+        cfg.scf.fft_backend,
+    );
     defer alloc.free(rho_g);
 
-    var tables = try initStressTableSet(
+    var tables = try init_stress_table_set(
         alloc,
         scf_result.grid.cell,
         species,
@@ -1047,11 +1053,11 @@ pub fn computeStressFromScf(
     );
     defer tables.deinit(alloc);
 
-    const ecutrho = stressDensityCutoff(cfg.scf.ecut_ry, cfg.scf.grid_scale);
-    var paw_buffers = try initStressPawBuffers(alloc, grid, scf_result, atoms, ecutrho);
+    const ecutrho = stress_density_cutoff(cfg.scf.ecut_ry, cfg.scf.grid_scale);
+    var paw_buffers = try init_stress_paw_buffers(alloc, grid, scf_result, atoms, ecutrho);
     defer paw_buffers.deinit(alloc);
 
-    var stress_terms = try computeStress(
+    var stress_terms = try compute_stress(
         alloc,
         grid,
         rho_g,
@@ -1077,7 +1083,7 @@ pub fn computeStressFromScf(
         ecutrho,
         scf_result.wavefunctions_down,
     );
-    try maybeSymmetrizeStressTerms(
+    try maybe_symmetrize_stress_terms(
         alloc,
         &stress_terms,
         scf_result.grid.cell,
@@ -1116,8 +1122,8 @@ test "ewald stress finite difference" {
         .quiet = true,
     };
 
-    const e0 = try ewald.ionIonEnergy(io, cell, recip_lat, &charges, &positions, params);
-    const sigma = try ewald.ionIonStress(cell, recip_lat, &charges, &positions, params);
+    const e0 = try ewald.ion_ion_energy(io, cell, recip_lat, &charges, &positions, params);
+    const sigma = try ewald.ion_ion_stress(cell, recip_lat, &charges, &positions, params);
 
     const frac = [_]math.Vec3{
         math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 },
@@ -1169,8 +1175,8 @@ test "ewald stress finite difference" {
                 };
             }
 
-            const e_p = try ewald.ionIonEnergy(io, cell_p, recip_p, &charges, &pos_p, params);
-            const e_m = try ewald.ionIonEnergy(io, cell_m, recip_m, &charges, &pos_m, params);
+            const e_p = try ewald.ion_ion_energy(io, cell_p, recip_p, &charges, &pos_p, params);
+            const e_m = try ewald.ion_ion_energy(io, cell_m, recip_m, &charges, &pos_m, params);
 
             const fd_factor: f64 = if (al == be) 1.0 else 2.0;
             const sigma_fd = (e_p - e_m) / (2.0 * delta * fd_factor) / vol0;

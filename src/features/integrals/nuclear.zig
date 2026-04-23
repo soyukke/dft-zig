@@ -15,12 +15,12 @@ const boys = @import("boys.zig");
 
 const PrimitiveGaussian = basis.PrimitiveGaussian;
 const ContractedShell = basis.ContractedShell;
-const normalizationS = basis.normalizationS;
+const normalization_s = basis.normalization_s;
 
 /// Compute nuclear attraction integral between two contracted s-type shells
 /// for a single nucleus at position `nuc_pos` with charge `z`.
 /// Returns the integral in Hartree atomic units (negative for attraction).
-pub fn nuclearAttractionSS(
+pub fn nuclear_attraction_ss(
     shell_a: ContractedShell,
     shell_b: ContractedShell,
     nuc_pos: math.Vec3,
@@ -33,9 +33,9 @@ pub fn nuclearAttractionSS(
     const r2_ab = math.Vec3.dot(diff_ab, diff_ab);
 
     for (shell_a.primitives) |prim_a| {
-        const na = normalizationS(prim_a.alpha);
+        const na = normalization_s(prim_a.alpha);
         for (shell_b.primitives) |prim_b| {
-            const nb = normalizationS(prim_b.alpha);
+            const nb = normalization_s(prim_b.alpha);
             const a = prim_a.alpha;
             const b = prim_b.alpha;
             const p = a + b;
@@ -65,7 +65,7 @@ pub fn nuclearAttractionSS(
 
 /// Compute total nuclear attraction integral for all nuclei.
 /// V_μν = Σ_C V_μν^C
-pub fn totalNuclearAttraction(
+pub fn total_nuclear_attraction(
     shell_a: ContractedShell,
     shell_b: ContractedShell,
     nuc_positions: []const math.Vec3,
@@ -73,14 +73,14 @@ pub fn totalNuclearAttraction(
 ) f64 {
     var result: f64 = 0.0;
     for (nuc_positions, 0..) |pos, i| {
-        result += nuclearAttractionSS(shell_a, shell_b, pos, nuc_charges[i]);
+        result += nuclear_attraction_ss(shell_a, shell_b, pos, nuc_charges[i]);
     }
     return result;
 }
 
 /// Build the full nuclear attraction matrix V for a set of s-type shells.
 /// Returns a flat row-major n×n matrix.
-pub fn buildNuclearMatrix(
+pub fn build_nuclear_matrix(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
     nuc_positions: []const math.Vec3,
@@ -91,7 +91,7 @@ pub fn buildNuclearMatrix(
     for (0..n) |i| {
         for (0..n) |j| {
             if (j >= i) {
-                mat[i * n + j] = totalNuclearAttraction(
+                mat[i * n + j] = total_nuclear_attraction(
                     shells[i],
                     shells[j],
                     nuc_positions,
@@ -113,7 +113,7 @@ test "nuclear attraction negative for H at origin" {
         .l = 0,
         .primitives = &sto3g.H_1s,
     };
-    const v = nuclearAttractionSS(shell, shell, center, 1.0);
+    const v = nuclear_attraction_ss(shell, shell, center, 1.0);
     // Nuclear attraction should be negative (attractive)
     try testing.expect(v < 0.0);
     // STO-3G H 1s nuclear attraction ≈ -1.2266 Hartree

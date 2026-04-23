@@ -7,7 +7,7 @@ const complex_vec = @import("complex_vec.zig");
 const Complex = complex_vec.Complex;
 
 /// Scalar reference implementation of inner product
-fn innerProductScalar(a: []const Complex, b: []const Complex) Complex {
+fn inner_product_scalar(a: []const Complex, b: []const Complex) Complex {
     var sum_re: f64 = 0.0;
     var sum_im: f64 = 0.0;
     const n = @min(a.len, b.len);
@@ -19,8 +19,8 @@ fn innerProductScalar(a: []const Complex, b: []const Complex) Complex {
     return Complex.init(sum_re, sum_im);
 }
 
-/// Scalar reference implementation of vectorNorm
-fn vectorNormScalar(a: []const Complex) f64 {
+/// Scalar reference implementation of vector_norm
+fn vector_norm_scalar(a: []const Complex) f64 {
     var sum: f64 = 0.0;
     for (a) |v| {
         sum += v.r * v.r + v.i * v.i;
@@ -29,24 +29,24 @@ fn vectorNormScalar(a: []const Complex) f64 {
 }
 
 // Wrapper functions with noinline to prevent dead code elimination
-noinline fn innerProductScalarNoInline(a: []const Complex, b: []const Complex) Complex {
-    return innerProductScalar(a, b);
+noinline fn inner_product_scalar_no_inline(a: []const Complex, b: []const Complex) Complex {
+    return inner_product_scalar(a, b);
 }
 
-noinline fn innerProductSimdNoInline(a: []const Complex, b: []const Complex) Complex {
-    return complex_vec.innerProduct(a, b);
+noinline fn inner_product_simd_no_inline(a: []const Complex, b: []const Complex) Complex {
+    return complex_vec.inner_product(a, b);
 }
 
-noinline fn vectorNormScalarNoInline(a: []const Complex) f64 {
-    return vectorNormScalar(a);
+noinline fn vector_norm_scalar_no_inline(a: []const Complex) f64 {
+    return vector_norm_scalar(a);
 }
 
-noinline fn vectorNormSimdNoInline(a: []const Complex) f64 {
-    return complex_vec.vectorNorm(a);
+noinline fn vector_norm_simd_no_inline(a: []const Complex) f64 {
+    return complex_vec.vector_norm(a);
 }
 
 /// Scalar reference implementation of axpy
-fn axpyScalar(y: []Complex, x: []const Complex, alpha: f64) void {
+fn axpy_scalar(y: []Complex, x: []const Complex, alpha: f64) void {
     const n = @min(y.len, x.len);
     for (0..n) |i| {
         y[i].r += alpha * x[i].r;
@@ -57,7 +57,7 @@ fn axpyScalar(y: []Complex, x: []const Complex, alpha: f64) void {
 /// Volatile sink to prevent dead code elimination
 var volatile_sink: f64 = 0;
 
-fn benchmarkInnerProduct(
+fn benchmark_inner_product(
     io: std.Io,
     out: *std.Io.Writer,
     comptime name: []const u8,
@@ -81,7 +81,7 @@ fn benchmarkInnerProduct(
     return elapsed_ms;
 }
 
-fn benchmarkNorm(
+fn benchmark_norm(
     io: std.Io,
     out: *std.Io.Writer,
     comptime name: []const u8,
@@ -105,7 +105,7 @@ fn benchmarkNorm(
 
 /// Run the axpy scalar-vs-SIMD timing and print the speedup ratio.
 /// Copies `y_src` into `y_copy` each iteration to avoid accumulation drift.
-fn benchmarkAxpy(
+fn benchmark_axpy(
     io: std.Io,
     out: *std.Io.Writer,
     a: []const Complex,
@@ -116,7 +116,7 @@ fn benchmarkAxpy(
     const t_scalar = std.Io.Clock.Timestamp.now(io, .awake);
     for (0..iterations) |_| {
         @memcpy(y_copy, y_src);
-        axpyScalar(y_copy, a, 0.5);
+        axpy_scalar(y_copy, a, 0.5);
     }
     const scalar_axpy_ns: u64 = @intCast(t_scalar.untilNow(io).raw.nanoseconds);
     const scalar_axpy = @as(f64, @floatFromInt(scalar_axpy_ns)) / 1_000_000.0;
@@ -135,28 +135,28 @@ fn benchmarkAxpy(
 }
 
 /// Run inner-product scalar-vs-SIMD benchmarks and print the speedup ratio.
-fn benchmarkInnerProductPair(
+fn benchmark_inner_product_pair(
     io: std.Io,
     out: *std.Io.Writer,
     a: []const Complex,
     b: []const Complex,
     iterations: usize,
 ) !void {
-    const ip_s = innerProductScalarNoInline;
-    const ip_v = innerProductSimdNoInline;
-    const scalar_ip = try benchmarkInnerProduct(
+    const ip_s = inner_product_scalar_no_inline;
+    const ip_v = inner_product_simd_no_inline;
+    const scalar_ip = try benchmark_inner_product(
         io,
         out,
-        "innerProduct (scalar)",
+        "inner_product (scalar)",
         ip_s,
         a,
         b,
         iterations,
     );
-    const simd_ip = try benchmarkInnerProduct(
+    const simd_ip = try benchmark_inner_product(
         io,
         out,
-        "innerProduct (SIMD)  ",
+        "inner_product (SIMD)  ",
         ip_v,
         a,
         b,
@@ -166,20 +166,20 @@ fn benchmarkInnerProductPair(
 }
 
 /// Run vector-norm scalar-vs-SIMD benchmarks and print the speedup ratio.
-fn benchmarkNormPair(
+fn benchmark_norm_pair(
     io: std.Io,
     out: *std.Io.Writer,
     a: []const Complex,
     iterations: usize,
 ) !void {
-    const vn_s = vectorNormScalarNoInline;
-    const vn_v = vectorNormSimdNoInline;
-    const scalar_norm = try benchmarkNorm(io, out, "vectorNorm (scalar)  ", vn_s, a, iterations);
-    const simd_norm = try benchmarkNorm(io, out, "vectorNorm (SIMD)    ", vn_v, a, iterations);
+    const vn_s = vector_norm_scalar_no_inline;
+    const vn_v = vector_norm_simd_no_inline;
+    const scalar_norm = try benchmark_norm(io, out, "vector_norm (scalar)  ", vn_s, a, iterations);
+    const simd_norm = try benchmark_norm(io, out, "vector_norm (SIMD)    ", vn_v, a, iterations);
     try out.print("  Speedup: {d:.2}x\n\n", .{scalar_norm / simd_norm});
 }
 
-fn runSizeBenchmark(
+fn run_size_benchmark(
     alloc: std.mem.Allocator,
     io: std.Io,
     out: *std.Io.Writer,
@@ -205,8 +205,8 @@ fn runSizeBenchmark(
         y[i] = Complex.init(fi * 0.01, fi * 0.02);
     }
 
-    try benchmarkInnerProductPair(io, out, a, b, iterations);
-    try benchmarkNormPair(io, out, a, iterations);
+    try benchmark_inner_product_pair(io, out, a, b, iterations);
+    try benchmark_norm_pair(io, out, a, iterations);
 
     // Reset y for axpy benchmark
     for (0..size) |i| {
@@ -218,7 +218,7 @@ fn runSizeBenchmark(
     const y_copy = try alloc.alloc(Complex, size);
     defer alloc.free(y_copy);
 
-    try benchmarkAxpy(io, out, a, y, y_copy, iterations);
+    try benchmark_axpy(io, out, a, y, y_copy, iterations);
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -235,7 +235,7 @@ pub fn main(init: std.process.Init) !void {
     try out.print("\n=== Complex Vector Operations Benchmark ===\n\n", .{});
 
     for (sizes) |size| {
-        try runSizeBenchmark(alloc, io, out, size, iterations);
+        try run_size_benchmark(alloc, io, out, size, iterations);
     }
 
     try out.flush();

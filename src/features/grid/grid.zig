@@ -17,7 +17,7 @@ pub const AtomGrid = becke.Atom;
 pub const LebedevPoint = lebedev.LebedevPoint;
 pub const RadialPoint = radial.RadialPoint;
 
-pub const buildMolecularGrid = becke.buildMolecularGrid;
+pub const build_molecular_grid = becke.build_molecular_grid;
 
 test {
     _ = lebedev;

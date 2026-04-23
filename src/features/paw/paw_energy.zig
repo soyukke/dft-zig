@@ -19,7 +19,7 @@ const xc = @import("../xc/xc.zig");
 ///
 /// For pseudized augmentation charges (PSQ), E_H^AE - E_H^{PS+Q} ≠ 0.
 /// Uses full multipole expansion (all L) with Gaunt coefficients.
-pub fn computePawOnsiteEnergy(
+pub fn compute_paw_onsite_energy(
     alloc: std.mem.Allocator,
     paw: PawData,
     tab: *const PawTab,
@@ -35,7 +35,7 @@ pub fn computePawOnsiteEnergy(
     _ = tab; // kij no longer used here (already in D^0/PP_DIJ)
 
     // On-site XC energy (angular Lebedev quadrature with GGA gradients)
-    const e_xc = try paw_xc.computePawExcOnsiteAngular(
+    const e_xc = try paw_xc.compute_paw_exc_onsite_angular(
         alloc,
         paw,
         rhoij_m,
@@ -50,7 +50,7 @@ pub fn computePawOnsiteEnergy(
     );
 
     // On-site Hartree energy (multi-L multipole expansion with Gaunt coefficients)
-    const e_h = try paw_xc.computePawEhOnsiteMultiL(
+    const e_h = try paw_xc.compute_paw_eh_onsite_multi_l(
         alloc,
         paw,
         rhoij_m,

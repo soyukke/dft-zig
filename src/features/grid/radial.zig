@@ -27,7 +27,7 @@ pub const bragg_slater_radii = [_]f64{
 
 /// Returns the Bragg-Slater radius for a given atomic number.
 /// Falls back to 2.0 Bohr for elements not in the table.
-pub fn braggSlaterRadius(z: usize) f64 {
+pub fn bragg_slater_radius(z: usize) f64 {
     if (z < bragg_slater_radii.len) {
         return bragg_slater_radii[z];
     }
@@ -52,7 +52,7 @@ pub const RadialPoint = struct {
 /// The weight includes the Jacobian dr/dx and the Gauss-Chebyshev weight pi/n.
 ///
 /// Returns an array of n RadialPoint structs.
-pub fn treutlerAhlrichs(allocator: std.mem.Allocator, n: usize, alpha_scale: f64) ![]RadialPoint {
+pub fn treutler_ahlrichs(allocator: std.mem.Allocator, n: usize, alpha_scale: f64) ![]RadialPoint {
     const points = try allocator.alloc(RadialPoint, n);
     errdefer allocator.free(points);
 
@@ -108,7 +108,7 @@ pub fn treutlerAhlrichs(allocator: std.mem.Allocator, n: usize, alpha_scale: f64
 /// uniformly spaced on (0, 1).
 ///
 /// Reference: Mura & Knowles, JCP 104, 9848 (1996).
-pub fn muraKnowles(allocator: std.mem.Allocator, n: usize, alpha_scale: f64) ![]RadialPoint {
+pub fn mura_knowles(allocator: std.mem.Allocator, n: usize, alpha_scale: f64) ![]RadialPoint {
     const points = try allocator.alloc(RadialPoint, n);
     errdefer allocator.free(points);
 
@@ -138,13 +138,13 @@ pub fn muraKnowles(allocator: std.mem.Allocator, n: usize, alpha_scale: f64) ![]
 /// Generates the default radial grid for an atom.
 /// Uses Treutler-Ahlrichs with the Bragg-Slater radius scaling.
 /// n_radial is the number of radial points (typically 75 for light atoms).
-pub fn defaultRadialGrid(
+pub fn default_radial_grid(
     allocator: std.mem.Allocator,
     atomic_number: usize,
     n_radial: usize,
 ) ![]RadialPoint {
-    const radius = braggSlaterRadius(atomic_number);
-    return treutlerAhlrichs(allocator, n_radial, radius);
+    const radius = bragg_slater_radius(atomic_number);
+    return treutler_ahlrichs(allocator, n_radial, radius);
 }
 
 // --- Tests ---
@@ -152,7 +152,7 @@ pub fn defaultRadialGrid(
 test "treutler radial grid basic properties" {
     const allocator = std.testing.allocator;
 
-    const grid = try treutlerAhlrichs(allocator, 50, 1.0);
+    const grid = try treutler_ahlrichs(allocator, 50, 1.0);
     defer allocator.free(grid);
 
     // All r values should be positive
@@ -178,7 +178,7 @@ test "treutler radial grid basic properties" {
 test "mura-knowles radial grid basic properties" {
     const allocator = std.testing.allocator;
 
-    const grid = try muraKnowles(allocator, 50, 1.0);
+    const grid = try mura_knowles(allocator, 50, 1.0);
     defer allocator.free(grid);
 
     for (grid) |pt| {
@@ -192,7 +192,7 @@ test "treutler grid integrates r^2 * exp(-r^2)" {
     // = integral of r^4 * exp(-r^2) dr = 3*sqrt(pi)/8
     const allocator = std.testing.allocator;
 
-    const grid = try treutlerAhlrichs(allocator, 100, 1.0);
+    const grid = try treutler_ahlrichs(allocator, 100, 1.0);
     defer allocator.free(grid);
 
     var integral: f64 = 0.0;
@@ -210,7 +210,7 @@ test "treutler grid integrates r^2 * exp(-r^2)" {
 test "mura-knowles grid integrates r^2 * exp(-r^2)" {
     const allocator = std.testing.allocator;
 
-    const grid = try muraKnowles(allocator, 100, 1.0);
+    const grid = try mura_knowles(allocator, 100, 1.0);
     defer allocator.free(grid);
 
     var integral: f64 = 0.0;

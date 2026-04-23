@@ -71,7 +71,7 @@ const pi: f64 = std.math.pi;
 
 /// Atomic masses (most abundant isotope) in AMU, indexed by atomic number.
 /// Using integer masses to match PySCF default behavior.
-pub fn atomicMass(z: u8) f64 {
+pub fn atomic_mass(z: u8) f64 {
     return switch (z) {
         1 => 1.008, // H
         2 => 4.003, // He
@@ -84,7 +84,7 @@ pub fn atomicMass(z: u8) f64 {
 }
 
 /// Atomic masses matching PySCF defaults (integer values).
-pub fn atomicMassInt(z: u8) f64 {
+pub fn atomic_mass_int(z: u8) f64 {
     return switch (z) {
         1 => 1.0, // H
         2 => 4.0, // He
@@ -149,7 +149,7 @@ pub const VibrationalResult = struct {
 /// Convert eigenvalue of mass-weighted Hessian (Ha/(Bohr²·AMU)) to cm⁻¹.
 /// ω = sqrt(|λ| * Ha_to_J / (Bohr_to_m² * AMU_to_kg))  [rad/s]
 /// ν = ω / (2π c)  [cm⁻¹]
-pub fn eigenvalueToCm1(eigenvalue: f64) f64 {
+pub fn eigenvalue_to_cm1(eigenvalue: f64) f64 {
     const conv = ha_to_j / (bohr_to_m * bohr_to_m * amu_to_kg);
     if (eigenvalue >= 0.0) {
         const omega_si = @sqrt(eigenvalue * conv);
@@ -164,7 +164,7 @@ pub fn eigenvalueToCm1(eigenvalue: f64) f64 {
 /// Convert frequency in cm⁻¹ to Hartree.
 /// E = h * c * ν_cm⁻¹  (in Joules), then convert to Ha.
 /// c is in cm/s, so h * c_cm_s * ν gives energy directly.
-pub fn cm1ToHartree(freq_cm1: f64) f64 {
+pub fn cm1_to_hartree(freq_cm1: f64) f64 {
     return h_planck * c_cm_s * freq_cm1 / ha_to_j;
 }
 
@@ -230,7 +230,7 @@ pub const ThermoResult = struct {
 
 /// Compute the inertia tensor for a set of atoms.
 /// Returns the 3x3 tensor in a flat array (row-major).
-fn computeInertiaTensor(
+fn compute_inertia_tensor(
     positions: []const Vec3,
     atomic_numbers: []const u8,
     use_integer_masses: bool,
@@ -242,9 +242,9 @@ fn computeInertiaTensor(
     var total_mass: f64 = 0.0;
     for (0..n_atoms) |i| {
         const m = if (use_integer_masses)
-            atomicMassInt(atomic_numbers[i])
+            atomic_mass_int(atomic_numbers[i])
         else
-            atomicMass(atomic_numbers[i]);
+            atomic_mass(atomic_numbers[i]);
         com.x += m * positions[i].x;
         com.y += m * positions[i].y;
         com.z += m * positions[i].z;
@@ -258,9 +258,9 @@ fn computeInertiaTensor(
     var tensor = [_]f64{0.0} ** 9;
     for (0..n_atoms) |i| {
         const m = if (use_integer_masses)
-            atomicMassInt(atomic_numbers[i])
+            atomic_mass_int(atomic_numbers[i])
         else
-            atomicMass(atomic_numbers[i]);
+            atomic_mass(atomic_numbers[i]);
         const rx = positions[i].x - com.x;
         const ry = positions[i].y - com.y;
         const rz = positions[i].z - com.z;
@@ -345,12 +345,12 @@ fn diag3x3(tensor: [9]f64) [3]f64 {
 
 /// Compute principal moments of inertia (AMU·Bohr²) sorted descending.
 /// Also returns whether molecule is linear.
-fn principalMoments(
+fn principal_moments(
     positions: []const Vec3,
     atomic_numbers: []const u8,
     use_integer_masses: bool,
 ) struct { moments: [3]f64, is_linear: bool } {
-    const tensor = computeInertiaTensor(positions, atomic_numbers, use_integer_masses);
+    const tensor = compute_inertia_tensor(positions, atomic_numbers, use_integer_masses);
     const evals = diag3x3(tensor);
 
     // Linear if smallest moment is near zero
@@ -361,7 +361,7 @@ fn principalMoments(
 
 /// Convert principal moment of inertia (AMU·Bohr²) to rotational constant (GHz).
 /// B = h / (8π² I)  where I is in kg·m².
-fn momentToRotConst(moment_amu_bohr2: f64) f64 {
+fn moment_to_rot_const(moment_amu_bohr2: f64) f64 {
     if (moment_amu_bohr2 < 1e-10) return std.math.inf(f64);
     // Convert to SI: I_si = moment * amu_to_kg * bohr_to_m^2
     const i_si = moment_amu_bohr2 * amu_to_kg * bohr_to_m * bohr_to_m;
@@ -382,7 +382,7 @@ const TransContrib = struct {
     s_trans: f64,
 };
 
-fn computeTransContrib(
+fn compute_trans_contrib(
     positions: []const Vec3,
     atomic_numbers: []const u8,
     temperature: f64,
@@ -394,9 +394,9 @@ fn computeTransContrib(
     var total_mass_amu: f64 = 0.0;
     for (0..positions.len) |i| {
         total_mass_amu += if (use_integer_masses)
-            atomicMassInt(atomic_numbers[i])
+            atomic_mass_int(atomic_numbers[i])
         else
-            atomicMass(atomic_numbers[i]);
+            atomic_mass(atomic_numbers[i]);
     }
 
     // ==== Translational contribution (ideal gas) ====
@@ -424,7 +424,7 @@ const RotContrib = struct {
     is_linear: bool,
 };
 
-fn computeRotContrib(
+fn compute_rot_contrib(
     positions: []const Vec3,
     atomic_numbers: []const u8,
     temperature: f64,
@@ -432,11 +432,11 @@ fn computeRotContrib(
     sym_number: u32,
     use_integer_masses: bool,
 ) RotContrib {
-    const pm = principalMoments(positions, atomic_numbers, use_integer_masses);
+    const pm = principal_moments(positions, atomic_numbers, use_integer_masses);
     const rot_const = [3]f64{
-        momentToRotConst(pm.moments[2]), // Largest B from smallest I
-        momentToRotConst(pm.moments[1]),
-        momentToRotConst(pm.moments[0]), // Smallest B from largest I
+        moment_to_rot_const(pm.moments[2]), // Largest B from smallest I
+        moment_to_rot_const(pm.moments[1]),
+        moment_to_rot_const(pm.moments[0]), // Smallest B from largest I
     };
 
     const kT_si = k_b * temperature;
@@ -488,7 +488,7 @@ const VibContrib = struct {
     cv_vib: f64,
 };
 
-fn computeVibContrib(
+fn compute_vib_contrib(
     vib_frequencies_cm1: []const f64,
     kT: f64,
 ) VibContrib {
@@ -501,7 +501,7 @@ fn computeVibContrib(
         if (freq_cm1 <= 0.0) continue;
 
         // Convert to Hartree energy quantum
-        const e_quantum = cm1ToHartree(freq_cm1);
+        const e_quantum = cm1_to_hartree(freq_cm1);
         zpve += 0.5 * e_quantum;
 
         // u = hν / kT = e_quantum / kT
@@ -534,7 +534,7 @@ fn computeVibContrib(
     };
 }
 
-pub fn computeThermo(
+pub fn compute_thermo(
     vib_result: *const VibrationalResult,
     positions: []const Vec3,
     atomic_numbers: []const u8,
@@ -546,7 +546,7 @@ pub fn computeThermo(
 ) ThermoResult {
     const kT = k_b_ha * temperature;
 
-    const trans = computeTransContrib(
+    const trans = compute_trans_contrib(
         positions,
         atomic_numbers,
         temperature,
@@ -554,7 +554,7 @@ pub fn computeThermo(
         kT,
         use_integer_masses,
     );
-    const rot = computeRotContrib(
+    const rot = compute_rot_contrib(
         positions,
         atomic_numbers,
         temperature,
@@ -562,7 +562,7 @@ pub fn computeThermo(
         sym_number,
         use_integer_masses,
     );
-    const vib = computeVibContrib(vib_result.vib_frequencies_cm1, kT);
+    const vib = compute_vib_contrib(vib_result.vib_frequencies_cm1, kT);
 
     const e_vib = vib.zpve + vib.e_vib_thermal;
 
@@ -599,7 +599,7 @@ pub fn computeThermo(
 }
 
 /// Print thermodynamic results.
-pub fn printThermo(r: *const ThermoResult) void {
+pub fn print_thermo(r: *const ThermoResult) void {
     logging.progress(
         true,
         "\n=== Thermodynamic Properties ({d:.2} K, {d:.0} Pa) ===\n",
@@ -643,7 +643,7 @@ pub fn printThermo(r: *const ThermoResult) void {
 // Shell-to-atom map (reused from optimizer.zig)
 // ============================================================================
 
-fn buildShellToAtomMap(
+fn build_shell_to_atom_map(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
     nuc_positions: []const Vec3,
@@ -667,7 +667,7 @@ fn buildShellToAtomMap(
     return map;
 }
 
-fn updateShellCenters(
+fn update_shell_centers(
     shells: []ContractedShell,
     shell_to_atom: []const usize,
     positions: []const Vec3,
@@ -688,7 +688,7 @@ fn updateShellCenters(
 ///
 /// where g_j is the j-th component of the gradient and e_i is the i-th
 /// unit vector in 3N-dimensional coordinate space.
-fn applyDisplacement(
+fn apply_displacement(
     nuc_positions: []Vec3,
     orig_positions: []const Vec3,
     shells: []ContractedShell,
@@ -704,10 +704,44 @@ fn applyDisplacement(
         2 => nuc_positions[atom_i].z += delta_signed,
         else => {},
     }
-    updateShellCenters(shells, shell_to_atom, nuc_positions);
+    update_shell_centers(shells, shell_to_atom, nuc_positions);
 }
 
-fn hessianRowFromCentralDiff(
+fn compute_gradient_at_displacement(
+    alloc: std.mem.Allocator,
+    shells: []ContractedShell,
+    nuc_positions: []Vec3,
+    orig_positions: []const Vec3,
+    shell_to_atom: []const usize,
+    nuc_charges: []const f64,
+    n_electrons: usize,
+    n_occ: usize,
+    params: VibrationalParams,
+    atom_i: usize,
+    coord_i: usize,
+    delta: f64,
+) ![]f64 {
+    apply_displacement(
+        nuc_positions,
+        orig_positions,
+        shells,
+        shell_to_atom,
+        atom_i,
+        coord_i,
+        delta,
+    );
+    return compute_gradient_flat(
+        alloc,
+        shells,
+        nuc_positions,
+        nuc_charges,
+        n_electrons,
+        n_occ,
+        params.scf_params,
+    );
+}
+
+fn hessian_row_from_central_diff(
     alloc: std.mem.Allocator,
     shells: []ContractedShell,
     nuc_positions: []Vec3,
@@ -739,35 +773,35 @@ fn hessianRowFromCentralDiff(
         },
     );
 
-    applyDisplacement(nuc_positions, orig_positions, shells, shell_to_atom, atom_i, coord_i, delta);
-    const grad_plus = try computeGradientFlat(
+    const grad_plus = try compute_gradient_at_displacement(
         alloc,
         shells,
         nuc_positions,
+        orig_positions,
+        shell_to_atom,
         nuc_charges,
         n_electrons,
         n_occ,
-        params.scf_params,
+        params,
+        atom_i,
+        coord_i,
+        delta,
     );
     defer alloc.free(grad_plus);
 
-    applyDisplacement(
-        nuc_positions,
-        orig_positions,
-        shells,
-        shell_to_atom,
-        atom_i,
-        coord_i,
-        -delta,
-    );
-    const grad_minus = try computeGradientFlat(
+    const grad_minus = try compute_gradient_at_displacement(
         alloc,
         shells,
         nuc_positions,
+        orig_positions,
+        shell_to_atom,
         nuc_charges,
         n_electrons,
         n_occ,
-        params.scf_params,
+        params,
+        atom_i,
+        coord_i,
+        -delta,
     );
     defer alloc.free(grad_minus);
 
@@ -777,7 +811,7 @@ fn hessianRowFromCentralDiff(
     }
 }
 
-fn symmetrizeSquareMatrix(mat: []f64, n: usize) void {
+fn symmetrize_square_matrix(mat: []f64, n: usize) void {
     for (0..n) |i| {
         for (i + 1..n) |j| {
             const avg = (mat[i * n + j] + mat[j * n + i]) / 2.0;
@@ -787,7 +821,7 @@ fn symmetrizeSquareMatrix(mat: []f64, n: usize) void {
     }
 }
 
-pub fn computeNumericalHessian(
+pub fn compute_numerical_hessian(
     alloc: std.mem.Allocator,
     shells: []ContractedShell,
     nuc_positions: []Vec3,
@@ -800,7 +834,7 @@ pub fn computeNumericalHessian(
     const n_occ = n_electrons / 2;
 
     // Build shell-to-atom map from initial geometry
-    const shell_to_atom = try buildShellToAtomMap(alloc, shells, nuc_positions);
+    const shell_to_atom = try build_shell_to_atom_map(alloc, shells, nuc_positions);
     defer alloc.free(shell_to_atom);
 
     // Save original positions
@@ -815,7 +849,7 @@ pub fn computeNumericalHessian(
 
     // For each coordinate i, displace +δ and -δ, compute gradient
     for (0..n3) |i| {
-        try hessianRowFromCentralDiff(
+        try hessian_row_from_central_diff(
             alloc,
             shells,
             nuc_positions,
@@ -833,16 +867,16 @@ pub fn computeNumericalHessian(
 
     // Restore original positions
     @memcpy(nuc_positions, orig_positions);
-    updateShellCenters(shells, shell_to_atom, nuc_positions);
+    update_shell_centers(shells, shell_to_atom, nuc_positions);
 
     // Symmetrize: H = (H + H^T) / 2
-    symmetrizeSquareMatrix(hessian, n3);
+    symmetrize_square_matrix(hessian, n3);
 
     return hessian;
 }
 
 /// Helper: run SCF + gradient and return flattened gradient array.
-fn computeGradientFlat(
+fn compute_gradient_flat(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
     nuc_positions: []const Vec3,
@@ -854,7 +888,7 @@ fn computeGradientFlat(
     const n_atoms = nuc_positions.len;
     const n3 = n_atoms * 3;
 
-    var scf_result = try gto_scf.runGeneralRhfScf(
+    var scf_result = try gto_scf.run_general_rhf_scf(
         alloc,
         shells,
         nuc_positions,
@@ -864,7 +898,7 @@ fn computeGradientFlat(
     );
     defer scf_result.deinit(alloc);
 
-    var grad_result = try gradient_mod.computeRhfGradient(
+    var grad_result = try gradient_mod.compute_rhf_gradient(
         alloc,
         shells,
         nuc_positions,
@@ -892,7 +926,7 @@ fn computeGradientFlat(
 /// Diagonalize a real symmetric matrix using LAPACK dsyev.
 /// Returns eigenvalues (ascending) and eigenvectors (columns of the output matrix).
 /// The input matrix is overwritten with eigenvectors.
-fn diagonalizeSymmetric(alloc: std.mem.Allocator, matrix: []f64, n: usize) ![]f64 {
+fn diagonalize_symmetric(alloc: std.mem.Allocator, matrix: []f64, n: usize) ![]f64 {
     lapack_mutex.lock();
     defer lapack_mutex.unlock();
 
@@ -956,7 +990,7 @@ fn diagonalizeSymmetric(alloc: std.mem.Allocator, matrix: []f64, n: usize) ![]f6
 ///   4. Convert eigenvalues to frequencies in cm⁻¹.
 ///   5. Identify and separate translational/rotational modes.
 ///   6. Compute ZPVE.
-fn massWeightHessian(
+fn mass_weight_hessian(
     mw_hessian: []f64,
     n_atoms: usize,
     n3: usize,
@@ -965,14 +999,14 @@ fn massWeightHessian(
 ) void {
     for (0..n_atoms) |i| {
         const mi = if (use_integer_masses)
-            atomicMassInt(atomic_numbers[i])
+            atomic_mass_int(atomic_numbers[i])
         else
-            atomicMass(atomic_numbers[i]);
+            atomic_mass(atomic_numbers[i]);
         for (0..n_atoms) |j| {
             const mj = if (use_integer_masses)
-                atomicMassInt(atomic_numbers[j])
+                atomic_mass_int(atomic_numbers[j])
             else
-                atomicMass(atomic_numbers[j]);
+                atomic_mass(atomic_numbers[j]);
             const inv_sqrt_mm = 1.0 / @sqrt(mi * mj);
             for (0..3) |a| {
                 for (0..3) |b| {
@@ -983,7 +1017,7 @@ fn massWeightHessian(
     }
 }
 
-fn extractVibrationalFrequencies(
+fn extract_vibrational_frequencies(
     alloc: std.mem.Allocator,
     frequencies: []const f64,
     threshold: f64,
@@ -1003,17 +1037,17 @@ fn extractVibrationalFrequencies(
     return vib_freqs;
 }
 
-fn computeZpveFromFreqs(vib_freqs: []const f64) f64 {
+fn compute_zpve_from_freqs(vib_freqs: []const f64) f64 {
     var zpve: f64 = 0.0;
     for (vib_freqs) |freq| {
         if (freq > 0.0) {
-            zpve += cm1ToHartree(freq);
+            zpve += cm1_to_hartree(freq);
         }
     }
     return zpve * 0.5;
 }
 
-fn reportFrequencies(
+fn report_frequencies(
     print_progress: bool,
     n3: usize,
     frequencies: []const f64,
@@ -1032,7 +1066,7 @@ fn reportFrequencies(
     logging.progress(true, "\nZPVE: {d:.10} Ha ({d:.4} kcal/mol)\n", .{ zpve, zpve * 627.509 });
 }
 
-pub fn vibrationalAnalysis(
+pub fn vibrational_analysis(
     alloc: std.mem.Allocator,
     shells: []ContractedShell,
     nuc_positions: []Vec3,
@@ -1051,7 +1085,7 @@ pub fn vibrationalAnalysis(
     );
 
     // Step 1: Compute numerical Hessian
-    const hessian = try computeNumericalHessian(
+    const hessian = try compute_numerical_hessian(
         alloc,
         shells,
         nuc_positions,
@@ -1066,11 +1100,11 @@ pub fn vibrationalAnalysis(
     defer alloc.free(mw_hessian);
 
     @memcpy(mw_hessian, hessian);
-    massWeightHessian(mw_hessian, n_atoms, n3, atomic_numbers, params.use_integer_masses);
+    mass_weight_hessian(mw_hessian, n_atoms, n3, atomic_numbers, params.use_integer_masses);
 
     // Step 3: Diagonalize mass-weighted Hessian
     // dsyev expects column-major but our matrix is symmetric, so row-major = column-major
-    const eigenvalues = try diagonalizeSymmetric(alloc, mw_hessian, n3);
+    const eigenvalues = try diagonalize_symmetric(alloc, mw_hessian, n3);
     // After diagonalization, mw_hessian contains eigenvectors (column-major)
     const normal_modes = try alloc.alloc(f64, n3 * n3);
     @memcpy(normal_modes, mw_hessian);
@@ -1078,20 +1112,20 @@ pub fn vibrationalAnalysis(
     // Step 4: Convert eigenvalues to frequencies
     const frequencies = try alloc.alloc(f64, n3);
     for (0..n3) |i| {
-        frequencies[i] = eigenvalueToCm1(eigenvalues[i]);
+        frequencies[i] = eigenvalue_to_cm1(eigenvalues[i]);
     }
 
     // Step 5: Separate vibrational modes from translations/rotations
-    const vib_freqs = try extractVibrationalFrequencies(
+    const vib_freqs = try extract_vibrational_frequencies(
         alloc,
         frequencies,
         params.rot_trans_threshold,
     );
 
     // Step 6: Compute ZPVE = (1/2) * sum of positive vibrational frequencies (in Ha)
-    const zpve = computeZpveFromFreqs(vib_freqs);
+    const zpve = compute_zpve_from_freqs(vib_freqs);
 
-    reportFrequencies(params.print_progress, n3, frequencies, vib_freqs, zpve);
+    report_frequencies(params.print_progress, n3, frequencies, vib_freqs, zpve);
 
     return .{
         .eigenvalues = eigenvalues,

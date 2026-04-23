@@ -3,7 +3,7 @@ const math = @import("../math/math.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const pseudo = @import("../pseudopotential/pseudopotential.zig");
 const form_factor = @import("../pseudopotential/form_factor.zig");
-const local_potential = @import("../pseudopotential/local_potential.zig");
+const local_potential_mod = @import("../pseudopotential/local_potential.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const xyz = @import("../structure/xyz.zig");
 
@@ -42,21 +42,21 @@ pub const PotentialGrid = struct {
 
     /// Return value for (h,k,l) or zero if out of range.
     /// Return value for (h,k,l). Returns zero if out of grid range.
-    pub fn valueAt(self: PotentialGrid, h: i32, k: i32, l: i32) math.Complex {
-        const idx = self.indexOf(h, k, l) orelse return math.complex.init(0.0, 0.0);
+    pub fn value_at(self: PotentialGrid, h: i32, k: i32, l: i32) math.Complex {
+        const idx = self.index_of(h, k, l) orelse return math.complex.init(0.0, 0.0);
         return self.values[idx];
     }
 
-    /// Alias for valueAt. Returns zero if out of grid range.
-    pub fn valueAtWrapped(self: PotentialGrid, h: i32, k: i32, l: i32) math.Complex {
-        return self.valueAt(h, k, l);
+    /// Alias for value_at. Returns zero if out of grid range.
+    pub fn value_at_wrapped(self: PotentialGrid, h: i32, k: i32, l: i32) math.Complex {
+        return self.value_at(h, k, l);
     }
 
     /// Convert integer indices to flat index.
-    pub fn indexOf(self: PotentialGrid, h: i32, k: i32, l: i32) ?usize {
-        const hi = index1D(h, self.nx, self.min_h) orelse return null;
-        const ki = index1D(k, self.ny, self.min_k) orelse return null;
-        const li = index1D(l, self.nz, self.min_l) orelse return null;
+    pub fn index_of(self: PotentialGrid, h: i32, k: i32, l: i32) ?usize {
+        const hi = index1_d(h, self.nx, self.min_h) orelse return null;
+        const ki = index1_d(k, self.ny, self.min_k) orelse return null;
+        const li = index1_d(l, self.nz, self.min_l) orelse return null;
         return hi + self.nx * (ki + self.ny * li);
     }
 };
@@ -80,7 +80,7 @@ const NonlocalMode = enum {
 };
 
 /// Build species table from parsed pseudopotentials.
-pub fn buildSpeciesEntries(alloc: std.mem.Allocator, items: []pseudo.Parsed) ![]SpeciesEntry {
+pub fn build_species_entries(alloc: std.mem.Allocator, items: []pseudo.Parsed) ![]SpeciesEntry {
     var list: std.ArrayList(SpeciesEntry) = .empty;
     errdefer {
         for (list.items) |*entry| {
@@ -96,7 +96,7 @@ pub fn buildSpeciesEntries(alloc: std.mem.Allocator, items: []pseudo.Parsed) ![]
                 .symbol = item.spec.element,
                 .upf = upf,
                 .z_valence = z,
-                .epsatm_ry = form_factor.computeEpsatm(upf.*, z),
+                .epsatm_ry = form_factor.compute_epsatm(upf.*, z),
                 .is_paw = upf.paw != null,
             });
         } else {
@@ -107,7 +107,7 @@ pub fn buildSpeciesEntries(alloc: std.mem.Allocator, items: []pseudo.Parsed) ![]
 }
 
 /// Release species table resources.
-pub fn deinitSpeciesEntries(alloc: std.mem.Allocator, entries: []SpeciesEntry) void {
+pub fn deinit_species_entries(alloc: std.mem.Allocator, entries: []SpeciesEntry) void {
     if (entries.len == 0) return;
     for (entries) |*entry| {
         entry.deinit();
@@ -116,7 +116,7 @@ pub fn deinitSpeciesEntries(alloc: std.mem.Allocator, entries: []SpeciesEntry) v
 }
 
 /// Map atoms to species indices and convert to bohr.
-pub fn buildAtomData(
+pub fn build_atom_data(
     alloc: std.mem.Allocator,
     atoms: []const xyz.Atom,
     unit_scale_bohr: f64,
@@ -125,7 +125,7 @@ pub fn buildAtomData(
     const data = try alloc.alloc(AtomData, atoms.len);
     errdefer alloc.free(data);
     for (atoms, 0..) |atom, i| {
-        const idx = findSpeciesIndex(species, atom.symbol) orelse
+        const idx = find_species_index(species, atom.symbol) orelse
             return error.MissingPseudopotential;
         data[i] = .{
             .position = math.Vec3.scale(atom.position, unit_scale_bohr),
@@ -135,7 +135,7 @@ pub fn buildAtomData(
     return data;
 }
 
-test "buildAtomData accepts const atom slices" {
+test "build_atom_data accepts const atom slices" {
     const alloc = std.testing.allocator;
     const atoms = [_]xyz.Atom{
         .{
@@ -152,7 +152,7 @@ test "buildAtomData accepts const atom slices" {
         },
     };
 
-    const atom_data = try buildAtomData(alloc, atoms[0..], 2.0, species[0..]);
+    const atom_data = try build_atom_data(alloc, atoms[0..], 2.0, species[0..]);
     defer alloc.free(atom_data);
 
     try std.testing.expectEqual(@as(usize, 1), atom_data.len);
@@ -163,7 +163,7 @@ test "buildAtomData accepts const atom slices" {
 }
 
 /// Locate species entry by symbol.
-pub fn findSpeciesIndex(species: []const SpeciesEntry, symbol: []const u8) ?usize {
+pub fn find_species_index(species: []const SpeciesEntry, symbol: []const u8) ?usize {
     for (species, 0..) |entry, i| {
         if (std.mem.eql(u8, entry.symbol, symbol)) return i;
     }
@@ -171,13 +171,13 @@ pub fn findSpeciesIndex(species: []const SpeciesEntry, symbol: []const u8) ?usiz
 }
 
 /// Build Hamiltonian with local and nonlocal terms.
-pub fn buildHamiltonian(
+pub fn build_hamiltonian(
     alloc: std.mem.Allocator,
     gvecs: []const plane_wave.GVector,
     species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
-    local_cfg: local_potential.LocalPotentialConfig,
+    local_cfg: local_potential_mod.LocalPotentialConfig,
     extra: ?PotentialGrid,
 ) ![]math.Complex {
     const n = gvecs.len;
@@ -190,7 +190,7 @@ pub fn buildHamiltonian(
         var i: usize = 0;
         while (i < n) : (i += 1) {
             const q = math.Vec3.sub(gvecs[i].cart, gvecs[j].cart);
-            var value = try localPotential(
+            var value = try local_potential(
                 q,
                 gvecs[i],
                 gvecs[j],
@@ -207,12 +207,12 @@ pub fn buildHamiltonian(
         }
     }
 
-    try addNonlocalContribution(alloc, h, gvecs, species, atoms, inv_volume, .dij);
+    try add_nonlocal_contribution(alloc, h, gvecs, species, atoms, inv_volume, .dij);
     return h;
 }
 
 /// Build nonlocal matrix for projector terms only.
-pub fn buildNonlocalMatrix(
+pub fn build_nonlocal_matrix(
     alloc: std.mem.Allocator,
     gvecs: []const plane_wave.GVector,
     species: []const SpeciesEntry,
@@ -223,12 +223,12 @@ pub fn buildNonlocalMatrix(
     const h = try alloc.alloc(math.Complex, n * n);
     errdefer alloc.free(h);
     @memset(h, math.complex.init(0.0, 0.0));
-    try addNonlocalContribution(alloc, h, gvecs, species, atoms, inv_volume, .dij);
+    try add_nonlocal_contribution(alloc, h, gvecs, species, atoms, inv_volume, .dij);
     return h;
 }
 
 /// Build overlap matrix for generalized eigenproblem.
-pub fn buildOverlapMatrix(
+pub fn build_overlap_matrix(
     alloc: std.mem.Allocator,
     gvecs: []const plane_wave.GVector,
     species: []const SpeciesEntry,
@@ -238,13 +238,13 @@ pub fn buildOverlapMatrix(
     const n = gvecs.len;
     const s = try alloc.alloc(math.Complex, n * n);
     errdefer alloc.free(s);
-    initIdentity(s, n);
-    try addNonlocalContribution(alloc, s, gvecs, species, atoms, inv_volume, .qij);
+    init_identity(s, n);
+    try add_nonlocal_contribution(alloc, s, gvecs, species, atoms, inv_volume, .qij);
     return s;
 }
 
 /// Initialize matrix to identity.
-pub fn initIdentity(m: []math.Complex, n: usize) void {
+pub fn init_identity(m: []math.Complex, n: usize) void {
     var j: usize = 0;
     while (j < n) : (j += 1) {
         var i: usize = 0;
@@ -256,7 +256,7 @@ pub fn initIdentity(m: []math.Complex, n: usize) void {
 }
 
 /// Add nonlocal pseudopotential to Hamiltonian.
-fn addNonlocalContribution(
+fn add_nonlocal_contribution(
     alloc: std.mem.Allocator,
     h: []math.Complex,
     gvecs: []const plane_wave.GVector,
@@ -280,7 +280,7 @@ fn addNonlocalContribution(
         if (beta_count == 0 or coeffs.len == 0) continue;
         if (coeffs.len != beta_count * beta_count) return error.InvalidPseudopotential;
 
-        var proj = try buildProjectors(alloc, upf, gvecs);
+        var proj = try build_projectors(alloc, upf, gvecs);
         defer proj.deinit(alloc);
 
         // Process each atom individually to avoid incorrect cross terms.
@@ -305,7 +305,7 @@ fn addNonlocalContribution(
                     const phase = math.complex.mul(atom_phase[i], phase_j_conj);
                     if (phase.r == 0.0 and phase.i == 0.0) continue;
 
-                    const nonlocal_value = computeNonlocalValue(
+                    const nonlocal_value = compute_nonlocal_value(
                         proj,
                         i,
                         j,
@@ -323,7 +323,7 @@ fn addNonlocalContribution(
 }
 
 /// Build projector cache for a species and basis.
-fn buildProjectors(
+fn build_projectors(
     alloc: std.mem.Allocator,
     upf: pseudo.UpfData,
     gvecs: []const plane_wave.GVector,
@@ -342,7 +342,13 @@ fn buildProjectors(
         var g: usize = 0;
         while (g < g_count) : (g += 1) {
             const gmag = math.Vec3.norm(gvecs[g].kpg);
-            const value = nonlocal.radialProjector(upf.beta[b].values, upf.r, upf.rab, l_val, gmag);
+            const value = nonlocal.radial_projector(
+                upf.beta[b].values,
+                upf.r,
+                upf.rab,
+                l_val,
+                gmag,
+            );
             radial[b * g_count + g] = value;
         }
     }
@@ -356,7 +362,7 @@ fn buildProjectors(
 }
 
 /// Compute nonlocal term contribution for a G pair.
-fn computeNonlocalValue(
+fn compute_nonlocal_value(
     proj: SpeciesProjectors,
     gi: usize,
     gj: usize,
@@ -378,7 +384,7 @@ fn computeNonlocalValue(
     var i: usize = 0;
     while (i < proj.beta_count) : (i += 1) {
         const li = proj.l[i];
-        const angular = nonlocal.angularFactor(li, cos_gamma);
+        const angular = nonlocal.angular_factor(li, cos_gamma);
         var j: usize = 0;
         while (j < proj.beta_count) : (j += 1) {
             if (proj.l[j] != li) continue;
@@ -393,7 +399,7 @@ fn computeNonlocalValue(
 }
 
 /// Compute phase sum for atoms of one species.
-fn phaseSum(q: math.Vec3, atoms: []const AtomData, species_index: usize) math.Complex {
+fn phase_sum(q: math.Vec3, atoms: []const AtomData, species_index: usize) math.Complex {
     var sum = math.complex.init(0.0, 0.0);
     for (atoms) |atom| {
         if (atom.species_index != species_index) continue;
@@ -404,22 +410,22 @@ fn phaseSum(q: math.Vec3, atoms: []const AtomData, species_index: usize) math.Co
 }
 
 /// Compute local potential in reciprocal space for q.
-fn localPotential(
+fn local_potential(
     q: math.Vec3,
     gi: plane_wave.GVector,
     gj: plane_wave.GVector,
     species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
-    local_cfg: local_potential.LocalPotentialConfig,
+    local_cfg: local_potential_mod.LocalPotentialConfig,
     extra: ?PotentialGrid,
 ) !math.Complex {
-    var value = try ionicLocalPotential(q, species, atoms, inv_volume, local_cfg);
+    var value = try ionic_local_potential(q, species, atoms, inv_volume, local_cfg);
     if (extra) |pot| {
         const dh = gi.h - gj.h;
         const dk = gi.k - gj.k;
         const dl = gi.l - gj.l;
-        const add = pot.valueAtWrapped(dh, dk, dl);
+        const add = pot.value_at_wrapped(dh, dk, dl);
         value = math.complex.add(value, add);
     }
     return value;
@@ -429,23 +435,23 @@ fn localPotential(
 /// Note: G=0 component is skipped as it cancels with the Hartree G=0 divergence
 /// in neutral systems. The G=0 ionic potential is handled separately in the
 /// energy calculation via Ewald summation.
-pub fn ionicLocalPotential(
+pub fn ionic_local_potential(
     q: math.Vec3,
     species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
-    local_cfg: local_potential.LocalPotentialConfig,
+    local_cfg: local_potential_mod.LocalPotentialConfig,
 ) !math.Complex {
-    return ionicLocalPotentialWithTable(q, species, atoms, inv_volume, local_cfg, null);
+    return ionic_local_potential_with_table(q, species, atoms, inv_volume, local_cfg, null);
 }
 
 /// Fast version using pre-computed form factor tables.
-pub fn ionicLocalPotentialWithTable(
+pub fn ionic_local_potential_with_table(
     q: math.Vec3,
     species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
-    local_cfg: local_potential.LocalPotentialConfig,
+    local_cfg: local_potential_mod.LocalPotentialConfig,
     ff_tables: ?[]const form_factor.LocalFormFactorTable,
 ) !math.Complex {
     const q_mag = math.Vec3.norm(q);
@@ -459,7 +465,7 @@ pub fn ionicLocalPotentialWithTable(
             tables[atom.species_index].eval(q_mag)
         else blk: {
             const entry = &species[atom.species_index];
-            break :blk localVqCached(entry, q_mag, local_cfg);
+            break :blk local_vq_cached(entry, q_mag, local_cfg);
         };
         const phase = math.complex.expi(-math.Vec3.dot(q, atom.position));
         sum = math.complex.add(sum, math.complex.scale(phase, vq));
@@ -467,29 +473,29 @@ pub fn ionicLocalPotentialWithTable(
     return math.complex.scale(sum, inv_volume);
 }
 
-pub fn localFormFactor(
+pub fn local_form_factor(
     entry: *const SpeciesEntry,
     q: f64,
-    local_cfg: local_potential.LocalPotentialConfig,
+    local_cfg: local_potential_mod.LocalPotentialConfig,
 ) f64 {
     return switch (local_cfg.mode) {
-        .tail => form_factor.localVqWithTail(entry.upf.*, entry.z_valence, q),
-        .ewald => form_factor.localVqEwald(entry.upf.*, entry.z_valence, q, local_cfg.alpha),
-        .short_range => form_factor.localVqShortRange(entry.upf.*, entry.z_valence, q),
+        .tail => form_factor.local_vq_with_tail(entry.upf.*, entry.z_valence, q),
+        .ewald => form_factor.local_vq_ewald(entry.upf.*, entry.z_valence, q, local_cfg.alpha),
+        .short_range => form_factor.local_vq_short_range(entry.upf.*, entry.z_valence, q),
     };
 }
 
 /// Get local form factor for a species with Coulomb tail correction.
-fn localVqCached(
+fn local_vq_cached(
     entry: *const SpeciesEntry,
     q: f64,
-    local_cfg: local_potential.LocalPotentialConfig,
+    local_cfg: local_potential_mod.LocalPotentialConfig,
 ) f64 {
-    return localFormFactor(entry, q, local_cfg);
+    return local_form_factor(entry, q, local_cfg);
 }
 
 /// Convert integer coordinate into flat index component.
-fn index1D(value: i32, n: usize, min: i32) ?usize {
+fn index1_d(value: i32, n: usize, min: i32) ?usize {
     const max = min + @as(i32, @intCast(n)) - 1;
     if (value < min or value > max) return null;
     return @intCast(value - min);

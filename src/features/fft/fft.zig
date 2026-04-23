@@ -25,13 +25,13 @@ const metal_fft_lib = fft_lib.metal_fft;
 pub const LibComplex = fft_lib.Complex;
 
 /// Check if value is power of two.
-pub fn isPowerOfTwo(n: usize) bool {
-    return fft_lib.isPowerOfTwo(n);
+pub fn is_power_of_two(n: usize) bool {
+    return fft_lib.is_power_of_two(n);
 }
 
 /// Convert math.Complex slice to LibComplex slice (zero-copy, same memory layout).
 /// Note: This relies on both types having the same memory layout (two f64 values).
-fn toLibComplex(data: []math.Complex) []LibComplex {
+fn to_lib_complex(data: []math.Complex) []LibComplex {
     const ptr: [*]LibComplex = @ptrCast(data.ptr);
     return ptr[0..data.len];
 }
@@ -61,11 +61,11 @@ pub const Fft3dPlan = struct {
 
     /// Initialize with default Zig backend
     pub fn init(alloc: std.mem.Allocator, io: std.Io, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
-        return initWithBackend(alloc, io, nx, ny, nz, .zig);
+        return init_with_backend(alloc, io, nx, ny, nz, .zig);
     }
 
     /// Initialize with specified backend
-    pub fn initWithBackend(
+    pub fn init_with_backend(
         alloc: std.mem.Allocator,
         io: std.Io,
         nx: usize,
@@ -74,17 +74,17 @@ pub const Fft3dPlan = struct {
         backend: FftBackend,
     ) !Fft3dPlan {
         return switch (backend) {
-            .zig => initZigPlan(alloc, nx, ny, nz),
-            .zig_parallel => initZigParallelPlan(alloc, io, nx, ny, nz),
-            .zig_transpose => initZigTransposePlan(alloc, io, nx, ny, nz),
-            .zig_comptime24 => initZigComptime24Plan(alloc, io, nx, ny, nz),
-            .fftw => initFftwPlan(alloc, nx, ny, nz),
-            .vdsp => initVdspPlan(alloc, nx, ny, nz),
-            .metal => initMetalPlan(alloc, nx, ny, nz),
+            .zig => init_zig_plan(alloc, nx, ny, nz),
+            .zig_parallel => init_zig_parallel_plan(alloc, io, nx, ny, nz),
+            .zig_transpose => init_zig_transpose_plan(alloc, io, nx, ny, nz),
+            .zig_comptime24 => init_zig_comptime24_plan(alloc, io, nx, ny, nz),
+            .fftw => init_fftw_plan(alloc, nx, ny, nz),
+            .vdsp => init_vdsp_plan(alloc, nx, ny, nz),
+            .metal => init_metal_plan(alloc, nx, ny, nz),
         };
     }
 
-    fn initZigPlan(alloc: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
+    fn init_zig_plan(alloc: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
         const plan = try fft_lib.Plan3d.init(alloc, nx, ny, nz);
         return .{
             .nx = nx,
@@ -96,7 +96,7 @@ pub const Fft3dPlan = struct {
         };
     }
 
-    fn initZigParallelPlan(
+    fn init_zig_parallel_plan(
         alloc: std.mem.Allocator,
         io: std.Io,
         nx: usize,
@@ -114,7 +114,7 @@ pub const Fft3dPlan = struct {
         };
     }
 
-    fn initZigTransposePlan(
+    fn init_zig_transpose_plan(
         alloc: std.mem.Allocator,
         io: std.Io,
         nx: usize,
@@ -132,7 +132,7 @@ pub const Fft3dPlan = struct {
         };
     }
 
-    fn initZigComptime24Plan(
+    fn init_zig_comptime24_plan(
         alloc: std.mem.Allocator,
         io: std.Io,
         nx: usize,
@@ -141,7 +141,7 @@ pub const Fft3dPlan = struct {
     ) !Fft3dPlan {
         // Only supports 24×24×24, fall back to zig_parallel for other sizes
         if (nx != 24 or ny != 24 or nz != 24) {
-            return initZigParallelPlan(alloc, io, nx, ny, nz);
+            return init_zig_parallel_plan(alloc, io, nx, ny, nz);
         }
         const plan = try parallel_fft24.ParallelPlan3d24.init(alloc, io, nx, ny, nz);
         return .{
@@ -154,7 +154,7 @@ pub const Fft3dPlan = struct {
         };
     }
 
-    fn initFftwPlan(alloc: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
+    fn init_fftw_plan(alloc: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
         const plan = try fftw_fft.FftwPlan3d.init(alloc, nx, ny, nz);
         return .{
             .nx = nx,
@@ -166,13 +166,13 @@ pub const Fft3dPlan = struct {
         };
     }
 
-    fn initVdspPlan(alloc: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
+    fn init_vdsp_plan(alloc: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
         if (comptime builtin.os.tag != .macos) {
             return error.VdspNotAvailable;
         }
         // vDSP only supports power-of-2 sizes — fall back to the pure-Zig FFT.
-        if (!isPowerOfTwo(nx) or !isPowerOfTwo(ny) or !isPowerOfTwo(nz)) {
-            return initZigPlan(alloc, nx, ny, nz);
+        if (!is_power_of_two(nx) or !is_power_of_two(ny) or !is_power_of_two(nz)) {
+            return init_zig_plan(alloc, nx, ny, nz);
         }
         const plan = try vdsp_fft.VdspPlan3d.init(alloc, nx, ny, nz);
         return .{
@@ -185,7 +185,7 @@ pub const Fft3dPlan = struct {
         };
     }
 
-    fn initMetalPlan(alloc: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
+    fn init_metal_plan(alloc: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
         if (comptime builtin.os.tag != .macos) {
             return error.MetalNotAvailable;
         }
@@ -223,19 +223,19 @@ pub const Fft3dPlan = struct {
 
     pub fn forward(self: *Fft3dPlan, data: []math.Complex) void {
         switch (self.plan) {
-            .zig => |*p| p.forward(toLibComplex(data)),
-            .zig_parallel => |*p| p.forward(toLibComplex(data)),
-            .zig_transpose => |*p| p.forward(toLibComplex(data)),
-            .zig_comptime24 => |*p| p.forward(toLibComplex(data)),
-            .fftw => |*p| p.forward(toLibComplex(data)),
+            .zig => |*p| p.forward(to_lib_complex(data)),
+            .zig_parallel => |*p| p.forward(to_lib_complex(data)),
+            .zig_transpose => |*p| p.forward(to_lib_complex(data)),
+            .zig_comptime24 => |*p| p.forward(to_lib_complex(data)),
+            .fftw => |*p| p.forward(to_lib_complex(data)),
             .vdsp => |*p| {
                 if (comptime builtin.os.tag == .macos) {
-                    p.forward(toLibComplex(data));
+                    p.forward(to_lib_complex(data));
                 }
             },
             .metal => |*p| {
                 if (comptime builtin.os.tag == .macos) {
-                    p.forward(toLibComplex(data));
+                    p.forward(to_lib_complex(data));
                 }
             },
         }
@@ -243,19 +243,19 @@ pub const Fft3dPlan = struct {
 
     pub fn inverse(self: *Fft3dPlan, data: []math.Complex) void {
         switch (self.plan) {
-            .zig => |*p| p.inverse(toLibComplex(data)),
-            .zig_parallel => |*p| p.inverse(toLibComplex(data)),
-            .zig_transpose => |*p| p.inverse(toLibComplex(data)),
-            .zig_comptime24 => |*p| p.inverse(toLibComplex(data)),
-            .fftw => |*p| p.inverse(toLibComplex(data)),
+            .zig => |*p| p.inverse(to_lib_complex(data)),
+            .zig_parallel => |*p| p.inverse(to_lib_complex(data)),
+            .zig_transpose => |*p| p.inverse(to_lib_complex(data)),
+            .zig_comptime24 => |*p| p.inverse(to_lib_complex(data)),
+            .fftw => |*p| p.inverse(to_lib_complex(data)),
             .vdsp => |*p| {
                 if (comptime builtin.os.tag == .macos) {
-                    p.inverse(toLibComplex(data));
+                    p.inverse(to_lib_complex(data));
                 }
             },
             .metal => |*p| {
                 if (comptime builtin.os.tag == .macos) {
-                    p.inverse(toLibComplex(data));
+                    p.inverse(to_lib_complex(data));
                 }
             },
         }
@@ -263,17 +263,17 @@ pub const Fft3dPlan = struct {
 };
 
 /// Forward 3D FFT in-place using plan.
-pub fn fft3dForwardInPlacePlan(plan: *Fft3dPlan, data: []math.Complex) !void {
+pub fn fft3d_forward_in_place_plan(plan: *Fft3dPlan, data: []math.Complex) !void {
     plan.forward(data);
 }
 
 /// Inverse 3D FFT in-place using plan.
-pub fn fft3dInverseInPlacePlan(plan: *Fft3dPlan, data: []math.Complex) !void {
+pub fn fft3d_inverse_in_place_plan(plan: *Fft3dPlan, data: []math.Complex) !void {
     plan.inverse(data);
 }
 
 /// Forward 3D FFT in-place (creates temporary plan).
-pub fn fft3dForwardInPlace(
+pub fn fft3d_forward_in_place(
     alloc: std.mem.Allocator,
     data: []math.Complex,
     nx: usize,
@@ -285,11 +285,11 @@ pub fn fft3dForwardInPlace(
     var plan = try fft_lib.Plan3d.init(alloc, nx, ny, nz);
     defer plan.deinit();
 
-    plan.forward(toLibComplex(data));
+    plan.forward(to_lib_complex(data));
 }
 
 /// Inverse 3D FFT in-place (creates temporary plan).
-pub fn fft3dInverseInPlace(
+pub fn fft3d_inverse_in_place(
     alloc: std.mem.Allocator,
     data: []math.Complex,
     nx: usize,
@@ -301,7 +301,7 @@ pub fn fft3dInverseInPlace(
     var plan = try fft_lib.Plan3d.init(alloc, nx, ny, nz);
     defer plan.deinit();
 
-    plan.inverse(toLibComplex(data));
+    plan.inverse(to_lib_complex(data));
 }
 
 // ============== 1D FFT functions (for compatibility) ==============
@@ -350,18 +350,18 @@ pub const RealFft3dPlan = struct {
     }
 
     /// Get the complex output size
-    pub fn complexSize(self: *const RealFft3dPlan) usize {
+    pub fn complex_size(self: *const RealFft3dPlan) usize {
         return self.nx_complex * self.ny * self.nz;
     }
 
     /// Get the real input size
-    pub fn realSize(self: *const RealFft3dPlan) usize {
+    pub fn real_size(self: *const RealFft3dPlan) usize {
         return self.nx * self.ny * self.nz;
     }
 };
 
 /// Convert LibComplex slice to math.Complex slice (zero-copy)
-fn toMathComplex(data: []LibComplex) []math.Complex {
+fn to_math_complex(data: []LibComplex) []math.Complex {
     const ptr: [*]math.Complex = @ptrCast(data.ptr);
     return ptr[0..data.len];
 }
@@ -385,10 +385,10 @@ pub const Fft1dPlan = struct {
 pub fn fft1d(data: []math.Complex, inverse: bool) void {
     // For simple 1D FFT without plan, we need to check if power of 2
     // and use the appropriate algorithm
-    const lib_data = toLibComplex(data);
+    const lib_data = to_lib_complex(data);
     const n = data.len;
 
-    if (isPowerOfTwo(n)) {
+    if (is_power_of_two(n)) {
         // Use radix-2 directly
         const radix2 = @import("../../lib/fft/radix2.zig");
         if (inverse) {
@@ -404,8 +404,8 @@ pub fn fft1d(data: []math.Complex, inverse: bool) void {
 }
 
 /// 1D FFT using pre-computed plan.
-pub fn fft1dPlanned(plan: Fft1dPlan, data: []math.Complex, inverse: bool) void {
-    const lib_data = toLibComplex(data);
+pub fn fft1d_planned(plan: Fft1dPlan, data: []math.Complex, inverse: bool) void {
+    const lib_data = to_lib_complex(data);
     if (inverse) {
         plan.plan.inverse(lib_data);
     } else {
@@ -440,7 +440,7 @@ test "Fft3dPlan arbitrary size" {
     }
 }
 
-test "fft3dForwardInPlace arbitrary size" {
+test "fft3d_forward_in_place arbitrary size" {
     const allocator = std.testing.allocator;
 
     var data: [24]math.Complex = undefined;
@@ -451,8 +451,8 @@ test "fft3dForwardInPlace arbitrary size" {
     const original = data;
 
     // 2x3x4 grid (all non-power-of-2 except 2 and 4)
-    try fft3dForwardInPlace(allocator, &data, 2, 3, 4);
-    try fft3dInverseInPlace(allocator, &data, 2, 3, 4);
+    try fft3d_forward_in_place(allocator, &data, 2, 3, 4);
+    try fft3d_inverse_in_place(allocator, &data, 2, 3, 4);
 
     for (0..24) |i| {
         try std.testing.expectApproxEqAbs(data[i].r, original[i].r, 1e-9);
@@ -478,7 +478,7 @@ test "RealFft3dPlan roundtrip" {
     }
 
     // Forward
-    const complex_size = plan.complexSize();
+    const complex_size = plan.complex_size();
     const spectrum = try allocator.alloc(LibComplex, complex_size);
     defer allocator.free(spectrum);
 
@@ -517,7 +517,7 @@ test "RealFft3dPlan vs complex Fft3dPlan" {
     }
 
     // RFFT
-    const complex_size = rfft_plan.complexSize();
+    const complex_size = rfft_plan.complex_size();
     const rfft_output = try allocator.alloc(LibComplex, complex_size);
     defer allocator.free(rfft_output);
 
@@ -536,7 +536,7 @@ test "RealFft3dPlan vs complex Fft3dPlan" {
             for (0..nx_c) |ix| {
                 const rfft_idx = ix + nx_c * (iy + ny * iz);
                 const cfft_idx = ix + nx * (iy + ny * iz);
-                const rfft_val = toMathComplex(rfft_output)[rfft_idx];
+                const rfft_val = to_math_complex(rfft_output)[rfft_idx];
                 try std.testing.expectApproxEqAbs(rfft_val.r, cfft_data[cfft_idx].r, 1e-9);
                 try std.testing.expectApproxEqAbs(rfft_val.i, cfft_data[cfft_idx].i, 1e-9);
             }

@@ -218,7 +218,7 @@ pub const element_symbols = [max_z + 1][]const u8{
 };
 
 /// Map element symbol to atomic number Z.
-pub fn atomicNumber(symbol: []const u8) ?usize {
+pub fn atomic_number(symbol: []const u8) ?usize {
     for (element_symbols, 0..) |sym, z| {
         if (std.mem.eql(u8, sym, symbol)) return z;
     }
@@ -386,7 +386,7 @@ pub const ref_cn = [max_z + 1][]const f64{
 /// Get C6 reference values for a homonuclear pair (Z, Z).
 /// Returns C6 table as flat array of n_ref × n_ref values.
 /// The table[i * n + j] gives C6 for ref system i of atom A and ref system j of atom B.
-pub fn getC6RefHomo(z: usize) []const f64 {
+pub fn get_c6_ref_homo(z: usize) []const f64 {
     return switch (z) {
         1 => &c6_ref_H_H,
         5 => &c6_ref_B_B,
@@ -404,27 +404,27 @@ pub fn getC6RefHomo(z: usize) []const f64 {
 
 /// Get C6 reference values for a heteronuclear pair (za, zb).
 /// Returns null if not available (will use geometric mean approximation).
-pub fn getC6RefHetero(za: usize, zb: usize) ?[]const f64 {
-    const key = pairKey(za, zb);
+pub fn get_c6_ref_hetero(za: usize, zb: usize) ?[]const f64 {
+    const key = pair_key(za, zb);
     return switch (key) {
-        pairKey(1, 6) => &c6_ref_H_C,
-        pairKey(1, 7) => &c6_ref_H_N,
-        pairKey(1, 8) => &c6_ref_H_O,
-        pairKey(6, 7) => &c6_ref_C_N,
-        pairKey(6, 8) => &c6_ref_C_O,
-        pairKey(7, 8) => &c6_ref_N_O,
+        pair_key(1, 6) => &c6_ref_H_C,
+        pair_key(1, 7) => &c6_ref_H_N,
+        pair_key(1, 8) => &c6_ref_H_O,
+        pair_key(6, 7) => &c6_ref_C_N,
+        pair_key(6, 8) => &c6_ref_C_O,
+        pair_key(7, 8) => &c6_ref_N_O,
         else => null,
     };
 }
 
-fn pairKey(za: usize, zb: usize) u64 {
+fn pair_key(za: usize, zb: usize) u64 {
     const a = if (za <= zb) za else zb;
     const b = if (za <= zb) zb else za;
     return @as(u64, @intCast(a)) * (max_z + 1) + @as(u64, @intCast(b));
 }
 
 /// Get the number of reference CN values for an element.
-pub fn numRef(z: usize) usize {
+pub fn num_ref(z: usize) usize {
     if (z > max_z) return 0;
     return ref_cn[z].len;
 }
@@ -562,12 +562,12 @@ const c6_ref_Cl_Cl = [4]f64{
     67.90, 50.60,
 };
 
-test "atomicNumber" {
+test "atomic_number" {
     const testing = std.testing;
-    try testing.expectEqual(@as(?usize, 1), atomicNumber("H"));
-    try testing.expectEqual(@as(?usize, 6), atomicNumber("C"));
-    try testing.expectEqual(@as(?usize, 7), atomicNumber("N"));
-    try testing.expectEqual(@as(?usize, 8), atomicNumber("O"));
-    try testing.expectEqual(@as(?usize, 14), atomicNumber("Si"));
-    try testing.expectEqual(@as(?usize, null), atomicNumber("Xx"));
+    try testing.expectEqual(@as(?usize, 1), atomic_number("H"));
+    try testing.expectEqual(@as(?usize, 6), atomic_number("C"));
+    try testing.expectEqual(@as(?usize, 7), atomic_number("N"));
+    try testing.expectEqual(@as(?usize, 8), atomic_number("O"));
+    try testing.expectEqual(@as(?usize, 14), atomic_number("Si"));
+    try testing.expectEqual(@as(?usize, null), atomic_number("Xx"));
 }

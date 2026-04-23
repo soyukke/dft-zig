@@ -23,42 +23,42 @@ pub const SpaceGroupInfo = struct {
 };
 
 /// Detect space group and return its number and symbols.
-pub fn detectSpaceGroup(
+pub fn detect_space_group(
     alloc: std.mem.Allocator,
     cell: math.Mat3,
     atoms: []const hamiltonian.AtomData,
     symprec: f64,
 ) !?SpaceGroupInfo {
-    const ops = try symmetry.getSymmetryOps(alloc, cell, atoms, symprec);
+    const ops = try symmetry.get_symmetry_ops(alloc, cell, atoms, symprec);
     defer alloc.free(ops);
 
-    const hall_number = try matchHallNumber(alloc, ops, symprec);
+    const hall_number = try match_hall_number(alloc, ops, symprec);
     if (hall_number == 0) return null;
 
     const spg = data.spacegroup_types[@as(usize, @intCast(hall_number))];
     return SpaceGroupInfo{
         .number = spg.number,
         .hall_number = hall_number,
-        .hall_symbol = try copyHallSymbol(alloc, spg.hall_symbol),
-        .international = try copyTrimmed(alloc, spg.international),
-        .international_short = try copyTrimmed(alloc, spg.international_short),
-        .schoenflies = try copyTrimmed(alloc, spg.schoenflies),
-        .choice = try copyTrimmed(alloc, spg.choice),
+        .hall_symbol = try copy_hall_symbol(alloc, spg.hall_symbol),
+        .international = try copy_trimmed(alloc, spg.international),
+        .international_short = try copy_trimmed(alloc, spg.international_short),
+        .schoenflies = try copy_trimmed(alloc, spg.schoenflies),
+        .choice = try copy_trimmed(alloc, spg.choice),
     };
 }
 
 /// Detect space group using atoms only.
-pub fn detectSpaceGroupFromAtoms(
+pub fn detect_space_group_from_atoms(
     alloc: std.mem.Allocator,
     cell: math.Mat3,
     atoms: []const hamiltonian.AtomData,
     symprec: f64,
 ) !?SpaceGroupInfo {
-    return detectSpaceGroup(alloc, cell, atoms, symprec);
+    return detect_space_group(alloc, cell, atoms, symprec);
 }
 
-fn matchHallNumber(alloc: std.mem.Allocator, ops_in: []const symmetry.SymOp, tol: f64) !i32 {
-    const bases = try orthogonalBasisTransforms(alloc);
+fn match_hall_number(alloc: std.mem.Allocator, ops_in: []const symmetry.SymOp, tol: f64) !i32 {
+    const bases = try orthogonal_basis_transforms(alloc);
     defer alloc.free(bases);
 
     const transformed = try alloc.alloc(symmetry.SymOp, ops_in.len);
@@ -66,14 +66,14 @@ fn matchHallNumber(alloc: std.mem.Allocator, ops_in: []const symmetry.SymOp, tol
 
     var hall: usize = 1;
     while (hall < data.spacegroup_types.len) : (hall += 1) {
-        const db_ops = try getDatabaseOps(alloc, hall);
+        const db_ops = try get_database_ops(alloc, hall);
         defer alloc.free(db_ops);
 
         if (db_ops.len != ops_in.len) continue;
         var matched = false;
         for (bases) |basis| {
-            transformOps(transformed, ops_in, basis);
-            if (matchOperations(alloc, transformed, db_ops, tol)) {
+            transform_ops(transformed, ops_in, basis);
+            if (match_operations(alloc, transformed, db_ops, tol)) {
                 matched = true;
                 break;
             }
@@ -85,7 +85,7 @@ fn matchHallNumber(alloc: std.mem.Allocator, ops_in: []const symmetry.SymOp, tol
     return 0;
 }
 
-fn matchOperations(
+fn match_operations(
     alloc: std.mem.Allocator,
     ops_in: []const symmetry.SymOp,
     ops_db: []const symmetry.SymOp,
@@ -93,7 +93,7 @@ fn matchOperations(
 ) bool {
     _ = tol;
     for (ops_db) |op| {
-        if (!hasRotation(ops_in, op.rot)) return false;
+        if (!has_rotation(ops_in, op.rot)) return false;
     }
 
     const grid: i32 = 24;
@@ -101,7 +101,7 @@ fn matchOperations(
     defer set.deinit();
 
     for (ops_in) |op| {
-        const key = encodeOp(op.rot, op.trans, grid);
+        const key = encode_op(op.rot, op.trans, grid);
         set.put(key, {}) catch return false;
     }
 
@@ -119,9 +119,9 @@ fn matchOperations(
                 };
                 var matched = true;
                 for (ops_db) |op_db| {
-                    const shift = math.Vec3.sub(origin, op_db.rot.mulVec(origin));
+                    const shift = math.Vec3.sub(origin, op_db.rot.mul_vec(origin));
                     const trans = wrap01(math.Vec3.add(op_db.trans, shift));
-                    const key = encodeOp(op_db.rot, trans, grid);
+                    const key = encode_op(op_db.rot, trans, grid);
                     if (!set.contains(key)) {
                         matched = false;
                         break;
@@ -134,14 +134,14 @@ fn matchOperations(
     return false;
 }
 
-fn hasRotation(ops: []const symmetry.SymOp, rot: symmetry.Mat3i) bool {
+fn has_rotation(ops: []const symmetry.SymOp, rot: symmetry.Mat3i) bool {
     for (ops) |op| {
-        if (mat3iEqual(op.rot, rot)) return true;
+        if (mat3i_equal(op.rot, rot)) return true;
     }
     return false;
 }
 
-fn orthogonalBasisTransforms(alloc: std.mem.Allocator) ![]symmetry.Mat3i {
+fn orthogonal_basis_transforms(alloc: std.mem.Allocator) ![]symmetry.Mat3i {
     const perms = [_][3]u8{
         .{ 0, 1, 2 },
         .{ 0, 2, 1 },
@@ -171,7 +171,7 @@ fn orthogonalBasisTransforms(alloc: std.mem.Allocator) ![]symmetry.Mat3i {
     return try list.toOwnedSlice(alloc);
 }
 
-fn transformOps(
+fn transform_ops(
     out_ops: []symmetry.SymOp,
     ops: []const symmetry.SymOp,
     basis: symmetry.Mat3i,
@@ -179,15 +179,15 @@ fn transformOps(
     const inv = basis.inverse() orelse basis;
     var i: usize = 0;
     while (i < ops.len) : (i += 1) {
-        const rot = mat3iMul(mat3iMul(inv, ops[i].rot), basis);
-        const trans = wrap01(inv.mulVec(ops[i].trans));
+        const rot = mat3i_mul(mat3i_mul(inv, ops[i].rot), basis);
+        const trans = wrap01(inv.mul_vec(ops[i].trans));
         const inv_rot = rot.inverse() orelse rot;
         const k_rot = inv_rot.transpose();
         out_ops[i] = .{ .rot = rot, .k_rot = k_rot, .trans = trans };
     }
 }
 
-fn mat3iMul(a: symmetry.Mat3i, b: symmetry.Mat3i) symmetry.Mat3i {
+fn mat3i_mul(a: symmetry.Mat3i, b: symmetry.Mat3i) symmetry.Mat3i {
     var out = [3][3]i32{ .{ 0, 0, 0 }, .{ 0, 0, 0 }, .{ 0, 0, 0 } };
     var i: usize = 0;
     while (i < 3) : (i += 1) {
@@ -204,7 +204,7 @@ fn mat3iMul(a: symmetry.Mat3i, b: symmetry.Mat3i) symmetry.Mat3i {
     return .{ .m = out };
 }
 
-fn mat3iEqual(a: symmetry.Mat3i, b: symmetry.Mat3i) bool {
+fn mat3i_equal(a: symmetry.Mat3i, b: symmetry.Mat3i) bool {
     var i: usize = 0;
     while (i < 3) : (i += 1) {
         var j: usize = 0;
@@ -215,13 +215,13 @@ fn mat3iEqual(a: symmetry.Mat3i, b: symmetry.Mat3i) bool {
     return true;
 }
 
-fn encodeOp(rot: symmetry.Mat3i, trans: math.Vec3, grid: i32) u64 {
-    const r = encodeRotation(rot);
-    const t = encodeTranslation(trans, grid);
+fn encode_op(rot: symmetry.Mat3i, trans: math.Vec3, grid: i32) u64 {
+    const r = encode_rotation(rot);
+    const t = encode_translation(trans, grid);
     return (@as(u64, r) << 32) | @as(u64, t);
 }
 
-fn encodeRotation(rot: symmetry.Mat3i) u32 {
+fn encode_rotation(rot: symmetry.Mat3i) u32 {
     var code: u32 = 0;
     var factor: u32 = 1;
     var i: usize = 0;
@@ -236,11 +236,11 @@ fn encodeRotation(rot: symmetry.Mat3i) u32 {
     return code;
 }
 
-fn encodeTranslation(trans: math.Vec3, grid: i32) u32 {
+fn encode_translation(trans: math.Vec3, grid: i32) u32 {
     const t = wrap01(trans);
-    const qx = quantizeCoord(t.x, grid);
-    const qy = quantizeCoord(t.y, grid);
-    const qz = quantizeCoord(t.z, grid);
+    const qx = quantize_coord(t.x, grid);
+    const qy = quantize_coord(t.y, grid);
+    const qz = quantize_coord(t.z, grid);
     const grid_u = @as(u32, @intCast(grid));
     const qx_u = @as(u32, @intCast(qx));
     const qy_u = @as(u32, @intCast(qy));
@@ -248,7 +248,7 @@ fn encodeTranslation(trans: math.Vec3, grid: i32) u32 {
     return qx_u + grid_u * (qy_u + grid_u * qz_u);
 }
 
-fn quantizeCoord(x: f64, grid: i32) i32 {
+fn quantize_coord(x: f64, grid: i32) i32 {
     const scaled = x * @as(f64, @floatFromInt(grid));
     var q = @as(i32, @intFromFloat(std.math.round(scaled)));
     if (q == grid) q = 0;
@@ -256,7 +256,7 @@ fn quantizeCoord(x: f64, grid: i32) i32 {
     return q;
 }
 
-fn getDatabaseOps(alloc: std.mem.Allocator, hall_number: usize) ![]symmetry.SymOp {
+fn get_database_ops(alloc: std.mem.Allocator, hall_number: usize) ![]symmetry.SymOp {
     const idx = data.symmetry_operation_index[hall_number];
     const count = idx[0];
     const start = idx[1];
@@ -264,13 +264,13 @@ fn getDatabaseOps(alloc: std.mem.Allocator, hall_number: usize) ![]symmetry.SymO
     var i: usize = 0;
     while (i < @as(usize, @intCast(count))) : (i += 1) {
         const encoded = data.symmetry_operations[@as(usize, @intCast(start)) + i];
-        const op = decodeOperation(encoded);
+        const op = decode_operation(encoded);
         list[i] = op;
     }
     return list;
 }
 
-fn decodeOperation(encoded: i32) symmetry.SymOp {
+fn decode_operation(encoded: i32) symmetry.SymOp {
     var rot: [3][3]i32 = .{ .{ 0, 0, 0 }, .{ 0, 0, 0 }, .{ 0, 0, 0 } };
     var trans = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
 
@@ -313,7 +313,7 @@ fn wrap01(v: math.Vec3) math.Vec3 {
     };
 }
 
-fn wrapCentered(v: math.Vec3) math.Vec3 {
+fn wrap_centered(v: math.Vec3) math.Vec3 {
     return .{
         .x = v.x - std.math.round(v.x),
         .y = v.y - std.math.round(v.y),
@@ -321,19 +321,19 @@ fn wrapCentered(v: math.Vec3) math.Vec3 {
     };
 }
 
-fn fracClose(a: math.Vec3, b: math.Vec3, tol: f64) bool {
-    const d = wrapCentered(math.Vec3.sub(a, b));
+fn frac_close(a: math.Vec3, b: math.Vec3, tol: f64) bool {
+    const d = wrap_centered(math.Vec3.sub(a, b));
     return @abs(d.x) < tol and @abs(d.y) < tol and @abs(d.z) < tol;
 }
 
-fn copyTrimmed(alloc: std.mem.Allocator, input: []const u8) ![]u8 {
+fn copy_trimmed(alloc: std.mem.Allocator, input: []const u8) ![]u8 {
     const trimmed = std.mem.trimEnd(u8, input, " ");
     const out = try alloc.alloc(u8, trimmed.len);
     @memcpy(out, trimmed);
     return out;
 }
 
-fn copyHallSymbol(alloc: std.mem.Allocator, input: []const u8) ![]u8 {
+fn copy_hall_symbol(alloc: std.mem.Allocator, input: []const u8) ![]u8 {
     const trimmed = std.mem.trimEnd(u8, input, " ");
     const out = try alloc.alloc(u8, trimmed.len);
     @memcpy(out, trimmed);

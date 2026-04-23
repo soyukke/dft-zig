@@ -56,7 +56,7 @@ pub const Grid = local_force.Grid;
 
 /// Compute ion-ion forces using either direct Coulomb (isolated) or Ewald (periodic).
 /// Returns freshly allocated forces in Rydberg/Bohr units.
-fn computeIonIonForces(
+fn compute_ion_ion_forces(
     alloc: std.mem.Allocator,
     charges: []const f64,
     positions: []const math.Vec3,
@@ -70,7 +70,7 @@ fn computeIonIonForces(
     const ewald_forces = try alloc.alloc(math.Vec3, n_atoms);
     if (coulomb_r_cut != null) {
         // Isolated system: direct pairwise Coulomb forces (in Hartree/Bohr)
-        const direct_forces_ha = try coulomb_mod.directIonIonForces(alloc, charges, positions);
+        const direct_forces_ha = try coulomb_mod.direct_ion_ion_forces(alloc, charges, positions);
         defer alloc.free(direct_forces_ha);
 
         for (direct_forces_ha, 0..) |f_ha, i| {
@@ -85,7 +85,7 @@ fn computeIonIonForces(
             .tol = 1e-8,
             .quiet = quiet,
         };
-        const ewald_forces_ha = try ewald.ionIonForces(
+        const ewald_forces_ha = try ewald.ion_ion_forces(
             alloc,
             cell,
             recip,
@@ -103,7 +103,7 @@ fn computeIonIonForces(
 }
 
 /// Compute nonlocal forces including optional spin-down contribution.
-fn computeNonlocalForcesTotal(
+fn compute_nonlocal_forces_total(
     alloc: std.mem.Allocator,
     wavefunctions: ?scf.WavefunctionData,
     wavefunctions_down: ?scf.WavefunctionData,
@@ -118,7 +118,7 @@ fn computeNonlocalForcesTotal(
     const wf = wavefunctions orelse return null;
     const is_spin = wavefunctions_down != null;
     const sf: f64 = if (is_spin) 1.0 else 2.0;
-    const nl_forces = try nonlocal_force.nonlocalForces(
+    const nl_forces = try nonlocal_force.nonlocal_forces(
         alloc,
         wf,
         species,
@@ -132,7 +132,7 @@ fn computeNonlocalForcesTotal(
     );
     // Add spin-down nonlocal forces if spin-polarized
     if (wavefunctions_down) |wf_down| {
-        const nl_down = try nonlocal_force.nonlocalForces(
+        const nl_down = try nonlocal_force.nonlocal_forces(
             alloc,
             wf_down,
             species,
@@ -154,7 +154,7 @@ fn computeNonlocalForcesTotal(
 }
 
 /// Extract V_xc(G) from V_eff(G) = V_H(G) + V_xc(G) by subtracting the Hartree component.
-fn extractVxcFromPotential(
+fn extract_vxc_from_potential(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho_g: []const math.Complex,
@@ -200,7 +200,7 @@ fn extractVxcFromPotential(
 }
 
 /// Compute NLCC forces from either a precomputed V_xc(r) or V_eff(G) + ρ(G).
-fn computeNlccForcesIfAvailable(
+fn compute_nlcc_forces_if_available(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho_g: []const math.Complex,
@@ -226,10 +226,10 @@ fn computeNlccForcesIfAvailable(
             .recip = grid.recip,
             .volume = volume,
         };
-        const vxc_g = try scf.realToReciprocal(alloc, fft_grid_obj, vxc_r, false);
+        const vxc_g = try scf.real_to_reciprocal(alloc, fft_grid_obj, vxc_r, false);
         defer alloc.free(vxc_g);
 
-        return try nlcc_force.nlccForcesGSpace(
+        return try nlcc_force.nlcc_forces_g_space(
             alloc,
             grid,
             vxc_g,
@@ -238,10 +238,10 @@ fn computeNlccForcesIfAvailable(
             rho_core_tables,
         );
     } else if (potential_g) |pot| {
-        const vxc_g = try extractVxcFromPotential(alloc, grid, rho_g, pot);
+        const vxc_g = try extract_vxc_from_potential(alloc, grid, rho_g, pot);
         defer alloc.free(vxc_g);
         // Use G-space NLCC force directly (no need to FFT back to real space)
-        return try nlcc_force.nlccForcesGSpace(
+        return try nlcc_force.nlcc_forces_g_space(
             alloc,
             grid,
             vxc_g,
@@ -254,7 +254,7 @@ fn computeNlccForcesIfAvailable(
 }
 
 /// Compute D3(BJ) dispersion forces for the configured vdw settings.
-fn computeDispersionForces(
+fn compute_dispersion_forces(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
@@ -271,7 +271,7 @@ fn computeDispersionForces(
 
     for (atoms, 0..) |atom, idx| {
         const symbol = species[atom.species_index].symbol;
-        atomic_numbers[idx] = d3_params.atomicNumber(symbol) orelse 0;
+        atomic_numbers[idx] = d3_params.atomic_number(symbol) orelse 0;
         atom_positions[idx] = atom.position;
     }
     var damping = d3_params.pbe_d3bj;
@@ -279,7 +279,7 @@ fn computeDispersionForces(
     if (vdw_cfg.s8) |v| damping.s8 = v;
     if (vdw_cfg.a1) |v| damping.a1 = v;
     if (vdw_cfg.a2) |v| damping.a2 = v;
-    return try d3.computeForces(
+    return try d3.compute_forces(
         alloc,
         atomic_numbers,
         atom_positions,
@@ -291,7 +291,7 @@ fn computeDispersionForces(
 }
 
 /// Sum per-component forces into the total force array.
-fn sumForceComponents(
+fn sum_force_components(
     total_forces: []math.Vec3,
     ewald_forces: []const math.Vec3,
     local_forces: []const math.Vec3,
@@ -322,7 +322,7 @@ fn sumForceComponents(
 }
 
 /// Log force section timings when not in quiet mode.
-fn logForceTimings(
+fn log_force_timings(
     logger: runtime_logging.Logger,
     quiet: bool,
     t0: std.Io.Clock.Timestamp,
@@ -351,7 +351,7 @@ fn logForceTimings(
 }
 
 /// Emit per-atom force component debug lines.
-fn logForceComponents(
+fn log_force_components(
     logger: runtime_logging.Logger,
     ewald_forces: []const math.Vec3,
     local_forces: []const math.Vec3,
@@ -363,7 +363,7 @@ fn logForceComponents(
     logger.print(.debug, "\n=== Force Components (Ry/Bohr) ===\n", .{}) catch {};
     const zero_vec = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
     for (0..total_forces.len) |i| {
-        logForceComponentLine(
+        log_force_component_line(
             logger,
             i,
             ewald_forces[i],
@@ -377,7 +377,7 @@ fn logForceComponents(
     }
 }
 
-fn logForceComponentLine(
+fn log_force_component_line(
     logger: runtime_logging.Logger,
     i: usize,
     ew: math.Vec3,
@@ -389,7 +389,7 @@ fn logForceComponentLine(
     zero_vec: math.Vec3,
 ) void {
     if (nlf) |nl_force| {
-        logForceComponentWithNonlocal(
+        log_force_component_with_nonlocal(
             logger,
             i,
             ew,
@@ -402,10 +402,10 @@ fn logForceComponentLine(
         );
         return;
     }
-    logForceComponentWithoutNonlocal(logger, i, ew, loc, rf, cf, tot, zero_vec);
+    log_force_component_without_nonlocal(logger, i, ew, loc, rf, cf, tot, zero_vec);
 }
 
-fn logForceComponentWithNonlocal(
+fn log_force_component_with_nonlocal(
     logger: runtime_logging.Logger,
     i: usize,
     ew: math.Vec3,
@@ -475,7 +475,7 @@ fn logForceComponentWithNonlocal(
     ) catch {};
 }
 
-fn logForceComponentWithoutNonlocal(
+fn log_force_component_without_nonlocal(
     logger: runtime_logging.Logger,
     i: usize,
     ew: math.Vec3,
@@ -585,7 +585,7 @@ const IonData = struct {
     ) !IonData {
         var charges: []f64 = &[_]f64{};
         var positions: []math.Vec3 = &[_]math.Vec3{};
-        try extractChargesAndPositions(alloc, species, atoms, &charges, &positions);
+        try extract_charges_and_positions(alloc, species, atoms, &charges, &positions);
         return .{ .charges = charges, .positions = positions };
     }
 
@@ -604,7 +604,7 @@ const PawSijData = struct {
         paw_tabs: ?[]const paw_mod.PawTab,
     ) !PawSijData {
         var data: PawSijData = .{};
-        try buildPawSijList(alloc, paw_tabs, &data.list, &data.buf);
+        try build_paw_sij_list(alloc, paw_tabs, &data.list, &data.buf);
         return data;
     }
 
@@ -632,7 +632,7 @@ const OptionalForceComponents = struct {
 };
 
 /// Assemble ForceTerms and emit timing/component logs.
-fn finalizeForceTerms(
+fn finalize_force_terms(
     alloc: std.mem.Allocator,
     io: std.Io,
     quiet: bool,
@@ -650,7 +650,7 @@ fn finalizeForceTerms(
     // Force timing profile (unbuffered write)
     const log_level: runtime_logging.Level = if (quiet) .warn else .info;
     const logger = runtime_logging.stderr(io, log_level);
-    logForceTimings(
+    log_force_timings(
         logger,
         quiet,
         timings.t0,
@@ -662,7 +662,7 @@ fn finalizeForceTerms(
 
     // Total forces
     const total_forces = try alloc.alloc(math.Vec3, n_atoms);
-    sumForceComponents(
+    sum_force_components(
         total_forces,
         ewald_forces,
         local_forces,
@@ -675,7 +675,7 @@ fn finalizeForceTerms(
 
     // Debug output for force components
     if (runtime_logging.enabled(log_level, .debug)) {
-        logForceComponents(
+        log_force_components(
             logger,
             ewald_forces,
             local_forces,
@@ -699,7 +699,7 @@ fn finalizeForceTerms(
 }
 
 /// Extract ionic charges and positions for ion-ion force computation.
-fn extractChargesAndPositions(
+fn extract_charges_and_positions(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
@@ -716,7 +716,7 @@ fn extractChargesAndPositions(
 }
 
 /// Build the per-species S_ij list for PAW nonlocal forces. Caller owns the optional buffer.
-fn buildPawSijList(
+fn build_paw_sij_list(
     alloc: std.mem.Allocator,
     paw_tabs: ?[]const paw_mod.PawTab,
     list_out: *?[]const []const f64,
@@ -735,7 +735,7 @@ fn buildPawSijList(
 }
 
 /// Compute residual forces (from ∇V_Hxc correction) when vresid_g is provided.
-fn computeResidualForcesIfAvailable(
+fn compute_residual_forces_if_available(
     alloc: std.mem.Allocator,
     grid: Grid,
     vresid_g: ?[]const math.Complex,
@@ -745,7 +745,7 @@ fn computeResidualForcesIfAvailable(
     rho_core_tables: ?[]const form_factor.RadialFormFactorTable,
 ) !?[]math.Vec3 {
     const vresid = vresid_g orelse return null;
-    return try residual_force.residualForces(
+    return try residual_force.residual_forces(
         alloc,
         grid,
         vresid,
@@ -757,7 +757,7 @@ fn computeResidualForcesIfAvailable(
 }
 
 /// Compute PAW D^hat forces when all PAW inputs are provided.
-fn computePawDhatForcesIfAvailable(
+fn compute_paw_dhat_forces_if_available(
     alloc: std.mem.Allocator,
     grid: Grid,
     potential_g: ?[]const math.Complex,
@@ -767,7 +767,7 @@ fn computePawDhatForcesIfAvailable(
     atoms: []const hamiltonian.AtomData,
 ) !?[]math.Vec3 {
     if (paw_tabs == null or paw_rhoij == null or potential_g == null) return null;
-    return try paw_dhat_force.pawDhatForces(
+    return try paw_dhat_force.paw_dhat_forces(
         alloc,
         grid,
         potential_g.?,
@@ -782,7 +782,7 @@ fn computePawDhatForcesIfAvailable(
 /// Returns forces in Rydberg/Bohr units.
 /// If coulomb_r_cut is non-null, uses direct Coulomb forces instead of Ewald
 /// for the ion-ion contribution (isolated/molecular systems).
-pub fn computeForces(
+pub fn compute_forces(
     alloc: std.mem.Allocator,
     io: std.Io,
     grid: Grid,
@@ -839,8 +839,8 @@ pub fn computeForces(
         .paw_rhoij = paw_rhoij,
         .wavefunctions_down = wavefunctions_down,
     };
-    const primary = try computePrimaryForceComponents(force_input);
-    const optional = try computeOptionalForceComponents(force_input);
+    const primary = try compute_primary_force_components(force_input);
+    const optional = try compute_optional_force_components(force_input);
     const timings = ForceTimings{
         .t0 = primary.t0,
         .after_ewald = primary.after_ewald,
@@ -848,7 +848,7 @@ pub fn computeForces(
         .after_nonlocal = primary.after_nonlocal,
         .after_nlcc = optional.after_nlcc,
     };
-    return try finalizeForceTerms(
+    return try finalize_force_terms(
         alloc,
         io,
         quiet,
@@ -863,12 +863,12 @@ pub fn computeForces(
     );
 }
 
-fn computePrimaryForceComponents(in: ForceComputeInput) !PrimaryForceComponents {
+fn compute_primary_force_components(in: ForceComputeInput) !PrimaryForceComponents {
     const ion_data = try IonData.init(in.alloc, in.species, in.atoms);
     defer ion_data.deinit(in.alloc);
 
     const t0 = std.Io.Clock.Timestamp.now(in.io, .awake);
-    const ewald_forces = try computeIonIonForces(
+    const ewald_forces = try compute_ion_ion_forces(
         in.alloc,
         ion_data.charges,
         ion_data.positions,
@@ -879,7 +879,7 @@ fn computePrimaryForceComponents(in: ForceComputeInput) !PrimaryForceComponents 
         in.coulomb_r_cut,
     );
     const after_ewald = std.Io.Clock.Timestamp.now(in.io, .awake);
-    const local_forces = try local_force.localPseudoForces(
+    const local_forces = try local_force.local_pseudo_forces(
         in.alloc,
         in.grid,
         in.rho_g,
@@ -893,7 +893,7 @@ fn computePrimaryForceComponents(in: ForceComputeInput) !PrimaryForceComponents 
     const paw_sij = try PawSijData.init(in.alloc, in.paw_tabs);
     defer paw_sij.deinit(in.alloc);
 
-    const nl_forces = try computeNonlocalForcesTotal(
+    const nl_forces = try compute_nonlocal_forces_total(
         in.alloc,
         in.wavefunctions,
         in.wavefunctions_down,
@@ -916,8 +916,8 @@ fn computePrimaryForceComponents(in: ForceComputeInput) !PrimaryForceComponents 
     };
 }
 
-fn computeOptionalForceComponents(in: ForceComputeInput) !OptionalForceComponents {
-    const resid_forces = try computeResidualForcesIfAvailable(
+fn compute_optional_force_components(in: ForceComputeInput) !OptionalForceComponents {
+    const resid_forces = try compute_residual_forces_if_available(
         in.alloc,
         in.grid,
         in.vresid_g,
@@ -926,7 +926,7 @@ fn computeOptionalForceComponents(in: ForceComputeInput) !OptionalForceComponent
         in.rho_atom_tables,
         in.rho_core_tables,
     );
-    const nlcc_forces = try computeNlccForcesIfAvailable(
+    const nlcc_forces = try compute_nlcc_forces_if_available(
         in.alloc,
         in.grid,
         in.rho_g,
@@ -942,14 +942,14 @@ fn computeOptionalForceComponents(in: ForceComputeInput) !OptionalForceComponent
         .after_nlcc = after_nlcc,
         .resid_forces = resid_forces,
         .nlcc_forces = nlcc_forces,
-        .disp_forces = try computeDispersionForces(
+        .disp_forces = try compute_dispersion_forces(
             in.alloc,
             in.species,
             in.atoms,
             in.cell,
             in.vdw_cfg,
         ),
-        .paw_dhat_forces = try computePawDhatForcesIfAvailable(
+        .paw_dhat_forces = try compute_paw_dhat_forces_if_available(
             in.alloc,
             in.grid,
             in.potential_g,
@@ -962,7 +962,7 @@ fn computeOptionalForceComponents(in: ForceComputeInput) !OptionalForceComponent
 }
 
 /// Compute maximum force magnitude.
-pub fn maxForce(forces: []const math.Vec3) f64 {
+pub fn max_force(forces: []const math.Vec3) f64 {
     var max: f64 = 0.0;
     for (forces) |f| {
         const mag = math.Vec3.norm(f);
@@ -972,7 +972,7 @@ pub fn maxForce(forces: []const math.Vec3) f64 {
 }
 
 /// Compute RMS force.
-pub fn rmsForce(forces: []const math.Vec3) f64 {
+pub fn rms_force(forces: []const math.Vec3) f64 {
     if (forces.len == 0) return 0.0;
     var sum: f64 = 0.0;
     for (forces) |f| {
@@ -990,10 +990,10 @@ test "force utilities" {
         math.Vec3{ .x = 0.0, .y = 0.0, .z = 3.0 },
     };
 
-    const max = maxForce(&forces);
+    const max = max_force(&forces);
     try testing.expectApproxEqAbs(max, 3.0, 1e-10);
 
-    const rms = rmsForce(&forces);
+    const rms = rms_force(&forces);
     // RMS = sqrt((1 + 4 + 9) / 3) = sqrt(14/3) ≈ 2.16
     try testing.expectApproxEqAbs(rms, std.math.sqrt(14.0 / 3.0), 1e-10);
 }

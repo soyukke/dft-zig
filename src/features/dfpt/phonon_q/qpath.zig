@@ -16,7 +16,7 @@ pub const GeneratedQPath = struct {
 };
 
 /// Generate FCC q-path: Γ-X-W-K-Γ-L
-pub fn generateFccQPath(
+pub fn generate_fcc_q_path(
     alloc: std.mem.Allocator,
     recip: math.Mat3,
     npoints_per_seg: usize,
@@ -107,8 +107,8 @@ pub fn generateFccQPath(
 }
 
 /// Generate q-path from config-specified high-symmetry points.
-/// Same format as generateFccQPath but with user-supplied points.
-pub fn generateQPathFromConfig(
+/// Same format as generate_fcc_q_path but with user-supplied points.
+pub fn generate_q_path_from_config(
     alloc: std.mem.Allocator,
     qpath_points: []const config_mod.BandPathPoint,
     npoints_per_seg: usize,

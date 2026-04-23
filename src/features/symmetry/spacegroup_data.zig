@@ -7424,7 +7424,7 @@ pub const symmetry_operation_index = [_][2]i32{
     .{ 96, 7293 },
 };
 
-pub fn trimSymbol(alloc: std.mem.Allocator, input: []const u8) ![]u8 {
+pub fn trim_symbol(alloc: std.mem.Allocator, input: []const u8) ![]u8 {
     const trimmed = std.mem.trimEnd(u8, input, " ");
     const out_buf = try alloc.alloc(u8, trimmed.len);
     @memcpy(out_buf, trimmed);

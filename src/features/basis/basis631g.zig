@@ -200,7 +200,7 @@ pub const MAX_SHELLS_PER_ATOM = 5;
 ///
 /// Returns the shells and the count of valid shells, or null if the element
 /// is not supported.
-pub fn buildAtomShells(
+pub fn build_atom_shells(
     z: u32,
     center: math.Vec3,
 ) ?struct { shells: [MAX_SHELLS_PER_ATOM]ContractedShell, count: usize } {
@@ -256,7 +256,7 @@ pub fn buildAtomShells(
 }
 
 /// Return number of shells for a given atomic number in 6-31G.
-pub fn numShellsForAtom(z: u32) ?usize {
+pub fn num_shells_for_atom(z: u32) ?usize {
     return switch (z) {
         1 => 2,
         6, 7, 8, 9 => 5,
@@ -267,7 +267,7 @@ pub fn numShellsForAtom(z: u32) ?usize {
 /// Return number of basis functions for a given atomic number in 6-31G.
 /// H: 2 (two s functions)
 /// C-F: 9 (3s + 6p = 1+1+1 + 3+3 = 9)
-pub fn numBasisForAtom(z: u32) ?usize {
+pub fn num_basis_for_atom(z: u32) ?usize {
     return switch (z) {
         1 => 2,
         6, 7, 8, 9 => 9,
@@ -282,7 +282,7 @@ pub fn numBasisForAtom(z: u32) ?usize {
 test "6-31G H shell count" {
     const testing = @import("std").testing;
     const center = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-    const data = buildAtomShells(1, center).?;
+    const data = build_atom_shells(1, center).?;
     try testing.expectEqual(@as(usize, 2), data.count);
     try testing.expectEqual(@as(u32, 0), data.shells[0].l);
     try testing.expectEqual(@as(u32, 0), data.shells[1].l);
@@ -293,12 +293,12 @@ test "6-31G H shell count" {
 test "6-31G O shell count and basis functions" {
     const testing = @import("std").testing;
     const center = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-    const data = buildAtomShells(8, center).?;
+    const data = build_atom_shells(8, center).?;
     try testing.expectEqual(@as(usize, 5), data.count);
 
     // Count total basis functions: 1s(1) + 2s(1) + 2p(3) + 2s'(1) + 2p'(3) = 9
     const obara_saika = @import("../integrals/obara_saika.zig");
-    const n = obara_saika.totalBasisFunctions(data.shells[0..data.count]);
+    const n = obara_saika.total_basis_functions(data.shells[0..data.count]);
     try testing.expectEqual(@as(usize, 9), n);
 }
 
@@ -312,9 +312,9 @@ test "6-31G H2O basis count is 13" {
         .{ .x = 0.0, .y = -1.4305226763, .z = 1.1092692351 },
     };
 
-    const o_data = buildAtomShells(8, nuc_positions[0]).?;
-    const h1_data = buildAtomShells(1, nuc_positions[1]).?;
-    const h2_data = buildAtomShells(1, nuc_positions[2]).?;
+    const o_data = build_atom_shells(8, nuc_positions[0]).?;
+    const h1_data = build_atom_shells(1, nuc_positions[1]).?;
+    const h2_data = build_atom_shells(1, nuc_positions[2]).?;
 
     // Combine all shells
     var all_shells: [MAX_SHELLS_PER_ATOM * 3]ContractedShell = undefined;
@@ -332,7 +332,7 @@ test "6-31G H2O basis count is 13" {
         count += 1;
     }
 
-    const n = obara_saika.totalBasisFunctions(all_shells[0..count]);
+    const n = obara_saika.total_basis_functions(all_shells[0..count]);
     // O: 9, H: 2, H: 2 = 13
     try testing.expectEqual(@as(usize, 13), n);
 }

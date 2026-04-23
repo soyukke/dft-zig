@@ -14,7 +14,7 @@ const Grid = scf_mod.Grid;
 /// Apply V^(1)(r)|ψ⟩ with complex V^(1) and cross-basis (k → k+q).
 /// Scatters k-basis coefficients to grid, IFFTs, multiplies by V^(1)(r),
 /// FFTs back, and gathers to k+q-basis.
-pub fn applyV1PsiQ(
+pub fn apply_v1_psi_q(
     alloc: std.mem.Allocator,
     grid: Grid,
     map_k: *const scf_mod.PwGridMap,
@@ -37,7 +37,7 @@ pub fn applyV1PsiQ(
     const work_r = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_r);
 
-    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g, work_r, null);
+    try scf_mod.fft_reciprocal_to_complex_in_place(alloc, grid, work_g, work_r, null);
 
     // Multiply by V^(1)(r) (complex × complex)
     for (0..total) |i| {
@@ -48,7 +48,7 @@ pub fn applyV1PsiQ(
     const work_g_out = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_g_out);
 
-    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, work_r, work_g_out, null);
+    try scf_mod.fft_complex_to_reciprocal_in_place(alloc, grid, work_r, work_g_out, null);
 
     // Gather to k+q-basis
     const result = try alloc.alloc(math.Complex, n_pw_kq);
@@ -58,9 +58,9 @@ pub fn applyV1PsiQ(
     return result;
 }
 
-/// Cached variant of applyV1PsiQ that uses pre-computed ψ^(0)(r) in real space.
+/// Cached variant of apply_v1_psi_q that uses pre-computed ψ^(0)(r) in real space.
 /// Skips the scatter + IFFT step for ψ^(0), saving one FFT per band per SCF iteration.
-pub fn applyV1PsiQCached(
+pub fn apply_v1_psi_q_cached(
     alloc: std.mem.Allocator,
     grid: Grid,
     map_kq: *const scf_mod.PwGridMap,
@@ -82,7 +82,7 @@ pub fn applyV1PsiQCached(
     const work_g_out = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_g_out);
 
-    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, work_r, work_g_out, null);
+    try scf_mod.fft_complex_to_reciprocal_in_place(alloc, grid, work_r, work_g_out, null);
 
     // Gather to k+q-basis
     const result = try alloc.alloc(math.Complex, n_pw_kq);
@@ -98,7 +98,7 @@ pub fn applyV1PsiQCached(
 /// Matches ABINIT's dfpt_mkrho convention:
 /// weight = two * occ * wtk / ucvol.
 /// For single k-point (Γ only), wtk=1.0 gives the original 4/Ω.
-pub fn computeRho1Q(
+pub fn compute_rho1_q(
     alloc: std.mem.Allocator,
     grid: Grid,
     map_k: *const scf_mod.PwGridMap,
@@ -135,12 +135,12 @@ pub fn computeRho1Q(
         // ψ^(0)(r) via IFFT using k-basis map
         @memset(work_g0, math.complex.init(0.0, 0.0));
         map_k.scatter(psi0_k[n], work_g0);
-        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g0, work_r0, null);
+        try scf_mod.fft_reciprocal_to_complex_in_place(alloc, grid, work_g0, work_r0, null);
 
         // ψ^(1)(r) via IFFT using k+q-basis map
         @memset(work_g1, math.complex.init(0.0, 0.0));
         map_kq.scatter(psi1_kq[n], work_g1);
-        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g1, work_r1, null);
+        try scf_mod.fft_reciprocal_to_complex_in_place(alloc, grid, work_g1, work_r1, null);
 
         // ρ^(1)(r) += (4×wtk/Ω) × ψ^(0)*(r) × ψ^(1)(r)  [complex]
         for (0..total) |i| {
@@ -155,9 +155,9 @@ pub fn computeRho1Q(
     return rho1_r;
 }
 
-/// Cached variant of computeRho1Q that uses pre-computed ψ^(0)(r) in real space.
+/// Cached variant of compute_rho1_q that uses pre-computed ψ^(0)(r) in real space.
 /// Skips the scatter + IFFT for ψ^(0) each band, saving n_occ FFTs per call.
-pub fn computeRho1QCached(
+pub fn compute_rho1_q_cached(
     alloc: std.mem.Allocator,
     grid: Grid,
     map_kq: *const scf_mod.PwGridMap,
@@ -185,7 +185,7 @@ pub fn computeRho1QCached(
         // ψ^(1)(r) via IFFT using k+q-basis map
         @memset(work_g1, math.complex.init(0.0, 0.0));
         map_kq.scatter(psi1_kq[n], work_g1);
-        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g1, work_r1, null);
+        try scf_mod.fft_reciprocal_to_complex_in_place(alloc, grid, work_g1, work_r1, null);
 
         // ρ^(1)(r) += (4×wtk/Ω) × ψ^(0)*(r) × ψ^(1)(r)  [complex]
         for (0..total) |i| {
@@ -199,13 +199,13 @@ pub fn computeRho1QCached(
 }
 
 /// Compute ρ^(1)(G) from ρ^(1)(r) complex via FFT.
-pub fn complexRealToReciprocal(
+pub fn complex_real_to_reciprocal(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho1_r: []math.Complex,
 ) ![]math.Complex {
     const total = grid.count();
     const out = try alloc.alloc(math.Complex, total);
-    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, rho1_r, out, null);
+    try scf_mod.fft_complex_to_reciprocal_in_place(alloc, grid, rho1_r, out, null);
     return out;
 }

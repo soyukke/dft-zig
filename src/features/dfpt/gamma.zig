@@ -1,7 +1,7 @@
 //! Γ-point DFPT phonon calculation.
 //!
 //! Contains the q=0 perturbation solver, dynmat construction,
-//! diagnostics, and the top-level `runPhonon` entry point.
+//! diagnostics, and the top-level `run_phonon` entry point.
 
 const std = @import("std");
 const math = @import("../math/math.zig");
@@ -29,9 +29,9 @@ const PreparedGroundState = dfpt.PreparedGroundState;
 const DfptConfig = dfpt.DfptConfig;
 const IonicData = dfpt.IonicData;
 const PerturbationResult = dfpt.PerturbationResult;
-const logDfpt = dfpt.logDfpt;
-const logDfptInfo = dfpt.logDfptInfo;
-const logDfptWarn = dfpt.logDfptWarn;
+const log_dfpt = dfpt.log_dfpt;
+const log_dfpt_info = dfpt.log_dfpt_info;
+const log_dfpt_warn = dfpt.log_dfpt_warn;
 
 const Grid = scf_mod.Grid;
 
@@ -162,7 +162,7 @@ const GammaSymmetryData = struct {
     }
 };
 
-fn buildAllGammaAnalyticPerturbations(
+fn build_all_gamma_analytic_perturbations(
     alloc: std.mem.Allocator,
     gs: GroundState,
     storage: *GammaPerturbationBuffers,
@@ -170,7 +170,7 @@ fn buildAllGammaAnalyticPerturbations(
     for (0..gs.atoms.len) |ia| {
         for (0..3) |dir| {
             const idx = 3 * ia + dir;
-            storage.vloc1_gs[idx] = try perturbation.buildLocalPerturbation(
+            storage.vloc1_gs[idx] = try perturbation.build_local_perturbation(
                 alloc,
                 gs.grid,
                 gs.atoms[ia],
@@ -179,7 +179,7 @@ fn buildAllGammaAnalyticPerturbations(
                 gs.local_cfg,
                 gs.ff_tables,
             );
-            storage.rho1_core_gs[idx] = try perturbation.buildCorePerturbation(
+            storage.rho1_core_gs[idx] = try perturbation.build_core_perturbation(
                 alloc,
                 gs.grid,
                 gs.atoms[ia],
@@ -191,7 +191,7 @@ fn buildAllGammaAnalyticPerturbations(
     }
 }
 
-fn solveSequentialGammaPerturbations(
+fn solve_sequential_gamma_perturbations(
     alloc: std.mem.Allocator,
     gs: GroundState,
     irr_info: dynmat_mod.IrreducibleAtomInfo,
@@ -202,16 +202,16 @@ fn solveSequentialGammaPerturbations(
     for (irr_info.irr_atom_indices) |ia| {
         for (0..3) |dir| {
             const idx = 3 * ia + dir;
-            logDfpt(
+            log_dfpt(
                 "dfpt: solving perturbation atom={d} dir={s} (irreducible)\n",
                 .{ ia, dir_names[dir] },
             );
-            storage.pert_results[idx] = try solvePerturbation(alloc, gs, ia, dir, dfpt_cfg);
+            storage.pert_results[idx] = try solve_perturbation(alloc, gs, ia, dir, dfpt_cfg);
         }
     }
 }
 
-fn buildIrrPertIndices(
+fn build_irr_pert_indices(
     alloc: std.mem.Allocator,
     irr_info: dynmat_mod.IrreducibleAtomInfo,
 ) ![]usize {
@@ -226,7 +226,7 @@ fn buildIrrPertIndices(
     return irr_pert_indices;
 }
 
-fn solveParallelGammaPerturbations(
+fn solve_parallel_gamma_perturbations(
     alloc: std.mem.Allocator,
     io: std.Io,
     gs: GroundState,
@@ -236,10 +236,10 @@ fn solveParallelGammaPerturbations(
     pert_thread_count: usize,
     dim: usize,
 ) !void {
-    const irr_pert_indices = try buildIrrPertIndices(alloc, irr_info);
+    const irr_pert_indices = try build_irr_pert_indices(alloc, irr_info);
     defer alloc.free(irr_pert_indices);
 
-    logDfptInfo(
+    log_dfpt_info(
         "dfpt: using {d} threads for {d} perturbations ({d} irreducible)\n",
         .{ pert_thread_count, dim, irr_pert_indices.len },
     );
@@ -275,14 +275,14 @@ fn solveParallelGammaPerturbations(
         workers[ti] = .{ .shared = &shared, .thread_index = ti };
     }
     for (0..pert_thread_count - 1) |ti| {
-        threads[ti] = try std.Thread.spawn(.{}, gammaPertWorkerFn, .{&workers[ti + 1]});
+        threads[ti] = try std.Thread.spawn(.{}, gamma_pert_worker_fn, .{&workers[ti + 1]});
     }
-    gammaPertWorkerFn(&workers[0]);
+    gamma_pert_worker_fn(&workers[0]);
     for (threads) |t| t.join();
     if (worker_err) |e| return e;
 }
 
-fn maybeRunGammaDiagnostics(
+fn maybe_run_gamma_diagnostics(
     alloc: std.mem.Allocator,
     gs: GroundState,
     storage: *const GammaPerturbationBuffers,
@@ -290,25 +290,25 @@ fn maybeRunGammaDiagnostics(
     irr_info: dynmat_mod.IrreducibleAtomInfo,
 ) !void {
     if (irr_info.n_irr_atoms == n_atoms) {
-        try runDiagnostics(alloc, gs, storage.pert_results, storage.vloc1_gs, n_atoms);
+        try run_diagnostics(alloc, gs, storage.pert_results, storage.vloc1_gs, n_atoms);
         return;
     }
-    logDfptInfo(
+    log_dfpt_info(
         "dfpt: skipping diagnostics (symmetry-reduced: {d}/{d} irreducible atoms)\n",
         .{ irr_info.n_irr_atoms, n_atoms },
     );
 }
 
-fn initGammaSymmetryData(
+fn init_gamma_symmetry_data(
     alloc: std.mem.Allocator,
     cell_bohr: math.Mat3,
     atoms: []const hamiltonian.AtomData,
     recip: math.Mat3,
 ) !GammaSymmetryData {
-    const symops = try symmetry_mod.getSymmetryOps(alloc, cell_bohr, atoms, 1e-5);
+    const symops = try symmetry_mod.get_symmetry_ops(alloc, cell_bohr, atoms, 1e-5);
     errdefer alloc.free(symops);
 
-    const sym_data = try dynmat_mod.buildIndsym(alloc, symops, atoms, recip, 1e-5);
+    const sym_data = try dynmat_mod.build_indsym(alloc, symops, atoms, recip, 1e-5);
     errdefer {
         for (sym_data.indsym) |row| alloc.free(row);
         alloc.free(sym_data.indsym);
@@ -316,7 +316,7 @@ fn initGammaSymmetryData(
         alloc.free(sym_data.tnons_shift);
     }
 
-    var irr_info = try dynmat_mod.findIrreducibleAtoms(
+    var irr_info = try dynmat_mod.find_irreducible_atoms(
         alloc,
         symops,
         sym_data.indsym,
@@ -333,15 +333,15 @@ fn initGammaSymmetryData(
     };
 }
 
-fn logFullGammaDynmat(dim: usize, dyn: []const f64) void {
-    logDfpt("dfpt: full dynmat (Ry/bohr², before ASR):\n", .{});
+fn log_full_gamma_dynmat(dim: usize, dyn: []const f64) void {
+    log_dfpt("dfpt: full dynmat (Ry/bohr², before ASR):\n", .{});
     for (0..dim) |i| {
         const ia = i / 3;
         const da = i % 3;
         for (0..dim) |j| {
             const jb = j / 3;
             const db = j % 3;
-            logDfpt(
+            log_dfpt(
                 "  D(atom{d},{d}, atom{d},{d}) = {e:.10}\n",
                 .{ ia, da, jb, db, dyn[i * dim + j] },
             );
@@ -349,7 +349,7 @@ fn logFullGammaDynmat(dim: usize, dyn: []const f64) void {
     }
 }
 
-fn directionComponent(v: math.Vec3, dir: usize) f64 {
+fn direction_component(v: math.Vec3, dir: usize) f64 {
     return switch (dir) {
         0 => v.x,
         1 => v.y,
@@ -358,21 +358,21 @@ fn directionComponent(v: math.Vec3, dir: usize) f64 {
     };
 }
 
-fn finalizeGammaPhononResult(
+fn finalize_gamma_phonon_result(
     alloc: std.mem.Allocator,
     dyn: []f64,
     n_atoms: usize,
     masses: []const f64,
 ) !PhononResult {
     const dim = 3 * n_atoms;
-    logFullGammaDynmat(dim, dyn);
-    dynmat_mod.applyASR(dyn, n_atoms);
-    logDfptInfo("dfpt: ASR applied\n", .{});
-    dynmat_mod.massWeight(dyn, n_atoms, masses);
+    log_full_gamma_dynmat(dim, dyn);
+    dynmat_mod.apply_asr(dyn, n_atoms);
+    log_dfpt_info("dfpt: ASR applied\n", .{});
+    dynmat_mod.mass_weight(dyn, n_atoms, masses);
 
     const result = try dynmat_mod.diagonalize(alloc, dyn, dim);
-    logDfptInfo("dfpt: phonon frequencies (cm⁻¹):\n", .{});
-    for (result.frequencies_cm1) |f| logDfptInfo("dfpt:   {d:.2}\n", .{f});
+    log_dfpt_info("dfpt: phonon frequencies (cm⁻¹):\n", .{});
+    for (result.frequencies_cm1) |f| log_dfpt_info("dfpt:   {d:.2}\n", .{f});
     return .{
         .frequencies_cm1 = result.frequencies_cm1,
         .omega2 = result.omega2,
@@ -381,7 +381,7 @@ fn finalizeGammaPhononResult(
     };
 }
 
-fn buildGammaPhononResult(
+fn build_gamma_phonon_result(
     alloc: std.mem.Allocator,
     scf_result: *scf_mod.ScfResult,
     gs: GroundState,
@@ -394,10 +394,15 @@ fn buildGammaPhononResult(
     cfg: config_mod.Config,
 ) !PhononResult {
     const n_atoms = gs.atoms.len;
-    const rho0_g = try scf_mod.realToReciprocal(alloc, scf_result.grid, scf_result.density, false);
+    const rho0_g = try scf_mod.real_to_reciprocal(
+        alloc,
+        scf_result.grid,
+        scf_result.density,
+        false,
+    );
     defer alloc.free(rho0_g);
 
-    const dyn = try buildGammaDynmat(
+    const dyn = try build_gamma_dynmat(
         alloc,
         gs,
         storage.pert_results,
@@ -415,7 +420,7 @@ fn buildGammaPhononResult(
     defer alloc.free(dyn);
 
     if (symmetry.irr_info.n_irr_atoms < n_atoms) {
-        dynmat_mod.reconstructDynmatColumnsReal(
+        dynmat_mod.reconstruct_dynmat_columns_real(
             dyn,
             n_atoms,
             symmetry.irr_info,
@@ -424,10 +429,10 @@ fn buildGammaPhononResult(
             cell_bohr,
         );
     }
-    return try finalizeGammaPhononResult(alloc, dyn, n_atoms, ionic.masses);
+    return try finalize_gamma_phonon_result(alloc, dyn, n_atoms, ionic.masses);
 }
 
-fn maybeComputeGammaDielectric(
+fn maybe_compute_gamma_dielectric(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -439,9 +444,9 @@ fn maybeComputeGammaDielectric(
 ) !void {
     if (!cfg.dfpt.compute_dielectric) return;
 
-    logDfptInfo("dfpt: computing dielectric tensor (ddk at all k-points)\n", .{});
+    log_dfpt_info("dfpt: computing dielectric tensor (ddk at all k-points)\n", .{});
     const electric = @import("electric.zig");
-    const dielectric = try electric.computeDielectricAllK(
+    const dielectric = try electric.compute_dielectric_all_k(
         alloc,
         io,
         cfg,
@@ -453,9 +458,9 @@ fn maybeComputeGammaDielectric(
         recip,
         volume,
     );
-    logDfptInfo("dfpt: dielectric tensor ε∞:\n", .{});
+    log_dfpt_info("dfpt: dielectric tensor ε∞:\n", .{});
     for (0..3) |i| {
-        logDfptInfo("  {d:.6} {d:.6} {d:.6}\n", .{
+        log_dfpt_info("  {d:.6} {d:.6} {d:.6}\n", .{
             dielectric.epsilon[i][0],
             dielectric.epsilon[i][1],
             dielectric.epsilon[i][2],
@@ -466,15 +471,15 @@ fn maybeComputeGammaDielectric(
     defer if (out_dir) |*d| d.close(io);
 
     if (out_dir) |od| {
-        electric.writeElectricResults(io, od, dielectric) catch |err| {
-            logDfptWarn("dfpt: warning: failed to write electric.dat: {}\n", .{err});
+        electric.write_electric_results(io, od, dielectric) catch |err| {
+            log_dfpt_warn("dfpt: warning: failed to write electric.dat: {}\n", .{err});
         };
     }
 }
 
 /// Run DFPT phonon calculation at the Γ-point.
 /// Takes converged SCF results and returns phonon frequencies.
-pub fn runPhonon(
+pub fn run_phonon(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -489,8 +494,8 @@ pub fn runPhonon(
     const n_atoms = atoms.len;
     const dim = 3 * n_atoms;
 
-    logDfptInfo("dfpt: starting phonon calculation ({d} atoms, dim={d})\n", .{ n_atoms, dim });
-    var prepared = try dfpt.prepareGroundState(
+    log_dfpt_info("dfpt: starting phonon calculation ({d} atoms, dim={d})\n", .{ n_atoms, dim });
+    var prepared = try dfpt.prepare_ground_state(
         alloc,
         io,
         cfg,
@@ -503,12 +508,12 @@ pub fn runPhonon(
     defer prepared.deinit();
 
     var gs = prepared.gs;
-    const dfpt_cfg = DfptConfig.fromConfig(cfg);
-    const pert_thread_count = dfpt.perturbationThreadCount(dim, dfpt_cfg.perturbation_threads);
-    var symmetry = try initGammaSymmetryData(alloc, cell_bohr, atoms, recip);
+    const dfpt_cfg = DfptConfig.from_config(cfg);
+    const pert_thread_count = dfpt.perturbation_thread_count(dim, dfpt_cfg.perturbation_threads);
+    var symmetry = try init_gamma_symmetry_data(alloc, cell_bohr, atoms, recip);
     defer symmetry.deinit(alloc);
 
-    logDfptInfo(
+    log_dfpt_info(
         "dfpt: {d} symops, {d}/{d} irreducible atoms\n",
         .{ symmetry.symops.len, symmetry.irr_info.n_irr_atoms, n_atoms },
     );
@@ -516,11 +521,11 @@ pub fn runPhonon(
     var storage = try GammaPerturbationBuffers.init(alloc, dim);
     defer storage.deinit(alloc);
 
-    try buildAllGammaAnalyticPerturbations(alloc, gs, &storage);
+    try build_all_gamma_analytic_perturbations(alloc, gs, &storage);
     if (pert_thread_count <= 1) {
-        try solveSequentialGammaPerturbations(alloc, gs, symmetry.irr_info, dfpt_cfg, &storage);
+        try solve_sequential_gamma_perturbations(alloc, gs, symmetry.irr_info, dfpt_cfg, &storage);
     } else {
-        try solveParallelGammaPerturbations(
+        try solve_parallel_gamma_perturbations(
             alloc,
             io,
             gs,
@@ -531,12 +536,12 @@ pub fn runPhonon(
             dim,
         );
     }
-    try maybeRunGammaDiagnostics(alloc, gs, &storage, n_atoms, symmetry.irr_info);
+    try maybe_run_gamma_diagnostics(alloc, gs, &storage, n_atoms, symmetry.irr_info);
 
     const ionic = try IonicData.init(alloc, species, atoms);
     defer ionic.deinit(alloc);
 
-    const result = try buildGammaPhononResult(
+    const result = try build_gamma_phonon_result(
         alloc,
         scf_result,
         gs,
@@ -549,7 +554,7 @@ pub fn runPhonon(
         cfg,
     );
 
-    try maybeComputeGammaDielectric(
+    try maybe_compute_gamma_dielectric(
         alloc,
         io,
         cfg,
@@ -562,13 +567,13 @@ pub fn runPhonon(
     return result;
 }
 
-fn initSolvePerturbationInputs(
+fn init_solve_perturbation_inputs(
     alloc: std.mem.Allocator,
     gs: GroundState,
     atom_index: usize,
     direction: usize,
 ) !SolvePerturbationInputs {
-    const vloc1_g = try perturbation.buildLocalPerturbation(
+    const vloc1_g = try perturbation.build_local_perturbation(
         alloc,
         gs.grid,
         gs.atoms[atom_index],
@@ -579,7 +584,7 @@ fn initSolvePerturbationInputs(
     );
     errdefer alloc.free(vloc1_g);
 
-    const rho1_core_g = try perturbation.buildCorePerturbation(
+    const rho1_core_g = try perturbation.build_core_perturbation(
         alloc,
         gs.grid,
         gs.atoms[atom_index],
@@ -593,7 +598,7 @@ fn initSolvePerturbationInputs(
     defer alloc.free(rho1_core_g_for_ifft);
 
     @memcpy(rho1_core_g_for_ifft, rho1_core_g);
-    const rho1_core_r = try scf_mod.reciprocalToReal(alloc, gs.grid, rho1_core_g_for_ifft);
+    const rho1_core_r = try scf_mod.reciprocal_to_real(alloc, gs.grid, rho1_core_g_for_ifft);
     errdefer alloc.free(rho1_core_r);
 
     return .{
@@ -603,7 +608,7 @@ fn initSolvePerturbationInputs(
     };
 }
 
-fn initPsi1Buffers(
+fn init_psi1_buffers(
     alloc: std.mem.Allocator,
     n_occ: usize,
     n_pw: usize,
@@ -623,7 +628,7 @@ fn initPsi1Buffers(
     return psi1;
 }
 
-fn buildTotalPerturbationPotential(
+fn build_total_perturbation_potential(
     alloc: std.mem.Allocator,
     gs: GroundState,
     rho1_g: []const math.Complex,
@@ -631,14 +636,14 @@ fn buildTotalPerturbationPotential(
     vloc1_g: []const math.Complex,
 ) ![]f64 {
     const total = gs.grid.count();
-    const vh1_g = try perturbation.buildHartreePerturbation(alloc, gs.grid, rho1_g);
+    const vh1_g = try perturbation.build_hartree_perturbation(alloc, gs.grid, rho1_g);
     defer alloc.free(vh1_g);
 
     const rho1_g_copy = try alloc.alloc(math.Complex, total);
     defer alloc.free(rho1_g_copy);
 
     @memcpy(rho1_g_copy, rho1_g);
-    const rho1_r = try scf_mod.reciprocalToReal(alloc, gs.grid, rho1_g_copy);
+    const rho1_r = try scf_mod.reciprocal_to_real(alloc, gs.grid, rho1_g_copy);
     defer alloc.free(rho1_r);
 
     const rho1_total_r = try alloc.alloc(f64, total);
@@ -647,10 +652,10 @@ fn buildTotalPerturbationPotential(
     for (0..total) |i| {
         rho1_total_r[i] = rho1_r[i] + rho1_core_r[i];
     }
-    const vxc1_r = try perturbation.buildXcPerturbationFull(alloc, gs, rho1_total_r);
+    const vxc1_r = try perturbation.build_xc_perturbation_full(alloc, gs, rho1_total_r);
     defer alloc.free(vxc1_r);
 
-    const vxc1_g = try scf_mod.realToReciprocal(alloc, gs.grid, vxc1_r, false);
+    const vxc1_g = try scf_mod.real_to_reciprocal(alloc, gs.grid, vxc1_r, false);
     defer alloc.free(vxc1_g);
 
     const vtot1_g = try alloc.alloc(math.Complex, total);
@@ -666,10 +671,10 @@ fn buildTotalPerturbationPotential(
     defer alloc.free(vtot1_g_for_ifft);
 
     @memcpy(vtot1_g_for_ifft, vtot1_g);
-    return try scf_mod.reciprocalToReal(alloc, gs.grid, vtot1_g_for_ifft);
+    return try scf_mod.reciprocal_to_real(alloc, gs.grid, vtot1_g_for_ifft);
 }
 
-fn addNonlocalPerturbationToRhs(
+fn add_nonlocal_perturbation_to_rhs(
     gs: GroundState,
     atom_index: usize,
     direction: usize,
@@ -678,7 +683,7 @@ fn addNonlocalPerturbationToRhs(
     nl_buffers: *const NonlocalScfBuffers,
 ) void {
     const nl_ctx = gs.apply_ctx.nonlocal_ctx orelse return;
-    perturbation.applyNonlocalPerturbation(
+    perturbation.apply_nonlocal_perturbation(
         gs.gvecs,
         gs.atoms,
         nl_ctx,
@@ -697,7 +702,7 @@ fn addNonlocalPerturbationToRhs(
     }
 }
 
-fn updatePsi1ForAllBands(
+fn update_psi1_for_all_bands(
     alloc: std.mem.Allocator,
     gs: GroundState,
     atom_index: usize,
@@ -708,7 +713,7 @@ fn updatePsi1ForAllBands(
     nl_buffers: *const NonlocalScfBuffers,
 ) !void {
     for (0..gs.n_occ) |n| {
-        const rhs = try applyV1Psi(
+        const rhs = try apply_v1_psi(
             alloc,
             gs.grid,
             gs.gvecs,
@@ -718,7 +723,7 @@ fn updatePsi1ForAllBands(
         );
         defer alloc.free(rhs);
 
-        addNonlocalPerturbationToRhs(
+        add_nonlocal_perturbation_to_rhs(
             gs,
             atom_index,
             direction,
@@ -729,7 +734,7 @@ fn updatePsi1ForAllBands(
         for (0..gs.gvecs.len) |g| {
             rhs[g] = math.complex.scale(rhs[g], -1.0);
         }
-        sternheimer.projectConduction(rhs, gs.wavefunctions, gs.n_occ);
+        sternheimer.project_conduction(rhs, gs.wavefunctions, gs.n_occ);
         const result = try sternheimer.solve(
             alloc,
             gs.apply_ctx,
@@ -749,7 +754,7 @@ fn updatePsi1ForAllBands(
     }
 }
 
-fn mixDensityResponse(
+fn mix_density_response(
     rho1_g: []math.Complex,
     new_rho1_g: []const math.Complex,
     beta: f64,
@@ -767,7 +772,7 @@ fn mixDensityResponse(
     return @sqrt(diff_norm);
 }
 
-fn logRho1Consistency(
+fn log_rho1_consistency(
     final_rho1_g: []const math.Complex,
     mixed_rho1_g: []const math.Complex,
 ) void {
@@ -780,7 +785,7 @@ fn logRho1Consistency(
         const di = final_rho1_g[i].i - mixed_rho1_g[i].i;
         rho1_diff += dr * dr + di * di;
     }
-    logDfpt(
+    log_dfpt(
         "dfpt_scf: final |rho1_g|={e:.6} |rho1_mixed - rho1_psi1|={e:.6}\n",
         .{ @sqrt(rho1_norm), @sqrt(rho1_diff) },
     );
@@ -788,7 +793,7 @@ fn logRho1Consistency(
 
 /// Run DFPT SCF for a single perturbation (atom_index, direction).
 /// Returns the converged first-order density and wavefunctions.
-pub fn solvePerturbation(
+pub fn solve_perturbation(
     alloc: std.mem.Allocator,
     gs: GroundState,
     atom_index: usize,
@@ -796,14 +801,14 @@ pub fn solvePerturbation(
     cfg: DfptConfig,
 ) !PerturbationResult {
     const total = gs.grid.count();
-    var inputs = try initSolvePerturbationInputs(alloc, gs, atom_index, direction);
+    var inputs = try init_solve_perturbation_inputs(alloc, gs, atom_index, direction);
     defer inputs.deinit(alloc);
 
     const rho1_g = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(rho1_g);
 
     @memset(rho1_g, math.complex.init(0.0, 0.0));
-    const psi1 = try initPsi1Buffers(alloc, gs.n_occ, gs.gvecs.len);
+    const psi1 = try init_psi1_buffers(alloc, gs.n_occ, gs.gvecs.len);
     var cleanup = PerturbationResult{ .rho1_g = rho1_g, .psi1 = psi1 };
     errdefer cleanup.deinit(alloc);
 
@@ -812,7 +817,7 @@ pub fn solvePerturbation(
 
     var iter: usize = 0;
     while (iter < cfg.scf_max_iter) : (iter += 1) {
-        const vtot1_r = try buildTotalPerturbationPotential(
+        const vtot1_r = try build_total_perturbation_potential(
             alloc,
             gs,
             rho1_g,
@@ -821,7 +826,7 @@ pub fn solvePerturbation(
         );
         defer alloc.free(vtot1_r);
 
-        try updatePsi1ForAllBands(
+        try update_psi1_for_all_bands(
             alloc,
             gs,
             atom_index,
@@ -831,7 +836,7 @@ pub fn solvePerturbation(
             cfg,
             &nl_buffers,
         );
-        const new_rho1_r = try computeRho1(
+        const new_rho1_r = try compute_rho1(
             alloc,
             gs.grid,
             gs.gvecs,
@@ -842,16 +847,16 @@ pub fn solvePerturbation(
         );
         defer alloc.free(new_rho1_r);
 
-        const new_rho1_g = try scf_mod.realToReciprocal(alloc, gs.grid, new_rho1_r, false);
-        const diff_norm = mixDensityResponse(rho1_g, new_rho1_g, cfg.mixing_beta);
+        const new_rho1_g = try scf_mod.real_to_reciprocal(alloc, gs.grid, new_rho1_r, false);
+        const diff_norm = mix_density_response(rho1_g, new_rho1_g, cfg.mixing_beta);
         alloc.free(new_rho1_g);
-        logDfpt("dfpt_scf: iter={d} diff_norm={e:.6}\n", .{ iter, diff_norm });
+        log_dfpt("dfpt_scf: iter={d} diff_norm={e:.6}\n", .{ iter, diff_norm });
         if (diff_norm < cfg.scf_tol) {
-            logDfpt("dfpt_scf: converged at iter={d}\n", .{iter});
+            log_dfpt("dfpt_scf: converged at iter={d}\n", .{iter});
             break;
         }
     }
-    const final_rho1_r = try computeRho1(
+    const final_rho1_r = try compute_rho1(
         alloc,
         gs.grid,
         gs.gvecs,
@@ -862,15 +867,15 @@ pub fn solvePerturbation(
     );
     defer alloc.free(final_rho1_r);
 
-    const final_rho1_g = try scf_mod.realToReciprocal(alloc, gs.grid, final_rho1_r, false);
-    logRho1Consistency(final_rho1_g, rho1_g);
+    const final_rho1_g = try scf_mod.real_to_reciprocal(alloc, gs.grid, final_rho1_r, false);
+    log_rho1_consistency(final_rho1_g, rho1_g);
     alloc.free(rho1_g);
     return .{ .rho1_g = final_rho1_g, .psi1 = psi1 };
 }
 
 /// Apply V^(1)(r)|ψ(r)⟩ → result in PW basis.
 /// Uses FFT: ψ(r) = IFFT[scatter(ψ_G)], multiply by V^(1)(r), FFT back, gather.
-pub fn applyV1Psi(
+pub fn apply_v1_psi(
     alloc: std.mem.Allocator,
     grid: Grid,
     gvecs: []const plane_wave.GVector,
@@ -892,7 +897,7 @@ pub fn applyV1Psi(
     const work_r = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_r);
 
-    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g, work_r, null);
+    try scf_mod.fft_reciprocal_to_complex_in_place(alloc, grid, work_g, work_r, null);
 
     // Multiply by V^(1)(r)
     for (0..total) |i| {
@@ -903,7 +908,7 @@ pub fn applyV1Psi(
     const work_g_out = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_g_out);
 
-    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, work_r, work_g_out, null);
+    try scf_mod.fft_complex_to_reciprocal_in_place(alloc, grid, work_r, work_g_out, null);
 
     // Gather back to PW basis
     const result = try alloc.alloc(math.Complex, n_pw);
@@ -916,7 +921,7 @@ pub fn applyV1Psi(
 /// ρ^(1)(r) = (4/Ω) × Σ_n Re[ψ_n^(0)*(r) × ψ_n^(1)(r)]
 /// Factor 4 = 2 (spin degeneracy) × 2 (derivative of |ψ|²).
 /// Factor 1/Ω from the PW normalization convention (ψ^grid = √Ω × ψ^physical).
-pub fn computeRho1(
+pub fn compute_rho1(
     alloc: std.mem.Allocator,
     grid: Grid,
     gvecs: []const plane_wave.GVector,
@@ -948,12 +953,12 @@ pub fn computeRho1(
         // ψ_n^(0)(r) via IFFT
         @memset(work_g0, math.complex.init(0.0, 0.0));
         ctx.map.scatter(psi0[n], work_g0);
-        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g0, work_r0, null);
+        try scf_mod.fft_reciprocal_to_complex_in_place(alloc, grid, work_g0, work_r0, null);
 
         // ψ_n^(1)(r) via IFFT
         @memset(work_g1, math.complex.init(0.0, 0.0));
         ctx.map.scatter(psi1[n], work_g1);
-        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g1, work_r1, null);
+        try scf_mod.fft_reciprocal_to_complex_in_place(alloc, grid, work_g1, work_r1, null);
 
         // ρ^(1)(r) += (4/Ω) × Re[ψ_n^(0)*(r) × ψ_n^(1)(r)]
         for (0..total) |i| {
@@ -969,7 +974,7 @@ pub fn computeRho1(
 
 /// Compute the electronic contribution to the dynamical matrix element.
 /// D^elec_{Iα,Jβ} = Σ_G conj(V^(1)_{Iα}(G)) × ρ^(1)_{Jβ}(G) × Ω
-pub fn computeElecDynmatElement(
+pub fn compute_elec_dynmat_element(
     vloc1_g: []const math.Complex,
     rho1_g: []const math.Complex,
     volume: f64,
@@ -986,7 +991,7 @@ pub fn computeElecDynmatElement(
 ///
 /// This accounts for the nonlocal pseudopotential's contribution to the
 /// force constant via the first-order wavefunctions.
-pub fn computeNonlocalResponseDynmat(
+pub fn compute_nonlocal_response_dynmat(
     alloc: std.mem.Allocator,
     gs: GroundState,
     pert_results: []PerturbationResult,
@@ -1024,7 +1029,7 @@ pub fn computeNonlocalResponseDynmat(
             var sum: f64 = 0.0;
             for (0..gs.n_occ) |n| {
                 // Compute V_nl^(1)_{ia,dir_a} |δψ_n,j⟩
-                perturbation.applyNonlocalPerturbation(
+                perturbation.apply_nonlocal_perturbation(
                     gs.gvecs,
                     gs.atoms,
                     nl_ctx,
@@ -1060,8 +1065,8 @@ pub fn computeNonlocalResponseDynmat(
 /// D_NLCC_cross(Iα,Jβ) = ∫ V_xc^(1)[ρ^(1)_core,I](r) × ρ^(1)_total,J(r) dr
 ///
 /// For LDA this reduces to ∫ f_xc(r) × ρ^(1)_core,I(r) × ρ^(1)_total,J(r) dr.
-/// For GGA, V_xc^(1) includes gradient-dependent terms via buildXcPerturbationFull.
-pub fn computeNlccCrossDynmat(
+/// For GGA, V_xc^(1) includes gradient-dependent terms via build_xc_perturbation_full.
+pub fn compute_nlcc_cross_dynmat(
     alloc: std.mem.Allocator,
     grid: Grid,
     gs: GroundState,
@@ -1083,11 +1088,11 @@ pub fn computeNlccCrossDynmat(
         defer alloc.free(rho1_core_i_g_copy);
 
         @memcpy(rho1_core_i_g_copy, rho1_core_gs[i]);
-        const rho1_core_i_r = try scf_mod.reciprocalToReal(alloc, grid, rho1_core_i_g_copy);
+        const rho1_core_i_r = try scf_mod.reciprocal_to_real(alloc, grid, rho1_core_i_g_copy);
         defer alloc.free(rho1_core_i_r);
 
         // Build V_xc^(1)[ρ^(1)_core,I] using full GGA-aware kernel
-        const vxc1_core_i = try perturbation.buildXcPerturbationFull(alloc, gs, rho1_core_i_r);
+        const vxc1_core_i = try perturbation.build_xc_perturbation_full(alloc, gs, rho1_core_i_r);
         defer alloc.free(vxc1_core_i);
 
         for (0..dim) |j| {
@@ -1097,14 +1102,14 @@ pub fn computeNlccCrossDynmat(
             defer alloc.free(rho1_val_g_copy);
 
             @memcpy(rho1_val_g_copy, pert_results[j].rho1_g);
-            const rho1_val_r = try scf_mod.reciprocalToReal(alloc, grid, rho1_val_g_copy);
+            const rho1_val_r = try scf_mod.reciprocal_to_real(alloc, grid, rho1_val_g_copy);
             defer alloc.free(rho1_val_r);
 
             const rho1_core_j_g_copy = try alloc.alloc(math.Complex, total);
             defer alloc.free(rho1_core_j_g_copy);
 
             @memcpy(rho1_core_j_g_copy, rho1_core_gs[j]);
-            const rho1_core_j_r = try scf_mod.reciprocalToReal(alloc, grid, rho1_core_j_g_copy);
+            const rho1_core_j_r = try scf_mod.reciprocal_to_real(alloc, grid, rho1_core_j_g_copy);
             defer alloc.free(rho1_core_j_r);
 
             // D_NLCC(I,J) = ∫ V_xc^(1)[ρ^(1)_core,I](r) × ρ^(1)_total,J(r) dr
@@ -1120,16 +1125,16 @@ pub fn computeNlccCrossDynmat(
     return dyn;
 }
 
-fn addDynmatContribution(dst: []f64, src: []const f64) void {
+fn add_dynmat_contribution(dst: []f64, src: []const f64) void {
     for (0..dst.len) |i| dst[i] += src[i];
 }
 
-fn logDynmatSample(label: []const u8, dyn: []const f64) void {
+fn log_dynmat_sample(label: []const u8, dyn: []const f64) void {
     const off_diag = if (dyn.len > 3) dyn[3] else 0.0;
-    logDfpt("{s} D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n", .{ label, dyn[0], off_diag });
+    log_dfpt("{s} D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n", .{ label, dyn[0], off_diag });
 }
 
-fn addElectronicDynmatContribution(
+fn add_electronic_dynmat_contribution(
     dyn: []f64,
     vloc1_gs: []const []math.Complex,
     pert_results: []const PerturbationResult,
@@ -1140,17 +1145,17 @@ fn addElectronicDynmatContribution(
     for (0..dim) |i| {
         for (0..dim) |j| {
             if (!irr_info.is_irreducible[j / 3]) continue;
-            dyn[i * dim + j] = computeElecDynmatElement(
+            dyn[i * dim + j] = compute_elec_dynmat_element(
                 vloc1_gs[i],
                 pert_results[j].rho1_g,
                 volume,
             );
         }
     }
-    logDynmatSample("dfpt: electronic", dyn);
+    log_dynmat_sample("dfpt: electronic", dyn);
 }
 
-fn addEwaldDynmatContribution(
+fn add_ewald_dynmat_contribution(
     alloc: std.mem.Allocator,
     dyn: []f64,
     cell_bohr: math.Mat3,
@@ -1158,24 +1163,24 @@ fn addEwaldDynmatContribution(
     charges: []const f64,
     positions: []const math.Vec3,
 ) !void {
-    const ewald_dyn = try ewald2.ewaldDynmat(alloc, cell_bohr, recip, charges, positions);
+    const ewald_dyn = try ewald2.ewald_dynmat(alloc, cell_bohr, recip, charges, positions);
     defer alloc.free(ewald_dyn);
 
-    logDfpt(
+    log_dfpt(
         "dfpt: ewald D(0x,0x)={e:.10} D(0x,1x)={e:.10} (Ha)\n",
         .{ ewald_dyn[0], if (ewald_dyn.len > 3) ewald_dyn[3] else 0.0 },
     );
     for (0..dyn.len) |i| dyn[i] += ewald_dyn[i] * 2.0;
 }
 
-fn addSelfEnergyDynmatContribution(
+fn add_self_energy_dynmat_contribution(
     alloc: std.mem.Allocator,
     dyn: []f64,
     grid: Grid,
     gs: GroundState,
     rho0_g: []math.Complex,
 ) !void {
-    const self_dyn = try dynmat_contrib.computeSelfEnergyDynmat(
+    const self_dyn = try dynmat_contrib.compute_self_energy_dynmat(
         alloc,
         grid,
         gs.species,
@@ -1186,11 +1191,11 @@ fn addSelfEnergyDynmatContribution(
     );
     defer alloc.free(self_dyn);
 
-    logDynmatSample("dfpt: self-energy", self_dyn);
-    addDynmatContribution(dyn, self_dyn);
+    log_dynmat_sample("dfpt: self-energy", self_dyn);
+    add_dynmat_contribution(dyn, self_dyn);
 }
 
-fn addNonlocalDynmatContributions(
+fn add_nonlocal_dynmat_contributions(
     alloc: std.mem.Allocator,
     dyn: []f64,
     gs: GroundState,
@@ -1198,7 +1203,7 @@ fn addNonlocalDynmatContributions(
     n_atoms: usize,
     irr_info: dynmat_mod.IrreducibleAtomInfo,
 ) !void {
-    const nl_resp_dyn = try computeNonlocalResponseDynmat(
+    const nl_resp_dyn = try compute_nonlocal_response_dynmat(
         alloc,
         gs,
         pert_results,
@@ -1207,17 +1212,17 @@ fn addNonlocalDynmatContributions(
     );
     defer alloc.free(nl_resp_dyn);
 
-    logDynmatSample("dfpt: nl-response", nl_resp_dyn);
-    addDynmatContribution(dyn, nl_resp_dyn);
+    log_dynmat_sample("dfpt: nl-response", nl_resp_dyn);
+    add_dynmat_contribution(dyn, nl_resp_dyn);
 
-    const nl_self_dyn = try dynmat_contrib.computeNonlocalSelfEnergyDynmat(alloc, gs, n_atoms);
+    const nl_self_dyn = try dynmat_contrib.compute_nonlocal_self_energy_dynmat(alloc, gs, n_atoms);
     defer alloc.free(nl_self_dyn);
 
-    logDynmatSample("dfpt: nl-self-energy", nl_self_dyn);
-    addDynmatContribution(dyn, nl_self_dyn);
+    log_dynmat_sample("dfpt: nl-self-energy", nl_self_dyn);
+    add_dynmat_contribution(dyn, nl_self_dyn);
 }
 
-fn addNlccDynmatContributions(
+fn add_nlcc_dynmat_contributions(
     alloc: std.mem.Allocator,
     dyn: []f64,
     grid: Grid,
@@ -1229,7 +1234,7 @@ fn addNlccDynmatContributions(
 ) !void {
     if (gs.rho_core == null) return;
 
-    const nlcc_cross_dyn = try computeNlccCrossDynmat(
+    const nlcc_cross_dyn = try compute_nlcc_cross_dynmat(
         alloc,
         grid,
         gs,
@@ -1240,18 +1245,18 @@ fn addNlccDynmatContributions(
     );
     defer alloc.free(nlcc_cross_dyn);
 
-    logDynmatSample("dfpt: nlcc-cross", nlcc_cross_dyn);
-    addDynmatContribution(dyn, nlcc_cross_dyn);
+    log_dynmat_sample("dfpt: nlcc-cross", nlcc_cross_dyn);
+    add_dynmat_contribution(dyn, nlcc_cross_dyn);
 
     const vxc_r_slice = gs.vxc_r.?;
     const vxc_r_copy = try alloc.alloc(f64, vxc_r_slice.len);
     defer alloc.free(vxc_r_copy);
 
     @memcpy(vxc_r_copy, vxc_r_slice);
-    const vxc_g = try scf_mod.realToReciprocal(alloc, grid, vxc_r_copy, false);
+    const vxc_g = try scf_mod.real_to_reciprocal(alloc, grid, vxc_r_copy, false);
     defer alloc.free(vxc_g);
 
-    const nlcc_self_dyn = try dynmat_contrib.computeNlccSelfDynmat(
+    const nlcc_self_dyn = try dynmat_contrib.compute_nlcc_self_dynmat(
         alloc,
         grid,
         gs.species,
@@ -1261,11 +1266,11 @@ fn addNlccDynmatContributions(
     );
     defer alloc.free(nlcc_self_dyn);
 
-    logDynmatSample("dfpt: nlcc-self", nlcc_self_dyn);
-    addDynmatContribution(dyn, nlcc_self_dyn);
+    log_dynmat_sample("dfpt: nlcc-self", nlcc_self_dyn);
+    add_dynmat_contribution(dyn, nlcc_self_dyn);
 }
 
-fn addD3DynmatContribution(
+fn add_d3_dynmat_contribution(
     alloc: std.mem.Allocator,
     dyn: []f64,
     gs: GroundState,
@@ -1283,7 +1288,7 @@ fn addD3DynmatContribution(
 
     for (gs.atoms, 0..) |atom, idx| {
         atomic_numbers[idx] =
-            d3_params.atomicNumber(gs.species[atom.species_index].symbol) orelse 0;
+            d3_params.atomic_number(gs.species[atom.species_index].symbol) orelse 0;
         atom_positions[idx] = atom.position;
     }
     var damping = d3_params.pbe_d3bj;
@@ -1292,7 +1297,7 @@ fn addD3DynmatContribution(
     if (cfg.vdw.a1) |v| damping.a1 = v;
     if (cfg.vdw.a2) |v| damping.a2 = v;
 
-    const d3_dyn = try d3.computeDynmat(
+    const d3_dyn = try d3.compute_dynmat(
         alloc,
         atomic_numbers,
         atom_positions,
@@ -1303,15 +1308,15 @@ fn addD3DynmatContribution(
     );
     defer alloc.free(d3_dyn);
 
-    logDynmatSample("dfpt: d3-disp", d3_dyn);
-    addDynmatContribution(dyn, d3_dyn);
+    log_dynmat_sample("dfpt: d3-disp", d3_dyn);
+    add_dynmat_contribution(dyn, d3_dyn);
 }
 
 /// Build the Γ-point dynamical matrix from all contributions:
 /// electronic, Ewald, self-energy, nonlocal response, nonlocal self-energy,
 /// NLCC cross, and NLCC self.
 /// Returns an owned slice of size dim×dim (caller must free).
-fn buildGammaDynmat(
+fn build_gamma_dynmat(
     alloc: std.mem.Allocator,
     gs: GroundState,
     pert_results: []PerturbationResult,
@@ -1332,11 +1337,11 @@ fn buildGammaDynmat(
     errdefer alloc.free(dyn);
 
     @memset(dyn, 0.0);
-    addElectronicDynmatContribution(dyn, vloc1_gs, pert_results, volume, irr_info);
-    try addEwaldDynmatContribution(alloc, dyn, cell_bohr, recip, charges, positions);
-    try addSelfEnergyDynmatContribution(alloc, dyn, grid, gs, rho0_g);
-    try addNonlocalDynmatContributions(alloc, dyn, gs, pert_results, n_atoms, irr_info);
-    try addNlccDynmatContributions(
+    add_electronic_dynmat_contribution(dyn, vloc1_gs, pert_results, volume, irr_info);
+    try add_ewald_dynmat_contribution(alloc, dyn, cell_bohr, recip, charges, positions);
+    try add_self_energy_dynmat_contribution(alloc, dyn, grid, gs, rho0_g);
+    try add_nonlocal_dynmat_contributions(alloc, dyn, gs, pert_results, n_atoms, irr_info);
+    try add_nlcc_dynmat_contributions(
         alloc,
         dyn,
         grid,
@@ -1346,16 +1351,16 @@ fn buildGammaDynmat(
         n_atoms,
         irr_info,
     );
-    try addD3DynmatContribution(alloc, dyn, gs, cell_bohr, cfg);
-    logDfpt("dfpt: total dynmat diagonal (Ry):", .{});
+    try add_d3_dynmat_contribution(alloc, dyn, gs, cell_bohr, cfg);
+    log_dfpt("dfpt: total dynmat diagonal (Ry):", .{});
     for (0..3 * n_atoms) |i| {
-        logDfpt(" {e:.6}", .{dyn[i * 3 * n_atoms + i]});
+        log_dfpt(" {e:.6}", .{dyn[i * 3 * n_atoms + i]});
     }
-    logDfpt("\n", .{});
+    log_dfpt("\n", .{});
     return dyn;
 }
 
-fn runAsrBandDiagnostic(
+fn run_asr_band_diagnostic(
     alloc: std.mem.Allocator,
     gs: GroundState,
     pert_results: []PerturbationResult,
@@ -1379,11 +1384,11 @@ fn runAsrBandDiagnostic(
     defer alloc.free(expected);
 
     for (0..n_pw) |g| {
-        const g_d = directionComponent(gs.gvecs[g].cart, dir);
+        const g_d = direction_component(gs.gvecs[g].cart, dir);
         const psi = gs.wavefunctions[band][g];
         expected[g] = math.complex.init(psi.i * g_d, -psi.r * g_d);
     }
-    sternheimer.projectConduction(expected, gs.wavefunctions, gs.n_occ);
+    sternheimer.project_conduction(expected, gs.wavefunctions, gs.n_occ);
 
     var diff_norm: f64 = 0.0;
     var exp_norm: f64 = 0.0;
@@ -1396,14 +1401,14 @@ fn runAsrBandDiagnostic(
         sum_norm += sum_psi1[g].r * sum_psi1[g].r + sum_psi1[g].i * sum_psi1[g].i;
     }
     const asr_rel = if (exp_norm > 1e-30) @sqrt(diff_norm / exp_norm) else 0.0;
-    logDfpt(
+    log_dfpt(
         "dfpt_asr: dir={d} band={d} |Σ_J ψ1|={e:.6} |expected|={e:.6}" ++
             " |diff|={e:.6} rel={e:.6}\n",
         .{ dir, band, @sqrt(sum_norm), @sqrt(exp_norm), @sqrt(diff_norm), asr_rel },
     );
 }
 
-fn runAsrDiagnostics(
+fn run_asr_diagnostics(
     alloc: std.mem.Allocator,
     gs: GroundState,
     pert_results: []PerturbationResult,
@@ -1411,12 +1416,12 @@ fn runAsrDiagnostics(
 ) !void {
     for (0..3) |dir| {
         for (0..gs.n_occ) |band| {
-            try runAsrBandDiagnostic(alloc, gs, pert_results, n_atoms, dir, band);
+            try run_asr_band_diagnostic(alloc, gs, pert_results, n_atoms, dir, band);
         }
     }
 }
 
-fn runNonlocalCommutatorBandDiagnostic(
+fn run_nonlocal_commutator_band_diagnostic(
     alloc: std.mem.Allocator,
     gs: GroundState,
     n_atoms: usize,
@@ -1451,7 +1456,7 @@ fn runNonlocalCommutatorBandDiagnostic(
 
     @memset(nl_out1, math.complex.init(0.0, 0.0));
     for (0..n_atoms) |ia| {
-        perturbation.applyNonlocalPerturbation(
+        perturbation.apply_nonlocal_perturbation(
             gs.gvecs,
             gs.atoms,
             nl_ctx,
@@ -1468,14 +1473,14 @@ fn runNonlocalCommutatorBandDiagnostic(
         for (0..n_pw) |g| nl_out1[g] = math.complex.add(nl_out1[g], nl_out2[g]);
     }
     for (0..n_pw) |g| {
-        const g_d = directionComponent(gs.gvecs[g].cart, dir);
+        const g_d = direction_component(gs.gvecs[g].cart, dir);
         const psi = gs.wavefunctions[band][g];
         work_igpsi[g] = math.complex.init(-psi.i * g_d, psi.r * g_d);
     }
-    try scf_mod.applyNonlocalPotential(gs.apply_ctx, work_igpsi, nl_out2);
-    try scf_mod.applyNonlocalPotential(gs.apply_ctx, gs.wavefunctions[band], nl_out3);
+    try scf_mod.apply_nonlocal_potential(gs.apply_ctx, work_igpsi, nl_out2);
+    try scf_mod.apply_nonlocal_potential(gs.apply_ctx, gs.wavefunctions[band], nl_out3);
     for (0..n_pw) |g| {
-        const g_d = directionComponent(gs.gvecs[g].cart, dir);
+        const g_d = direction_component(gs.gvecs[g].cart, dir);
         const v = nl_out3[g];
         nl_out3[g] = math.complex.init(-v.i * g_d, v.r * g_d);
     }
@@ -1492,14 +1497,14 @@ fn runNonlocalCommutatorBandDiagnostic(
         rhs_norm += expected_g.r * expected_g.r + expected_g.i * expected_g.i;
     }
     const vnl_rel = if (rhs_norm > 1e-30) @sqrt(diff_norm / rhs_norm) else 0.0;
-    logDfpt(
+    log_dfpt(
         "dfpt_vnl_test: dir={d} band={d} |Σ V1_nl|ψ|={e:.6}" ++
             " |V_nl|iGψ⟩-iG V_nl|ψ⟩|={e:.6} |diff|={e:.6} rel={e:.6}\n",
         .{ dir, band, @sqrt(lhs_norm), @sqrt(rhs_norm), @sqrt(diff_norm), vnl_rel },
     );
 }
 
-fn runNonlocalCommutatorDiagnostics(
+fn run_nonlocal_commutator_diagnostics(
     alloc: std.mem.Allocator,
     gs: GroundState,
     n_atoms: usize,
@@ -1507,12 +1512,12 @@ fn runNonlocalCommutatorDiagnostics(
     if (gs.apply_ctx.nonlocal_ctx == null) return;
     for (0..1) |dir| {
         for (0..gs.n_occ) |band| {
-            try runNonlocalCommutatorBandDiagnostic(alloc, gs, n_atoms, dir, band);
+            try run_nonlocal_commutator_band_diagnostic(alloc, gs, n_atoms, dir, band);
         }
     }
 }
 
-fn computeWavefunctionDynmatEntry(
+fn compute_wavefunction_dynmat_entry(
     alloc: std.mem.Allocator,
     gs: GroundState,
     vloc1_r: []const f64,
@@ -1520,7 +1525,7 @@ fn computeWavefunctionDynmatEntry(
 ) !f64 {
     var value: f64 = 0.0;
     for (0..gs.n_occ) |band| {
-        const vpsi = try applyV1Psi(
+        const vpsi = try apply_v1_psi(
             alloc,
             gs.grid,
             gs.gvecs,
@@ -1542,7 +1547,7 @@ fn computeWavefunctionDynmatEntry(
     return value;
 }
 
-fn runElectronicWavefunctionDiagnostics(
+fn run_electronic_wavefunction_diagnostics(
     alloc: std.mem.Allocator,
     gs: GroundState,
     pert_results: []PerturbationResult,
@@ -1552,15 +1557,20 @@ fn runElectronicWavefunctionDiagnostics(
     defer alloc.free(vloc1_0x_g_copy);
 
     @memcpy(vloc1_0x_g_copy, vloc1_gs[0]);
-    const vloc1_0x_r = try scf_mod.reciprocalToReal(alloc, gs.grid, vloc1_0x_g_copy);
+    const vloc1_0x_r = try scf_mod.reciprocal_to_real(alloc, gs.grid, vloc1_0x_g_copy);
     defer alloc.free(vloc1_0x_r);
 
-    const d_wf_00 = try computeWavefunctionDynmatEntry(alloc, gs, vloc1_0x_r, pert_results[0].psi1);
+    const d_wf_00 = try compute_wavefunction_dynmat_entry(
+        alloc,
+        gs,
+        vloc1_0x_r,
+        pert_results[0].psi1,
+    );
     const d_wf_03 = if (pert_results.len > 3)
-        try computeWavefunctionDynmatEntry(alloc, gs, vloc1_0x_r, pert_results[3].psi1)
+        try compute_wavefunction_dynmat_entry(alloc, gs, vloc1_0x_r, pert_results[3].psi1)
     else
         0.0;
-    logDfpt("dfpt: D_elec_wf D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n", .{ d_wf_00, d_wf_03 });
+    log_dfpt("dfpt: D_elec_wf D(0x,0x)={e:.10} D(0x,1x)={e:.10}\n", .{ d_wf_00, d_wf_03 });
 }
 
 /// Run diagnostic tests on the DFPT perturbation results at Γ-point.
@@ -1568,16 +1578,16 @@ fn runElectronicWavefunctionDiagnostics(
 /// 1. ASR check: Σ_J ψ^(1)_{n,Jβ} vs P_c(-iG_β ψ^(0)_n)
 /// 2. V_nl^(1) commutator test
 /// 3. D_elec comparison via wavefunction inner product
-fn runDiagnostics(
+fn run_diagnostics(
     alloc: std.mem.Allocator,
     gs: GroundState,
     pert_results: []PerturbationResult,
     vloc1_gs: []const []math.Complex,
     n_atoms: usize,
 ) !void {
-    try runAsrDiagnostics(alloc, gs, pert_results, n_atoms);
-    try runNonlocalCommutatorDiagnostics(alloc, gs, n_atoms);
-    try runElectronicWavefunctionDiagnostics(alloc, gs, pert_results, vloc1_gs);
+    try run_asr_diagnostics(alloc, gs, pert_results, n_atoms);
+    try run_nonlocal_commutator_diagnostics(alloc, gs, n_atoms);
+    try run_electronic_wavefunction_diagnostics(alloc, gs, pert_results, vloc1_gs);
 }
 
 // =====================================================================
@@ -1607,7 +1617,7 @@ const GammaPertWorker = struct {
     thread_index: usize,
 };
 
-fn setGammaPertError(shared: *GammaPertShared, e: anyerror) void {
+fn set_gamma_pert_error(shared: *GammaPertShared, e: anyerror) void {
     shared.err_mutex.lockUncancelable(shared.io);
     defer shared.err_mutex.unlock(shared.io);
 
@@ -1616,7 +1626,7 @@ fn setGammaPertError(shared: *GammaPertShared, e: anyerror) void {
     }
 }
 
-fn gammaPertWorkerFn(worker: *GammaPertWorker) void {
+fn gamma_pert_worker_fn(worker: *GammaPertWorker) void {
     const shared = worker.shared;
     const gs = shared.gs.*;
     const alloc = shared.alloc;
@@ -1636,21 +1646,21 @@ fn gammaPertWorkerFn(worker: *GammaPertWorker) void {
             shared.log_mutex.lockUncancelable(shared.io);
             defer shared.log_mutex.unlock(shared.io);
 
-            logDfpt(
+            log_dfpt(
                 "dfpt: [thread {d}] solving perturbation atom={d} dir={s} ({d}/{d})\n",
                 .{ worker.thread_index, ia, dir_names[dir], work_idx + 1, shared.dim },
             );
         }
 
         // Solve DFPT SCF (vloc1/rho1_core already built by caller)
-        shared.pert_results[idx] = solvePerturbation(
+        shared.pert_results[idx] = solve_perturbation(
             alloc,
             gs,
             ia,
             dir,
             shared.dfpt_cfg.*,
         ) catch |e| {
-            setGammaPertError(shared, e);
+            set_gamma_pert_error(shared, e);
             shared.stop.store(1, .release);
             break;
         };

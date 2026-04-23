@@ -23,7 +23,7 @@ pub fn name(mode: LocalPotentialMode) []const u8 {
     };
 }
 
-pub fn defaultEwaldAlpha(cell_bohr: math.Mat3) f64 {
+pub fn default_ewald_alpha(cell_bohr: math.Mat3) f64 {
     const lmin = @min(
         @min(math.Vec3.norm(cell_bohr.row(0)), math.Vec3.norm(cell_bohr.row(1))),
         math.Vec3.norm(cell_bohr.row(2)),
@@ -39,7 +39,7 @@ pub fn resolve(
     return .{
         .mode = mode,
         .alpha = if (mode == .ewald)
-            (if (explicit_alpha > 0.0) explicit_alpha else defaultEwaldAlpha(cell_bohr))
+            (if (explicit_alpha > 0.0) explicit_alpha else default_ewald_alpha(cell_bohr))
         else
             0.0,
     };

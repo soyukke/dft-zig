@@ -34,13 +34,13 @@ pub const fft24_comptime = @import("fft24_comptime.zig"); // Comptime-optimized 
 pub const parallel_fft24 = @import("parallel_fft24.zig"); // Parallel FFT optimized for 24×24×24
 
 /// Check if value is power of two.
-pub fn isPowerOfTwo(n: usize) bool {
-    return radix2.isPowerOfTwo(n);
+pub fn is_power_of_two(n: usize) bool {
+    return radix2.is_power_of_two(n);
 }
 
 /// Check if n is a smooth number (composed only of factors 2, 3, 5).
-pub fn isSmoothNumber(n: usize) bool {
-    return mixed_radix.isSmoothNumber(n);
+pub fn is_smooth_number(n: usize) bool {
+    return mixed_radix.is_smooth_number(n);
 }
 
 /// Mixed-radix plan wrapper (SIMD version).
@@ -64,12 +64,12 @@ const MixedRadixPlan = struct {
 
     pub fn forward(self: *const MixedRadixPlan, data: []Complex) void {
         if (data.len != self.n) return;
-        mixed_radix.mixedRadixFftNoNorm(data, self.scratch, false);
+        mixed_radix.mixed_radix_fft_no_norm(data, self.scratch, false);
     }
 
     pub fn inverse(self: *const MixedRadixPlan, data: []Complex) void {
         if (data.len != self.n) return;
-        mixed_radix.mixedRadixFftNoNorm(data, self.scratch, true);
+        mixed_radix.mixed_radix_fft_no_norm(data, self.scratch, true);
         // Apply normalization
         const scale = 1.0 / @as(f64, @floatFromInt(self.n));
         for (data) |*v| {
@@ -99,12 +99,12 @@ const MixedRadixPlanScalar = struct {
 
     pub fn forward(self: *const MixedRadixPlanScalar, data: []Complex) void {
         if (data.len != self.n) return;
-        mixed_radix.mixedRadixFftNoNormScalar(data, self.scratch, false);
+        mixed_radix.mixed_radix_fft_no_norm_scalar(data, self.scratch, false);
     }
 
     pub fn inverse(self: *const MixedRadixPlanScalar, data: []Complex) void {
         if (data.len != self.n) return;
-        mixed_radix.mixedRadixFftNoNormScalar(data, self.scratch, true);
+        mixed_radix.mixed_radix_fft_no_norm_scalar(data, self.scratch, true);
         const scale = 1.0 / @as(f64, @floatFromInt(self.n));
         for (data) |*v| {
             v.* = Complex.scale(v.*, scale);
@@ -127,14 +127,14 @@ pub const Plan1d = struct {
     pub fn init(allocator: std.mem.Allocator, n: usize) !Plan1d {
         if (n == 0) return error.InvalidSize;
 
-        if (isPowerOfTwo(n)) {
+        if (is_power_of_two(n)) {
             const plan = try radix2.Plan.init(allocator, n);
             return .{
                 .n = n,
                 .algorithm = .{ .radix2 = plan },
                 .allocator = allocator,
             };
-        } else if (isSmoothNumber(n)) {
+        } else if (is_smooth_number(n)) {
             const plan = try MixedRadixPlan.init(allocator, n);
             return .{
                 .n = n,
@@ -193,14 +193,14 @@ pub const Plan1dScalar = struct {
     pub fn init(allocator: std.mem.Allocator, n: usize) !Plan1dScalar {
         if (n == 0) return error.InvalidSize;
 
-        if (isPowerOfTwo(n)) {
+        if (is_power_of_two(n)) {
             const plan = try radix2_scalar.Plan.init(allocator, n);
             return .{
                 .n = n,
                 .algorithm = .{ .radix2 = plan },
                 .allocator = allocator,
             };
-        } else if (isSmoothNumber(n)) {
+        } else if (is_smooth_number(n)) {
             const plan = try MixedRadixPlanScalar.init(allocator, n);
             return .{
                 .n = n,

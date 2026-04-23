@@ -92,7 +92,7 @@ pub const BFGS = struct {
         const h_inv = try alloc.alloc(f64, n_dof * n_dof);
 
         // Estimate force constant from nearest-neighbor distance
-        const h_inv_diag = estimateInvHessianDiag(n_atoms, atoms, cell);
+        const h_inv_diag = estimate_inv_hessian_diag(n_atoms, atoms, cell);
 
         // Initialize as scaled identity matrix
         for (h_inv, 0..) |*h, i| {
@@ -111,7 +111,7 @@ pub const BFGS = struct {
 
     /// Estimate diagonal value for inverse Hessian from structure.
     /// Currently returns 1.0 (identity scaling) which is simple and robust.
-    fn estimateInvHessianDiag(
+    fn estimate_inv_hessian_diag(
         n_atoms: usize,
         atoms: []const hamiltonian.AtomData,
         cell: math.Mat3,
@@ -123,7 +123,7 @@ pub const BFGS = struct {
     }
 
     /// Compute distance between two positions using minimum image convention.
-    fn minimumImageDistance(pos_a: math.Vec3, pos_b: math.Vec3, cell: math.Mat3) f64 {
+    fn minimum_image_distance(pos_a: math.Vec3, pos_b: math.Vec3, cell: math.Mat3) f64 {
         // Difference in Cartesian coordinates
         var dx = pos_b.x - pos_a.x;
         var dy = pos_b.y - pos_a.y;

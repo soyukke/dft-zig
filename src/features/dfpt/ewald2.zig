@@ -38,7 +38,7 @@ const EwaldContext = struct {
     inv_4alpha2: f64,
 };
 
-fn initEwaldContext(
+fn init_ewald_context(
     cell: math.Mat3,
     recip: math.Mat3,
     n: usize,
@@ -84,7 +84,7 @@ fn initEwaldContext(
     };
 }
 
-fn latticeVector(
+fn lattice_vector(
     ctx: *const EwaldContext,
     n1: i32,
     n2: i32,
@@ -99,7 +99,7 @@ fn latticeVector(
     );
 }
 
-fn reciprocalVector(
+fn reciprocal_vector(
     ctx: *const EwaldContext,
     h: i32,
     k: i32,
@@ -114,7 +114,7 @@ fn reciprocalVector(
     );
 }
 
-fn realSpaceSecondDerivativeTensor(
+fn real_space_second_derivative_tensor(
     ctx: *const EwaldContext,
     delta: math.Vec3,
 ) ?RealSpaceTensor {
@@ -144,7 +144,7 @@ fn realSpaceSecondDerivativeTensor(
     return tensor;
 }
 
-fn dynmatIndex(
+fn dynmat_index(
     ctx: *const EwaldContext,
     i: usize,
     a: usize,
@@ -154,11 +154,11 @@ fn dynmatIndex(
     return (3 * i + a) * ctx.dim + (3 * j + b);
 }
 
-fn dyewq0Index(mu: usize, nu: usize) usize {
+fn dyewq0_index(mu: usize, nu: usize) usize {
     return 3 * mu + nu;
 }
 
-fn addRealSpaceOffDiagonal(
+fn add_real_space_off_diagonal(
     ctx: *const EwaldContext,
     dynmat: []f64,
     charges: []const f64,
@@ -175,13 +175,14 @@ fn addRealSpaceOffDiagonal(
                     while (n3 <= ctx.nr3) : (n3 += 1) {
                         const delta = math.Vec3.add(
                             math.Vec3.sub(positions[i], positions[j]),
-                            latticeVector(ctx, n1, n2, n3),
+                            lattice_vector(ctx, n1, n2, n3),
                         );
-                        const tensor = realSpaceSecondDerivativeTensor(ctx, delta) orelse continue;
+                        const tensor = real_space_second_derivative_tensor(ctx, delta) orelse
+                            continue;
                         const zz = charges[i] * charges[j];
                         for (0..3) |a| {
                             for (0..3) |b| {
-                                dynmat[dynmatIndex(ctx, i, a, j, b)] -= zz * tensor[a][b];
+                                dynmat[dynmat_index(ctx, i, a, j, b)] -= zz * tensor[a][b];
                             }
                         }
                     }
@@ -191,7 +192,7 @@ fn addRealSpaceOffDiagonal(
     }
 }
 
-fn addReciprocalOffDiagonal(
+fn add_reciprocal_off_diagonal(
     ctx: *const EwaldContext,
     dynmat: []f64,
     charges: []const f64,
@@ -204,7 +205,7 @@ fn addReciprocalOffDiagonal(
             var l: i32 = -ctx.ng3;
             while (l <= ctx.ng3) : (l += 1) {
                 if (h == 0 and k == 0 and l == 0) continue;
-                const gvec = reciprocalVector(ctx, h, k, l);
+                const gvec = reciprocal_vector(ctx, h, k, l);
                 const g2val = math.Vec3.dot(gvec, gvec);
                 if (g2val > ctx.gcut * ctx.gcut) continue;
 
@@ -219,7 +220,7 @@ fn addReciprocalOffDiagonal(
                         const zz = charges[i] * charges[j];
                         for (0..3) |a| {
                             for (0..3) |b| {
-                                dynmat[dynmatIndex(ctx, i, a, j, b)] +=
+                                dynmat[dynmat_index(ctx, i, a, j, b)] +=
                                     zz * factor * gcomp[a] * gcomp[b] * cos_gr;
                             }
                         }
@@ -230,7 +231,7 @@ fn addReciprocalOffDiagonal(
     }
 }
 
-fn applyAcousticSumRule(
+fn apply_acoustic_sum_rule(
     ctx: *const EwaldContext,
     dynmat: []f64,
 ) void {
@@ -240,15 +241,15 @@ fn applyAcousticSumRule(
                 var sum: f64 = 0.0;
                 for (0..ctx.n) |j| {
                     if (j == i) continue;
-                    sum += dynmat[dynmatIndex(ctx, i, a, j, b)];
+                    sum += dynmat[dynmat_index(ctx, i, a, j, b)];
                 }
-                dynmat[dynmatIndex(ctx, i, a, i, b)] = -sum;
+                dynmat[dynmat_index(ctx, i, a, i, b)] = -sum;
             }
         }
     }
 }
 
-fn addRealSpaceOffDiagonalQ(
+fn add_real_space_off_diagonal_q(
     ctx: *const EwaldContext,
     dynmat: []math.Complex,
     charges: []const f64,
@@ -264,17 +265,18 @@ fn addRealSpaceOffDiagonalQ(
                 while (n2 <= ctx.nr2) : (n2 += 1) {
                     var n3: i32 = -ctx.nr3;
                     while (n3 <= ctx.nr3) : (n3 += 1) {
-                        const lvec = latticeVector(ctx, n1, n2, n3);
+                        const lvec = lattice_vector(ctx, n1, n2, n3);
                         const delta = math.Vec3.add(
                             math.Vec3.sub(positions[i], positions[j]),
                             lvec,
                         );
-                        const tensor = realSpaceSecondDerivativeTensor(ctx, delta) orelse continue;
+                        const tensor = real_space_second_derivative_tensor(ctx, delta) orelse
+                            continue;
                         const phase = math.complex.expi(math.Vec3.dot(q_cart, lvec));
                         const zz = charges[i] * charges[j];
                         for (0..3) |a| {
                             for (0..3) |b| {
-                                const idx = dynmatIndex(ctx, i, a, j, b);
+                                const idx = dynmat_index(ctx, i, a, j, b);
                                 dynmat[idx] = math.complex.sub(
                                     dynmat[idx],
                                     math.complex.scale(phase, zz * tensor[a][b]),
@@ -288,7 +290,7 @@ fn addRealSpaceOffDiagonalQ(
     }
 }
 
-fn addReciprocalContributionQ(
+fn add_reciprocal_contribution_q(
     ctx: *const EwaldContext,
     dynmat: []math.Complex,
     charges: []const f64,
@@ -301,7 +303,7 @@ fn addReciprocalContributionQ(
         while (k <= ctx.ng2) : (k += 1) {
             var l: i32 = -ctx.ng3;
             while (l <= ctx.ng3) : (l += 1) {
-                const gvec = reciprocalVector(ctx, h, k, l);
+                const gvec = reciprocal_vector(ctx, h, k, l);
                 const gpq = math.Vec3.add(gvec, q_cart);
                 const gpq2 = math.Vec3.dot(gpq, gpq);
                 if (gpq2 < 1e-12 or gpq2 > ctx.gcut * ctx.gcut) continue;
@@ -316,7 +318,7 @@ fn addReciprocalContributionQ(
                         const zz = charges[i] * charges[j];
                         for (0..3) |a| {
                             for (0..3) |b| {
-                                const idx = dynmatIndex(ctx, i, a, j, b);
+                                const idx = dynmat_index(ctx, i, a, j, b);
                                 dynmat[idx] = math.complex.add(
                                     dynmat[idx],
                                     math.complex.scale(
@@ -333,7 +335,7 @@ fn addReciprocalContributionQ(
     }
 }
 
-fn accumulateDyewq0Reciprocal(
+fn accumulate_dyewq0_reciprocal(
     ctx: *const EwaldContext,
     dyewq0: []Dyewq0Block,
     charges: []const f64,
@@ -346,7 +348,7 @@ fn accumulateDyewq0Reciprocal(
             var l: i32 = -ctx.ng3;
             while (l <= ctx.ng3) : (l += 1) {
                 if (h == 0 and k == 0 and l == 0) continue;
-                const gvec = reciprocalVector(ctx, h, k, l);
+                const gvec = reciprocal_vector(ctx, h, k, l);
                 const g2val = math.Vec3.dot(gvec, gvec);
                 if (g2val > ctx.gcut * ctx.gcut) continue;
 
@@ -360,7 +362,7 @@ fn accumulateDyewq0Reciprocal(
                         const w = charges[ia] * charges[ib] * factor * cos_gr;
                         for (0..3) |mu| {
                             for (0..3) |nu| {
-                                dyewq0[ia][dyewq0Index(mu, nu)] += w * gc[mu] * gc[nu];
+                                dyewq0[ia][dyewq0_index(mu, nu)] += w * gc[mu] * gc[nu];
                             }
                         }
                     }
@@ -370,7 +372,7 @@ fn accumulateDyewq0Reciprocal(
     }
 }
 
-fn accumulateDyewq0Real(
+fn accumulate_dyewq0_real(
     ctx: *const EwaldContext,
     dyewq0: []Dyewq0Block,
     charges: []const f64,
@@ -387,13 +389,14 @@ fn accumulateDyewq0Real(
                     while (n3 <= ctx.nr3) : (n3 += 1) {
                         const delta = math.Vec3.add(
                             math.Vec3.sub(positions[ia], positions[ib]),
-                            latticeVector(ctx, n1, n2, n3),
+                            lattice_vector(ctx, n1, n2, n3),
                         );
-                        const tensor = realSpaceSecondDerivativeTensor(ctx, delta) orelse continue;
+                        const tensor = real_space_second_derivative_tensor(ctx, delta) orelse
+                            continue;
                         const zz = charges[ia] * charges[ib];
                         for (0..3) |mu| {
                             for (0..3) |nu| {
-                                dyewq0[ia][dyewq0Index(mu, nu)] -= zz * tensor[mu][nu];
+                                dyewq0[ia][dyewq0_index(mu, nu)] -= zz * tensor[mu][nu];
                             }
                         }
                     }
@@ -403,7 +406,7 @@ fn accumulateDyewq0Real(
     }
 }
 
-fn buildDyewq0(
+fn build_dyewq0(
     alloc: std.mem.Allocator,
     ctx: *const EwaldContext,
     charges: []const f64,
@@ -411,12 +414,12 @@ fn buildDyewq0(
 ) ![]Dyewq0Block {
     const dyewq0 = try alloc.alloc(Dyewq0Block, ctx.n);
     @memset(dyewq0, [_]f64{0.0} ** 9);
-    accumulateDyewq0Reciprocal(ctx, dyewq0, charges, positions);
-    accumulateDyewq0Real(ctx, dyewq0, charges, positions);
+    accumulate_dyewq0_reciprocal(ctx, dyewq0, charges, positions);
+    accumulate_dyewq0_real(ctx, dyewq0, charges, positions);
     return dyewq0;
 }
 
-fn applyDyewq0DiagonalCorrection(
+fn apply_dyewq0_diagonal_correction(
     ctx: *const EwaldContext,
     dynmat: []math.Complex,
     dyewq0: []const Dyewq0Block,
@@ -424,10 +427,10 @@ fn applyDyewq0DiagonalCorrection(
     for (0..ctx.n) |ia| {
         for (0..3) |mu| {
             for (0..3) |nu| {
-                const idx = dynmatIndex(ctx, ia, mu, ia, nu);
+                const idx = dynmat_index(ctx, ia, mu, ia, nu);
                 dynmat[idx] = math.complex.sub(
                     dynmat[idx],
-                    math.complex.init(dyewq0[ia][dyewq0Index(mu, nu)], 0.0),
+                    math.complex.init(dyewq0[ia][dyewq0_index(mu, nu)], 0.0),
                 );
             }
         }
@@ -441,19 +444,19 @@ fn applyDyewq0DiagonalCorrection(
 /// Strategy: compute off-diagonal blocks (I≠J) directly, then set diagonal
 /// blocks via the acoustic sum rule D_{Iα,Iβ} = -Σ_{J≠I} D_{Iα,Jβ}.
 /// This is exact for the Ewald sum (translational invariance is built in).
-pub fn ewaldDynmat(
+pub fn ewald_dynmat(
     alloc: std.mem.Allocator,
     cell: math.Mat3,
     recip: math.Mat3,
     charges: []const f64,
     positions: []const math.Vec3,
 ) ![]f64 {
-    const ctx = initEwaldContext(cell, recip, charges.len);
+    const ctx = init_ewald_context(cell, recip, charges.len);
     const dynmat = try alloc.alloc(f64, ctx.dim * ctx.dim);
     @memset(dynmat, 0.0);
-    addRealSpaceOffDiagonal(&ctx, dynmat, charges, positions);
-    addReciprocalOffDiagonal(&ctx, dynmat, charges, positions);
-    applyAcousticSumRule(&ctx, dynmat);
+    add_real_space_off_diagonal(&ctx, dynmat, charges, positions);
+    add_reciprocal_off_diagonal(&ctx, dynmat, charges, positions);
+    apply_acoustic_sum_rule(&ctx, dynmat);
     return dynmat;
 }
 
@@ -466,7 +469,7 @@ pub fn ewaldDynmat(
 ///   because L≠0 real-space contributions are exponentially suppressed by erfc)
 /// - G=0 is excluded from both electronic perturbation and Ewald (macroscopic
 ///   field is handled separately via the non-analytic correction if needed)
-pub fn ewaldDynmatQ(
+pub fn ewald_dynmat_q(
     alloc: std.mem.Allocator,
     cell: math.Mat3,
     recip: math.Mat3,
@@ -474,16 +477,16 @@ pub fn ewaldDynmatQ(
     positions: []const math.Vec3,
     q_cart: math.Vec3,
 ) ![]math.Complex {
-    const ctx = initEwaldContext(cell, recip, charges.len);
+    const ctx = init_ewald_context(cell, recip, charges.len);
     const dynmat = try alloc.alloc(math.Complex, ctx.dim * ctx.dim);
     errdefer alloc.free(dynmat);
     @memset(dynmat, math.complex.init(0.0, 0.0));
-    addRealSpaceOffDiagonalQ(&ctx, dynmat, charges, positions, q_cart);
-    addReciprocalContributionQ(&ctx, dynmat, charges, positions, q_cart);
-    const dyewq0 = try buildDyewq0(alloc, &ctx, charges, positions);
+    add_real_space_off_diagonal_q(&ctx, dynmat, charges, positions, q_cart);
+    add_reciprocal_contribution_q(&ctx, dynmat, charges, positions, q_cart);
+    const dyewq0 = try build_dyewq0(alloc, &ctx, charges, positions);
     defer alloc.free(dyewq0);
 
-    applyDyewq0DiagonalCorrection(&ctx, dynmat, dyewq0);
+    apply_dyewq0_diagonal_correction(&ctx, dynmat, dyewq0);
     return dynmat;
 }
 
@@ -513,7 +516,7 @@ test "ewald dynmat finite difference" {
         math.Vec3{ .x = a / 4.0, .y = a / 4.0, .z = a / 4.0 },
     };
 
-    const dynmat = try ewaldDynmat(alloc, cell, recip_lat, &charges, &positions);
+    const dynmat = try ewald_dynmat(alloc, cell, recip_lat, &charges, &positions);
     defer alloc.free(dynmat);
 
     // Finite difference of forces
@@ -543,7 +546,7 @@ test "ewald dynmat finite difference" {
                 else => {},
             }
 
-            const forces_plus = try ewald.ionIonForces(
+            const forces_plus = try ewald.ion_ion_forces(
                 alloc,
                 cell,
                 recip_lat,
@@ -553,7 +556,7 @@ test "ewald dynmat finite difference" {
             );
             defer alloc.free(forces_plus);
 
-            const forces_minus = try ewald.ionIonForces(
+            const forces_minus = try ewald.ion_ion_forces(
                 alloc,
                 cell,
                 recip_lat,
@@ -614,7 +617,7 @@ test "ewald dynmat symmetry" {
         math.Vec3{ .x = a / 4.0, .y = a / 4.0, .z = a / 4.0 },
     };
 
-    const dynmat_r = try ewaldDynmat(alloc, cell, recip_lat, &charges, &positions);
+    const dynmat_r = try ewald_dynmat(alloc, cell, recip_lat, &charges, &positions);
     defer alloc.free(dynmat_r);
 
     const dim = 6;
@@ -659,7 +662,7 @@ test "ewald dynmatQ at L-point matches Python reference" {
     // L-point: q = 0.5*(b1+b2+b3) in Cartesian
     const q_L = math.Vec3{ .x = bp * 0.5, .y = bp * 0.5, .z = bp * 0.5 };
 
-    const dynmat_q = try ewaldDynmatQ(alloc, cell, recip_lat, &charges, &positions, q_L);
+    const dynmat_q = try ewald_dynmat_q(alloc, cell, recip_lat, &charges, &positions, q_L);
     defer alloc.free(dynmat_q);
 
     const dim = 6;
@@ -724,7 +727,7 @@ test "ewald dynmatQ Hermiticity" {
 
     // Test at X-point: q = (π/a, 0, 0) = (0.5, 0, 0) in fractional
     const q_cart = math.Vec3{ .x = std.math.pi / a, .y = 0.0, .z = 0.0 };
-    const dynmat_q = try ewaldDynmatQ(alloc, cell, recip_lat, &charges, &positions, q_cart);
+    const dynmat_q = try ewald_dynmat_q(alloc, cell, recip_lat, &charges, &positions, q_cart);
     defer alloc.free(dynmat_q);
 
     const dim = 6;

@@ -72,7 +72,7 @@ pub const Mat3i = struct {
         return Mat3i{ .m = out };
     }
 
-    pub fn mulVec(self: Mat3i, v: math.Vec3) math.Vec3 {
+    pub fn mul_vec(self: Mat3i, v: math.Vec3) math.Vec3 {
         return .{
             .x = @as(f64, @floatFromInt(self.m[0][0])) * v.x +
                 @as(f64, @floatFromInt(self.m[0][1])) * v.y +
@@ -92,12 +92,12 @@ pub const Mat3i = struct {
 };
 
 /// Generate Monkhorst-Pack k-mesh.
-pub fn generateKmesh(
+pub fn generate_kmesh(
     alloc: std.mem.Allocator,
     kmesh: [3]usize,
     recip: math.Mat3,
 ) ![]KPoint {
-    return kpoints_mod.generateKmesh(
+    return kpoints_mod.generate_kmesh(
         alloc,
         kmesh,
         recip,
@@ -106,7 +106,7 @@ pub fn generateKmesh(
 }
 
 /// Generate Monkhorst-Pack k-mesh with symmetry reduction.
-pub fn generateKmeshSymmetry(
+pub fn generate_kmesh_symmetry(
     alloc: std.mem.Allocator,
     io: std.Io,
     kmesh: [3]usize,
@@ -115,7 +115,7 @@ pub fn generateKmeshSymmetry(
     atoms: []const hamiltonian.AtomData,
     time_reversal: bool,
 ) ![]KPoint {
-    return kpoints_mod.generateKmeshSymmetry(
+    return kpoints_mod.generate_kmesh_symmetry(
         alloc,
         io,
         kmesh,
@@ -128,13 +128,13 @@ pub fn generateKmeshSymmetry(
 }
 
 /// Enumerate symmetry operations (rotation + translation) for the given cell.
-pub fn getSymmetryOps(
+pub fn get_symmetry_ops(
     alloc: std.mem.Allocator,
     cell: math.Mat3,
     atoms: []const hamiltonian.AtomData,
     tol: f64,
 ) ![]SymOp {
-    return try buildSymmetryOps(alloc, cell, atoms, tol);
+    return try build_symmetry_ops(alloc, cell, atoms, tol);
 }
 
 const AtomFrac = struct {
@@ -142,7 +142,7 @@ const AtomFrac = struct {
     species_index: usize,
 };
 
-fn buildSymmetryOps(
+fn build_symmetry_ops(
     alloc: std.mem.Allocator,
     cell: math.Mat3,
     atoms: []const hamiltonian.AtomData,
@@ -154,9 +154,9 @@ fn buildSymmetryOps(
 
     // Enumerate integer rotation matrices with entries in {-1,0,1},
     // keep those that preserve the lattice metric, then check atom mapping.
-    const metric = latticeMetric(cell);
+    const metric = lattice_metric(cell);
     const recip = math.reciprocal(cell);
-    const atom_fracs = try buildAtomFracs(alloc, recip, atoms);
+    const atom_fracs = try build_atom_fracs(alloc, recip, atoms);
     defer alloc.free(atom_fracs);
 
     var ops_list: std.ArrayList(SymOp) = .empty;
@@ -188,7 +188,7 @@ fn buildSymmetryOps(
                                             .{ m3, m4, m5 },
                                             .{ m6, m7, m8 },
                                         } };
-                                        try tryAppendRotation(
+                                        try try_append_rotation(
                                             alloc,
                                             &ops_list,
                                             rot,
@@ -210,7 +210,7 @@ fn buildSymmetryOps(
     return try ops_list.toOwnedSlice(alloc);
 }
 
-fn tryAppendRotation(
+fn try_append_rotation(
     alloc: std.mem.Allocator,
     ops_list: *std.ArrayList(SymOp),
     rot: Mat3i,
@@ -221,20 +221,20 @@ fn tryAppendRotation(
 ) !void {
     const det_val = rot.det();
     if (det_val != 1 and det_val != -1) return;
-    if (!latticeSymmetric(rot, metric, tol)) return;
-    const translations = try findTranslations(alloc, rot, atom_fracs, matched, tol);
+    if (!lattice_symmetric(rot, metric, tol)) return;
+    const translations = try find_translations(alloc, rot, atom_fracs, matched, tol);
     defer alloc.free(translations);
 
     if (translations.len == 0) return;
     const inv = rot.inverse() orelse return;
     const k_rot = inv.transpose();
     for (translations) |t| {
-        if (hasSymOp(ops_list.items, rot, t, tol)) continue;
+        if (has_sym_op(ops_list.items, rot, t, tol)) continue;
         try ops_list.append(alloc, .{ .rot = rot, .k_rot = k_rot, .trans = t });
     }
 }
 
-fn latticeMetric(cell: math.Mat3) [3][3]f64 {
+fn lattice_metric(cell: math.Mat3) [3][3]f64 {
     const a1 = cell.row(0);
     const a2 = cell.row(1);
     const a3 = cell.row(2);
@@ -245,7 +245,7 @@ fn latticeMetric(cell: math.Mat3) [3][3]f64 {
     };
 }
 
-fn latticeSymmetric(rot: Mat3i, metric: [3][3]f64, tol: f64) bool {
+fn lattice_symmetric(rot: Mat3i, metric: [3][3]f64, tol: f64) bool {
     var i: usize = 0;
     while (i < 3) : (i += 1) {
         var j: usize = 0;
@@ -266,7 +266,7 @@ fn latticeSymmetric(rot: Mat3i, metric: [3][3]f64, tol: f64) bool {
     return true;
 }
 
-fn buildAtomFracs(
+fn build_atom_fracs(
     alloc: std.mem.Allocator,
     recip: math.Mat3,
     atoms: []const hamiltonian.AtomData,
@@ -290,7 +290,7 @@ fn buildAtomFracs(
     return list;
 }
 
-fn findTranslations(
+fn find_translations(
     alloc: std.mem.Allocator,
     rot: Mat3i,
     atoms: []const AtomFrac,
@@ -301,12 +301,12 @@ fn findTranslations(
     errdefer list.deinit(alloc);
 
     const ref = atoms[0];
-    const rot_ref = rot.mulVec(ref.frac);
+    const rot_ref = rot.mul_vec(ref.frac);
     for (atoms) |target| {
         if (target.species_index != ref.species_index) continue;
         const t = wrap01(math.Vec3.sub(target.frac, rot_ref));
-        if (translationExists(list.items, t, tol)) continue;
-        if (translationValid(rot, t, atoms, matched, tol)) {
+        if (translation_exists(list.items, t, tol)) continue;
+        if (translation_valid(rot, t, atoms, matched, tol)) {
             try list.append(alloc, t);
         }
     }
@@ -314,7 +314,7 @@ fn findTranslations(
     return try list.toOwnedSlice(alloc);
 }
 
-fn translationValid(
+fn translation_valid(
     rot: Mat3i,
     t: math.Vec3,
     atoms: []const AtomFrac,
@@ -324,13 +324,13 @@ fn translationValid(
     @memset(matched, false);
     var i: usize = 0;
     while (i < atoms.len) : (i += 1) {
-        const target = wrap01(math.Vec3.add(rot.mulVec(atoms[i].frac), t));
+        const target = wrap01(math.Vec3.add(rot.mul_vec(atoms[i].frac), t));
         var found = false;
         var j: usize = 0;
         while (j < atoms.len) : (j += 1) {
             if (matched[j]) continue;
             if (atoms[j].species_index != atoms[i].species_index) continue;
-            if (fracClose(target, atoms[j].frac, tol)) {
+            if (frac_close(target, atoms[j].frac, tol)) {
                 matched[j] = true;
                 found = true;
                 break;
@@ -341,22 +341,22 @@ fn translationValid(
     return true;
 }
 
-fn translationExists(list: []math.Vec3, t: math.Vec3, tol: f64) bool {
+fn translation_exists(list: []math.Vec3, t: math.Vec3, tol: f64) bool {
     for (list) |existing| {
-        if (fracClose(existing, t, tol)) return true;
+        if (frac_close(existing, t, tol)) return true;
     }
     return false;
 }
 
-fn hasSymOp(list: []SymOp, rot: Mat3i, t: math.Vec3, tol: f64) bool {
+fn has_sym_op(list: []SymOp, rot: Mat3i, t: math.Vec3, tol: f64) bool {
     for (list) |op| {
-        if (!mat3iEqual(op.rot, rot)) continue;
-        if (fracClose(op.trans, t, tol)) return true;
+        if (!mat3i_equal(op.rot, rot)) continue;
+        if (frac_close(op.trans, t, tol)) return true;
     }
     return false;
 }
 
-fn mat3iEqual(a: Mat3i, b: Mat3i) bool {
+fn mat3i_equal(a: Mat3i, b: Mat3i) bool {
     var i: usize = 0;
     while (i < 3) : (i += 1) {
         var j: usize = 0;
@@ -375,7 +375,7 @@ fn wrap01(v: math.Vec3) math.Vec3 {
     };
 }
 
-fn wrapCentered(v: math.Vec3) math.Vec3 {
+fn wrap_centered(v: math.Vec3) math.Vec3 {
     return .{
         .x = v.x - std.math.round(v.x),
         .y = v.y - std.math.round(v.y),
@@ -383,8 +383,8 @@ fn wrapCentered(v: math.Vec3) math.Vec3 {
     };
 }
 
-fn fracClose(a: math.Vec3, b: math.Vec3, tol: f64) bool {
-    const d = wrapCentered(math.Vec3.sub(a, b));
+fn frac_close(a: math.Vec3, b: math.Vec3, tol: f64) bool {
+    const d = wrap_centered(math.Vec3.sub(a, b));
     return @abs(d.x) < tol and @abs(d.y) < tol and @abs(d.z) < tol;
 }
 
@@ -415,14 +415,14 @@ pub const IrrepClassification = struct {
 
 /// Check if k-point lies on mirror plane (ky = 0 in fractional coords).
 /// Returns true if k is invariant under σ_y: (kx, ky, kz) → (kx, -ky, kz).
-pub fn hasYMirrorSymmetry(k_frac: math.Vec3, tol: f64) bool {
+pub fn has_y_mirror_symmetry(k_frac: math.Vec3, tol: f64) bool {
     // k is on mirror plane if ky = 0 (or ky = 0.5 which maps to itself)
     const ky = k_frac.y;
     return @abs(ky) < tol or @abs(ky - 0.5) < tol or @abs(ky + 0.5) < tol;
 }
 
 /// Walk G-vectors and assign each to invariant or σ_y partner pair lists.
-fn partitionGVectorsByYMirror(
+fn partition_g_vectors_by_y_mirror(
     alloc: std.mem.Allocator,
     gvecs: []const GVector,
     invariant_list: *std.ArrayList(usize),
@@ -478,13 +478,13 @@ fn partitionGVectorsByYMirror(
 /// For a k-point on the M-Γ path (ky=0), G-vectors split into:
 /// - Invariant: G with k_index=0 (transform as χ=+1 under σ_y)
 /// - Pairs: (h,+k,l) and (h,-k,l) form even (+) and odd (-) combinations
-pub fn classifyGVectorsByMirror(
+pub fn classify_g_vectors_by_mirror(
     alloc: std.mem.Allocator,
     gvecs: []const GVector,
     k_frac: math.Vec3,
     tol: f64,
 ) !IrrepClassification {
-    const has_mirror = hasYMirrorSymmetry(k_frac, tol);
+    const has_mirror = has_y_mirror_symmetry(k_frac, tol);
 
     if (!has_mirror) {
         // No mirror symmetry - no block-diagonalization possible
@@ -501,7 +501,7 @@ pub fn classifyGVectorsByMirror(
     var pair_list: std.ArrayList(MirrorPair) = .empty;
     errdefer pair_list.deinit(alloc);
 
-    try partitionGVectorsByYMirror(alloc, gvecs, &invariant_list, &pair_list);
+    try partition_g_vectors_by_y_mirror(alloc, gvecs, &invariant_list, &pair_list);
 
     return IrrepClassification{
         .invariant_indices = try invariant_list.toOwnedSlice(alloc),
@@ -525,7 +525,7 @@ pub const BlockEigenResult = struct {
 };
 
 /// Build the even-irrep sub-Hamiltonian from invariant G-vectors and mirror pairs.
-fn buildEvenBlockH(
+fn build_even_block_h(
     alloc: std.mem.Allocator,
     full_h: []const math.Complex,
     n: usize,
@@ -579,7 +579,7 @@ fn buildEvenBlockH(
 }
 
 /// Build the odd-irrep sub-Hamiltonian from mirror pairs only.
-fn buildOddBlockH(
+fn build_odd_block_h(
     alloc: std.mem.Allocator,
     full_h: []const math.Complex,
     n: usize,
@@ -620,7 +620,7 @@ fn buildOddBlockH(
 /// The transformed Hamiltonian elements for pairs are:
 ///   H_++ = (H_ii + H_jj + H_ij + H_ji) / 2
 ///   H_-- = (H_ii + H_jj - H_ij - H_ji) / 2
-pub fn blockDiagonalEigenvalues(
+pub fn block_diagonal_eigenvalues(
     alloc: std.mem.Allocator,
     backend: linalg.Backend,
     full_h: []math.Complex,
@@ -629,7 +629,7 @@ pub fn blockDiagonalEigenvalues(
 ) !BlockEigenResult {
     if (!classification.has_mirror) {
         // No symmetry - solve full matrix
-        const values = try linalg.hermitianEigenvalues(alloc, backend, n, full_h);
+        const values = try linalg.hermitian_eigenvalues(alloc, backend, n, full_h);
         return BlockEigenResult{
             .eigenvalues = values,
             .even_count = n,
@@ -645,20 +645,20 @@ pub fn blockDiagonalEigenvalues(
     // Build even block: invariant + even combinations of pairs
     var even_values: []f64 = &[_]f64{};
     if (n_even > 0) {
-        const h_even = try buildEvenBlockH(alloc, full_h, n, classification, n_even, n_inv);
+        const h_even = try build_even_block_h(alloc, full_h, n, classification, n_even, n_inv);
         defer alloc.free(h_even);
 
-        even_values = try linalg.hermitianEigenvalues(alloc, backend, n_even, h_even);
+        even_values = try linalg.hermitian_eigenvalues(alloc, backend, n_even, h_even);
     }
     errdefer if (even_values.len > 0) alloc.free(even_values);
 
     // Build odd block: odd combinations of pairs only
     var odd_values: []f64 = &[_]f64{};
     if (n_odd > 0) {
-        const h_odd = try buildOddBlockH(alloc, full_h, n, classification, n_odd);
+        const h_odd = try build_odd_block_h(alloc, full_h, n, classification, n_odd);
         defer alloc.free(h_odd);
 
-        odd_values = try linalg.hermitianEigenvalues(alloc, backend, n_odd, h_odd);
+        odd_values = try linalg.hermitian_eigenvalues(alloc, backend, n_odd, h_odd);
     }
     errdefer if (odd_values.len > 0) alloc.free(odd_values);
 

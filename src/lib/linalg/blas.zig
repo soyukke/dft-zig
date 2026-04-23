@@ -482,7 +482,7 @@ pub fn dtrsv(
 /// Build projected matrix: T = V† * W
 /// V is n x m, W is n x m, T is m x m
 /// T[i,j] = <V[:,i] | W[:,j]> = conj(V[:,i])^T * W[:,j]
-pub fn buildProjectedMatrix(
+pub fn build_projected_matrix(
     n: usize,
     m: usize,
     v: []const Complex,
@@ -515,7 +515,7 @@ pub fn buildProjectedMatrix(
 
 /// Combine columns: out = V * coeffs
 /// V is n x m matrix, coeffs is m-vector, out is n-vector
-pub fn combineColumns(
+pub fn combine_columns(
     n: usize,
     m: usize,
     v: []const Complex,

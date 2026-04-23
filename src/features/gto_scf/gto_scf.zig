@@ -93,7 +93,7 @@ pub const ScfResult = struct {
 
 /// Run a Restricted Hartree-Fock SCF calculation (s-type shells only, legacy).
 ///
-/// For general angular momentum, use runGeneralRhfScf.
+/// For general angular momentum, use run_general_rhf_scf.
 const RhfLoopResult = struct {
     e_total: f64,
     converged: bool,
@@ -101,7 +101,7 @@ const RhfLoopResult = struct {
     eigen: linalg.RealEigenDecomp,
 };
 
-fn runRhfScfLoop(
+fn run_rhf_scf_loop(
     alloc: std.mem.Allocator,
     n: usize,
     n_occ: usize,
@@ -129,15 +129,15 @@ fn runRhfScfLoop(
 
     while (iter < params.max_iter) : (iter += 1) {
         // Build Fock matrix
-        fock.updateFockMatrix(n, h_core, p_mat, eri_table, f_mat);
+        fock.update_fock_matrix(n, h_core, p_mat, eri_table, f_mat);
 
         // Compute energy
-        const e_elec = energy_mod.electronicEnergy(n, p_mat, h_core, f_mat);
+        const e_elec = energy_mod.electronic_energy(n, p_mat, h_core, f_mat);
         e_total = e_elec + v_nn;
 
         // Check convergence
         const delta_e = @abs(e_total - e_old);
-        const rms_p = density_matrix.densityRmsDiff(n, p_mat, p_old);
+        const rms_p = density_matrix.density_rms_diff(n, p_mat, p_old);
 
         if (iter > 0 and delta_e < params.energy_threshold and rms_p < params.density_threshold) {
             converged = true;
@@ -152,16 +152,16 @@ fn runRhfScfLoop(
         alloc.free(eigen.vectors);
         alloc.free(eigen.values);
 
-        eigen = try solveRoothaanHall(alloc, n, f_mat, s_mat);
+        eigen = try solve_roothaan_hall(alloc, n, f_mat, s_mat);
 
         // Update density matrix
-        density_matrix.updateDensityMatrix(n, n_occ, eigen.vectors, p_mat);
+        density_matrix.update_density_matrix(n, n_occ, eigen.vectors, p_mat);
     }
 
     // If not converged, do a final energy evaluation
     if (!converged) {
-        fock.updateFockMatrix(n, h_core, p_mat, eri_table, f_mat);
-        const e_elec = energy_mod.electronicEnergy(n, p_mat, h_core, f_mat);
+        fock.update_fock_matrix(n, h_core, p_mat, eri_table, f_mat);
+        const e_elec = energy_mod.electronic_energy(n, p_mat, h_core, f_mat);
         e_total = e_elec + v_nn;
     }
 
@@ -173,7 +173,7 @@ fn runRhfScfLoop(
     };
 }
 
-pub fn runRhfScf(
+pub fn run_rhf_scf(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
     nuc_positions: []const math.Vec3,
@@ -186,13 +186,13 @@ pub fn runRhfScf(
     const n_occ = n_electrons / 2; // number of doubly-occupied orbitals
 
     // Step 1: Build one-electron integrals
-    const s_mat = try integrals.buildOverlapMatrix(alloc, shells);
+    const s_mat = try integrals.build_overlap_matrix(alloc, shells);
     defer alloc.free(s_mat);
 
-    const t_mat = try integrals.buildKineticMatrix(alloc, shells);
+    const t_mat = try integrals.build_kinetic_matrix(alloc, shells);
     defer alloc.free(t_mat);
 
-    const v_mat = try integrals.buildNuclearMatrix(alloc, shells, nuc_positions, nuc_charges);
+    const v_mat = try integrals.build_nuclear_matrix(alloc, shells, nuc_positions, nuc_charges);
     defer alloc.free(v_mat);
 
     // H_core = T + V
@@ -204,20 +204,21 @@ pub fn runRhfScf(
     }
 
     // Step 2: Build ERI table
-    var eri_table = try integrals.buildEriTable(alloc, shells);
+    var eri_table = try integrals.build_eri_table(alloc, shells);
     defer eri_table.deinit(alloc);
 
     // Nuclear repulsion energy
-    const v_nn = energy_mod.nuclearRepulsionEnergy(nuc_positions, nuc_charges);
+    const v_nn = energy_mod.nuclear_repulsion_energy(nuc_positions, nuc_charges);
 
     // Step 3: Initial guess — diagonalize H_core (F = H_core when P = 0)
-    const eigen0 = try solveRoothaanHall(alloc, n, h_core, s_mat);
+    const eigen0 = try solve_roothaan_hall(alloc, n, h_core, s_mat);
 
     // Build initial density matrix
-    const p_mat = try density_matrix.buildDensityMatrix(alloc, n, n_occ, eigen0.vectors);
+    const vectors0 = eigen0.vectors;
+    const p_mat = try density_matrix.build_density_matrix(alloc, n, n_occ, vectors0);
 
     // Step 4: SCF loop
-    const loop = try runRhfScfLoop(
+    const loop = try run_rhf_scf_loop(
         alloc,
         n,
         n_occ,
@@ -257,9 +258,9 @@ const GeneralFockCtx = struct {
     schwarz_threshold: f64,
 };
 
-fn buildGeneralFock(ctx: GeneralFockCtx, p_mat: []const f64, f_mat: []f64) void {
+fn build_general_fock(ctx: GeneralFockCtx, p_mat: []const f64, f_mat: []f64) void {
     if (ctx.use_direct_scf) {
-        fock.buildFockDirect(
+        fock.build_fock_direct(
             ctx.n,
             ctx.h_core,
             p_mat,
@@ -269,7 +270,7 @@ fn buildGeneralFock(ctx: GeneralFockCtx, p_mat: []const f64, f_mat: []f64) void 
             f_mat,
         );
     } else {
-        fock.updateFockMatrixGeneral(ctx.n, ctx.h_core, p_mat, ctx.eri_table.?.*, f_mat);
+        fock.update_fock_matrix_general(ctx.n, ctx.h_core, p_mat, ctx.eri_table.?.*, f_mat);
     }
 }
 
@@ -289,7 +290,7 @@ const GeneralIterState = struct {
     converged: bool,
 };
 
-fn stepGeneralRhfIteration(
+fn step_general_rhf_iteration(
     alloc: std.mem.Allocator,
     state: *GeneralIterState,
     iter: usize,
@@ -307,15 +308,15 @@ fn stepGeneralRhfIteration(
     const n = fock_ctx.n;
 
     // Build Fock matrix
-    buildGeneralFock(fock_ctx, p_mat, f_mat);
+    build_general_fock(fock_ctx, p_mat, f_mat);
 
     // Compute energy using the un-extrapolated Fock matrix
-    const e_elec = energy_mod.electronicEnergy(n, p_mat, fock_ctx.h_core, f_mat);
+    const e_elec = energy_mod.electronic_energy(n, p_mat, fock_ctx.h_core, f_mat);
     state.e_total = e_elec + v_nn;
 
     // Check convergence
     const delta_e = @abs(state.e_total - state.e_old);
-    const rms_p = density_matrix.densityRmsDiff(n, p_mat, p_old);
+    const rms_p = density_matrix.density_rms_diff(n, p_mat, p_old);
 
     if (iter > 0 and delta_e < params.energy_threshold and rms_p < params.density_threshold) {
         state.converged = true;
@@ -336,13 +337,13 @@ fn stepGeneralRhfIteration(
         alloc.free(state.eigen.values);
     }
 
-    state.eigen = try solveRoothaanHall(alloc, n, f_to_diag, s_mat);
+    state.eigen = try solve_roothaan_hall(alloc, n, f_to_diag, s_mat);
     state.eigen_initialized = true;
 
-    density_matrix.updateDensityMatrix(n, n_occ, state.eigen.vectors, p_mat);
+    density_matrix.update_density_matrix(n, n_occ, state.eigen.vectors, p_mat);
 }
 
-fn runGeneralRhfIterations(
+fn run_general_rhf_iterations(
     alloc: std.mem.Allocator,
     n_occ: usize,
     s_mat: []const f64,
@@ -358,7 +359,7 @@ fn runGeneralRhfIterations(
 ) !usize {
     var iter: usize = 0;
     while (iter < params.max_iter) : (iter += 1) {
-        try stepGeneralRhfIteration(
+        try step_general_rhf_iteration(
             alloc,
             state,
             iter,
@@ -378,7 +379,7 @@ fn runGeneralRhfIterations(
     return iter;
 }
 
-fn runGeneralRhfLoop(
+fn run_general_rhf_loop(
     alloc: std.mem.Allocator,
     n_occ: usize,
     s_mat: []const f64,
@@ -417,7 +418,7 @@ fn runGeneralRhfLoop(
         .converged = false,
     };
 
-    const iter = try runGeneralRhfIterations(
+    const iter = try run_general_rhf_iterations(
         alloc,
         n_occ,
         s_mat,
@@ -433,8 +434,8 @@ fn runGeneralRhfLoop(
     );
 
     if (!state.converged) {
-        buildGeneralFock(fock_ctx, p_mat, f_mat);
-        const e_elec = energy_mod.electronicEnergy(n, p_mat, fock_ctx.h_core, f_mat);
+        build_general_fock(fock_ctx, p_mat, f_mat);
+        const e_elec = energy_mod.electronic_energy(n, p_mat, fock_ctx.h_core, f_mat);
         state.e_total = e_elec + v_nn;
     }
 
@@ -447,16 +448,16 @@ fn runGeneralRhfLoop(
     };
 }
 
-fn buildGeneralHCore(
+fn build_general_h_core(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
     nuc_positions: []const math.Vec3,
     nuc_charges: []const f64,
     n: usize,
 ) !struct { h_core: []f64, s_mat: []f64, t_mat: []f64, v_mat: []f64 } {
-    const s_mat = try obara_saika.buildOverlapMatrix(alloc, shells);
-    const t_mat = try obara_saika.buildKineticMatrix(alloc, shells);
-    const v_mat = try obara_saika.buildNuclearMatrix(alloc, shells, nuc_positions, nuc_charges);
+    const s_mat = try obara_saika.build_overlap_matrix(alloc, shells);
+    const t_mat = try obara_saika.build_kinetic_matrix(alloc, shells);
+    const v_mat = try obara_saika.build_nuclear_matrix(alloc, shells, nuc_positions, nuc_charges);
 
     const h_core = try alloc.alloc(f64, n * n);
     for (0..n * n) |i| {
@@ -471,7 +472,7 @@ const InitialGuess = struct {
     p_mat: []f64,
 };
 
-fn prepareGeneralInitialGuess(
+fn prepare_general_initial_guess(
     alloc: std.mem.Allocator,
     n: usize,
     n_occ: usize,
@@ -490,14 +491,14 @@ fn prepareGeneralInitialGuess(
         break :blk p_init;
     } else blk: {
         // Default: diagonalize H_core (P=0 → F=H_core)
-        eigen = try solveRoothaanHall(alloc, n, h_core, s_mat);
+        eigen = try solve_roothaan_hall(alloc, n, h_core, s_mat);
         eigen_initialized = true;
-        break :blk try density_matrix.buildDensityMatrix(alloc, n, n_occ, eigen.vectors);
+        break :blk try density_matrix.build_density_matrix(alloc, n, n_occ, eigen.vectors);
     };
     return .{ .eigen = eigen, .eigen_initialized = eigen_initialized, .p_mat = p_mat };
 }
 
-fn packageGeneralScfResult(
+fn package_general_scf_result(
     loop: GeneralLoopResult,
     v_nn: f64,
     p_mat: []f64,
@@ -514,7 +515,7 @@ fn packageGeneralScfResult(
     };
 }
 
-pub fn runGeneralRhfScf(
+pub fn run_general_rhf_scf(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
     nuc_positions: []const math.Vec3,
@@ -523,11 +524,11 @@ pub fn runGeneralRhfScf(
     params: ScfParams,
 ) !ScfResult {
     std.debug.assert(n_electrons % 2 == 0);
-    const n = obara_saika.totalBasisFunctions(shells);
+    const n = obara_saika.total_basis_functions(shells);
     const n_occ = n_electrons / 2;
 
     // Step 1: Build one-electron integrals using Obara-Saika
-    const one = try buildGeneralHCore(alloc, shells, nuc_positions, nuc_charges, n);
+    const one = try build_general_h_core(alloc, shells, nuc_positions, nuc_charges, n);
     defer alloc.free(one.s_mat);
     defer alloc.free(one.t_mat);
     defer alloc.free(one.v_mat);
@@ -540,9 +541,9 @@ pub fn runGeneralRhfScf(
     var eri_table: ?obara_saika.GeneralEriTable = null;
     var schwarz_table: ?fock.SchwarzTable = null;
     if (params.use_direct_scf) {
-        schwarz_table = try fock.buildSchwarzTable(alloc, shells);
+        schwarz_table = try fock.build_schwarz_table(alloc, shells);
     } else {
-        eri_table = try obara_saika.buildEriTable(alloc, shells);
+        eri_table = try obara_saika.build_eri_table(alloc, shells);
     }
     defer {
         if (eri_table) |*et| et.deinit(alloc);
@@ -550,10 +551,10 @@ pub fn runGeneralRhfScf(
     }
 
     // Nuclear repulsion energy
-    const v_nn = energy_mod.nuclearRepulsionEnergy(nuc_positions, nuc_charges);
+    const v_nn = energy_mod.nuclear_repulsion_energy(nuc_positions, nuc_charges);
 
     // Step 3: Initial guess
-    const init = try prepareGeneralInitialGuess(alloc, n, n_occ, h_core, s_mat, params);
+    const init = try prepare_general_initial_guess(alloc, n, n_occ, h_core, s_mat, params);
 
     // Step 4: SCF loop
     const fock_ctx = GeneralFockCtx{
@@ -565,7 +566,7 @@ pub fn runGeneralRhfScf(
         .eri_table = if (eri_table) |*et| et else null,
         .schwarz_threshold = params.schwarz_threshold,
     };
-    const loop = try runGeneralRhfLoop(
+    const loop = try run_general_rhf_loop(
         alloc,
         n_occ,
         s_mat,
@@ -577,12 +578,12 @@ pub fn runGeneralRhfScf(
         init.eigen_initialized,
     );
 
-    return packageGeneralScfResult(loop, v_nn, init.p_mat);
+    return package_general_scf_result(loop, v_nn, init.p_mat);
 }
 
 /// Solve the Roothaan-Hall equation FC = SCε using the generalized
 /// eigenvalue solver. Uses LAPACK dsygv (via Accelerate).
-fn solveRoothaanHall(
+fn solve_roothaan_hall(
     alloc: std.mem.Allocator,
     n: usize,
     f_mat: []const f64,
@@ -598,11 +599,11 @@ fn solveRoothaanHall(
 
     @memcpy(b, s_mat);
 
-    return try linalg.realSymmetricGenEigenDecomp(alloc, .accelerate, n, a, b);
+    return try linalg.real_symmetric_gen_eigen_decomp(alloc, .accelerate, n, a, b);
 }
 
 /// Print SCF iteration info to stderr for debugging.
-pub fn printIterInfo(
+pub fn print_iter_info(
     iter: usize,
     e_total: f64,
     delta_e: f64,
@@ -642,7 +643,7 @@ test "RHF H2 STO-3G at R=1.4 bohr" {
         .{ .center = nuc_positions[1], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    var result = try runRhfScf(
+    var result = try run_rhf_scf(
         alloc,
         &shells,
         &nuc_positions,
@@ -677,11 +678,18 @@ test "General RHF H2 STO-3G matches legacy" {
     };
 
     // Legacy s-only SCF
-    var result_legacy = try runRhfScf(alloc, &shells, &nuc_positions, &nuc_charges, 2, .{});
+    var result_legacy = try run_rhf_scf(alloc, &shells, &nuc_positions, &nuc_charges, 2, .{});
     defer result_legacy.deinit(alloc);
 
     // General SCF (should give same result for s-only shells)
-    var result_general = try runGeneralRhfScf(alloc, &shells, &nuc_positions, &nuc_charges, 2, .{});
+    var result_general = try run_general_rhf_scf(
+        alloc,
+        &shells,
+        &nuc_positions,
+        &nuc_charges,
+        2,
+        .{},
+    );
     defer result_general.deinit(alloc);
 
     try testing.expectApproxEqAbs(result_legacy.total_energy, result_general.total_energy, 1e-10);
@@ -706,9 +714,30 @@ test "Nuclear attraction p-orbital symmetry at origin" {
     const pz = basis_mod.AngularMomentum{ .x = 0, .y = 0, .z = 1 };
 
     // Nuclear attraction for a single nucleus at origin with Z=8
-    const v_xx = obara_saika.contractedNuclearAttraction(shell_2p, px, shell_2p, px, nuc_pos, 8.0);
-    const v_yy = obara_saika.contractedNuclearAttraction(shell_2p, py, shell_2p, py, nuc_pos, 8.0);
-    const v_zz = obara_saika.contractedNuclearAttraction(shell_2p, pz, shell_2p, pz, nuc_pos, 8.0);
+    const v_xx = obara_saika.contracted_nuclear_attraction(
+        shell_2p,
+        px,
+        shell_2p,
+        px,
+        nuc_pos,
+        8.0,
+    );
+    const v_yy = obara_saika.contracted_nuclear_attraction(
+        shell_2p,
+        py,
+        shell_2p,
+        py,
+        nuc_pos,
+        8.0,
+    );
+    const v_zz = obara_saika.contracted_nuclear_attraction(
+        shell_2p,
+        pz,
+        shell_2p,
+        pz,
+        nuc_pos,
+        8.0,
+    );
 
     // These should all be equal by spherical symmetry
     try testing.expectApproxEqAbs(v_xx, v_yy, 1e-10);
@@ -719,10 +748,38 @@ test "Nuclear attraction p-orbital symmetry at origin" {
 
     // Now test with a displaced nucleus (H at y=1.43, z=1.11)
     const h_pos = math.Vec3{ .x = 0.0, .y = 1.4305226763, .z = 1.1092692351 };
-    const v_xx_h = obara_saika.contractedNuclearAttraction(shell_2p, px, shell_2p, px, h_pos, 1.0);
-    const v_yy_h = obara_saika.contractedNuclearAttraction(shell_2p, py, shell_2p, py, h_pos, 1.0);
-    const v_zz_h = obara_saika.contractedNuclearAttraction(shell_2p, pz, shell_2p, pz, h_pos, 1.0);
-    const v_yz_h = obara_saika.contractedNuclearAttraction(shell_2p, py, shell_2p, pz, h_pos, 1.0);
+    const v_xx_h = obara_saika.contracted_nuclear_attraction(
+        shell_2p,
+        px,
+        shell_2p,
+        px,
+        h_pos,
+        1.0,
+    );
+    const v_yy_h = obara_saika.contracted_nuclear_attraction(
+        shell_2p,
+        py,
+        shell_2p,
+        py,
+        h_pos,
+        1.0,
+    );
+    const v_zz_h = obara_saika.contracted_nuclear_attraction(
+        shell_2p,
+        pz,
+        shell_2p,
+        pz,
+        h_pos,
+        1.0,
+    );
+    const v_yz_h = obara_saika.contracted_nuclear_attraction(
+        shell_2p,
+        py,
+        shell_2p,
+        pz,
+        h_pos,
+        1.0,
+    );
 
     // PySCF reference for H nucleus at (0, 1.43, 1.11) with Z=1
     try testing.expectApproxEqAbs(-0.5031599190, v_xx_h, 1e-4);
@@ -758,17 +815,22 @@ test "General RHF H2O STO-3G integrals" {
         .{ .center = nuc_positions[2], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    const n = obara_saika.totalBasisFunctions(&shells);
+    const n = obara_saika.total_basis_functions(&shells);
     try testing.expectEqual(@as(usize, 7), n);
 
     // Build S, T, V matrices
-    const s_mat = try obara_saika.buildOverlapMatrix(alloc, &shells);
+    const s_mat = try obara_saika.build_overlap_matrix(alloc, &shells);
     defer alloc.free(s_mat);
 
-    const t_mat = try obara_saika.buildKineticMatrix(alloc, &shells);
+    const t_mat = try obara_saika.build_kinetic_matrix(alloc, &shells);
     defer alloc.free(t_mat);
 
-    const v_mat = try obara_saika.buildNuclearMatrix(alloc, &shells, &nuc_positions, &nuc_charges);
+    const v_mat = try obara_saika.build_nuclear_matrix(
+        alloc,
+        &shells,
+        &nuc_positions,
+        &nuc_charges,
+    );
     defer alloc.free(v_mat);
 
     // Check S matrix against PySCF
@@ -818,11 +880,11 @@ test "General RHF H2O STO-3G" {
     };
 
     // Total basis functions: 1 + 1 + 3 + 1 + 1 = 7
-    const n_basis = obara_saika.totalBasisFunctions(&shells);
+    const n_basis = obara_saika.total_basis_functions(&shells);
     try testing.expectEqual(@as(usize, 7), n_basis);
 
     // 10 electrons (O=8, H=1, H=1)
-    var result = try runGeneralRhfScf(alloc, &shells, &nuc_positions, &nuc_charges, 10, .{});
+    var result = try run_general_rhf_scf(alloc, &shells, &nuc_positions, &nuc_charges, 10, .{});
     defer result.deinit(alloc);
 
     // Reference: PySCF RHF/STO-3G H2O = -74.9630631297 Ha
@@ -855,15 +917,25 @@ test "DIIS accelerates H2O convergence" {
     };
 
     // Run WITHOUT DIIS
-    var result_no_diis = try runGeneralRhfScf(alloc, &shells, &nuc_positions, &nuc_charges, 10, .{
-        .use_diis = false,
-    });
+    var result_no_diis = try run_general_rhf_scf(
+        alloc,
+        &shells,
+        &nuc_positions,
+        &nuc_charges,
+        10,
+        .{ .use_diis = false },
+    );
     defer result_no_diis.deinit(alloc);
 
     // Run WITH DIIS (default)
-    var result_diis = try runGeneralRhfScf(alloc, &shells, &nuc_positions, &nuc_charges, 10, .{
-        .use_diis = true,
-    });
+    var result_diis = try run_general_rhf_scf(
+        alloc,
+        &shells,
+        &nuc_positions,
+        &nuc_charges,
+        10,
+        .{ .use_diis = true },
+    );
     defer result_diis.deinit(alloc);
 
     // Both should converge to the same energy

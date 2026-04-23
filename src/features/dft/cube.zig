@@ -4,7 +4,7 @@ const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const d3_params = @import("../vdw/d3_params.zig");
 
 /// Emit the cube-format header: title, atom count/origin, and voxel vectors.
-fn emitCubeHeader(
+fn emit_cube_header(
     out: *std.Io.Writer,
     n_atoms: usize,
     grid: [3]usize,
@@ -46,14 +46,14 @@ fn emitCubeHeader(
 }
 
 /// Emit the atom block (atomic number, valence Z, Cartesian position in Bohr).
-fn emitCubeAtoms(
+fn emit_cube_atoms(
     out: *std.Io.Writer,
     atoms: []const hamiltonian.AtomData,
     species: []const hamiltonian.SpeciesEntry,
 ) !void {
     for (atoms) |atom| {
         const sym = species[atom.species_index].symbol;
-        const z_num = d3_params.atomicNumber(sym) orelse 0;
+        const z_num = d3_params.atomic_number(sym) orelse 0;
         const z_val = species[atom.species_index].z_valence;
         try out.print("{d:>5} {d:>12.6} {d:>12.6} {d:>12.6} {d:>12.6}\n", .{
             z_num,
@@ -69,7 +69,7 @@ fn emitCubeAtoms(
 /// DFT-Zig stores density as density[ix + nx*(iy + ny*iz)] where x is fastest in memory.
 /// This means iz increments cause stride nx*ny jumps — acceptable for typical grid sizes
 /// (32³ = 32K elements fits in L1 cache).
-fn emitCubeDensity(
+fn emit_cube_density(
     out: *std.Io.Writer,
     density: []const f64,
     grid: [3]usize,
@@ -99,7 +99,7 @@ fn emitCubeDensity(
 /// Write electron density in Gaussian cube format.
 /// Density is in electrons/Bohr³ (converted from Ry units).
 /// Grid ordering: x-outer, y-middle, z-inner (Fortran convention).
-pub fn writeCubeFile(
+pub fn write_cube_file(
     io: std.Io,
     dir: std.Io.Dir,
     filename: []const u8,
@@ -116,8 +116,8 @@ pub fn writeCubeFile(
     var writer = file.writer(io, &buf);
     const out = &writer.interface;
 
-    try emitCubeHeader(out, atoms.len, grid, cell_bohr);
-    try emitCubeAtoms(out, atoms, species);
-    try emitCubeDensity(out, density, grid);
+    try emit_cube_header(out, atoms.len, grid, cell_bohr);
+    try emit_cube_atoms(out, atoms, species);
+    try emit_cube_density(out, density, grid);
     try out.flush();
 }

@@ -57,23 +57,23 @@ pub fn column(data: []math.Complex, n: usize, col: usize) []math.Complex {
 }
 
 /// Get const column slice from matrix
-pub fn columnConst(data: []const math.Complex, n: usize, col: usize) []const math.Complex {
+pub fn column_const(data: []const math.Complex, n: usize, col: usize) []const math.Complex {
     return data[col * n .. (col + 1) * n];
 }
 
 /// Complex inner product: <a|b> = sum(conj(a[i]) * b[i])
 /// Uses SIMD-optimized implementation for ~1.25x speedup.
-pub fn innerProduct(n: usize, a: []const math.Complex, b: []const math.Complex) math.Complex {
+pub fn inner_product(n: usize, a: []const math.Complex, b: []const math.Complex) math.Complex {
     // Use SIMD-optimized version (same memory layout as math.Complex)
     const simd_a: []const simd_vec.Complex = @ptrCast(a[0..n]);
     const simd_b: []const simd_vec.Complex = @ptrCast(b[0..n]);
-    const result = simd_vec.innerProduct(simd_a, simd_b);
+    const result = simd_vec.inner_product(simd_a, simd_b);
     return math.complex.init(result.r, result.i);
 }
 
 /// Vector norm: sqrt(<a|a>)
 /// Vector 2-norm using BLAS dznrm2
-pub fn vectorNorm(n: usize, a: []const math.Complex) f64 {
+pub fn vector_norm(n: usize, a: []const math.Complex) f64 {
     if (n == 0) return 0.0;
     const blas_a: []const blas.Complex = @ptrCast(a[0..n]);
     return blas.dznrm2(blas_a);
@@ -90,7 +90,7 @@ pub fn axpy(n: usize, y: []math.Complex, x: []const math.Complex, alpha: f64) vo
 
 /// Combine columns: out = V * coeffs using BLAS zgemv
 /// V is n x m column-major matrix, coeffs is m-vector, out is n-vector
-pub fn combineColumns(
+pub fn combine_columns(
     n: usize,
     v: []const math.Complex,
     m: usize,
@@ -105,12 +105,12 @@ pub fn combineColumns(
     const blas_v: []const blas.Complex = @ptrCast(v);
     const blas_coeffs: []const blas.Complex = @ptrCast(coeffs);
     const blas_out: []blas.Complex = @ptrCast(out);
-    blas.combineColumns(n, m, blas_v, blas_coeffs, blas_out);
+    blas.combine_columns(n, m, blas_v, blas_coeffs, blas_out);
 }
 
 /// Batch combine columns: out = V * C using BLAS zgemm
 /// V is n x m column-major, C is m x ncols column-major, out is n x ncols column-major
-pub fn combineColumnsMatrix(
+pub fn combine_columns_matrix(
     n: usize,
     v: []const math.Complex,
     m: usize,
@@ -144,7 +144,7 @@ pub fn combineColumnsMatrix(
 
 /// Precondition residual for generalized problem: out[i] = r[i] / (diag_H[i] - lambda * diag_S[i])
 /// When diag_s is null, uses standard preconditioner (S=I).
-pub fn preconditionGeneralized(
+pub fn precondition_generalized(
     n: usize,
     diag: []const f64,
     diag_s: ?[]const f64,
@@ -162,22 +162,22 @@ pub fn preconditionGeneralized(
 
 /// S-inner product: <a|S|b> using pre-computed S·b column.
 /// When sv_col is null (S=I), falls back to standard inner product.
-pub fn innerProductS(
+pub fn inner_product_s(
     n: usize,
     a: []const math.Complex,
     b: []const math.Complex,
     sv_col: ?[]const math.Complex,
 ) math.Complex {
     if (sv_col) |sb| {
-        return innerProduct(n, a, sb);
+        return inner_product(n, a, sb);
     }
-    return innerProduct(n, a, b);
+    return inner_product(n, a, b);
 }
 
 /// Modified Gram-Schmidt orthonormalization with S-inner product.
 /// sv is the S·v matrix (column-major), updated in place for new column.
 /// When sv is null, uses standard inner product (S=I).
-pub fn orthonormalizeVectorS(
+pub fn orthonormalize_vector_s(
     n: usize,
     v: []math.Complex,
     basis: []const math.Complex,
@@ -187,14 +187,14 @@ pub fn orthonormalizeVectorS(
 ) f64 {
     const blas_v: []blas.Complex = @ptrCast(v);
     for (0..m) |j| {
-        const bj = columnConst(basis, n, j);
+        const bj = column_const(basis, n, j);
         // Use S-inner product: <bj|S|v>
         const sv_v = if (sv) |s| column(@constCast(s), n, m) else null;
         _ = sv_v;
         const dot = if (sv_basis) |sb|
-            innerProduct(n, columnConst(sb, n, j), v)
+            inner_product(n, column_const(sb, n, j), v)
         else
-            innerProduct(n, bj, v);
+            inner_product(n, bj, v);
         const neg_dot = blas.Complex.init(-dot.r, -dot.i);
         const blas_bj: []const blas.Complex = @ptrCast(bj);
         blas.zaxpy(neg_dot, blas_bj, blas_v);
@@ -228,7 +228,7 @@ pub fn precondition(
 /// Build projected matrix: T = V† * W using BLAS zgemm
 /// V is n x m, W is n x m, T is m x m (Hermitian)
 /// For numerical stability, enforces Hermitian symmetry after computation.
-pub fn buildProjected(
+pub fn build_projected(
     n: usize,
     v: []const math.Complex,
     w: []const math.Complex,
@@ -241,7 +241,7 @@ pub fn buildProjected(
     const blas_v: []const blas.Complex = @ptrCast(v);
     const blas_w: []const blas.Complex = @ptrCast(w);
     const blas_out: []blas.Complex = @ptrCast(out);
-    blas.buildProjectedMatrix(n, m, blas_v, blas_w, blas_out);
+    blas.build_projected_matrix(n, m, blas_v, blas_w, blas_out);
 
     // Enforce Hermitian symmetry: T = (T + T†) / 2
     for (0..m) |j| {
@@ -260,7 +260,7 @@ pub fn buildProjected(
 
 /// Orthonormalize vector against basis using modified Gram-Schmidt
 /// Uses BLAS zaxpy for vector updates.
-pub fn orthonormalizeVector(
+pub fn orthonormalize_vector(
     n: usize,
     v: []math.Complex,
     basis: []const math.Complex,
@@ -268,8 +268,8 @@ pub fn orthonormalizeVector(
 ) f64 {
     const blas_v: []blas.Complex = @ptrCast(v);
     for (0..m) |j| {
-        const bj = columnConst(basis, n, j);
-        const dot = innerProduct(n, bj, v);
+        const bj = column_const(basis, n, j);
+        const dot = inner_product(n, bj, v);
         // v = v - dot * bj (using BLAS zaxpy: y = alpha * x + y)
         const neg_dot = blas.Complex.init(-dot.r, -dot.i);
         const blas_bj: []const blas.Complex = @ptrCast(bj);
@@ -284,35 +284,35 @@ pub fn orthonormalizeVector(
 }
 
 /// Initialize random vectors
-pub fn initRandomVectors(n: usize, v: []math.Complex, m: usize, seed: *u64) void {
+pub fn init_random_vectors(n: usize, v: []math.Complex, m: usize, seed: *u64) void {
     for (0..m) |col| {
         for (0..n) |i| {
-            const r = nextRand01(seed) - 0.5;
-            const im = nextRand01(seed) - 0.5;
+            const r = next_rand01(seed) - 0.5;
+            const im = next_rand01(seed) - 0.5;
             v[i + col * n] = math.complex.init(r, im);
         }
     }
 }
 
 /// Orthonormalize all columns
-pub fn orthonormalizeAll(n: usize, v: []math.Complex, m: usize, seed: *u64) !void {
+pub fn orthonormalize_all(n: usize, v: []math.Complex, m: usize, seed: *u64) !void {
     for (0..m) |col| {
         var retries: usize = 0;
         while (retries < 3) : (retries += 1) {
-            const norm = orthonormalizeVector(n, column(v, n, col), v, col);
+            const norm = orthonormalize_vector(n, column(v, n, col), v, col);
             if (norm > 1e-8) break;
             for (0..n) |i| {
-                const r = nextRand01(seed) - 0.5;
-                const im = nextRand01(seed) - 0.5;
+                const r = next_rand01(seed) - 0.5;
+                const im = next_rand01(seed) - 0.5;
                 v[i + col * n] = math.complex.init(r, im);
             }
         }
-        if (vectorNorm(n, column(v, n, col)) < 1e-8) return error.InvalidMatrixSize;
+        if (vector_norm(n, column(v, n, col)) < 1e-8) return error.InvalidMatrixSize;
     }
 }
 
 /// Simple LCG random number generator
-pub fn nextRand01(seed: *u64) f64 {
+pub fn next_rand01(seed: *u64) f64 {
     seed.* = seed.* *% 6364136223846793005 +% 1;
     const val: u64 = seed.* >> 11;
     return @as(f64, @floatFromInt(val)) / 9007199254740992.0;
@@ -320,7 +320,7 @@ pub fn nextRand01(seed: *u64) f64 {
 
 /// Small matrix eigendecomposition using LAPACK zheev
 /// Optimized for small matrices: bypasses global mutex and uses stack workspace.
-pub fn hermitianEigenDecompSmall(
+pub fn hermitian_eigen_decomp_small(
     alloc: std.mem.Allocator,
     n: usize,
     a: []math.Complex,
@@ -394,7 +394,7 @@ pub fn hermitianEigenDecompSmall(
         return linalg.EigenDecomp{ .values = values, .vectors = vectors, .n = n };
     }
     // Delegate to LAPACK zheev via linalg module for larger matrices
-    return linalg.hermitianEigenDecomp(alloc, .accelerate, n, a);
+    return linalg.hermitian_eigen_decomp(alloc, .accelerate, n, a);
 }
 
 extern fn zheev_(
@@ -428,7 +428,7 @@ extern fn zhegv_(
 
 /// Solve generalized Hermitian eigenvalue problem A·x = λ·B·x for small matrices.
 /// B must be positive definite. Returns eigenvalues and eigenvectors.
-pub fn hermitianGeneralizedEigenDecompSmall(
+pub fn hermitian_generalized_eigen_decomp_small(
     alloc: std.mem.Allocator,
     n: usize,
     a: []math.Complex,

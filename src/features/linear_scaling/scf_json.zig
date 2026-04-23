@@ -30,7 +30,7 @@ pub const ScfComparisonJson = struct {
     energy_terms: energy_compare.EnergyComparison,
 };
 
-pub fn writeReferenceJson(
+pub fn write_reference_json(
     io: std.Io,
     dir: std.Io.Dir,
     path: []const u8,
@@ -52,17 +52,17 @@ pub fn writeReferenceJson(
     try out.flush();
 }
 
-pub fn writeReferenceFromScfResult(
+pub fn write_reference_from_scf_result(
     io: std.Io,
     dir: std.Io.Dir,
     path: []const u8,
     result: *const scf.ScfResult,
 ) !void {
-    const snapshot = scf_harness.snapshotFromScfResult(result);
-    try writeReferenceJson(io, dir, path, snapshot);
+    const snapshot = scf_harness.snapshot_from_scf_result(result);
+    try write_reference_json(io, dir, path, snapshot);
 }
 
-pub fn readReferenceJson(
+pub fn read_reference_json(
     io: std.Io,
     alloc: std.mem.Allocator,
     dir: std.Io.Dir,
@@ -85,7 +85,7 @@ pub fn readReferenceJson(
     };
 }
 
-pub fn compareReferenceToScfResult(
+pub fn compare_reference_to_scf_result(
     reference_data: *const ScfReferenceOwned,
     result: *const scf.ScfResult,
 ) !scf_harness.ScfComparisonReport {
@@ -93,11 +93,11 @@ pub fn compareReferenceToScfResult(
         .energy_terms = reference_data.energy_terms,
         .density = reference_data.density,
     };
-    const cand_snapshot = scf_harness.snapshotFromScfResult(result);
-    return scf_harness.compareSnapshots(ref_snapshot, cand_snapshot);
+    const cand_snapshot = scf_harness.snapshot_from_scf_result(result);
+    return scf_harness.compare_snapshots(ref_snapshot, cand_snapshot);
 }
 
-pub fn writeComparisonJson(
+pub fn write_comparison_json(
     io: std.Io,
     dir: std.Io.Dir,
     path: []const u8,
@@ -119,15 +119,15 @@ pub fn writeComparisonJson(
     try out.flush();
 }
 
-pub fn writeComparisonFromScfResults(
+pub fn write_comparison_from_scf_results(
     io: std.Io,
     dir: std.Io.Dir,
     path: []const u8,
     reference_result: *const scf.ScfResult,
     candidate_result: *const scf.ScfResult,
 ) !scf_harness.ScfComparisonReport {
-    const report = try scf_harness.compareScfResults(reference_result, candidate_result);
-    try writeComparisonJson(io, dir, path, report);
+    const report = try scf_harness.compare_scf_results(reference_result, candidate_result);
+    try write_comparison_json(io, dir, path, report);
     return report;
 }
 
@@ -151,9 +151,9 @@ test "scf reference json round trip" {
         .nonlocal_pseudo = 9.0,
     };
     const snapshot = scf_harness.ScfSnapshot{ .energy_terms = terms, .density = density[0..] };
-    try writeReferenceJson(io, tmp.dir, "ref.json", snapshot);
+    try write_reference_json(io, tmp.dir, "ref.json", snapshot);
 
-    var loaded = try readReferenceJson(io, alloc, tmp.dir, "ref.json");
+    var loaded = try read_reference_json(io, alloc, tmp.dir, "ref.json");
     defer loaded.deinit(alloc);
 
     try std.testing.expectEqual(@as(usize, density.len), loaded.density.len);
@@ -191,7 +191,7 @@ test "scf comparison json parses" {
             .nonlocal_pseudo = .{ .abs = 1.0, .rel = 0.10 },
         },
     };
-    try writeComparisonJson(io, tmp.dir, "compare.json", report);
+    try write_comparison_json(io, tmp.dir, "compare.json", report);
 
     const content = try tmp.dir.readFileAlloc(io, "compare.json", alloc, .limited(1024 * 1024));
     defer alloc.free(content);

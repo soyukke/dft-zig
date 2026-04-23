@@ -36,7 +36,7 @@ pub const ScfRunOptions = struct {
     nonlocal_basis: local_orbital.BasisType = .s_only,
 };
 
-pub fn loadPseudos(
+pub fn load_pseudos(
     alloc: std.mem.Allocator,
     io: std.Io,
     specs: []const pseudo.Spec,
@@ -55,7 +55,7 @@ pub fn loadPseudos(
     return try list.toOwnedSlice(alloc);
 }
 
-pub fn deinitPseudos(alloc: std.mem.Allocator, pseudos: []pseudo.Parsed) void {
+pub fn deinit_pseudos(alloc: std.mem.Allocator, pseudos: []pseudo.Parsed) void {
     for (pseudos) |*item| {
         item.deinit(alloc);
     }
@@ -64,7 +64,7 @@ pub fn deinitPseudos(alloc: std.mem.Allocator, pseudos: []pseudo.Parsed) void {
     }
 }
 
-pub fn buildIonSitesFromAtoms(
+pub fn build_ion_sites_from_atoms(
     alloc: std.mem.Allocator,
     atoms: []const xyz.Atom,
     pseudos: []const pseudo.Parsed,
@@ -74,14 +74,14 @@ pub fn buildIonSitesFromAtoms(
     const sites = try alloc.alloc(ionic_potential.IonSite, atoms.len);
     errdefer alloc.free(sites);
     for (atoms, 0..) |atom, idx| {
-        const upf = findUpfForSymbol(pseudos, atom.symbol) orelse
+        const upf = find_upf_for_symbol(pseudos, atom.symbol) orelse
             return error.MissingPseudopotential;
         sites[idx] = .{ .position = math.Vec3.scale(atom.position, scale_to_bohr), .upf = upf };
     }
     return sites;
 }
 
-pub fn runScfFromAtoms(
+pub fn run_scf_from_atoms(
     alloc: std.mem.Allocator,
     atoms: []const xyz.Atom,
     pseudos: []const pseudo.Parsed,
@@ -92,7 +92,7 @@ pub fn runScfFromAtoms(
     if (opts.grid_dims[0] == 0 or opts.grid_dims[1] == 0 or opts.grid_dims[2] == 0) {
         return error.InvalidGrid;
     }
-    const scale = math.unitsScaleToBohr(opts.units);
+    const scale = math.units_scale_to_bohr(opts.units);
     const scaled_cell = cell.scale(scale);
     const sigma = opts.sigma * scale;
     const cutoff = opts.cutoff * scale;
@@ -108,7 +108,7 @@ pub fn runScfFromAtoms(
     for (atoms, 0..) |atom, idx| {
         centers[idx] = math.Vec3.scale(atom.position, scale);
     }
-    const sites = try buildIonSitesFromAtoms(alloc, atoms, pseudos, scale);
+    const sites = try build_ion_sites_from_atoms(alloc, atoms, pseudos, scale);
     defer alloc.free(sites);
 
     const scf_opts = local_orbital_scf.ScfGridOptions{
@@ -130,7 +130,7 @@ pub fn runScfFromAtoms(
         .nonlocal_threshold = opts.nonlocal_threshold,
         .nonlocal_basis = opts.nonlocal_basis,
     };
-    return local_orbital_scf.runScfWithGridAndIons(
+    return local_orbital_scf.run_scf_with_grid_and_ions(
         alloc,
         centers,
         scaled_cell,
@@ -140,7 +140,7 @@ pub fn runScfFromAtoms(
     );
 }
 
-pub fn runScfFromXyz(
+pub fn run_scf_from_xyz(
     alloc: std.mem.Allocator,
     io: std.Io,
     xyz_path: []const u8,
@@ -152,13 +152,13 @@ pub fn runScfFromXyz(
     var atom_list = try xyz.load(alloc, io, xyz_path);
     defer atom_list.deinit(alloc);
 
-    const pseudos = try loadPseudos(alloc, io, specs);
-    defer deinitPseudos(alloc, pseudos);
+    const pseudos = try load_pseudos(alloc, io, specs);
+    defer deinit_pseudos(alloc, pseudos);
 
-    return runScfFromAtoms(alloc, atom_list.items, pseudos, cell, pbc, opts);
+    return run_scf_from_atoms(alloc, atom_list.items, pseudos, cell, pbc, opts);
 }
 
-fn findUpfForSymbol(pseudos: []const pseudo.Parsed, symbol: []const u8) ?*const pseudo.UpfData {
+fn find_upf_for_symbol(pseudos: []const pseudo.Parsed, symbol: []const u8) ?*const pseudo.UpfData {
     for (pseudos) |*item| {
         if (std.mem.eql(u8, item.spec.element, symbol)) {
             if (item.upf) |*data| return data;
@@ -174,7 +174,7 @@ fn findUpfForSymbol(pseudos: []const pseudo.Parsed, symbol: []const u8) ?*const 
     return null;
 }
 
-test "buildIonSitesFromAtoms maps symbols" {
+test "build_ion_sites_from_atoms maps symbols" {
     const alloc = std.testing.allocator;
     const symbol_buf = [_]u8{ 'S', 'i' };
     const spec = pseudo.Spec{
@@ -216,7 +216,7 @@ test "buildIonSitesFromAtoms maps symbols" {
         .{ .symbol = symbol_buf[0..], .position = .{ .x = 2.0, .y = 3.0, .z = 4.0 } },
     };
     const pseudos = [_]pseudo.Parsed{parsed};
-    const sites = try buildIonSitesFromAtoms(alloc, atoms[0..], pseudos[0..], 2.0);
+    const sites = try build_ion_sites_from_atoms(alloc, atoms[0..], pseudos[0..], 2.0);
     defer alloc.free(sites);
 
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), sites[0].position.x, 1e-12);

@@ -35,14 +35,14 @@ const runtime_logging = @import("../runtime/logging.zig");
 const Grid = scf_mod.Grid;
 
 // =====================================================================
-// Re-exports for external callers (preserves dfpt.runPhonon etc.)
+// Re-exports for external callers (preserves dfpt.run_phonon etc.)
 // =====================================================================
 
 pub const ifc = @import("ifc.zig");
-pub const runPhonon = gamma.runPhonon;
+pub const run_phonon = gamma.run_phonon;
 pub const PhononResult = gamma.PhononResult;
-pub const runPhononBand = phonon_q.runPhononBand;
-pub const runPhononBandIFC = phonon_q.runPhononBandIFC;
+pub const run_phonon_band = phonon_q.run_phonon_band;
+pub const run_phonon_band_ifc = phonon_q.run_phonon_band_ifc;
 pub const PhononBandResult = phonon_q.PhononBandResult;
 
 // =====================================================================
@@ -158,7 +158,7 @@ pub const DfptConfig = struct {
     log_level: runtime_logging.Level = .info,
 
     /// Build DfptConfig from the global config.
-    pub fn fromConfig(cfg: config_mod.Config) DfptConfig {
+    pub fn from_config(cfg: config_mod.Config) DfptConfig {
         return .{
             .sternheimer_tol = cfg.dfpt.sternheimer_tol,
             .sternheimer_max_iter = cfg.dfpt.sternheimer_max_iter,
@@ -196,7 +196,7 @@ pub const IonicData = struct {
         for (0..n) |i| {
             charges[i] = species[atoms[i].species_index].z_valence;
             positions[i] = atoms[i].position;
-            masses[i] = atomic_data.atomicMass(species[atoms[i].species_index].symbol);
+            masses[i] = atomic_data.atomic_mass(species[atoms[i].species_index].symbol);
         }
         return .{ .charges = charges, .positions = positions, .masses = masses };
     }
@@ -238,7 +238,7 @@ const CoreResources = struct {
     }
 };
 
-fn initDfptApplyContext(
+fn init_dfpt_apply_context(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -253,7 +253,7 @@ fn initDfptApplyContext(
     const apply_ctx_ptr = try alloc.create(scf_mod.ApplyContext);
     errdefer alloc.destroy(apply_ctx_ptr);
 
-    apply_ctx_ptr.* = try scf_mod.ApplyContext.initWithWorkspaces(
+    apply_ctx_ptr.* = try scf_mod.ApplyContext.init_with_workspaces(
         alloc,
         io,
         grid,
@@ -272,14 +272,14 @@ fn initDfptApplyContext(
     return apply_ctx_ptr;
 }
 
-fn solveGammaEigenproblem(
+fn solve_gamma_eigenproblem(
     alloc: std.mem.Allocator,
     cfg: config_mod.Config,
     apply_ctx_ptr: *scf_mod.ApplyContext,
     gvecs: []const plane_wave.GVector,
     n_occ: usize,
 ) !linalg.EigenDecomp {
-    logDfptInfo("dfpt: solving Gamma-point eigenvalues with LOBPCG\n", .{});
+    log_dfpt_info("dfpt: solving Gamma-point eigenvalues with LOBPCG\n", .{});
     const nbands_solve = @max(n_occ + 2, @as(usize, 8));
     const diag = try alloc.alloc(f64, gvecs.len);
     defer alloc.free(diag);
@@ -290,10 +290,10 @@ fn solveGammaEigenproblem(
     const op = iterative.Operator{
         .n = gvecs.len,
         .ctx = @ptrCast(apply_ctx_ptr),
-        .apply = &scf_mod.applyHamiltonian,
-        .apply_batch = &scf_mod.applyHamiltonianBatched,
+        .apply = &scf_mod.apply_hamiltonian,
+        .apply_batch = &scf_mod.apply_hamiltonian_batched,
     };
-    return try iterative.hermitianEigenDecompIterative(
+    return try iterative.hermitian_eigen_decomp_iterative(
         alloc,
         cfg.linalg_backend,
         op,
@@ -303,7 +303,7 @@ fn solveGammaEigenproblem(
     );
 }
 
-fn copyOccupiedWavefunctions(
+fn copy_occupied_wavefunctions(
     alloc: std.mem.Allocator,
     eig: linalg.EigenDecomp,
     n_occ: usize,
@@ -326,7 +326,7 @@ fn copyOccupiedWavefunctions(
     return .{ .wf_const = wf_const, .wf_2d = wf_2d };
 }
 
-fn buildCoreResources(
+fn build_core_resources(
     alloc: std.mem.Allocator,
     cfg: config_mod.Config,
     grid: Grid,
@@ -335,21 +335,21 @@ fn buildCoreResources(
 ) !CoreResources {
     var resources = CoreResources{};
 
-    if (!scf_mod.hasNlcc(species)) return resources;
-    resources.rho_core = try scf_mod.buildCoreDensity(alloc, grid, species, @constCast(atoms));
-    logDfptDebug("dfpt: NLCC core charge built on grid\n", .{});
+    if (!scf_mod.has_nlcc(species)) return resources;
+    resources.rho_core = try scf_mod.build_core_density(alloc, grid, species, @constCast(atoms));
+    log_dfpt_debug("dfpt: NLCC core charge built on grid\n", .{});
 
     const ff_q_max = @sqrt(cfg.scf.ecut_ry) * 2.0 + 10.0;
     const buf = try alloc.alloc(form_factor.RadialFormFactorTable, species.len);
     for (species, 0..) |sp, si| {
-        buf[si] = try form_factor.RadialFormFactorTable.initRhoCore(alloc, sp.upf.*, ff_q_max);
+        buf[si] = try form_factor.RadialFormFactorTable.init_rho_core(alloc, sp.upf.*, ff_q_max);
     }
     resources.rho_core_tables_buf = buf;
     resources.rho_core_tables = buf;
     return resources;
 }
 
-fn buildDfptVxcGrid(
+fn build_dfpt_vxc_grid(
     alloc: std.mem.Allocator,
     cfg: config_mod.Config,
     grid: Grid,
@@ -358,7 +358,7 @@ fn buildDfptVxcGrid(
 ) !?[]f64 {
     if (rho_core == null) return null;
     if (cfg.scf.xc == .pbe) {
-        const fields = try scf_mod.computeXcFields(alloc, grid, density, rho_core, false, .pbe);
+        const fields = try scf_mod.compute_xc_fields(alloc, grid, density, rho_core, false, .pbe);
         alloc.free(fields.exc);
         return fields.vxc;
     }
@@ -367,7 +367,7 @@ fn buildDfptVxcGrid(
     const vxc_r = try alloc.alloc(f64, total);
     for (0..total) |i| {
         const core = if (rho_core) |rc| rc[i] else 0.0;
-        const eval = xc.evalPoint(cfg.scf.xc, density[i] + core, 0.0);
+        const eval = xc.eval_point(cfg.scf.xc, density[i] + core, 0.0);
         vxc_r[i] = eval.df_dn;
     }
     return vxc_r;
@@ -386,7 +386,7 @@ const GammaGroundPrep = struct {
     }
 };
 
-fn initGammaGroundPrep(
+fn init_gamma_ground_prep(
     alloc: std.mem.Allocator,
     cfg: config_mod.Config,
     scf_result: *scf_mod.ScfResult,
@@ -395,14 +395,14 @@ fn initGammaGroundPrep(
     recip: math.Mat3,
     local_cfg: local_potential.LocalPotentialConfig,
 ) !GammaGroundPrep {
-    const nelec = totalElectrons(species, atoms);
+    const nelec = total_electrons(species, atoms);
     const n_occ = @as(usize, @intFromFloat(std.math.ceil(nelec / 2.0)));
     const k_gamma = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
     var basis = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, k_gamma);
     errdefer basis.deinit(alloc);
 
-    logDfptInfo("dfpt: nelec={d:.1} n_occ={d} n_pw={d}\n", .{ nelec, n_occ, basis.gvecs.len });
-    var ionic = try scf_mod.buildIonicPotentialGrid(
+    log_dfpt_info("dfpt: nelec={d:.1} n_occ={d} n_pw={d}\n", .{ nelec, n_occ, basis.gvecs.len });
+    var ionic = try scf_mod.build_ionic_potential_grid(
         alloc,
         scf_result.grid,
         species,
@@ -413,7 +413,7 @@ fn initGammaGroundPrep(
     );
     errdefer ionic.deinit(alloc);
 
-    const local_r = try scf_mod.buildLocalPotentialReal(
+    const local_r = try scf_mod.build_local_potential_real(
         alloc,
         scf_result.grid,
         ionic,
@@ -423,15 +423,15 @@ fn initGammaGroundPrep(
     return .{ .basis = basis, .ionic = ionic, .local_r = local_r, .n_occ = n_occ };
 }
 
-fn logGammaEigenvalues(n_occ: usize, eig: linalg.EigenDecomp) void {
-    logDfptDebug("dfpt: Gamma eigenvalues (Ry):", .{});
+fn log_gamma_eigenvalues(n_occ: usize, eig: linalg.EigenDecomp) void {
+    log_dfpt_debug("dfpt: Gamma eigenvalues (Ry):", .{});
     for (0..@min(n_occ + 2, eig.values.len)) |i| {
-        logDfptDebug(" {d:.6}", .{eig.values[i]});
+        log_dfpt_debug(" {d:.6}", .{eig.values[i]});
     }
-    logDfptDebug("\n", .{});
+    log_dfpt_debug("\n", .{});
 }
 
-fn makeGroundState(
+fn make_ground_state(
     scf_result: *scf_mod.ScfResult,
     cfg: config_mod.Config,
     gvecs: []const plane_wave.GVector,
@@ -472,7 +472,7 @@ fn makeGroundState(
     };
 }
 
-fn makePreparedGroundState(
+fn make_prepared_ground_state(
     alloc: std.mem.Allocator,
     gs: GroundState,
     gamma_prep: GammaGroundPrep,
@@ -523,7 +523,7 @@ const ElectronicState = struct {
     }
 };
 
-fn buildGammaElectronicState(
+fn build_gamma_electronic_state(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -535,8 +535,8 @@ fn buildGammaElectronicState(
     volume: f64,
     n_occ: usize,
 ) !ElectronicState {
-    const pert_threads = perturbationThreadCount(3 * atoms.len, cfg.dfpt.perturbation_threads);
-    const apply_ctx_ptr = try initDfptApplyContext(
+    const pert_threads = perturbation_thread_count(3 * atoms.len, cfg.dfpt.perturbation_threads);
+    const apply_ctx_ptr = try init_dfpt_apply_context(
         alloc,
         io,
         cfg,
@@ -553,11 +553,11 @@ fn buildGammaElectronicState(
         alloc.destroy(apply_ctx_ptr);
     }
 
-    var eig = try solveGammaEigenproblem(alloc, cfg, apply_ctx_ptr, gvecs, n_occ);
+    var eig = try solve_gamma_eigenproblem(alloc, cfg, apply_ctx_ptr, gvecs, n_occ);
     errdefer eig.deinit(alloc);
-    logGammaEigenvalues(n_occ, eig);
+    log_gamma_eigenvalues(n_occ, eig);
 
-    const wf = try copyOccupiedWavefunctions(alloc, eig, n_occ, gvecs.len);
+    const wf = try copy_occupied_wavefunctions(alloc, eig, n_occ, gvecs.len);
     errdefer {
         for (wf.wf_2d) |band| alloc.free(band);
         alloc.free(wf.wf_2d);
@@ -583,7 +583,7 @@ const XcSupport = struct {
     }
 };
 
-fn buildDfptXcSupport(
+fn build_dfpt_xc_support(
     alloc: std.mem.Allocator,
     cfg: config_mod.Config,
     grid: Grid,
@@ -591,13 +591,13 @@ fn buildDfptXcSupport(
     species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
 ) !XcSupport {
-    var core_resources = try buildCoreResources(alloc, cfg, grid, species, atoms);
+    var core_resources = try build_core_resources(alloc, cfg, grid, species, atoms);
     errdefer core_resources.deinit(alloc);
 
-    const vxc_r = try buildDfptVxcGrid(alloc, cfg, grid, density, core_resources.rho_core);
+    const vxc_r = try build_dfpt_vxc_grid(alloc, cfg, grid, density, core_resources.rho_core);
     errdefer if (vxc_r) |v| alloc.free(v);
 
-    var fxc_result = try buildFxcGrid(alloc, grid, density, core_resources.rho_core, cfg.scf.xc);
+    var fxc_result = try build_fxc_grid(alloc, grid, density, core_resources.rho_core, cfg.scf.xc);
     errdefer fxc_result.deinit(alloc);
     return .{
         .core_resources = core_resources,
@@ -611,8 +611,8 @@ fn buildDfptXcSupport(
 // =====================================================================
 
 /// Build a PreparedGroundState at the Γ-point from converged SCF results.
-/// This extracts the common ground-state setup shared by `runPhonon` and `runPhononBand`.
-pub fn prepareGroundState(
+/// This extracts the common ground-state setup shared by `run_phonon` and `run_phonon_band`.
+pub fn prepare_ground_state(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -622,10 +622,10 @@ pub fn prepareGroundState(
     volume: f64,
     recip: math.Mat3,
 ) !PreparedGroundState {
-    setDfptLogLevel(cfg.dfpt.log_level);
+    set_dfpt_log_level(cfg.dfpt.log_level);
     const grid = scf_result.grid;
     const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, grid.cell);
-    var gamma_prep = try initGammaGroundPrep(
+    var gamma_prep = try init_gamma_ground_prep(
         alloc,
         cfg,
         scf_result,
@@ -637,7 +637,7 @@ pub fn prepareGroundState(
     errdefer gamma_prep.deinit(alloc);
     const gvecs = gamma_prep.basis.gvecs;
     const n_occ = gamma_prep.n_occ;
-    var electronic = try buildGammaElectronicState(
+    var electronic = try build_gamma_electronic_state(
         alloc,
         io,
         cfg,
@@ -651,7 +651,7 @@ pub fn prepareGroundState(
     );
     errdefer electronic.deinit(alloc);
 
-    var xc_support = try buildDfptXcSupport(
+    var xc_support = try build_dfpt_xc_support(
         alloc,
         cfg,
         grid,
@@ -661,7 +661,7 @@ pub fn prepareGroundState(
     );
     errdefer xc_support.deinit(alloc);
 
-    const gs = makeGroundState(
+    const gs = make_ground_state(
         scf_result,
         cfg,
         gvecs,
@@ -676,7 +676,7 @@ pub fn prepareGroundState(
         xc_support.vxc_r,
         &xc_support.fxc_result,
     );
-    return makePreparedGroundState(
+    return make_prepared_ground_state(
         alloc,
         gs,
         gamma_prep,
@@ -697,7 +697,7 @@ pub fn prepareGroundState(
 /// Compute the number of threads to use for perturbation parallelism.
 /// total: number of perturbations (3 * n_atoms)
 /// cfg_threads: user-configured perturbation_threads (0 = auto)
-pub fn perturbationThreadCount(total: usize, cfg_threads: usize) usize {
+pub fn perturbation_thread_count(total: usize, cfg_threads: usize) usize {
     if (total <= 1) return 1;
     if (cfg_threads > 0) return @min(total, cfg_threads);
     const cpu_count = std.Thread.getCpuCount() catch 1;
@@ -708,7 +708,7 @@ pub fn perturbationThreadCount(total: usize, cfg_threads: usize) usize {
 /// Compute how many k-point threads each perturbation worker should use.
 /// Divides available CPU cores among perturbation workers so total parallelism
 /// ≈ pert_threads × kpt_threads ≈ available CPUs.
-pub fn kpointThreadsForPertParallel(pert_threads: usize, cfg_kpoint_threads: usize) usize {
+pub fn kpoint_threads_for_pert_parallel(pert_threads: usize, cfg_kpoint_threads: usize) usize {
     if (pert_threads <= 1) return cfg_kpoint_threads; // no perturbation parallelism, keep original
     const cpu_count = std.Thread.getCpuCount() catch 1;
     if (cpu_count <= pert_threads) return 1; // not enough CPUs for k-point parallelism
@@ -739,7 +739,7 @@ pub const FxcGridResult = struct {
 /// Build f_xc(r) = d²E_xc/dρ² on the real-space grid.
 /// When NLCC is present, f_xc must be evaluated at the total density (ρ_val + ρ_core).
 /// For PBE, also computes gradient-dependent kernel terms and ∇n₀.
-pub fn buildFxcGrid(
+pub fn build_fxc_grid(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho_r: []const f64,
@@ -761,14 +761,14 @@ pub fn buildFxcGrid(
 
     if (xc_func == .lda_pz) {
         for (0..total) |i| {
-            const kernel = xc.evalKernel(.lda_pz, density[i], 0.0);
+            const kernel = xc.eval_kernel(.lda_pz, density[i], 0.0);
             fxc[i] = kernel.fxc;
         }
         return .{ .fxc_r = fxc };
     }
 
     // PBE: compute ∇n₀ and gradient-dependent kernel
-    var grad = try scf_mod.gradientFromReal(alloc, grid, density, false);
+    var grad = try scf_mod.gradient_from_real(alloc, grid, density, false);
     // Transfer ownership of gradient arrays to result
     errdefer grad.deinit(alloc);
 
@@ -781,7 +781,7 @@ pub fn buildFxcGrid(
 
     for (0..total) |i| {
         const g2 = grad.x[i] * grad.x[i] + grad.y[i] * grad.y[i] + grad.z[i] * grad.z[i];
-        const kernel = xc.evalKernel(.pbe, density[i], g2);
+        const kernel = xc.eval_kernel(.pbe, density[i], g2);
         fxc[i] = kernel.fxc;
         fxc_ns[i] = kernel.f_ns;
         fxc_ss[i] = kernel.f_ss;
@@ -800,7 +800,7 @@ pub fn buildFxcGrid(
 }
 
 /// Compute total number of valence electrons.
-fn totalElectrons(
+fn total_electrons(
     species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
 ) f64 {
@@ -812,30 +812,30 @@ fn totalElectrons(
 }
 
 /// Log output for DFPT diagnostics.
-pub fn logDfpt(comptime fmt: []const u8, args: anytype) void {
-    logDfptDebug(fmt, args);
+pub fn log_dfpt(comptime fmt: []const u8, args: anytype) void {
+    log_dfpt_debug(fmt, args);
 }
 
 var dfpt_log_level = std.atomic.Value(u8).init(@intFromEnum(runtime_logging.Level.info));
 
-pub fn setDfptLogLevel(level: runtime_logging.Level) void {
+pub fn set_dfpt_log_level(level: runtime_logging.Level) void {
     dfpt_log_level.store(@intFromEnum(level), .release);
 }
 
-pub fn getDfptLogLevel() runtime_logging.Level {
+pub fn get_dfpt_log_level() runtime_logging.Level {
     return @enumFromInt(dfpt_log_level.load(.acquire));
 }
 
-pub fn logDfptInfo(comptime fmt: []const u8, args: anytype) void {
-    runtime_logging.debugPrint(getDfptLogLevel(), .info, fmt, args);
+pub fn log_dfpt_info(comptime fmt: []const u8, args: anytype) void {
+    runtime_logging.debug_print(get_dfpt_log_level(), .info, fmt, args);
 }
 
-pub fn logDfptDebug(comptime fmt: []const u8, args: anytype) void {
-    runtime_logging.debugPrint(getDfptLogLevel(), .debug, fmt, args);
+pub fn log_dfpt_debug(comptime fmt: []const u8, args: anytype) void {
+    runtime_logging.debug_print(get_dfpt_log_level(), .debug, fmt, args);
 }
 
-pub fn logDfptWarn(comptime fmt: []const u8, args: anytype) void {
-    runtime_logging.debugPrint(getDfptLogLevel(), .warn, fmt, args);
+pub fn log_dfpt_warn(comptime fmt: []const u8, args: anytype) void {
+    runtime_logging.debug_print(get_dfpt_log_level(), .warn, fmt, args);
 }
 
 test {

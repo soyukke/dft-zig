@@ -108,7 +108,7 @@ pub const F_f_pol = [_]PrimitiveGaussian{
 pub const MAX_SHELLS_PER_ATOM = 8;
 
 /// Fill `result` with the hydrogen 6-31G(2df,p) shells at `center`.
-fn fillHydrogenShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
+fn fill_hydrogen_shells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
     // H: 6-31G sp (2 shells) + 1 p polarization
     result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.H_1s_inner };
     result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.H_1s_outer };
@@ -117,7 +117,7 @@ fn fillHydrogenShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: mat
 
 /// Fill `result` with the carbon 6-31G(2df,p) shells at `center`.
 /// PySCF ordering: 1s, 2s_inner, 2s_outer, 2p_inner, 2p_outer, d1, d2, f.
-fn fillCarbonShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
+fn fill_carbon_shells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
     result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.C_1s };
     result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.C_2s_inner };
     result[2] = .{ .center = center, .l = 0, .primitives = &basis631g.C_2s_outer };
@@ -128,7 +128,7 @@ fn fillCarbonShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.
     result[7] = .{ .center = center, .l = 3, .primitives = &C_f_pol };
 }
 
-fn fillNitrogenShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
+fn fill_nitrogen_shells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
     result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.N_1s };
     result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.N_2s_inner };
     result[2] = .{ .center = center, .l = 0, .primitives = &basis631g.N_2s_outer };
@@ -139,7 +139,7 @@ fn fillNitrogenShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: mat
     result[7] = .{ .center = center, .l = 3, .primitives = &N_f_pol };
 }
 
-fn fillOxygenShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
+fn fill_oxygen_shells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
     result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.O_1s };
     result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.O_2s_inner };
     result[2] = .{ .center = center, .l = 0, .primitives = &basis631g.O_2s_outer };
@@ -150,7 +150,7 @@ fn fillOxygenShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.
     result[7] = .{ .center = center, .l = 3, .primitives = &O_f_pol };
 }
 
-fn fillFluorineShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
+fn fill_fluorine_shells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
     result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.F_1s };
     result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.F_2s_inner };
     result[2] = .{ .center = center, .l = 0, .primitives = &basis631g.F_2s_outer };
@@ -165,7 +165,7 @@ fn fillFluorineShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: mat
 ///
 /// Returns the shells and the count of valid shells, or null if the element
 /// is not supported.
-pub fn buildAtomShells(
+pub fn build_atom_shells(
     z: u32,
     center: math.Vec3,
 ) ?struct { shells: [MAX_SHELLS_PER_ATOM]ContractedShell, count: usize } {
@@ -178,23 +178,23 @@ pub fn buildAtomShells(
 
     switch (z) {
         1 => {
-            fillHydrogenShells(&result, center);
+            fill_hydrogen_shells(&result, center);
             return .{ .shells = result, .count = 3 };
         },
         6 => {
-            fillCarbonShells(&result, center);
+            fill_carbon_shells(&result, center);
             return .{ .shells = result, .count = 8 };
         },
         7 => {
-            fillNitrogenShells(&result, center);
+            fill_nitrogen_shells(&result, center);
             return .{ .shells = result, .count = 8 };
         },
         8 => {
-            fillOxygenShells(&result, center);
+            fill_oxygen_shells(&result, center);
             return .{ .shells = result, .count = 8 };
         },
         9 => {
-            fillFluorineShells(&result, center);
+            fill_fluorine_shells(&result, center);
             return .{ .shells = result, .count = 8 };
         },
         else => return null,
@@ -202,7 +202,7 @@ pub fn buildAtomShells(
 }
 
 /// Return number of shells for a given atomic number in 6-31G(2df,p).
-pub fn numShellsForAtom(z: u32) ?usize {
+pub fn num_shells_for_atom(z: u32) ?usize {
     return switch (z) {
         1 => 3,
         6, 7, 8, 9 => 8,
@@ -227,7 +227,7 @@ pub fn numShellsForAtom(z: u32) ?usize {
 ///
 /// NOTE: PySCF uses spherical harmonics (5d, 7f) giving 26.
 /// Our Cartesian basis gives 31. This is correct for Cartesian GTOs.
-pub fn numBasisForAtom(z: u32) ?usize {
+pub fn num_basis_for_atom(z: u32) ?usize {
     return switch (z) {
         1 => 5, // 1+1+3
         6, 7, 8, 9 => 31, // 1+1+1+3+3+6+6+10
@@ -242,7 +242,7 @@ pub fn numBasisForAtom(z: u32) ?usize {
 test "6-31G(2df,p) H shell count" {
     const testing = @import("std").testing;
     const center = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-    const data = buildAtomShells(1, center).?;
+    const data = build_atom_shells(1, center).?;
     try testing.expectEqual(@as(usize, 3), data.count);
     // s, s, p
     try testing.expectEqual(@as(u32, 0), data.shells[0].l);
@@ -253,7 +253,7 @@ test "6-31G(2df,p) H shell count" {
 test "6-31G(2df,p) O shell count and basis functions" {
     const testing = @import("std").testing;
     const center = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-    const data = buildAtomShells(8, center).?;
+    const data = build_atom_shells(8, center).?;
     try testing.expectEqual(@as(usize, 8), data.count);
 
     // Shell types: s, s, s, p, p, d, d, f
@@ -269,7 +269,7 @@ test "6-31G(2df,p) O shell count and basis functions" {
     // Count total basis functions (Cartesian):
     // s(1) + s(1) + s(1) + p(3) + p(3) + d(6) + d(6) + f(10) = 31
     const obara_saika = @import("../integrals/obara_saika.zig");
-    const n = obara_saika.totalBasisFunctions(data.shells[0..data.count]);
+    const n = obara_saika.total_basis_functions(data.shells[0..data.count]);
     try testing.expectEqual(@as(usize, 31), n);
 }
 
@@ -283,9 +283,9 @@ test "6-31G(2df,p) H2O basis count (Cartesian)" {
         .{ .x = 0.0, .y = -1.4305226763, .z = 1.1092692351 },
     };
 
-    const o_data = buildAtomShells(8, nuc_positions[0]).?;
-    const h1_data = buildAtomShells(1, nuc_positions[1]).?;
-    const h2_data = buildAtomShells(1, nuc_positions[2]).?;
+    const o_data = build_atom_shells(8, nuc_positions[0]).?;
+    const h1_data = build_atom_shells(1, nuc_positions[1]).?;
+    const h2_data = build_atom_shells(1, nuc_positions[2]).?;
 
     // Combine all shells
     var all_shells: [MAX_SHELLS_PER_ATOM * 3]ContractedShell = undefined;
@@ -303,7 +303,7 @@ test "6-31G(2df,p) H2O basis count (Cartesian)" {
         count += 1;
     }
 
-    const n = obara_saika.totalBasisFunctions(all_shells[0..count]);
+    const n = obara_saika.total_basis_functions(all_shells[0..count]);
     // O: 31, H: 5, H: 5 = 41 (Cartesian)
     try testing.expectEqual(@as(usize, 41), n);
 }

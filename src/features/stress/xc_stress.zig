@@ -7,8 +7,8 @@ const stress_util = @import("stress.zig");
 const Stress3x3 = stress_util.Stress3x3;
 const Grid = stress_util.Grid;
 
-/// Compute ∂ρ/∂x_α in real space for each Cartesian direction by FFT(iG_α ρ(G)).
-fn computeDensityGradientsRealSpace(
+/// Compute ∂ρ/∂x_α in real space by Cartesian FFT(iG_α ρ(G)).
+fn compute_density_gradients_real_space(
     alloc: std.mem.Allocator,
     grid: Grid,
     fft_obj: scf.Grid,
@@ -33,12 +33,12 @@ fn computeDensityGradientsRealSpace(
             grad_g[g.idx] = math.complex.init(-gdir * rho_val.i, gdir * rho_val.r);
         }
 
-        grad_r[dir] = try scf.reciprocalToReal(alloc, fft_obj, grad_g);
+        grad_r[dir] = try scf.reciprocal_to_real(alloc, fft_obj, grad_g);
     }
 }
 
 /// Accumulate the GGA gradient-dependent stress over the real-space grid.
-fn accumulateGgaStress(
+fn accumulate_gga_stress(
     grid: Grid,
     rho_total: []const f64,
     grad_r: [3][]f64,
@@ -53,7 +53,7 @@ fn accumulateGgaStress(
         var g2_val: f64 = 0;
         for (0..3) |d| g2_val += grad_r[d][i] * grad_r[d][i];
 
-        const xc_pt = xc_mod.evalPoint(xc_func, rho_val, g2_val);
+        const xc_pt = xc_mod.eval_point(xc_func, rho_val, g2_val);
         const df_ds = xc_pt.df_dg2;
         if (@abs(df_ds) < 1e-30) continue;
 
@@ -68,7 +68,7 @@ fn accumulateGgaStress(
 /// XC stress.
 /// LDA: σ_αβ = δ_αβ (E_xc - ∫V_xc ρ dV) / Ω
 /// GGA: + (2/Ω) ∫ (∂f/∂σ) (∂ρ/∂x_α)(∂ρ/∂x_β) dV  (σ here means |∇ρ|²)
-pub fn xcStress(
+pub fn xc_stress(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho_r: []const f64,
@@ -77,7 +77,7 @@ pub fn xcStress(
     vxc_rho: f64,
     xc_func: xc_mod.Functional,
 ) !Stress3x3 {
-    var sigma = stress_util.zeroStress();
+    var sigma = stress_util.zero_stress();
     const inv_volume = 1.0 / grid.volume;
 
     // LDA part: diagonal only
@@ -108,16 +108,23 @@ pub fn xcStress(
             .recip = grid.recip,
             .volume = grid.volume,
         };
-        const rho_total_g = try scf.realToReciprocal(alloc, fft_obj, rho_total, false);
+        const rho_total_g = try scf.real_to_reciprocal(alloc, fft_obj, rho_total, false);
         defer alloc.free(rho_total_g);
 
         // Compute gradient components: ∂ρ/∂x_α in real space
         var grad_r = [3][]f64{ undefined, undefined, undefined };
-        try computeDensityGradientsRealSpace(alloc, grid, fft_obj, rho_total_g, n_grid, &grad_r);
+        try compute_density_gradients_real_space(
+            alloc,
+            grid,
+            fft_obj,
+            rho_total_g,
+            n_grid,
+            &grad_r,
+        );
         defer for (0..3) |dir| alloc.free(grad_r[dir]);
 
         // Evaluate df/dσ at each grid point and accumulate GGA stress
-        accumulateGgaStress(grid, rho_total, grad_r, xc_func, n_grid, inv_volume, &sigma);
+        accumulate_gga_stress(grid, rho_total, grad_r, xc_func, n_grid, inv_volume, &sigma);
 
         // Symmetrize
         for (0..3) |a| {

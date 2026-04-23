@@ -23,21 +23,21 @@ const ScfResult = scf_mod.ScfResult;
 const WavefunctionData = scf_mod.WavefunctionData;
 const EnergyTerms = energy_mod.EnergyTerms;
 
-const computeKpointEigenData = kpoints_mod.computeKpointEigenData;
-const findFermiLevelSpin = kpoints_mod.findFermiLevelSpin;
-const accumulateKpointDensitySmearingSpin = kpoints_mod.accumulateKpointDensitySmearingSpin;
-const buildFftIndexMap = fft_grid.buildFftIndexMap;
-const mixDensity = mixing.mixDensity;
-const mixDensityKerker = mixing.mixDensityKerker;
-const logProgress = logging.logProgress;
-const logIterStart = logging.logIterStart;
-const logSpinInit = logging.logSpinInit;
-const logSpinMagnetization = logging.logSpinMagnetization;
-const logSpinEnergySummary = logging.logSpinEnergySummary;
+const compute_kpoint_eigen_data = kpoints_mod.compute_kpoint_eigen_data;
+const find_fermi_level_spin = kpoints_mod.find_fermi_level_spin;
+const accumulate_kpoint_density_smearing_spin = kpoints_mod.accumulate_kpoint_density_smearing_spin;
+const build_fft_index_map = fft_grid.build_fft_index_map;
+const mix_density = mixing.mix_density;
+const mix_density_kerker = mixing.mix_density_kerker;
+const log_progress = logging.log_progress;
+const log_iter_start = logging.log_iter_start;
+const log_spin_init = logging.log_spin_init;
+const log_spin_magnetization = logging.log_spin_magnetization;
+const log_spin_energy_summary = logging.log_spin_energy_summary;
 
 const KPoint = symmetry.KPoint;
 
-/// Result from solveKpointsForSpin: eigendata and count.
+/// Result from solve_kpoints_for_spin: eigendata and count.
 const SpinEigenResult = struct {
     eigen_data: []KpointEigenData,
     filled: usize,
@@ -74,7 +74,7 @@ const SpinDensityPair = struct {
     up: []f64,
     down: []f64,
 
-    fn initZero(alloc: std.mem.Allocator, count: usize) !SpinDensityPair {
+    fn init_zero(alloc: std.mem.Allocator, count: usize) !SpinDensityPair {
         const up = try alloc.alloc(f64, count);
         errdefer alloc.free(up);
 
@@ -111,13 +111,13 @@ const SpinPotentialPair = struct {
         self.down.deinit(alloc);
     }
 
-    fn takeUp(self: *SpinPotentialPair) hamiltonian.PotentialGrid {
+    fn take_up(self: *SpinPotentialPair) hamiltonian.PotentialGrid {
         const values = self.up;
         self.up.values = &.{};
         return values;
     }
 
-    fn takeDown(self: *SpinPotentialPair) hamiltonian.PotentialGrid {
+    fn take_down(self: *SpinPotentialPair) hamiltonian.PotentialGrid {
         const values = self.down;
         self.down.values = &.{};
         return values;
@@ -209,10 +209,10 @@ const SpinLoopResources = struct {
     ecutrho_scf: f64,
 
     fn deinit(self: *SpinLoopResources, alloc: std.mem.Allocator) void {
-        deinitKpointCaches(alloc, self.kpoint_cache_up);
-        deinitKpointCaches(alloc, self.kpoint_cache_down);
-        deinitApplyCaches(alloc, self.apply_caches_up);
-        deinitApplyCaches(alloc, self.apply_caches_down);
+        deinit_kpoint_caches(alloc, self.kpoint_cache_up);
+        deinit_kpoint_caches(alloc, self.kpoint_cache_down);
+        deinit_apply_caches(alloc, self.apply_caches_up);
+        deinit_apply_caches(alloc, self.apply_caches_down);
         if (self.rho_up.len > 0) alloc.free(self.rho_up);
         if (self.rho_down.len > 0) alloc.free(self.rho_down);
         self.potential_up.deinit(alloc);
@@ -221,56 +221,56 @@ const SpinLoopResources = struct {
         if (self.paw_rhoij_down) |*rij| rij.deinit(alloc);
     }
 
-    fn resetKpointCaches(self: *SpinLoopResources) void {
+    fn reset_kpoint_caches(self: *SpinLoopResources) void {
         for (self.kpoint_cache_up) |*cache| cache.deinit();
         for (self.kpoint_cache_up) |*cache| cache.* = .{};
         for (self.kpoint_cache_down) |*cache| cache.deinit();
         for (self.kpoint_cache_down) |*cache| cache.* = .{};
     }
 
-    fn takePotentialUp(self: *SpinLoopResources) hamiltonian.PotentialGrid {
+    fn take_potential_up(self: *SpinLoopResources) hamiltonian.PotentialGrid {
         const result = self.potential_up;
         self.potential_up.values = &.{};
         return result;
     }
 
-    fn takePotentialDown(self: *SpinLoopResources) hamiltonian.PotentialGrid {
+    fn take_potential_down(self: *SpinLoopResources) hamiltonian.PotentialGrid {
         const result = self.potential_down;
         self.potential_down.values = &.{};
         return result;
     }
 
-    fn takeRhoUp(self: *SpinLoopResources) []f64 {
+    fn take_rho_up(self: *SpinLoopResources) []f64 {
         const result = self.rho_up;
         self.rho_up = &.{};
         return result;
     }
 
-    fn takeRhoDown(self: *SpinLoopResources) []f64 {
+    fn take_rho_down(self: *SpinLoopResources) []f64 {
         const result = self.rho_down;
         self.rho_down = &.{};
         return result;
     }
 };
 
-fn initKpointCaches(alloc: std.mem.Allocator, count: usize) ![]KpointCache {
+fn init_kpoint_caches(alloc: std.mem.Allocator, count: usize) ![]KpointCache {
     const caches = try alloc.alloc(KpointCache, count);
     for (caches) |*cache| cache.* = .{};
     return caches;
 }
 
-fn deinitKpointCaches(alloc: std.mem.Allocator, caches: []KpointCache) void {
+fn deinit_kpoint_caches(alloc: std.mem.Allocator, caches: []KpointCache) void {
     for (caches) |*cache| cache.deinit();
     alloc.free(caches);
 }
 
-fn initApplyCaches(alloc: std.mem.Allocator, count: usize) ![]apply.KpointApplyCache {
+fn init_apply_caches(alloc: std.mem.Allocator, count: usize) ![]apply.KpointApplyCache {
     const caches = try alloc.alloc(apply.KpointApplyCache, count);
     for (caches) |*cache| cache.* = .{};
     return caches;
 }
 
-fn deinitApplyCaches(
+fn deinit_apply_caches(
     alloc: std.mem.Allocator,
     caches: []apply.KpointApplyCache,
 ) void {
@@ -278,12 +278,12 @@ fn deinitApplyCaches(
     alloc.free(caches);
 }
 
-fn spinEcutrho(cfg: *const config.Config) f64 {
+fn spin_ecutrho(cfg: *const config.Config) f64 {
     const gs_scf = if (cfg.scf.grid_scale > 0.0) cfg.scf.grid_scale else 1.0;
     return cfg.scf.ecut_ry * gs_scf * gs_scf;
 }
 
-fn computeInitialMagnetization(cfg: *const config.Config, total_electrons: f64) f64 {
+fn compute_initial_magnetization(cfg: *const config.Config, total_electrons: f64) f64 {
     var magnetization: f64 = 0.0;
     if (cfg.scf.spinat) |values| {
         for (values) |value| magnetization += value;
@@ -291,14 +291,14 @@ fn computeInitialMagnetization(cfg: *const config.Config, total_electrons: f64) 
     return std.math.clamp(magnetization, -total_electrons, total_electrons);
 }
 
-fn initSpinDensities(
+fn init_spin_densities(
     ctx: *const SpinContext,
     rho_up: []f64,
     rho_down: []f64,
 ) !f64 {
     const total_electrons = ctx.common.total_electrons;
-    const magnetization = computeInitialMagnetization(ctx.cfg, total_electrons);
-    const atomic_rho = try scf_mod.buildAtomicDensity(
+    const magnetization = compute_initial_magnetization(ctx.cfg, total_electrons);
+    const atomic_rho = try scf_mod.build_atomic_density(
         ctx.alloc,
         ctx.common.grid,
         ctx.common.species,
@@ -321,12 +321,12 @@ fn initSpinDensities(
     return magnetization;
 }
 
-fn buildInitialSpinPotentials(
+fn build_initial_spin_potentials(
     ctx: *const SpinContext,
     rho_up: []const f64,
     rho_down: []const f64,
 ) !SpinPotentialPair {
-    const spin_potentials = try potential_mod.buildPotentialGridSpin(
+    const spin_potentials = try potential_mod.build_potential_grid_spin(
         ctx.alloc,
         ctx.common.grid,
         rho_up,
@@ -344,7 +344,7 @@ fn buildInitialSpinPotentials(
     };
 }
 
-fn cloneSpinRhoij(
+fn clone_spin_rhoij(
     alloc: std.mem.Allocator,
     common: *scf_mod.ScfCommon,
 ) !struct { up: ?paw_mod.RhoIJ, down: ?paw_mod.RhoIJ } {
@@ -357,23 +357,23 @@ fn cloneSpinRhoij(
     return .{ .up = up, .down = down };
 }
 
-fn initSpinLoopResources(ctx: *const SpinContext) !struct {
+fn init_spin_loop_resources(ctx: *const SpinContext) !struct {
     resources: SpinLoopResources,
     magnetization: f64,
 } {
     const count = ctx.common.kpoints.len;
     const grid_count = ctx.common.grid.count();
-    const kpoint_cache_up = try initKpointCaches(ctx.alloc, count);
-    errdefer deinitKpointCaches(ctx.alloc, kpoint_cache_up);
+    const kpoint_cache_up = try init_kpoint_caches(ctx.alloc, count);
+    errdefer deinit_kpoint_caches(ctx.alloc, kpoint_cache_up);
 
-    const kpoint_cache_down = try initKpointCaches(ctx.alloc, count);
-    errdefer deinitKpointCaches(ctx.alloc, kpoint_cache_down);
+    const kpoint_cache_down = try init_kpoint_caches(ctx.alloc, count);
+    errdefer deinit_kpoint_caches(ctx.alloc, kpoint_cache_down);
 
-    const apply_caches_up = try initApplyCaches(ctx.alloc, count);
-    errdefer deinitApplyCaches(ctx.alloc, apply_caches_up);
+    const apply_caches_up = try init_apply_caches(ctx.alloc, count);
+    errdefer deinit_apply_caches(ctx.alloc, apply_caches_up);
 
-    const apply_caches_down = try initApplyCaches(ctx.alloc, count);
-    errdefer deinitApplyCaches(ctx.alloc, apply_caches_down);
+    const apply_caches_down = try init_apply_caches(ctx.alloc, count);
+    errdefer deinit_apply_caches(ctx.alloc, apply_caches_down);
 
     const rho_up = try ctx.alloc.alloc(f64, grid_count);
     errdefer ctx.alloc.free(rho_up);
@@ -381,14 +381,14 @@ fn initSpinLoopResources(ctx: *const SpinContext) !struct {
     const rho_down = try ctx.alloc.alloc(f64, grid_count);
     errdefer ctx.alloc.free(rho_down);
 
-    const magnetization = try initSpinDensities(ctx, rho_up, rho_down);
-    const potentials = try buildInitialSpinPotentials(ctx, rho_up, rho_down);
+    const magnetization = try init_spin_densities(ctx, rho_up, rho_down);
+    const potentials = try build_initial_spin_potentials(ctx, rho_up, rho_down);
     errdefer {
         var pair = potentials;
         pair.deinit(ctx.alloc);
     }
 
-    const paw_rhoij = try cloneSpinRhoij(ctx.alloc, ctx.common);
+    const paw_rhoij = try clone_spin_rhoij(ctx.alloc, ctx.common);
     errdefer {
         if (paw_rhoij.up) |*rij| rij.deinit(ctx.alloc);
         if (paw_rhoij.down) |*rij| rij.deinit(ctx.alloc);
@@ -406,13 +406,13 @@ fn initSpinLoopResources(ctx: *const SpinContext) !struct {
             .potential_down = potentials.down,
             .paw_rhoij_up = paw_rhoij.up,
             .paw_rhoij_down = paw_rhoij.down,
-            .ecutrho_scf = spinEcutrho(ctx.cfg),
+            .ecutrho_scf = spin_ecutrho(ctx.cfg),
         },
         .magnetization = magnetization,
     };
 }
 
-fn resetSpinIterationRhoij(
+fn reset_spin_iteration_rhoij(
     common: *scf_mod.ScfCommon,
     resources: *SpinLoopResources,
 ) void {
@@ -421,13 +421,13 @@ fn resetSpinIterationRhoij(
     if (resources.paw_rhoij_down) |*rij| rij.reset();
 }
 
-fn solveSpinChannelsOnce(
+fn solve_spin_channels_once(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     iteration: usize,
     shared_fft_plan: fft.Fft3dPlan,
 ) !SpinChannelResults {
-    const up = try solveKpointsForSpin(
+    const up = try solve_kpoints_for_spin(
         ctx.alloc,
         ctx.io,
         ctx.cfg.*,
@@ -443,7 +443,7 @@ fn solveSpinChannelsOnce(
         ctx.alloc.free(up.eigen_data);
     }
 
-    const down = try solveKpointsForSpin(
+    const down = try solve_kpoints_for_spin(
         ctx.alloc,
         ctx.io,
         ctx.cfg.*,
@@ -462,7 +462,7 @@ fn solveSpinChannelsOnce(
     return .{ .up = up, .down = down };
 }
 
-fn bootstrapSpinPawDijIfNeeded(
+fn bootstrap_spin_paw_dij_if_needed(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     iteration: usize,
@@ -472,7 +472,7 @@ fn bootstrapSpinPawDijIfNeeded(
     if (iteration != 0 or !ctx.common.is_paw) return;
     const tabs = ctx.common.paw_tabs orelse return;
 
-    try paw_scf.updatePawDij(
+    try paw_scf.update_paw_dij(
         ctx.alloc,
         ctx.common.grid,
         ctx.common.ionic,
@@ -490,7 +490,7 @@ fn bootstrapSpinPawDijIfNeeded(
         null,
         1.0,
     );
-    try paw_scf.updatePawDij(
+    try paw_scf.update_paw_dij(
         ctx.alloc,
         ctx.common.grid,
         ctx.common.ionic,
@@ -509,8 +509,8 @@ fn bootstrapSpinPawDijIfNeeded(
         1.0,
     );
 
-    resources.resetKpointCaches();
-    const replacement = try solveSpinChannelsOnce(
+    resources.reset_kpoint_caches();
+    const replacement = try solve_spin_channels_once(
         ctx,
         resources,
         iteration,
@@ -520,12 +520,12 @@ fn bootstrapSpinPawDijIfNeeded(
     channels.* = replacement;
 }
 
-fn solveSpinChannels(
+fn solve_spin_channels(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     iteration: usize,
 ) !SpinChannelResults {
-    var shared_fft_plan = try fft.Fft3dPlan.initWithBackend(
+    var shared_fft_plan = try fft.Fft3dPlan.init_with_backend(
         ctx.alloc,
         ctx.io,
         ctx.common.grid.nx,
@@ -535,7 +535,7 @@ fn solveSpinChannels(
     );
     defer shared_fft_plan.deinit(ctx.alloc);
 
-    var channels = try solveSpinChannelsOnce(
+    var channels = try solve_spin_channels_once(
         ctx,
         resources,
         iteration,
@@ -543,7 +543,7 @@ fn solveSpinChannels(
     );
     errdefer channels.deinit(ctx.alloc);
 
-    try bootstrapSpinPawDijIfNeeded(
+    try bootstrap_spin_paw_dij_if_needed(
         ctx,
         resources,
         iteration,
@@ -553,7 +553,7 @@ fn solveSpinChannels(
     return channels;
 }
 
-fn computeSpinFermiLevels(
+fn compute_spin_fermi_levels(
     ctx: *const SpinContext,
     metrics: *SpinLoopMetrics,
     channels: *const SpinChannelResults,
@@ -563,7 +563,7 @@ fn computeSpinFermiLevels(
     const ne_up_target = (nelec + metrics.target_magnetization) / 2.0;
     const ne_down_target = (nelec - metrics.target_magnetization) / 2.0;
     const up = if (use_fsm)
-        findFermiLevelSpin(
+        find_fermi_level_spin(
             ne_up_target,
             ctx.cfg.scf.smear_ry,
             ctx.cfg.scf.smearing,
@@ -572,7 +572,7 @@ fn computeSpinFermiLevels(
             1.0,
         )
     else
-        findFermiLevelSpin(
+        find_fermi_level_spin(
             nelec,
             ctx.cfg.scf.smear_ry,
             ctx.cfg.scf.smearing,
@@ -581,7 +581,7 @@ fn computeSpinFermiLevels(
             1.0,
         );
     const down = if (use_fsm)
-        findFermiLevelSpin(
+        find_fermi_level_spin(
             ne_down_target,
             ctx.cfg.scf.smear_ry,
             ctx.cfg.scf.smearing,
@@ -594,7 +594,7 @@ fn computeSpinFermiLevels(
     return .{ .up = up, .down = down, .reference = up };
 }
 
-fn accumulateSpinChannelDensity(
+fn accumulate_spin_channel_density(
     ctx: *const SpinContext,
     entries: []const KpointEigenData,
     mu: f64,
@@ -605,7 +605,7 @@ fn accumulateSpinChannelDensity(
     fft_index_map: []const usize,
 ) !void {
     for (entries, 0..) |entry, kidx| {
-        try accumulateKpointDensitySmearingSpin(
+        try accumulate_kpoint_density_smearing_spin(
             ctx.alloc,
             ctx.io,
             ctx.cfg,
@@ -630,7 +630,7 @@ fn accumulateSpinChannelDensity(
     }
 }
 
-fn combineSpinPawRhoij(
+fn combine_spin_paw_rhoij(
     common: *scf_mod.ScfCommon,
     resources: *SpinLoopResources,
 ) void {
@@ -647,7 +647,7 @@ fn combineSpinPawRhoij(
     }
 }
 
-fn accumulateSpinIterationOutputs(
+fn accumulate_spin_iteration_outputs(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     channels: *const SpinChannelResults,
@@ -655,10 +655,10 @@ fn accumulateSpinIterationOutputs(
     rho_out: *SpinDensityPair,
     energies: *SpinIterationEnergies,
 ) !void {
-    const fft_index_map = try buildFftIndexMap(ctx.alloc, ctx.common.grid);
+    const fft_index_map = try build_fft_index_map(ctx.alloc, ctx.common.grid);
     defer ctx.alloc.free(fft_index_map);
 
-    try accumulateSpinChannelDensity(
+    try accumulate_spin_channel_density(
         ctx,
         channels.up.eigen_data[0..channels.up.filled],
         fermi_levels.up,
@@ -668,7 +668,7 @@ fn accumulateSpinIterationOutputs(
         energies,
         fft_index_map,
     );
-    try accumulateSpinChannelDensity(
+    try accumulate_spin_channel_density(
         ctx,
         channels.down.eigen_data[0..channels.down.filled],
         fermi_levels.down,
@@ -678,24 +678,24 @@ fn accumulateSpinIterationOutputs(
         energies,
         fft_index_map,
     );
-    combineSpinPawRhoij(ctx.common, resources);
+    combine_spin_paw_rhoij(ctx.common, resources);
 }
 
-fn symmetrizeSpinOutputs(
+fn symmetrize_spin_outputs(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     rho_out: *SpinDensityPair,
 ) !void {
     if (ctx.common.sym_ops) |ops| {
         if (ops.len > 1) {
-            try scf_mod.symmetrizeDensity(
+            try scf_mod.symmetrize_density(
                 ctx.alloc,
                 ctx.common.grid,
                 rho_out.up,
                 ops,
                 ctx.cfg.scf.use_rfft,
             );
-            try scf_mod.symmetrizeDensity(
+            try scf_mod.symmetrize_density(
                 ctx.alloc,
                 ctx.common.grid,
                 rho_out.down,
@@ -706,18 +706,18 @@ fn symmetrizeSpinOutputs(
     }
     if (ctx.common.paw_rhoij) |*prij| {
         if (ctx.cfg.scf.symmetry) {
-            try paw_scf.symmetrizeRhoIJ(ctx.alloc, prij, ctx.species, ctx.atoms);
+            try paw_scf.symmetrize_rho_ij(ctx.alloc, prij, ctx.species, ctx.atoms);
         }
     }
     _ = resources;
 }
 
-fn filterSpinDensityInPlace(
+fn filter_spin_density_in_place(
     ctx: *const SpinContext,
     density: []f64,
     ecutrho_scf: f64,
 ) !void {
-    const filtered = try potential_mod.filterDensityToEcutrho(
+    const filtered = try potential_mod.filter_density_to_ecutrho(
         ctx.alloc,
         ctx.common.grid,
         density,
@@ -729,7 +729,7 @@ fn filterSpinDensityInPlace(
     @memcpy(density, filtered);
 }
 
-fn buildSpinCompensatedDensityPair(
+fn build_spin_compensated_density_pair(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     rho_up: []const f64,
@@ -740,7 +740,7 @@ fn buildSpinCompensatedDensityPair(
     defer ctx.alloc.free(n_hat);
 
     @memset(n_hat, 0.0);
-    try paw_scf.addPawCompensationCharge(
+    try paw_scf.add_paw_compensation_charge(
         ctx.alloc,
         ctx.common.grid,
         n_hat,
@@ -751,7 +751,7 @@ fn buildSpinCompensatedDensityPair(
         &ctx.common.paw_gaunt.?,
     );
 
-    var augmented = try SpinDensityPair.initZero(ctx.alloc, grid_count);
+    var augmented = try SpinDensityPair.init_zero(ctx.alloc, grid_count);
     for (0..grid_count) |index| {
         augmented.up[index] = rho_up[index] + n_hat[index] * 0.5;
         augmented.down[index] = rho_down[index] + n_hat[index] * 0.5;
@@ -759,19 +759,19 @@ fn buildSpinCompensatedDensityPair(
     return augmented;
 }
 
-fn buildSpinPotentialInputs(
+fn build_spin_potential_inputs(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     rho_out: *SpinDensityPair,
 ) !SpinOptionalDensityPair {
-    try symmetrizeSpinOutputs(ctx, resources, rho_out);
+    try symmetrize_spin_outputs(ctx, resources, rho_out);
     if (!ctx.common.is_paw) return .{};
 
-    try filterSpinDensityInPlace(ctx, rho_out.up, resources.ecutrho_scf);
-    try filterSpinDensityInPlace(ctx, rho_out.down, resources.ecutrho_scf);
+    try filter_spin_density_in_place(ctx, rho_out.up, resources.ecutrho_scf);
+    try filter_spin_density_in_place(ctx, rho_out.down, resources.ecutrho_scf);
     if (ctx.common.paw_rhoij == null) return .{};
 
-    const augmented = try buildSpinCompensatedDensityPair(
+    const augmented = try build_spin_compensated_density_pair(
         ctx,
         resources,
         rho_out.up,
@@ -783,17 +783,17 @@ fn buildSpinPotentialInputs(
     };
 }
 
-fn buildSpinOutputPotentials(
+fn build_spin_output_potentials(
     ctx: *const SpinContext,
     rho_out: *const SpinDensityPair,
     rho_aug: *const SpinOptionalDensityPair,
 ) !SpinPotentialPair {
     const rho_up = rho_aug.up orelse rho_out.up;
     const rho_down = rho_aug.down orelse rho_out.down;
-    return buildInitialSpinPotentials(ctx, rho_up, rho_down);
+    return build_initial_spin_potentials(ctx, rho_up, rho_down);
 }
 
-fn computeSpinPotentialResidual(
+fn compute_spin_potential_residual(
     resources: *const SpinLoopResources,
     pot_out: *const SpinPotentialPair,
 ) f64 {
@@ -815,13 +815,13 @@ fn computeSpinPotentialResidual(
     return std.math.sqrt(sum_sq / @as(f64, @floatFromInt(2 * nvals)));
 }
 
-fn computeSpinIterationConvergence(
+fn compute_spin_iteration_convergence(
     ctx: *const SpinContext,
     resources: *const SpinLoopResources,
     rho_out: *const SpinDensityPair,
     pot_out: *const SpinPotentialPair,
 ) SpinIterationConvergence {
-    const residual = computeSpinPotentialResidual(resources, pot_out);
+    const residual = compute_spin_potential_residual(resources, pot_out);
     const grid_count = ctx.common.grid.count();
     var sum_diff_sq: f64 = 0.0;
     for (0..grid_count) |index| {
@@ -841,12 +841,12 @@ fn computeSpinIterationConvergence(
     return .{ .diff = diff, .residual = residual, .conv_value = conv_value };
 }
 
-fn logSpinIterationProgress(
+fn log_spin_iteration_progress(
     ctx: *const SpinContext,
     metrics: *const SpinLoopMetrics,
     convergence: SpinIterationConvergence,
 ) !void {
-    try ctx.common.log.writeIter(
+    try ctx.common.log.write_iter(
         metrics.iterations,
         convergence.diff,
         convergence.residual,
@@ -854,7 +854,7 @@ fn logSpinIterationProgress(
         metrics.last_nonlocal_energy,
     );
     if (!ctx.cfg.scf.quiet) {
-        try logProgress(
+        try log_progress(
             ctx.io,
             metrics.iterations,
             convergence.diff,
@@ -865,7 +865,7 @@ fn logSpinIterationProgress(
     }
 }
 
-fn acceptSpinConvergedStep(
+fn accept_spin_converged_step(
     alloc: std.mem.Allocator,
     resources: *SpinLoopResources,
     rho_out: *const SpinDensityPair,
@@ -874,12 +874,12 @@ fn acceptSpinConvergedStep(
     @memcpy(resources.rho_up, rho_out.up);
     @memcpy(resources.rho_down, rho_out.down);
     resources.potential_up.deinit(alloc);
-    resources.potential_up = pot_out.takeUp();
+    resources.potential_up = pot_out.take_up();
     resources.potential_down.deinit(alloc);
-    resources.potential_down = pot_out.takeDown();
+    resources.potential_down = pot_out.take_down();
 }
 
-fn applySpinPotentialPulay(
+fn apply_spin_potential_pulay(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     pot_out: *const SpinPotentialPair,
@@ -906,13 +906,13 @@ fn applySpinPotentialPulay(
             [*]math.Complex,
             @ptrCast(@alignCast(residual_concat[n_f64..].ptr)),
         )[0..n_complex];
-        mixing.applyModelDielectricPreconditioner(
+        mixing.apply_model_dielectric_preconditioner(
             ctx.common.grid,
             res_up_c,
             ctx.cfg.scf.diemac,
             ctx.cfg.scf.dielng,
         );
-        mixing.applyModelDielectricPreconditioner(
+        mixing.apply_model_dielectric_preconditioner(
             ctx.common.grid,
             res_down_c,
             ctx.cfg.scf.diemac,
@@ -925,7 +925,7 @@ fn applySpinPotentialPulay(
 
     @memcpy(concat_in[0..n_f64], v_in_up);
     @memcpy(concat_in[n_f64..], v_in_down);
-    try ctx.common.pulay_mixer.?.mixWithResidual(
+    try ctx.common.pulay_mixer.?.mix_with_residual(
         concat_in,
         residual_concat,
         ctx.cfg.scf.mixing_beta,
@@ -935,7 +935,7 @@ fn applySpinPotentialPulay(
     _ = resources;
 }
 
-fn applySpinPotentialMixing(
+fn apply_spin_potential_mixing(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     rho_out: *const SpinDensityPair,
@@ -952,7 +952,7 @@ fn applySpinPotentialMixing(
         @as([*]const f64, @ptrCast(pot_out.down.values.ptr))[0..n_f64];
 
     if (ctx.common.pulay_mixer != null and iteration >= ctx.cfg.scf.pulay_start) {
-        try applySpinPotentialPulay(
+        try apply_spin_potential_pulay(
             ctx,
             resources,
             pot_out,
@@ -962,15 +962,15 @@ fn applySpinPotentialMixing(
             v_in_down,
         );
     } else {
-        mixDensity(v_in_up, v_out_up_f, ctx.cfg.scf.mixing_beta);
-        mixDensity(v_in_down, v_out_down_f, ctx.cfg.scf.mixing_beta);
+        mix_density(v_in_up, v_out_up_f, ctx.cfg.scf.mixing_beta);
+        mix_density(v_in_down, v_out_down_f, ctx.cfg.scf.mixing_beta);
     }
     @memcpy(resources.rho_up, rho_out.up);
     @memcpy(resources.rho_down, rho_out.down);
     pot_out.deinit(ctx.alloc);
 }
 
-fn mixSpinDensityInputs(
+fn mix_spin_density_inputs(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     rho_out: *const SpinDensityPair,
@@ -980,7 +980,7 @@ fn mixSpinDensityInputs(
     if (force_density_mixing) {
         const paw_beta: f64 = 0.05;
         const paw_q0: f64 = 1.5;
-        try mixDensityKerker(
+        try mix_density_kerker(
             ctx.alloc,
             ctx.common.grid,
             resources.rho_up,
@@ -989,7 +989,7 @@ fn mixSpinDensityInputs(
             paw_q0,
             ctx.cfg.scf.use_rfft,
         );
-        try mixDensityKerker(
+        try mix_density_kerker(
             ctx.alloc,
             ctx.common.grid,
             resources.rho_down,
@@ -1021,16 +1021,16 @@ fn mixSpinDensityInputs(
         @memcpy(resources.rho_down, concat_in[grid_count..]);
         return;
     }
-    mixDensity(resources.rho_up, rho_out.up, ctx.cfg.scf.mixing_beta);
-    mixDensity(resources.rho_down, rho_out.down, ctx.cfg.scf.mixing_beta);
+    mix_density(resources.rho_up, rho_out.up, ctx.cfg.scf.mixing_beta);
+    mix_density(resources.rho_down, rho_out.down, ctx.cfg.scf.mixing_beta);
 }
 
-fn buildSpinMixedDensityAugmentation(
+fn build_spin_mixed_density_augmentation(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
 ) !SpinOptionalDensityPair {
     if (!ctx.common.is_paw or ctx.common.paw_rhoij == null) return .{};
-    const augmented = try buildSpinCompensatedDensityPair(
+    const augmented = try build_spin_compensated_density_pair(
         ctx,
         resources,
         resources.rho_up,
@@ -1042,21 +1042,21 @@ fn buildSpinMixedDensityAugmentation(
     };
 }
 
-fn rebuildSpinPotentialsFromMixedDensity(
+fn rebuild_spin_potentials_from_mixed_density(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
 ) !void {
-    var augmented = try buildSpinMixedDensityAugmentation(ctx, resources);
+    var augmented = try build_spin_mixed_density_augmentation(ctx, resources);
     defer augmented.deinit(ctx.alloc);
 
     const rho_up = augmented.up orelse resources.rho_up;
     const rho_down = augmented.down orelse resources.rho_down;
-    const rebuilt = try buildInitialSpinPotentials(ctx, rho_up, rho_down);
+    const rebuilt = try build_initial_spin_potentials(ctx, rho_up, rho_down);
     resources.potential_up = rebuilt.up;
     resources.potential_down = rebuilt.down;
 }
 
-fn applySpinDensityMixing(
+fn apply_spin_density_mixing(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     rho_out: *const SpinDensityPair,
@@ -1066,11 +1066,11 @@ fn applySpinDensityMixing(
     pot_out.deinit(ctx.alloc);
     resources.potential_up.deinit(ctx.alloc);
     resources.potential_down.deinit(ctx.alloc);
-    try mixSpinDensityInputs(ctx, resources, rho_out, iteration);
-    try rebuildSpinPotentialsFromMixedDensity(ctx, resources);
+    try mix_spin_density_inputs(ctx, resources, rho_out, iteration);
+    try rebuild_spin_potentials_from_mixed_density(ctx, resources);
 }
 
-fn mixSpinIterationState(
+fn mix_spin_iteration_state(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     rho_out: *const SpinDensityPair,
@@ -1079,7 +1079,7 @@ fn mixSpinIterationState(
 ) !void {
     const force_density_mixing = false;
     if (ctx.cfg.scf.mixing_mode == .potential and !force_density_mixing) {
-        try applySpinPotentialMixing(
+        try apply_spin_potential_mixing(
             ctx,
             resources,
             rho_out,
@@ -1088,10 +1088,10 @@ fn mixSpinIterationState(
         );
         return;
     }
-    try applySpinDensityMixing(ctx, resources, rho_out, iteration, pot_out);
+    try apply_spin_density_mixing(ctx, resources, rho_out, iteration, pot_out);
 }
 
-fn updateOneSpinPawDij(
+fn update_one_spin_paw_dij(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     potential: hamiltonian.PotentialGrid,
@@ -1100,7 +1100,7 @@ fn updateOneSpinPawDij(
     tabs: []paw_mod.PawTab,
     mix_beta: f64,
 ) !void {
-    try paw_scf.updatePawDij(
+    try paw_scf.update_paw_dij(
         ctx.alloc,
         ctx.common.grid,
         ctx.common.ionic,
@@ -1120,14 +1120,14 @@ fn updateOneSpinPawDij(
     );
 }
 
-fn updateSpinPawDijIfNeeded(
+fn update_spin_paw_dij_if_needed(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
 ) !void {
     if (!ctx.common.is_paw) return;
     const tabs = ctx.common.paw_tabs orelse return;
     const mix_beta = ctx.cfg.scf.mixing_beta;
-    try updateOneSpinPawDij(
+    try update_one_spin_paw_dij(
         ctx,
         resources,
         resources.potential_up,
@@ -1136,7 +1136,7 @@ fn updateSpinPawDijIfNeeded(
         tabs,
         mix_beta,
     );
-    try updateOneSpinPawDij(
+    try update_one_spin_paw_dij(
         ctx,
         resources,
         resources.potential_down,
@@ -1147,25 +1147,25 @@ fn updateSpinPawDijIfNeeded(
     );
 }
 
-fn runSpinIteration(
+fn run_spin_iteration(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     metrics: *SpinLoopMetrics,
 ) !bool {
     if (!ctx.cfg.scf.quiet) {
-        try logIterStart(ctx.io, metrics.iterations);
+        try log_iter_start(ctx.io, metrics.iterations);
     }
-    resetSpinIterationRhoij(ctx.common, resources);
+    reset_spin_iteration_rhoij(ctx.common, resources);
 
-    var rho_out = try SpinDensityPair.initZero(ctx.alloc, ctx.common.grid.count());
+    var rho_out = try SpinDensityPair.init_zero(ctx.alloc, ctx.common.grid.count());
     defer rho_out.deinit(ctx.alloc);
 
-    var channels = try solveSpinChannels(ctx, resources, metrics.iterations);
+    var channels = try solve_spin_channels(ctx, resources, metrics.iterations);
     defer channels.deinit(ctx.alloc);
 
-    const fermi_levels = computeSpinFermiLevels(ctx, metrics, &channels);
+    const fermi_levels = compute_spin_fermi_levels(ctx, metrics, &channels);
     var energies: SpinIterationEnergies = .{};
-    try accumulateSpinIterationOutputs(
+    try accumulate_spin_iteration_outputs(
         ctx,
         resources,
         &channels,
@@ -1178,29 +1178,29 @@ fn runSpinIteration(
     metrics.last_entropy_energy = energies.entropy;
     metrics.last_fermi_level = fermi_levels.reference;
 
-    var rho_aug = try buildSpinPotentialInputs(ctx, resources, &rho_out);
+    var rho_aug = try build_spin_potential_inputs(ctx, resources, &rho_out);
     defer rho_aug.deinit(ctx.alloc);
 
-    var pot_out = try buildSpinOutputPotentials(ctx, &rho_out, &rho_aug);
+    var pot_out = try build_spin_output_potentials(ctx, &rho_out, &rho_aug);
     var pot_out_owned = true;
     defer if (pot_out_owned) pot_out.deinit(ctx.alloc);
 
-    const convergence = computeSpinIterationConvergence(
+    const convergence = compute_spin_iteration_convergence(
         ctx,
         resources,
         &rho_out,
         &pot_out,
     );
     metrics.last_potential_residual = convergence.residual;
-    try logSpinIterationProgress(ctx, metrics, convergence);
+    try log_spin_iteration_progress(ctx, metrics, convergence);
 
     if (convergence.conv_value < ctx.cfg.scf.convergence) {
-        acceptSpinConvergedStep(ctx.alloc, resources, &rho_out, &pot_out);
+        accept_spin_converged_step(ctx.alloc, resources, &rho_out, &pot_out);
         pot_out_owned = false;
         return true;
     }
 
-    try mixSpinIterationState(
+    try mix_spin_iteration_state(
         ctx,
         resources,
         &rho_out,
@@ -1208,11 +1208,11 @@ fn runSpinIteration(
         &pot_out,
     );
     pot_out_owned = false;
-    try updateSpinPawDijIfNeeded(ctx, resources);
+    try update_spin_paw_dij_if_needed(ctx, resources);
     return false;
 }
 
-fn runSpinScfLoop(
+fn run_spin_scf_loop(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     target_magnetization: f64,
@@ -1221,7 +1221,7 @@ fn runSpinScfLoop(
         .target_magnetization = target_magnetization,
     };
     while (metrics.iterations < ctx.cfg.scf.max_iter) : (metrics.iterations += 1) {
-        if (try runSpinIteration(ctx, resources, &metrics)) {
+        if (try run_spin_iteration(ctx, resources, &metrics)) {
             metrics.converged = true;
             break;
         }
@@ -1229,7 +1229,7 @@ fn runSpinScfLoop(
     return metrics;
 }
 
-fn computeSpinMagnetization(
+fn compute_spin_magnetization(
     grid: Grid,
     rho_up: []const f64,
     rho_down: []const f64,
@@ -1242,7 +1242,7 @@ fn computeSpinMagnetization(
     return magnetization;
 }
 
-fn buildSpinTotalDensity(
+fn build_spin_total_density(
     alloc: std.mem.Allocator,
     rho_up: []const f64,
     rho_down: []const f64,
@@ -1254,13 +1254,13 @@ fn buildSpinTotalDensity(
     return density;
 }
 
-fn buildSpinEnergyAugmentedDensities(
+fn build_spin_energy_augmented_densities(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
 ) !SpinOptionalDensityPair {
     if (!ctx.common.is_paw or ctx.common.paw_rhoij == null) return .{};
 
-    var augmented = try buildSpinCompensatedDensityPair(
+    var augmented = try build_spin_compensated_density_pair(
         ctx,
         resources,
         resources.rho_up,
@@ -1268,22 +1268,22 @@ fn buildSpinEnergyAugmentedDensities(
     );
     errdefer augmented.deinit(ctx.alloc);
 
-    try filterSpinDensityInPlace(ctx, augmented.up, resources.ecutrho_scf);
-    try filterSpinDensityInPlace(ctx, augmented.down, resources.ecutrho_scf);
+    try filter_spin_density_in_place(ctx, augmented.up, resources.ecutrho_scf);
+    try filter_spin_density_in_place(ctx, augmented.down, resources.ecutrho_scf);
     return .{
         .up = augmented.up,
         .down = augmented.down,
     };
 }
 
-fn buildSpinEnergyTerms(
+fn build_spin_energy_terms(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     metrics: *const SpinLoopMetrics,
     rho_aug_energy: *const SpinOptionalDensityPair,
 ) !EnergyTerms {
     const paw_ecutrho: ?f64 = if (ctx.common.is_paw) resources.ecutrho_scf else null;
-    return energy_mod.computeEnergyTermsSpin(.{
+    return energy_mod.compute_energy_terms_spin(.{
         .alloc = ctx.alloc,
         .io = ctx.io,
         .grid = ctx.common.grid,
@@ -1308,7 +1308,7 @@ fn buildSpinEnergyTerms(
     });
 }
 
-fn applySpinPawOnsiteEnergy(
+fn apply_spin_paw_onsite_energy(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     energy_terms: *EnergyTerms,
@@ -1316,7 +1316,7 @@ fn applySpinPawOnsiteEnergy(
     if (!ctx.common.is_paw) return;
     const prij = &ctx.common.paw_rhoij.?;
     const tabs = ctx.common.paw_tabs orelse return;
-    energy_terms.paw_onsite = try paw_scf.computePawOnsiteEnergyTotal(
+    energy_terms.paw_onsite = try paw_scf.compute_paw_onsite_energy_total(
         ctx.alloc,
         prij,
         tabs,
@@ -1330,7 +1330,7 @@ fn applySpinPawOnsiteEnergy(
     energy_terms.total += energy_terms.paw_onsite;
 }
 
-fn copySpinRhoCore(
+fn copy_spin_rho_core(
     alloc: std.mem.Allocator,
     rho_core: ?[]const f64,
 ) !?[]f64 {
@@ -1340,7 +1340,7 @@ fn copySpinRhoCore(
     return copy;
 }
 
-fn dupSpinPerAtomDij(
+fn dup_spin_per_atom_dij(
     alloc: std.mem.Allocator,
     nc_species: anytype,
     select: enum { radial, m_resolved },
@@ -1368,14 +1368,14 @@ fn dupSpinPerAtomDij(
     return null;
 }
 
-fn appendEmptySpinDxc(
+fn append_empty_spin_dxc(
     alloc: std.mem.Allocator,
     dxc_list: *std.ArrayList([]f64),
 ) !void {
     try dxc_list.append(alloc, try alloc.alloc(f64, 0));
 }
 
-fn accumulateSpinMatrixTrace(
+fn accumulate_spin_matrix_trace(
     sum_dxc_rhoij: *f64,
     matrix: []const f64,
     rhoij: []const f64,
@@ -1388,7 +1388,7 @@ fn accumulateSpinMatrixTrace(
     }
 }
 
-fn computeSpinAtomHartreeDc(
+fn compute_spin_atom_hartree_dc(
     ctx: *const SpinContext,
     paw: anytype,
     rhoij_m: []const f64,
@@ -1399,7 +1399,7 @@ fn computeSpinAtomHartreeDc(
     const dij_h_dc = try ctx.alloc.alloc(f64, mt * mt);
     defer ctx.alloc.free(dij_h_dc);
 
-    try paw_mod.paw_xc.computePawDijHartreeMultiL(
+    try paw_mod.paw_xc.compute_paw_dij_hartree_multi_l(
         ctx.alloc,
         dij_h_dc,
         paw,
@@ -1411,7 +1411,7 @@ fn computeSpinAtomHartreeDc(
         &ctx.common.paw_gaunt.?,
     );
     var sum_dxc_rhoij: f64 = 0.0;
-    accumulateSpinMatrixTrace(&sum_dxc_rhoij, dij_h_dc, rhoij_m, mt);
+    accumulate_spin_matrix_trace(&sum_dxc_rhoij, dij_h_dc, rhoij_m, mt);
     return sum_dxc_rhoij;
 }
 
@@ -1420,7 +1420,7 @@ const SpinAtomDxcAndDc = struct {
     sum: f64,
 };
 
-fn computePolarizedAtomDxcAndDc(
+fn compute_polarized_atom_dxc_and_dc(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     atom_index: usize,
@@ -1436,7 +1436,7 @@ fn computePolarizedAtomDxcAndDc(
     const dxc_down = try ctx.alloc.alloc(f64, mt * mt);
     defer ctx.alloc.free(dxc_down);
 
-    try paw_mod.paw_xc.computePawDijXcAngularSpin(
+    try paw_mod.paw_xc.compute_paw_dij_xc_angular_spin(
         ctx.alloc,
         dxc_up,
         dxc_down,
@@ -1453,19 +1453,19 @@ fn computePolarizedAtomDxcAndDc(
         &ctx.common.paw_gaunt.?,
     );
     var sum_dxc_rhoij: f64 = 0.0;
-    accumulateSpinMatrixTrace(
+    accumulate_spin_matrix_trace(
         &sum_dxc_rhoij,
         dxc_up,
         resources.paw_rhoij_up.?.values[atom_index],
         mt,
     );
-    accumulateSpinMatrixTrace(
+    accumulate_spin_matrix_trace(
         &sum_dxc_rhoij,
         dxc_down,
         resources.paw_rhoij_down.?.values[atom_index],
         mt,
     );
-    sum_dxc_rhoij += try computeSpinAtomHartreeDc(
+    sum_dxc_rhoij += try compute_spin_atom_hartree_dc(
         ctx,
         paw,
         rhoij_m,
@@ -1476,7 +1476,7 @@ fn computePolarizedAtomDxcAndDc(
     return .{ .dxc = dxc_up, .sum = sum_dxc_rhoij };
 }
 
-fn computeUnpolarizedAtomDxcAndDc(
+fn compute_unpolarized_atom_dxc_and_dc(
     ctx: *const SpinContext,
     paw: anytype,
     rhoij_m: []const f64,
@@ -1487,7 +1487,7 @@ fn computeUnpolarizedAtomDxcAndDc(
     const dxc_m = try ctx.alloc.alloc(f64, mt * mt);
     errdefer ctx.alloc.free(dxc_m);
 
-    try paw_mod.paw_xc.computePawDijXcAngular(
+    try paw_mod.paw_xc.compute_paw_dij_xc_angular(
         ctx.alloc,
         dxc_m,
         paw,
@@ -1502,8 +1502,8 @@ fn computeUnpolarizedAtomDxcAndDc(
         &ctx.common.paw_gaunt.?,
     );
     var sum_dxc_rhoij: f64 = 0.0;
-    accumulateSpinMatrixTrace(&sum_dxc_rhoij, dxc_m, rhoij_m, mt);
-    sum_dxc_rhoij += try computeSpinAtomHartreeDc(
+    accumulate_spin_matrix_trace(&sum_dxc_rhoij, dxc_m, rhoij_m, mt);
+    sum_dxc_rhoij += try compute_spin_atom_hartree_dc(
         ctx,
         paw,
         rhoij_m,
@@ -1514,7 +1514,7 @@ fn computeUnpolarizedAtomDxcAndDc(
     return .{ .dxc = dxc_m, .sum = sum_dxc_rhoij };
 }
 
-fn computeSpinAtomDxcAndDc(
+fn compute_spin_atom_dxc_and_dc(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     prij: *const paw_mod.RhoIJ,
@@ -1533,7 +1533,7 @@ fn computeSpinAtomDxcAndDc(
     const sp_m_offsets = prij.m_offsets[atom_index];
     const rhoij_m = prij.values[atom_index];
     if (resources.paw_rhoij_up != null and resources.paw_rhoij_down != null) {
-        return computePolarizedAtomDxcAndDc(
+        return compute_polarized_atom_dxc_and_dc(
             ctx,
             resources,
             atom_index,
@@ -1544,7 +1544,7 @@ fn computeSpinAtomDxcAndDc(
             upf,
         );
     }
-    return computeUnpolarizedAtomDxcAndDc(
+    return compute_unpolarized_atom_dxc_and_dc(
         ctx,
         paw,
         rhoij_m,
@@ -1554,7 +1554,7 @@ fn computeSpinAtomDxcAndDc(
     );
 }
 
-fn buildSpinPawDxcResults(
+fn build_spin_paw_dxc_results(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     prij: *const paw_mod.RhoIJ,
@@ -1567,7 +1567,7 @@ fn buildSpinPawDxcResults(
     }
     var sum_dxc_rhoij: f64 = 0.0;
     for (ctx.atoms, 0..) |_, atom_index| {
-        const dxc_atom = try computeSpinAtomDxcAndDc(
+        const dxc_atom = try compute_spin_atom_dxc_and_dc(
             ctx,
             resources,
             prij,
@@ -1577,7 +1577,7 @@ fn buildSpinPawDxcResults(
         sum_dxc_rhoij += dxc_atom.sum;
         if (dxc_atom.dxc.len == 0) {
             ctx.alloc.free(dxc_atom.dxc);
-            try appendEmptySpinDxc(ctx.alloc, &dxc_list);
+            try append_empty_spin_dxc(ctx.alloc, &dxc_list);
         } else {
             try dxc_list.append(ctx.alloc, dxc_atom.dxc);
         }
@@ -1589,7 +1589,7 @@ fn buildSpinPawDxcResults(
     return .{ .dxc = dxc, .sum = sum_dxc_rhoij };
 }
 
-fn duplicateSpinContractedRhoij(
+fn duplicate_spin_contracted_rhoij(
     alloc: std.mem.Allocator,
     prij: *paw_mod.RhoIJ,
 ) !?[][]f64 {
@@ -1601,7 +1601,7 @@ fn duplicateSpinContractedRhoij(
     for (0..prij.natom) |atom_index| {
         const nbeta = prij.nbeta_per_atom[atom_index];
         const copy = try alloc.alloc(f64, nbeta * nbeta);
-        prij.contractToRadial(atom_index, copy);
+        prij.contract_to_radial(atom_index, copy);
         try rhoij_list.append(alloc, copy);
     }
     if (rhoij_list.items.len > 0) return try rhoij_list.toOwnedSlice(alloc);
@@ -1609,7 +1609,7 @@ fn duplicateSpinContractedRhoij(
     return null;
 }
 
-fn extractSpinPawResults(
+fn extract_spin_paw_results(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     energy_terms: *EnergyTerms,
@@ -1620,7 +1620,7 @@ fn extractSpinPawResults(
     errdefer results.deinit(ctx.alloc);
     if (ctx.common.paw_rhoij) |*prij| {
         if (ctx.common.paw_tabs) |tabs| {
-            const dxc_result = try buildSpinPawDxcResults(
+            const dxc_result = try build_spin_paw_dxc_results(
                 ctx,
                 resources,
                 prij,
@@ -1630,7 +1630,7 @@ fn extractSpinPawResults(
             energy_terms.paw_dxc_rhoij = -dxc_result.sum;
             energy_terms.total += energy_terms.paw_dxc_rhoij;
         }
-        results.rhoij = try duplicateSpinContractedRhoij(ctx.alloc, prij);
+        results.rhoij = try duplicate_spin_contracted_rhoij(ctx.alloc, prij);
     }
     if (ctx.common.paw_tabs) |tabs| {
         results.tabs = tabs;
@@ -1638,8 +1638,8 @@ fn extractSpinPawResults(
     }
     if (resources.apply_caches_up.len > 0) {
         if (resources.apply_caches_up[0].nonlocal_ctx) |nc| {
-            results.dij = try dupSpinPerAtomDij(ctx.alloc, nc.species, .radial);
-            results.dij_m = try dupSpinPerAtomDij(
+            results.dij = try dup_spin_per_atom_dij(ctx.alloc, nc.species, .radial);
+            results.dij_m = try dup_spin_per_atom_dij(
                 ctx.alloc,
                 nc.species,
                 .m_resolved,
@@ -1649,21 +1649,21 @@ fn extractSpinPawResults(
     return results;
 }
 
-fn shouldComputeSpinFinalWavefunctions(cfg: *const config.Config) bool {
+fn should_compute_spin_final_wavefunctions(cfg: *const config.Config) bool {
     return cfg.relax.enabled or cfg.dfpt.enabled or cfg.scf.compute_stress or cfg.dos.enabled;
 }
 
-fn computeSpinFinalWavefunctions(
+fn compute_spin_final_wavefunctions(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     rho_aug_energy: *const SpinOptionalDensityPair,
 ) !SpinFinalWavefunctionData {
-    if (!shouldComputeSpinFinalWavefunctions(ctx.cfg)) return .{};
+    if (!should_compute_spin_final_wavefunctions(ctx.cfg)) return .{};
 
     var result: SpinFinalWavefunctionData = .{};
     errdefer result.deinit(ctx.alloc);
 
-    const wfn_up = try scf_mod.computeFinalWavefunctionsWithSpinFactor(
+    const wfn_up = try scf_mod.compute_final_wavefunctions_with_spin_factor(
         ctx.alloc,
         ctx.io,
         ctx.cfg.*,
@@ -1685,7 +1685,7 @@ fn computeSpinFinalWavefunctions(
     result.band_energy += wfn_up.band_energy;
     result.nonlocal_energy += wfn_up.nonlocal_energy;
 
-    const wfn_down = try scf_mod.computeFinalWavefunctionsWithSpinFactor(
+    const wfn_down = try scf_mod.compute_final_wavefunctions_with_spin_factor(
         ctx.alloc,
         ctx.io,
         ctx.cfg.*,
@@ -1709,7 +1709,7 @@ fn computeSpinFinalWavefunctions(
 
     const pot_rho_up = rho_aug_energy.up orelse resources.rho_up;
     const pot_rho_down = rho_aug_energy.down orelse resources.rho_down;
-    const vxc_spin = try xc_fields_mod.computeXcFieldsSpin(
+    const vxc_spin = try xc_fields_mod.compute_xc_fields_spin(
         ctx.alloc,
         ctx.common.grid,
         pot_rho_up,
@@ -1724,7 +1724,7 @@ fn computeSpinFinalWavefunctions(
     return result;
 }
 
-fn buildSpinScfResult(
+fn build_spin_scf_result(
     alloc: std.mem.Allocator,
     resources: *SpinLoopResources,
     metrics: *const SpinLoopMetrics,
@@ -1738,7 +1738,7 @@ fn buildSpinScfResult(
 ) ScfResult {
     _ = alloc;
     return .{
-        .potential = resources.takePotentialUp(),
+        .potential = resources.take_potential_up(),
         .density = rho_total,
         .iterations = metrics.iterations,
         .converged = metrics.converged,
@@ -1748,9 +1748,9 @@ fn buildSpinScfResult(
         .wavefunctions = final_data.wavefunctions_up,
         .vresid = null,
         .grid = grid,
-        .density_up = resources.takeRhoUp(),
-        .density_down = resources.takeRhoDown(),
-        .potential_down = resources.takePotentialDown(),
+        .density_up = resources.take_rho_up(),
+        .density_down = resources.take_rho_down(),
+        .potential_down = resources.take_potential_down(),
         .magnetization = magnetization,
         .wavefunctions_down = final_data.wavefunctions_down,
         .vxc_r_up = final_data.vxc_r_up,
@@ -1768,45 +1768,45 @@ fn buildSpinScfResult(
     };
 }
 
-fn finalizeSpinScfResult(
+fn finalize_spin_scf_result(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
     metrics: *const SpinLoopMetrics,
 ) !ScfResult {
-    const magnetization = computeSpinMagnetization(
+    const magnetization = compute_spin_magnetization(
         ctx.common.grid,
         resources.rho_up,
         resources.rho_down,
     );
     if (!ctx.cfg.scf.quiet) {
-        try logSpinMagnetization(ctx.io, magnetization);
+        try log_spin_magnetization(ctx.io, magnetization);
     }
 
-    const rho_total = try buildSpinTotalDensity(
+    const rho_total = try build_spin_total_density(
         ctx.alloc,
         resources.rho_up,
         resources.rho_down,
     );
     errdefer ctx.alloc.free(rho_total);
 
-    var rho_aug_energy = try buildSpinEnergyAugmentedDensities(ctx, resources);
+    var rho_aug_energy = try build_spin_energy_augmented_densities(ctx, resources);
     defer rho_aug_energy.deinit(ctx.alloc);
 
-    var energy_terms = try buildSpinEnergyTerms(
+    var energy_terms = try build_spin_energy_terms(
         ctx,
         resources,
         metrics,
         &rho_aug_energy,
     );
-    try applySpinPawOnsiteEnergy(ctx, resources, &energy_terms);
+    try apply_spin_paw_onsite_energy(ctx, resources, &energy_terms);
 
-    var paw_results = try extractSpinPawResults(ctx, resources, &energy_terms);
+    var paw_results = try extract_spin_paw_results(ctx, resources, &energy_terms);
     errdefer paw_results.deinit(ctx.alloc);
 
     if (!ctx.cfg.scf.quiet) {
-        try logSpinEnergySummary(ctx.io, energy_terms, ctx.common.is_paw);
+        try log_spin_energy_summary(ctx.io, energy_terms, ctx.common.is_paw);
     }
-    try ctx.common.log.writeResult(
+    try ctx.common.log.write_result(
         metrics.converged,
         metrics.iterations,
         energy_terms.total,
@@ -1817,17 +1817,17 @@ fn finalizeSpinScfResult(
         energy_terms.psp_core,
     );
 
-    var final_data = try computeSpinFinalWavefunctions(
+    var final_data = try compute_spin_final_wavefunctions(
         ctx,
         resources,
         &rho_aug_energy,
     );
     errdefer final_data.deinit(ctx.alloc);
 
-    const rho_core_copy = try copySpinRhoCore(ctx.alloc, ctx.common.rho_core);
+    const rho_core_copy = try copy_spin_rho_core(ctx.alloc, ctx.common.rho_core);
     errdefer if (rho_core_copy) |values| ctx.alloc.free(values);
 
-    return buildSpinScfResult(
+    return build_spin_scf_result(
         ctx.alloc,
         resources,
         metrics,
@@ -1842,7 +1842,7 @@ fn finalizeSpinScfResult(
 }
 
 /// Solve eigenvalue problem for all k-points for a single spin channel.
-fn solveKpointsForSpin(
+fn solve_kpoints_for_spin(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
@@ -1866,20 +1866,25 @@ fn solveKpointsForSpin(
     // Add 20% extra bands + 4 minimum buffer for partial occupations.
     const nocc_base = @as(usize, @intFromFloat(std.math.ceil(common.total_electrons / 2.0)));
     const nocc = nocc_base + @max(4, nocc_base / 5);
-    const is_paw_spin = scf_mod.hasPaw(species);
-    const has_qij = scf_mod.hasQij(species) and !is_paw_spin;
+    const is_paw_spin = scf_mod.has_paw(species);
+    const has_qij = scf_mod.has_qij(species) and !is_paw_spin;
     const use_iterative_config = (cfg.scf.solver == .iterative or
         cfg.scf.solver == .cg or
         cfg.scf.solver == .auto) and !has_qij;
-    const nonlocal_enabled = cfg.scf.enable_nonlocal and scf_mod.hasNonlocal(species);
+    const nonlocal_enabled = cfg.scf.enable_nonlocal and scf_mod.has_nonlocal(species);
 
     var local_r: ?[]f64 = null;
     if (use_iterative_config) {
-        local_r = try potential_mod.buildLocalPotentialReal(alloc, grid, common.ionic, potential);
+        local_r = try potential_mod.build_local_potential_real(
+            alloc,
+            grid,
+            common.ionic,
+            potential,
+        );
     }
     defer if (local_r) |values| alloc.free(values);
 
-    const fft_index_map = try buildFftIndexMap(alloc, grid);
+    const fft_index_map = try build_fft_index_map(alloc, grid);
     defer alloc.free(fft_index_map);
 
     var iter_max_iter = cfg.scf.iterative_max_iter;
@@ -1901,7 +1906,7 @@ fn solveKpointsForSpin(
 
     for (kpoints, 0..) |kp, kidx| {
         const ac_ptr: ?*apply.KpointApplyCache = &apply_caches[kidx];
-        eigen_data[kidx] = try computeKpointEigenData(
+        eigen_data[kidx] = try compute_kpoint_eigen_data(
             alloc,
             io,
             &cfg,
@@ -1942,7 +1947,7 @@ fn solveKpointsForSpin(
 // Spin-polarized SCF loop (nspin=2)
 // =========================================================================
 
-pub fn runSpinPolarizedLoop(
+pub fn run_spin_polarized_loop(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
@@ -1960,18 +1965,18 @@ pub fn runSpinPolarizedLoop(
         .volume_bohr = volume_bohr,
         .common = common,
     };
-    const setup = try initSpinLoopResources(&ctx);
+    const setup = try init_spin_loop_resources(&ctx);
     var resources = setup.resources;
     defer resources.deinit(alloc);
 
     if (!cfg.scf.quiet) {
-        try logSpinInit(io, common.total_electrons, setup.magnetization);
+        try log_spin_init(io, common.total_electrons, setup.magnetization);
     }
 
-    var metrics = try runSpinScfLoop(
+    var metrics = try run_spin_scf_loop(
         &ctx,
         &resources,
         setup.magnetization,
     );
-    return finalizeSpinScfResult(&ctx, &resources, &metrics);
+    return finalize_spin_scf_result(&ctx, &resources, &metrics);
 }

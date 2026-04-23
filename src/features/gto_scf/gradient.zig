@@ -52,7 +52,7 @@ const BasisOnGrid = kohn_sham.BasisOnGrid;
 ///   dV_nn/dR_A = -Z_A * sum_{B != A} Z_B * (R_A - R_B) / |R_A - R_B|^3
 ///
 /// Returns an array of Vec3 gradients, one per atom.
-pub fn nuclearRepulsionGradient(
+pub fn nuclear_repulsion_gradient(
     alloc: std.mem.Allocator,
     nuc_positions: []const Vec3,
     nuc_charges: []const f64,
@@ -96,7 +96,7 @@ test "contracted overlap derivative vs FD (p-type)" {
     const ang_a = AngularMomentum{ .x = 0, .y = 1, .z = 0 };
     const ang_b = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
-    const analytical = contractedOverlapDeriv(shell_a, ang_a, shell_b, ang_b);
+    const analytical = contracted_overlap_deriv(shell_a, ang_a, shell_b, ang_b);
 
     const dirs = [3]Vec3{
         .{ .x = delta, .y = 0.0, .z = 0.0 },
@@ -108,8 +108,8 @@ test "contracted overlap derivative vs FD (p-type)" {
         const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
         const shell_a_p = ContractedShell{ .center = ca_p, .l = 1, .primitives = &sto3g.O_2p };
         const shell_a_m = ContractedShell{ .center = ca_m, .l = 1, .primitives = &sto3g.O_2p };
-        const s_p = obara_saika.contractedOverlap(shell_a_p, ang_a, shell_b, ang_b);
-        const s_m = obara_saika.contractedOverlap(shell_a_m, ang_a, shell_b, ang_b);
+        const s_p = obara_saika.contracted_overlap(shell_a_p, ang_a, shell_b, ang_b);
+        const s_m = obara_saika.contracted_overlap(shell_a_m, ang_a, shell_b, ang_b);
         const fd = (s_p - s_m) / (2.0 * delta);
         try testing.expectApproxEqAbs(fd, analytical[i], tol);
     }
@@ -129,7 +129,7 @@ test "contracted kinetic derivative vs FD (p-type)" {
     const ang_a = AngularMomentum{ .x = 0, .y = 1, .z = 0 };
     const ang_b = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
-    const analytical = contractedKineticDeriv(shell_a, ang_a, shell_b, ang_b);
+    const analytical = contracted_kinetic_deriv(shell_a, ang_a, shell_b, ang_b);
 
     const dirs = [3]Vec3{
         .{ .x = delta, .y = 0.0, .z = 0.0 },
@@ -141,8 +141,8 @@ test "contracted kinetic derivative vs FD (p-type)" {
         const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
         const shell_a_p = ContractedShell{ .center = ca_p, .l = 1, .primitives = &sto3g.O_2p };
         const shell_a_m = ContractedShell{ .center = ca_m, .l = 1, .primitives = &sto3g.O_2p };
-        const t_p = obara_saika.contractedKinetic(shell_a_p, ang_a, shell_b, ang_b);
-        const t_m = obara_saika.contractedKinetic(shell_a_m, ang_a, shell_b, ang_b);
+        const t_p = obara_saika.contracted_kinetic(shell_a_p, ang_a, shell_b, ang_b);
+        const t_m = obara_saika.contracted_kinetic(shell_a_m, ang_a, shell_b, ang_b);
         const fd = (t_p - t_m) / (2.0 * delta);
         try testing.expectApproxEqAbs(fd, analytical[i], tol);
     }
@@ -164,7 +164,14 @@ test "contracted nuclear derivative vs FD (p-type)" {
     const ang_a = AngularMomentum{ .x = 0, .y = 1, .z = 0 };
     const ang_b = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
-    const analytical = contractedNuclearDeriv(shell_a, ang_a, shell_b, ang_b, nuc_pos, nuc_charge);
+    const analytical = contracted_nuclear_deriv(
+        shell_a,
+        ang_a,
+        shell_b,
+        ang_b,
+        nuc_pos,
+        nuc_charge,
+    );
 
     const dirs = [3]Vec3{
         .{ .x = delta, .y = 0.0, .z = 0.0 },
@@ -176,7 +183,7 @@ test "contracted nuclear derivative vs FD (p-type)" {
         const ca_m = Vec3{ .x = center_a.x - d.x, .y = center_a.y - d.y, .z = center_a.z - d.z };
         const shell_a_p = ContractedShell{ .center = ca_p, .l = 1, .primitives = &sto3g.O_2p };
         const shell_a_m = ContractedShell{ .center = ca_m, .l = 1, .primitives = &sto3g.O_2p };
-        const v_p = obara_saika.contractedTotalNuclearAttraction(
+        const v_p = obara_saika.contracted_total_nuclear_attraction(
             shell_a_p,
             ang_a,
             shell_b,
@@ -184,7 +191,7 @@ test "contracted nuclear derivative vs FD (p-type)" {
             &[_]Vec3{nuc_pos},
             &[_]f64{nuc_charge},
         );
-        const v_m = obara_saika.contractedTotalNuclearAttraction(
+        const v_m = obara_saika.contracted_total_nuclear_attraction(
             shell_a_m,
             ang_a,
             shell_b,
@@ -205,7 +212,7 @@ test "contracted nuclear derivative vs FD (p-type)" {
 ///   W_{mu,nu} = 2 * sum_{i}^{occ} eps_i * C_{mu,i} * C_{nu,i}
 ///
 /// C is in column-major order: C[j*n + i] = C_{i,j}
-pub fn buildEnergyWeightedDensity(
+pub fn build_energy_weighted_density(
     alloc: std.mem.Allocator,
     n: usize,
     n_occ: usize,
@@ -245,7 +252,7 @@ pub fn buildEnergyWeightedDensity(
 
 const Axis = enum { x, y, z };
 
-fn incrementAngular(ang: AngularMomentum, axis: Axis) AngularMomentum {
+fn increment_angular(ang: AngularMomentum, axis: Axis) AngularMomentum {
     var next = ang;
     switch (axis) {
         .x => next.x += 1,
@@ -255,7 +262,7 @@ fn incrementAngular(ang: AngularMomentum, axis: Axis) AngularMomentum {
     return next;
 }
 
-fn angularComponent(ang: AngularMomentum, axis: Axis) u32 {
+fn angular_component(ang: AngularMomentum, axis: Axis) u32 {
     return switch (axis) {
         .x => ang.x,
         .y => ang.y,
@@ -263,7 +270,7 @@ fn angularComponent(ang: AngularMomentum, axis: Axis) u32 {
     };
 }
 
-fn decrementAngular(ang: AngularMomentum, axis: Axis) AngularMomentum {
+fn decrement_angular(ang: AngularMomentum, axis: Axis) AngularMomentum {
     var prev = ang;
     switch (axis) {
         .x => prev.x -= 1,
@@ -273,7 +280,7 @@ fn decrementAngular(ang: AngularMomentum, axis: Axis) AngularMomentum {
     return prev;
 }
 
-fn derivativeTwoCenterAxis(
+fn derivative_two_center_axis(
     comptime integral_fn: anytype,
     axis: Axis,
     alpha_a: f64,
@@ -286,18 +293,18 @@ fn derivativeTwoCenterAxis(
     const plus = integral_fn(
         alpha_a,
         center_a,
-        incrementAngular(ang_a, axis),
+        increment_angular(ang_a, axis),
         alpha_b,
         center_b,
         ang_b,
     );
     var deriv = 2.0 * alpha_a * plus;
-    const component = angularComponent(ang_a, axis);
+    const component = angular_component(ang_a, axis);
     if (component > 0) {
         const minus = integral_fn(
             alpha_a,
             center_a,
-            decrementAngular(ang_a, axis),
+            decrement_angular(ang_a, axis),
             alpha_b,
             center_b,
             ang_b,
@@ -307,7 +314,7 @@ fn derivativeTwoCenterAxis(
     return deriv;
 }
 
-fn primitiveTwoCenterDerivative(
+fn primitive_two_center_derivative(
     comptime integral_fn: anytype,
     alpha_a: f64,
     center_a: Vec3,
@@ -317,7 +324,7 @@ fn primitiveTwoCenterDerivative(
     ang_b: AngularMomentum,
 ) [3]f64 {
     return .{
-        derivativeTwoCenterAxis(
+        derivative_two_center_axis(
             integral_fn,
             .x,
             alpha_a,
@@ -327,7 +334,7 @@ fn primitiveTwoCenterDerivative(
             center_b,
             ang_b,
         ),
-        derivativeTwoCenterAxis(
+        derivative_two_center_axis(
             integral_fn,
             .y,
             alpha_a,
@@ -337,7 +344,7 @@ fn primitiveTwoCenterDerivative(
             center_b,
             ang_b,
         ),
-        derivativeTwoCenterAxis(
+        derivative_two_center_axis(
             integral_fn,
             .z,
             alpha_a,
@@ -350,7 +357,7 @@ fn primitiveTwoCenterDerivative(
     };
 }
 
-fn derivativeNuclearAxis(
+fn derivative_nuclear_axis(
     axis: Axis,
     alpha_a: f64,
     center_a: Vec3,
@@ -361,10 +368,10 @@ fn derivativeNuclearAxis(
     nuc_pos: Vec3,
     nuc_charge: f64,
 ) f64 {
-    const plus = obara_saika.primitiveNuclearAttraction(
+    const plus = obara_saika.primitive_nuclear_attraction(
         alpha_a,
         center_a,
-        incrementAngular(ang_a, axis),
+        increment_angular(ang_a, axis),
         alpha_b,
         center_b,
         ang_b,
@@ -372,12 +379,12 @@ fn derivativeNuclearAxis(
         nuc_charge,
     );
     var deriv = 2.0 * alpha_a * plus;
-    const component = angularComponent(ang_a, axis);
+    const component = angular_component(ang_a, axis);
     if (component > 0) {
-        const minus = obara_saika.primitiveNuclearAttraction(
+        const minus = obara_saika.primitive_nuclear_attraction(
             alpha_a,
             center_a,
-            decrementAngular(ang_a, axis),
+            decrement_angular(ang_a, axis),
             alpha_b,
             center_b,
             ang_b,
@@ -389,7 +396,7 @@ fn derivativeNuclearAxis(
     return deriv;
 }
 
-fn primitiveNuclearDerivative(
+fn primitive_nuclear_derivative(
     alpha_a: f64,
     center_a: Vec3,
     ang_a: AngularMomentum,
@@ -400,7 +407,7 @@ fn primitiveNuclearDerivative(
     nuc_charge: f64,
 ) [3]f64 {
     return .{
-        derivativeNuclearAxis(
+        derivative_nuclear_axis(
             .x,
             alpha_a,
             center_a,
@@ -411,7 +418,7 @@ fn primitiveNuclearDerivative(
             nuc_pos,
             nuc_charge,
         ),
-        derivativeNuclearAxis(
+        derivative_nuclear_axis(
             .y,
             alpha_a,
             center_a,
@@ -422,7 +429,7 @@ fn primitiveNuclearDerivative(
             nuc_pos,
             nuc_charge,
         ),
-        derivativeNuclearAxis(
+        derivative_nuclear_axis(
             .z,
             alpha_a,
             center_a,
@@ -436,7 +443,7 @@ fn primitiveNuclearDerivative(
     };
 }
 
-fn derivativeEriAxis(
+fn derivative_eri_axis(
     axis: Axis,
     alpha_a: f64,
     center_a: Vec3,
@@ -451,10 +458,10 @@ fn derivativeEriAxis(
     center_d: Vec3,
     ang_d: AngularMomentum,
 ) f64 {
-    const plus = obara_saika.primitiveERI(
+    const plus = obara_saika.primitive_eri(
         alpha_a,
         center_a,
-        incrementAngular(ang_a, axis),
+        increment_angular(ang_a, axis),
         alpha_b,
         center_b,
         ang_b,
@@ -466,12 +473,12 @@ fn derivativeEriAxis(
         ang_d,
     );
     var deriv = 2.0 * alpha_a * plus;
-    const component = angularComponent(ang_a, axis);
+    const component = angular_component(ang_a, axis);
     if (component > 0) {
-        const minus = obara_saika.primitiveERI(
+        const minus = obara_saika.primitive_eri(
             alpha_a,
             center_a,
-            decrementAngular(ang_a, axis),
+            decrement_angular(ang_a, axis),
             alpha_b,
             center_b,
             ang_b,
@@ -487,7 +494,7 @@ fn derivativeEriAxis(
     return deriv;
 }
 
-fn primitiveEriDerivative(
+fn primitive_eri_derivative(
     alpha_a: f64,
     center_a: Vec3,
     ang_a: AngularMomentum,
@@ -502,7 +509,7 @@ fn primitiveEriDerivative(
     ang_d: AngularMomentum,
 ) [3]f64 {
     return .{
-        derivativeEriAxis(
+        derivative_eri_axis(
             .x,
             alpha_a,
             center_a,
@@ -517,7 +524,7 @@ fn primitiveEriDerivative(
             center_d,
             ang_d,
         ),
-        derivativeEriAxis(
+        derivative_eri_axis(
             .y,
             alpha_a,
             center_a,
@@ -532,7 +539,7 @@ fn primitiveEriDerivative(
             center_d,
             ang_d,
         ),
-        derivativeEriAxis(
+        derivative_eri_axis(
             .z,
             alpha_a,
             center_a,
@@ -566,7 +573,7 @@ fn primitiveEriDerivative(
 /// Returns (dS/dAx, dS/dAy, dS/dAz).
 ///
 /// Uses: d/dA_x S(a,b) = 2*alpha * S(a+1_x, b) - a_x * S(a-1_x, b)
-fn primOverlapDeriv(
+fn prim_overlap_deriv(
     alpha_a: f64,
     center_a: Vec3,
     ang_a: AngularMomentum,
@@ -574,8 +581,8 @@ fn primOverlapDeriv(
     center_b: Vec3,
     ang_b: AngularMomentum,
 ) [3]f64 {
-    return primitiveTwoCenterDerivative(
-        obara_saika.primitiveOverlap,
+    return primitive_two_center_derivative(
+        obara_saika.primitive_overlap,
         alpha_a,
         center_a,
         ang_a,
@@ -587,7 +594,7 @@ fn primOverlapDeriv(
 
 /// Compute dT_{mu,nu}/dA for a pair of *primitives*.
 /// Returns (dT/dAx, dT/dAy, dT/dAz).
-fn primKineticDeriv(
+fn prim_kinetic_deriv(
     alpha_a: f64,
     center_a: Vec3,
     ang_a: AngularMomentum,
@@ -595,8 +602,8 @@ fn primKineticDeriv(
     center_b: Vec3,
     ang_b: AngularMomentum,
 ) [3]f64 {
-    return primitiveTwoCenterDerivative(
-        obara_saika.primitiveKinetic,
+    return primitive_two_center_derivative(
+        obara_saika.primitive_kinetic,
         alpha_a,
         center_a,
         ang_a,
@@ -608,7 +615,7 @@ fn primKineticDeriv(
 
 /// Compute dV_{mu,nu}/dA for a pair of *primitives* and a single nucleus.
 /// Returns (dV/dAx, dV/dAy, dV/dAz).
-fn primNuclearDeriv(
+fn prim_nuclear_deriv(
     alpha_a: f64,
     center_a: Vec3,
     ang_a: AngularMomentum,
@@ -618,7 +625,7 @@ fn primNuclearDeriv(
     nuc_pos: Vec3,
     nuc_charge: f64,
 ) [3]f64 {
-    return primitiveNuclearDerivative(
+    return primitive_nuclear_derivative(
         alpha_a,
         center_a,
         ang_a,
@@ -634,7 +641,7 @@ fn primNuclearDeriv(
 /// Returns (d/dAx, d/dAy, d/dAz).
 ///
 /// d/dA_x (a b | c d) = 2*alpha_a * (a+1_x b | c d) - a_x * (a-1_x b | c d)
-fn primEriDeriv(
+fn prim_eri_deriv(
     alpha_a: f64,
     center_a: Vec3,
     ang_a: AngularMomentum,
@@ -648,7 +655,7 @@ fn primEriDeriv(
     center_d: Vec3,
     ang_d: AngularMomentum,
 ) [3]f64 {
-    return primitiveEriDerivative(
+    return primitive_eri_derivative(
         alpha_a,
         center_a,
         ang_a,
@@ -669,7 +676,7 @@ fn primEriDeriv(
 // ============================================================================
 
 /// Contracted overlap derivative: d<shell_a, ang_a | shell_b, ang_b>/dA_{x,y,z}
-fn contractedOverlapDeriv(
+fn contracted_overlap_deriv(
     shell_a: ContractedShell,
     ang_a: AngularMomentum,
     shell_b: ContractedShell,
@@ -680,7 +687,7 @@ fn contractedOverlapDeriv(
         const norm_a = basis_mod.normalization(prim_a.alpha, ang_a.x, ang_a.y, ang_a.z);
         for (shell_b.primitives) |prim_b| {
             const norm_b = basis_mod.normalization(prim_b.alpha, ang_b.x, ang_b.y, ang_b.z);
-            const d = primOverlapDeriv(
+            const d = prim_overlap_deriv(
                 prim_a.alpha,
                 shell_a.center,
                 ang_a,
@@ -698,7 +705,7 @@ fn contractedOverlapDeriv(
 }
 
 /// Contracted kinetic derivative: d<shell_a, ang_a | T | shell_b, ang_b>/dA_{x,y,z}
-fn contractedKineticDeriv(
+fn contracted_kinetic_deriv(
     shell_a: ContractedShell,
     ang_a: AngularMomentum,
     shell_b: ContractedShell,
@@ -709,7 +716,7 @@ fn contractedKineticDeriv(
         const norm_a = basis_mod.normalization(prim_a.alpha, ang_a.x, ang_a.y, ang_a.z);
         for (shell_b.primitives) |prim_b| {
             const norm_b = basis_mod.normalization(prim_b.alpha, ang_b.x, ang_b.y, ang_b.z);
-            const d = primKineticDeriv(
+            const d = prim_kinetic_deriv(
                 prim_a.alpha,
                 shell_a.center,
                 ang_a,
@@ -727,7 +734,7 @@ fn contractedKineticDeriv(
 }
 
 /// Contracted nuclear attraction derivative for a single nucleus.
-fn contractedNuclearDeriv(
+fn contracted_nuclear_deriv(
     shell_a: ContractedShell,
     ang_a: AngularMomentum,
     shell_b: ContractedShell,
@@ -740,7 +747,7 @@ fn contractedNuclearDeriv(
         const norm_a = basis_mod.normalization(prim_a.alpha, ang_a.x, ang_a.y, ang_a.z);
         for (shell_b.primitives) |prim_b| {
             const norm_b = basis_mod.normalization(prim_b.alpha, ang_b.x, ang_b.y, ang_b.z);
-            const d = primNuclearDeriv(
+            const d = prim_nuclear_deriv(
                 prim_a.alpha,
                 shell_a.center,
                 ang_a,
@@ -760,7 +767,7 @@ fn contractedNuclearDeriv(
 }
 
 /// Contracted ERI derivative: d(mu nu | lam sig)/dA for mu centered on shell_a.
-fn contractedEriDeriv(
+fn contracted_eri_deriv(
     shell_a: ContractedShell,
     ang_a: AngularMomentum,
     shell_b: ContractedShell,
@@ -779,7 +786,7 @@ fn contractedEriDeriv(
                 const norm_c = basis_mod.normalization(prim_c.alpha, ang_c.x, ang_c.y, ang_c.z);
                 for (shell_d.primitives) |prim_d| {
                     const norm_d = basis_mod.normalization(prim_d.alpha, ang_d.x, ang_d.y, ang_d.z);
-                    const d = primEriDeriv(
+                    const d = prim_eri_deriv(
                         prim_a.alpha,
                         shell_a.center,
                         ang_a,
@@ -816,13 +823,13 @@ const BasisInfo = struct {
 };
 
 /// Build a mapping from basis function index to (shell_index, angular_momentum).
-fn buildBasisMap(alloc: std.mem.Allocator, shells: []const ContractedShell) ![]BasisInfo {
-    const n = obara_saika.totalBasisFunctions(shells);
+fn build_basis_map(alloc: std.mem.Allocator, shells: []const ContractedShell) ![]BasisInfo {
+    const n = obara_saika.total_basis_functions(shells);
     const map = try alloc.alloc(BasisInfo, n);
     var idx: usize = 0;
     for (shells, 0..) |shell, si| {
-        const cart = basis_mod.cartesianExponents(shell.l);
-        const n_cart = basis_mod.numCartesian(shell.l);
+        const cart = basis_mod.cartesian_exponents(shell.l);
+        const n_cart = basis_mod.num_cartesian(shell.l);
         for (0..n_cart) |ic| {
             map[idx] = .{ .shell_idx = si, .ang = cart[ic] };
             idx += 1;
@@ -833,7 +840,7 @@ fn buildBasisMap(alloc: std.mem.Allocator, shells: []const ContractedShell) ![]B
 
 /// Map a basis function to its atom index.
 /// atom_of_shell[shell_idx] = atom_index
-fn buildShellToAtomMap(
+fn build_shell_to_atom_map(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
     nuc_positions: []const Vec3,
@@ -939,7 +946,7 @@ const ProjectedDerivativeData = struct {
     }
 };
 
-fn initGradientWorkspace(
+fn init_gradient_workspace(
     alloc: std.mem.Allocator,
     n: usize,
     shells: []const ContractedShell,
@@ -948,11 +955,11 @@ fn initGradientWorkspace(
     mo_coefficients: []const f64,
     n_occ: usize,
 ) !GradientWorkspace {
-    const basis_map = try buildBasisMap(alloc, shells);
+    const basis_map = try build_basis_map(alloc, shells);
     errdefer alloc.free(basis_map);
-    const shell_atom_map = try buildShellToAtomMap(alloc, shells, nuc_positions);
+    const shell_atom_map = try build_shell_to_atom_map(alloc, shells, nuc_positions);
     errdefer alloc.free(shell_atom_map);
-    const w_mat = try buildEnergyWeightedDensity(
+    const w_mat = try build_energy_weighted_density(
         alloc,
         n,
         n_occ,
@@ -967,12 +974,12 @@ fn initGradientWorkspace(
     };
 }
 
-fn initGradientVector(
+fn init_gradient_vector(
     alloc: std.mem.Allocator,
     nuc_positions: []const Vec3,
     nuc_charges: []const f64,
 ) ![]Vec3 {
-    const grad_vnn = try nuclearRepulsionGradient(alloc, nuc_positions, nuc_charges);
+    const grad_vnn = try nuclear_repulsion_gradient(alloc, nuc_positions, nuc_charges);
     defer alloc.free(grad_vnn);
 
     const grad = try alloc.alloc(Vec3, nuc_positions.len);
@@ -980,19 +987,19 @@ fn initGradientVector(
     return grad;
 }
 
-fn addScaledDerivative(target: *Vec3, scale: f64, deriv: [3]f64) void {
+fn add_scaled_derivative(target: *Vec3, scale: f64, deriv: [3]f64) void {
     target.x += scale * deriv[0];
     target.y += scale * deriv[1];
     target.z += scale * deriv[2];
 }
 
-fn subtractDerivativePair(target: *Vec3, scale: f64, lhs: [3]f64, rhs: [3]f64) void {
+fn subtract_derivative_pair(target: *Vec3, scale: f64, lhs: [3]f64, rhs: [3]f64) void {
     target.x -= scale * (lhs[0] + rhs[0]);
     target.y -= scale * (lhs[1] + rhs[1]);
     target.z -= scale * (lhs[2] + rhs[2]);
 }
 
-fn accumulateOneElectronPair(ctx: *const OneElectronGradientCtx, mu: usize, nu: usize) void {
+fn accumulate_one_electron_pair(ctx: *const OneElectronGradientCtx, mu: usize, nu: usize) void {
     const mu_info = ctx.basis_map[mu];
     const nu_info = ctx.basis_map[nu];
     const mu_shell = ctx.shells[mu_info.shell_idx];
@@ -1001,19 +1008,19 @@ fn accumulateOneElectronPair(ctx: *const OneElectronGradientCtx, mu: usize, nu: 
     const p_val = ctx.p_mat[mu * ctx.n + nu];
     const w_val = ctx.w_mat[mu * ctx.n + nu];
 
-    addScaledDerivative(
+    add_scaled_derivative(
         &ctx.grad[atom_a],
         -2.0 * w_val,
-        contractedOverlapDeriv(mu_shell, mu_info.ang, nu_shell, nu_info.ang),
+        contracted_overlap_deriv(mu_shell, mu_info.ang, nu_shell, nu_info.ang),
     );
-    addScaledDerivative(
+    add_scaled_derivative(
         &ctx.grad[atom_a],
         2.0 * p_val,
-        contractedKineticDeriv(mu_shell, mu_info.ang, nu_shell, nu_info.ang),
+        contracted_kinetic_deriv(mu_shell, mu_info.ang, nu_shell, nu_info.ang),
     );
 
     for (ctx.nuc_positions, ctx.nuc_charges, 0..) |nuc_pos, nuc_charge, c| {
-        const dv_da = contractedNuclearDeriv(
+        const dv_da = contracted_nuclear_deriv(
             mu_shell,
             mu_info.ang,
             nu_shell,
@@ -1021,7 +1028,7 @@ fn accumulateOneElectronPair(ctx: *const OneElectronGradientCtx, mu: usize, nu: 
             nuc_pos,
             nuc_charge,
         );
-        const dv_db = contractedNuclearDeriv(
+        const dv_db = contracted_nuclear_deriv(
             nu_shell,
             nu_info.ang,
             mu_shell,
@@ -1029,20 +1036,20 @@ fn accumulateOneElectronPair(ctx: *const OneElectronGradientCtx, mu: usize, nu: 
             nuc_pos,
             nuc_charge,
         );
-        addScaledDerivative(&ctx.grad[atom_a], 2.0 * p_val, dv_da);
-        subtractDerivativePair(&ctx.grad[c], p_val, dv_da, dv_db);
+        add_scaled_derivative(&ctx.grad[atom_a], 2.0 * p_val, dv_da);
+        subtract_derivative_pair(&ctx.grad[c], p_val, dv_da, dv_db);
     }
 }
 
-fn accumulateOneElectronGradient(ctx: *const OneElectronGradientCtx) void {
+fn accumulate_one_electron_gradient(ctx: *const OneElectronGradientCtx) void {
     for (0..ctx.n) |mu| {
         for (0..ctx.n) |nu| {
-            accumulateOneElectronPair(ctx, mu, nu);
+            accumulate_one_electron_pair(ctx, mu, nu);
         }
     }
 }
 
-fn buildMaxShellDensity(
+fn build_max_shell_density(
     alloc: std.mem.Allocator,
     p_mat: []const f64,
     n: usize,
@@ -1069,7 +1076,7 @@ fn buildMaxShellDensity(
     return max_p_shell;
 }
 
-fn shellQuartetPassesDensityScreen(
+fn shell_quartet_passes_density_screen(
     ctx: *const TwoElectronGradientCtx,
     max_p_shell: []const f64,
     n_shells: usize,
@@ -1090,7 +1097,7 @@ fn shellQuartetPassesDensityScreen(
     return max_gamma_est * q_ab * q_cd >= threshold;
 }
 
-fn accumulateShellQuartetGradient(
+fn accumulate_shell_quartet_gradient(
     ctx: *const TwoElectronGradientCtx,
     info: ShellQuartetInfo,
     batch_dx: []const f64,
@@ -1118,7 +1125,7 @@ fn accumulateShellQuartetGradient(
                         ib * info.nc_s * info.nd_s +
                         ic * info.nd_s +
                         id_d;
-                    addScaledDerivative(&ctx.grad[info.atom_sa], 2.0 * gamma, .{
+                    add_scaled_derivative(&ctx.grad[info.atom_sa], 2.0 * gamma, .{
                         batch_dx[idx],
                         batch_dy[idx],
                         batch_dz[idx],
@@ -1129,15 +1136,15 @@ fn accumulateShellQuartetGradient(
     }
 }
 
-fn accumulateTwoElectronGradient(
+fn accumulate_two_electron_gradient(
     alloc: std.mem.Allocator,
     ctx: *const TwoElectronGradientCtx,
 ) !void {
     const threshold: f64 = 1e-12;
-    var schwarz = try fock_mod.buildSchwarzTable(alloc, ctx.shells);
+    var schwarz = try fock_mod.build_schwarz_table(alloc, ctx.shells);
     defer schwarz.deinit(alloc);
 
-    const max_p_shell = try buildMaxShellDensity(alloc, ctx.p_mat, ctx.n, schwarz);
+    const max_p_shell = try build_max_shell_density(alloc, ctx.p_mat, ctx.n, schwarz);
     defer alloc.free(max_p_shell);
 
     const n_shells = ctx.shells.len;
@@ -1153,7 +1160,7 @@ fn accumulateTwoElectronGradient(
             for (0..n_shells) |sc| {
                 for (0..n_shells) |sd| {
                     const q_cd = schwarz.get(sc, sd);
-                    if (!shellQuartetPassesDensityScreen(
+                    if (!shell_quartet_passes_density_screen(
                         ctx,
                         max_p_shell,
                         n_shells,
@@ -1166,7 +1173,7 @@ fn accumulateTwoElectronGradient(
                         threshold,
                     )) continue;
 
-                    _ = rys_eri.contractedShellQuartetEriDeriv(
+                    _ = rys_eri.contracted_shell_quartet_eri_deriv(
                         ctx.shells[sa],
                         ctx.shells[sb],
                         ctx.shells[sc],
@@ -1175,7 +1182,7 @@ fn accumulateTwoElectronGradient(
                         &batch_dy,
                         &batch_dz,
                     );
-                    accumulateShellQuartetGradient(ctx, .{
+                    accumulate_shell_quartet_gradient(ctx, .{
                         .atom_sa = ctx.shell_atom_map[sa],
                         .off_a = schwarz.shell_offsets[sa],
                         .off_b = schwarz.shell_offsets[sb],
@@ -1192,14 +1199,14 @@ fn accumulateTwoElectronGradient(
     }
 }
 
-fn freeDensityGridData(alloc: std.mem.Allocator, density_data: anytype) void {
+fn free_density_grid_data(alloc: std.mem.Allocator, density_data: anytype) void {
     alloc.free(density_data.rho);
     alloc.free(density_data.grad_x);
     alloc.free(density_data.grad_y);
     alloc.free(density_data.grad_z);
 }
 
-fn buildXcPotentialData(
+fn build_xc_potential_data(
     alloc: std.mem.Allocator,
     density_data: anytype,
     xc_func: XcFunctional,
@@ -1218,7 +1225,7 @@ fn buildXcPotentialData(
         }
         switch (xc_func) {
             .lda_svwn => {
-                const xc_eval = xc_functionals.ldaSvwn(rho_g);
+                const xc_eval = xc_functionals.lda_svwn(rho_g);
                 v_xc[ig] = xc_eval.v_xc;
                 v_sigma[ig] = 0.0;
             },
@@ -1235,7 +1242,7 @@ fn buildXcPotentialData(
     return .{ .v_xc = v_xc, .v_sigma = v_sigma };
 }
 
-fn buildProjectedPhi(
+fn build_projected_phi(
     alloc: std.mem.Allocator,
     p_mat: []const f64,
     bog: BasisOnGrid,
@@ -1256,7 +1263,7 @@ fn buildProjectedPhi(
     return p_phi;
 }
 
-fn buildProjectedDerivatives(
+fn build_projected_derivatives(
     alloc: std.mem.Allocator,
     p_mat: []const f64,
     bog: BasisOnGrid,
@@ -1296,7 +1303,7 @@ fn buildProjectedDerivatives(
     };
 }
 
-fn accumulateGgaBasisPointContribution(
+fn accumulate_gga_basis_point_contribution(
     shells: []const ContractedShell,
     mu_info: BasisInfo,
     grid_point: GridPoint,
@@ -1317,7 +1324,7 @@ fn accumulateGgaBasisPointContribution(
         gry * p_dphi.y.?[g_off + mu] +
         grz * p_dphi.z.?[g_off + mu];
     const gga1_factor = 2.0 * w * v_sig * f_mu;
-    const hess = kohn_sham.evalBasisFunctionWithHessian(
+    const hess = kohn_sham.eval_basis_function_with_hessian(
         shells[mu_info.shell_idx],
         mu_info.ang,
         grid_point.x,
@@ -1332,7 +1339,7 @@ fn accumulateGgaBasisPointContribution(
     };
 }
 
-fn accumulateSingleBasisXcGradient(
+fn accumulate_single_basis_xc_gradient(
     shells: []const ContractedShell,
     basis_map: []const BasisInfo,
     bog: BasisOnGrid,
@@ -1362,7 +1369,7 @@ fn accumulateSingleBasisXcGradient(
         xc_grad[1] += lda_factor * dphi_mu[1];
         xc_grad[2] += lda_factor * dphi_mu[2];
         if (has_gga and @abs(xc_data.v_sigma[ig]) > 1e-30) {
-            const gga = accumulateGgaBasisPointContribution(
+            const gga = accumulate_gga_basis_point_contribution(
                 shells,
                 mu_info,
                 grid_points[ig],
@@ -1384,7 +1391,7 @@ fn accumulateSingleBasisXcGradient(
     return xc_grad;
 }
 
-fn accumulateXcGradient(
+fn accumulate_xc_gradient(
     alloc: std.mem.Allocator,
     grad: []Vec3,
     shells: []const ContractedShell,
@@ -1396,19 +1403,25 @@ fn accumulateXcGradient(
     n: usize,
 ) !void {
     if (grid_points.len == 0) return;
-    var bog = try kohn_sham.evaluateBasisOnGrid(alloc, shells, grid_points);
+    var bog = try kohn_sham.evaluate_basis_on_grid(alloc, shells, grid_points);
     defer bog.deinit(alloc);
 
-    const density_data = try kohn_sham.computeDensityOnGrid(alloc, n, grid_points.len, p_mat, bog);
-    defer freeDensityGridData(alloc, density_data);
+    const density_data = try kohn_sham.compute_density_on_grid(
+        alloc,
+        n,
+        grid_points.len,
+        p_mat,
+        bog,
+    );
+    defer free_density_grid_data(alloc, density_data);
 
-    const xc_data = try buildXcPotentialData(alloc, density_data, xc_func);
+    const xc_data = try build_xc_potential_data(alloc, density_data, xc_func);
     defer xc_data.deinit(alloc);
 
-    const p_phi = try buildProjectedPhi(alloc, p_mat, bog, grid_points.len, n);
+    const p_phi = try build_projected_phi(alloc, p_mat, bog, grid_points.len, n);
     defer alloc.free(p_phi);
 
-    const p_dphi = try buildProjectedDerivatives(
+    const p_dphi = try build_projected_derivatives(
         alloc,
         p_mat,
         bog,
@@ -1419,7 +1432,7 @@ fn accumulateXcGradient(
     defer p_dphi.deinit(alloc);
 
     for (0..n) |mu| {
-        const xc_grad = accumulateSingleBasisXcGradient(
+        const xc_grad = accumulate_single_basis_xc_gradient(
             shells,
             basis_map,
             bog,
@@ -1431,7 +1444,7 @@ fn accumulateXcGradient(
             mu,
             n,
         );
-        addScaledDerivative(&grad[shell_atom_map[basis_map[mu].shell_idx]], -2.0, xc_grad);
+        add_scaled_derivative(&grad[shell_atom_map[basis_map[mu].shell_idx]], -2.0, xc_grad);
     }
 }
 
@@ -1449,7 +1462,7 @@ fn accumulateXcGradient(
 ///   dV_C/dR_C = sum_{mu,nu} P * d<mu|V_C|nu>/dR_C
 ///
 /// This extra "Hellmann-Feynman" term must be added for each nucleus.
-pub fn computeRhfGradient(
+pub fn compute_rhf_gradient(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
     nuc_positions: []const Vec3,
@@ -1459,8 +1472,8 @@ pub fn computeRhfGradient(
     mo_coefficients: []const f64,
     n_occ: usize,
 ) !GradientResult {
-    const n = obara_saika.totalBasisFunctions(shells);
-    const workspace = try initGradientWorkspace(
+    const n = obara_saika.total_basis_functions(shells);
+    const workspace = try init_gradient_workspace(
         alloc,
         n,
         shells,
@@ -1471,7 +1484,7 @@ pub fn computeRhfGradient(
     );
     defer workspace.deinit(alloc);
 
-    const grad = try initGradientVector(alloc, nuc_positions, nuc_charges);
+    const grad = try init_gradient_vector(alloc, nuc_positions, nuc_charges);
     errdefer alloc.free(grad);
 
     const one_electron = OneElectronGradientCtx{
@@ -1485,7 +1498,7 @@ pub fn computeRhfGradient(
         .w_mat = workspace.w_mat,
         .n = n,
     };
-    accumulateOneElectronGradient(&one_electron);
+    accumulate_one_electron_gradient(&one_electron);
 
     const two_electron = TwoElectronGradientCtx{
         .grad = grad,
@@ -1495,7 +1508,7 @@ pub fn computeRhfGradient(
         .n = n,
         .hf_frac = 1.0,
     };
-    try accumulateTwoElectronGradient(alloc, &two_electron);
+    try accumulate_two_electron_gradient(alloc, &two_electron);
 
     return .{ .gradients = grad };
 }
@@ -1519,7 +1532,7 @@ pub fn computeRhfGradient(
 ///   Additional terms involving second derivatives of basis functions and grad(rho) dot products.
 ///
 /// The "first-center x 2" strategy is used for all derivative terms, same as RHF.
-pub fn computeKsDftGradient(
+pub fn compute_ks_dft_gradient(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
     nuc_positions: []const Vec3,
@@ -1531,12 +1544,12 @@ pub fn computeKsDftGradient(
     grid_points: []const GridPoint,
     xc_func: XcFunctional,
 ) !GradientResult {
-    const n = obara_saika.totalBasisFunctions(shells);
+    const n = obara_saika.total_basis_functions(shells);
     const hf_frac: f64 = switch (xc_func) {
         .lda_svwn => 0.0,
         .b3lyp => 0.20,
     };
-    const workspace = try initGradientWorkspace(
+    const workspace = try init_gradient_workspace(
         alloc,
         n,
         shells,
@@ -1547,7 +1560,7 @@ pub fn computeKsDftGradient(
     );
     defer workspace.deinit(alloc);
 
-    const grad = try initGradientVector(alloc, nuc_positions, nuc_charges);
+    const grad = try init_gradient_vector(alloc, nuc_positions, nuc_charges);
     errdefer alloc.free(grad);
 
     const one_electron = OneElectronGradientCtx{
@@ -1561,7 +1574,7 @@ pub fn computeKsDftGradient(
         .w_mat = workspace.w_mat,
         .n = n,
     };
-    accumulateOneElectronGradient(&one_electron);
+    accumulate_one_electron_gradient(&one_electron);
 
     const two_electron = TwoElectronGradientCtx{
         .grad = grad,
@@ -1571,8 +1584,8 @@ pub fn computeKsDftGradient(
         .n = n,
         .hf_frac = hf_frac,
     };
-    try accumulateTwoElectronGradient(alloc, &two_electron);
-    try accumulateXcGradient(
+    try accumulate_two_electron_gradient(alloc, &two_electron);
+    try accumulate_xc_gradient(
         alloc,
         grad,
         shells,
@@ -1629,7 +1642,7 @@ test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
         .n_angular = 194,
         .prune = false,
     };
-    const grid_points = try becke.buildMolecularGrid(alloc, &atoms, grid_config);
+    const grid_points = try becke.build_molecular_grid(alloc, &atoms, grid_config);
     defer alloc.free(grid_points);
 
     // Run KS-DFT LDA SCF at equilibrium geometry
@@ -1641,7 +1654,7 @@ test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
         .energy_threshold = 1e-10,
         .density_threshold = 1e-8,
     };
-    var ks_result = try kohn_sham.runKohnShamScf(
+    var ks_result = try kohn_sham.run_kohn_sham_scf(
         alloc,
         io,
         &shells,
@@ -1655,7 +1668,7 @@ test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
     try testing.expect(ks_result.converged);
 
     // Compute analytical gradient
-    var grad_result = try computeKsDftGradient(
+    var grad_result = try compute_ks_dft_gradient(
         alloc,
         &shells,
         &nuc_positions,
@@ -1695,7 +1708,7 @@ test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
         .{ .center = pos_m[1], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    var ks_p = try kohn_sham.runKohnShamScf(
+    var ks_p = try kohn_sham.run_kohn_sham_scf(
         alloc,
         io,
         &shells_p,
@@ -1706,7 +1719,7 @@ test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
     );
     defer ks_p.deinit(alloc);
 
-    var ks_m = try kohn_sham.runKohnShamScf(
+    var ks_m = try kohn_sham.run_kohn_sham_scf(
         alloc,
         io,
         &shells_m,
@@ -1779,7 +1792,7 @@ test "KS-DFT LDA gradient H2O STO-3G vs PySCF" {
         .n_angular = 194,
         .prune = false,
     };
-    const grid_points = try becke.buildMolecularGrid(alloc, &atoms, grid_config);
+    const grid_points = try becke.build_molecular_grid(alloc, &atoms, grid_config);
     defer alloc.free(grid_points);
 
     // Run KS-DFT LDA SCF
@@ -1791,7 +1804,7 @@ test "KS-DFT LDA gradient H2O STO-3G vs PySCF" {
         .energy_threshold = 1e-10,
         .density_threshold = 1e-8,
     };
-    var ks_result = try kohn_sham.runKohnShamScf(
+    var ks_result = try kohn_sham.run_kohn_sham_scf(
         alloc,
         io,
         &shells,
@@ -1805,7 +1818,7 @@ test "KS-DFT LDA gradient H2O STO-3G vs PySCF" {
     try testing.expect(ks_result.converged);
 
     // Compute analytical gradient
-    var grad_result = try computeKsDftGradient(
+    var grad_result = try compute_ks_dft_gradient(
         alloc,
         &shells,
         &nuc_positions,
@@ -1893,7 +1906,7 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
         .n_angular = 194,
         .prune = false,
     };
-    const grid_points = try becke.buildMolecularGrid(alloc, &atoms, grid_config);
+    const grid_points = try becke.build_molecular_grid(alloc, &atoms, grid_config);
     defer alloc.free(grid_points);
 
     // Run KS-DFT B3LYP SCF
@@ -1905,7 +1918,7 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
         .energy_threshold = 1e-10,
         .density_threshold = 1e-8,
     };
-    var ks_result = try kohn_sham.runKohnShamScf(
+    var ks_result = try kohn_sham.run_kohn_sham_scf(
         alloc,
         io,
         &shells,
@@ -1919,7 +1932,7 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
     try testing.expect(ks_result.converged);
 
     // Compute analytical gradient
-    var grad_result = try computeKsDftGradient(
+    var grad_result = try compute_ks_dft_gradient(
         alloc,
         &shells,
         &nuc_positions,
@@ -1956,7 +1969,7 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
         .{ .center = pos_m[1], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    var ks_p = try kohn_sham.runKohnShamScf(
+    var ks_p = try kohn_sham.run_kohn_sham_scf(
         alloc,
         io,
         &shells_p,
@@ -1967,7 +1980,7 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
     );
     defer ks_p.deinit(alloc);
 
-    var ks_m = try kohn_sham.runKohnShamScf(
+    var ks_m = try kohn_sham.run_kohn_sham_scf(
         alloc,
         io,
         &shells_m,
@@ -2041,7 +2054,7 @@ test "KS-DFT B3LYP gradient H2O STO-3G vs PySCF" {
         .n_radial = 80,
         .n_angular = 302,
     };
-    const grid_points = try becke.buildMolecularGrid(alloc, &becke_atoms, grid_config);
+    const grid_points = try becke.build_molecular_grid(alloc, &becke_atoms, grid_config);
     defer alloc.free(grid_points);
 
     // Run B3LYP SCF
@@ -2054,7 +2067,7 @@ test "KS-DFT B3LYP gradient H2O STO-3G vs PySCF" {
         .density_threshold = 1e-8,
     };
 
-    var ks_result = try kohn_sham.runKohnShamScf(
+    var ks_result = try kohn_sham.run_kohn_sham_scf(
         alloc,
         io,
         &shells,
@@ -2068,7 +2081,7 @@ test "KS-DFT B3LYP gradient H2O STO-3G vs PySCF" {
     try testing.expect(ks_result.converged);
 
     // Compute analytical gradient
-    var grad_result = try computeKsDftGradient(
+    var grad_result = try compute_ks_dft_gradient(
         alloc,
         &shells,
         &nuc_positions,
@@ -2130,7 +2143,7 @@ test "nuclear repulsion gradient H2O" {
     };
     const nuc_charges = [_]f64{ 8.0, 1.0, 1.0 };
 
-    const grad = try nuclearRepulsionGradient(alloc, &nuc_positions, &nuc_charges);
+    const grad = try nuclear_repulsion_gradient(alloc, &nuc_positions, &nuc_charges);
     defer alloc.free(grad);
 
     // PySCF reference:
@@ -2182,7 +2195,7 @@ test "RHF gradient H2O STO-3G" {
     };
 
     // Run RHF SCF first
-    var scf_result = try gto_scf.runGeneralRhfScf(
+    var scf_result = try gto_scf.run_general_rhf_scf(
         alloc,
         &shells,
         &nuc_positions,
@@ -2195,7 +2208,7 @@ test "RHF gradient H2O STO-3G" {
     try testing.expect(scf_result.converged);
 
     // Compute analytical gradient
-    var grad_result = try computeRhfGradient(
+    var grad_result = try compute_rhf_gradient(
         alloc,
         &shells,
         &nuc_positions,
@@ -2260,7 +2273,7 @@ test "RHF gradient H2 STO-3G" {
     };
 
     // Run RHF SCF
-    var scf_result = try gto_scf.runGeneralRhfScf(
+    var scf_result = try gto_scf.run_general_rhf_scf(
         alloc,
         &shells,
         &nuc_positions,
@@ -2273,7 +2286,7 @@ test "RHF gradient H2 STO-3G" {
     try testing.expect(scf_result.converged);
 
     // Compute analytical gradient
-    var grad_result = try computeRhfGradient(
+    var grad_result = try compute_rhf_gradient(
         alloc,
         &shells,
         &nuc_positions,
@@ -2307,10 +2320,10 @@ test "RHF gradient H2 STO-3G" {
         .{ .center = pos_m[1], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    var scf_p = try gto_scf.runGeneralRhfScf(alloc, &shells_p, &pos_p, &nuc_charges, 2, .{});
+    var scf_p = try gto_scf.run_general_rhf_scf(alloc, &shells_p, &pos_p, &nuc_charges, 2, .{});
     defer scf_p.deinit(alloc);
 
-    var scf_m = try gto_scf.runGeneralRhfScf(alloc, &shells_m, &pos_m, &nuc_charges, 2, .{});
+    var scf_m = try gto_scf.run_general_rhf_scf(alloc, &shells_m, &pos_m, &nuc_charges, 2, .{});
     defer scf_m.deinit(alloc);
 
     const num_grad_x = (scf_p.total_energy - scf_m.total_energy) / (2.0 * delta);
@@ -2344,7 +2357,7 @@ test "primitive overlap derivative vs FD" {
         const ang_a = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
         const ang_b = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
-        const analytical = primOverlapDeriv(alpha_a, center_a, ang_a, alpha_b, center_b, ang_b);
+        const analytical = prim_overlap_deriv(alpha_a, center_a, ang_a, alpha_b, center_b, ang_b);
 
         const dirs = [3]Vec3{
             .{ .x = delta, .y = 0.0, .z = 0.0 },
@@ -2362,7 +2375,7 @@ test "primitive overlap derivative vs FD" {
                 .y = center_a.y - d.y,
                 .z = center_a.z - d.z,
             };
-            const s_p = obara_saika.primitiveOverlap(
+            const s_p = obara_saika.primitive_overlap(
                 alpha_a,
                 ca_p,
                 ang_a,
@@ -2370,7 +2383,7 @@ test "primitive overlap derivative vs FD" {
                 center_b,
                 ang_b,
             );
-            const s_m = obara_saika.primitiveOverlap(
+            const s_m = obara_saika.primitive_overlap(
                 alpha_a,
                 ca_m,
                 ang_a,
@@ -2388,7 +2401,7 @@ test "primitive overlap derivative vs FD" {
         const ang_a = AngularMomentum{ .x = 0, .y = 1, .z = 0 };
         const ang_b = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
-        const analytical = primOverlapDeriv(alpha_a, center_a, ang_a, alpha_b, center_b, ang_b);
+        const analytical = prim_overlap_deriv(alpha_a, center_a, ang_a, alpha_b, center_b, ang_b);
 
         const dirs = [3]Vec3{
             .{ .x = delta, .y = 0.0, .z = 0.0 },
@@ -2406,7 +2419,7 @@ test "primitive overlap derivative vs FD" {
                 .y = center_a.y - d.y,
                 .z = center_a.z - d.z,
             };
-            const s_p = obara_saika.primitiveOverlap(
+            const s_p = obara_saika.primitive_overlap(
                 alpha_a,
                 ca_p,
                 ang_a,
@@ -2414,7 +2427,7 @@ test "primitive overlap derivative vs FD" {
                 center_b,
                 ang_b,
             );
-            const s_m = obara_saika.primitiveOverlap(
+            const s_m = obara_saika.primitive_overlap(
                 alpha_a,
                 ca_m,
                 ang_a,
@@ -2432,7 +2445,7 @@ test "primitive overlap derivative vs FD" {
         const ang_a = AngularMomentum{ .x = 0, .y = 0, .z = 1 };
         const ang_b = AngularMomentum{ .x = 0, .y = 1, .z = 0 };
 
-        const analytical = primOverlapDeriv(alpha_a, center_a, ang_a, alpha_b, center_b, ang_b);
+        const analytical = prim_overlap_deriv(alpha_a, center_a, ang_a, alpha_b, center_b, ang_b);
 
         const dirs = [3]Vec3{
             .{ .x = delta, .y = 0.0, .z = 0.0 },
@@ -2450,7 +2463,7 @@ test "primitive overlap derivative vs FD" {
                 .y = center_a.y - d.y,
                 .z = center_a.z - d.z,
             };
-            const s_p = obara_saika.primitiveOverlap(
+            const s_p = obara_saika.primitive_overlap(
                 alpha_a,
                 ca_p,
                 ang_a,
@@ -2458,7 +2471,7 @@ test "primitive overlap derivative vs FD" {
                 center_b,
                 ang_b,
             );
-            const s_m = obara_saika.primitiveOverlap(
+            const s_m = obara_saika.primitive_overlap(
                 alpha_a,
                 ca_m,
                 ang_a,
@@ -2487,7 +2500,7 @@ test "primitive kinetic derivative vs FD" {
         const ang_a = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
         const ang_b = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
-        const analytical = primKineticDeriv(alpha_a, center_a, ang_a, alpha_b, center_b, ang_b);
+        const analytical = prim_kinetic_deriv(alpha_a, center_a, ang_a, alpha_b, center_b, ang_b);
 
         const dirs = [3]Vec3{
             .{ .x = delta, .y = 0.0, .z = 0.0 },
@@ -2505,7 +2518,7 @@ test "primitive kinetic derivative vs FD" {
                 .y = center_a.y - d.y,
                 .z = center_a.z - d.z,
             };
-            const t_p = obara_saika.primitiveKinetic(
+            const t_p = obara_saika.primitive_kinetic(
                 alpha_a,
                 ca_p,
                 ang_a,
@@ -2513,7 +2526,7 @@ test "primitive kinetic derivative vs FD" {
                 center_b,
                 ang_b,
             );
-            const t_m = obara_saika.primitiveKinetic(
+            const t_m = obara_saika.primitive_kinetic(
                 alpha_a,
                 ca_m,
                 ang_a,
@@ -2531,7 +2544,7 @@ test "primitive kinetic derivative vs FD" {
         const ang_a = AngularMomentum{ .x = 0, .y = 1, .z = 0 };
         const ang_b = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
-        const analytical = primKineticDeriv(alpha_a, center_a, ang_a, alpha_b, center_b, ang_b);
+        const analytical = prim_kinetic_deriv(alpha_a, center_a, ang_a, alpha_b, center_b, ang_b);
 
         const dirs = [3]Vec3{
             .{ .x = delta, .y = 0.0, .z = 0.0 },
@@ -2549,7 +2562,7 @@ test "primitive kinetic derivative vs FD" {
                 .y = center_a.y - d.y,
                 .z = center_a.z - d.z,
             };
-            const t_p = obara_saika.primitiveKinetic(
+            const t_p = obara_saika.primitive_kinetic(
                 alpha_a,
                 ca_p,
                 ang_a,
@@ -2557,7 +2570,7 @@ test "primitive kinetic derivative vs FD" {
                 center_b,
                 ang_b,
             );
-            const t_m = obara_saika.primitiveKinetic(
+            const t_m = obara_saika.primitive_kinetic(
                 alpha_a,
                 ca_m,
                 ang_a,
@@ -2575,7 +2588,7 @@ test "primitive kinetic derivative vs FD" {
         const ang_a = AngularMomentum{ .x = 0, .y = 0, .z = 1 };
         const ang_b = AngularMomentum{ .x = 0, .y = 1, .z = 0 };
 
-        const analytical = primKineticDeriv(alpha_a, center_a, ang_a, alpha_b, center_b, ang_b);
+        const analytical = prim_kinetic_deriv(alpha_a, center_a, ang_a, alpha_b, center_b, ang_b);
 
         const dirs = [3]Vec3{
             .{ .x = delta, .y = 0.0, .z = 0.0 },
@@ -2593,7 +2606,7 @@ test "primitive kinetic derivative vs FD" {
                 .y = center_a.y - d.y,
                 .z = center_a.z - d.z,
             };
-            const t_p = obara_saika.primitiveKinetic(
+            const t_p = obara_saika.primitive_kinetic(
                 alpha_a,
                 ca_p,
                 ang_a,
@@ -2601,7 +2614,7 @@ test "primitive kinetic derivative vs FD" {
                 center_b,
                 ang_b,
             );
-            const t_m = obara_saika.primitiveKinetic(
+            const t_m = obara_saika.primitive_kinetic(
                 alpha_a,
                 ca_m,
                 ang_a,
@@ -2632,7 +2645,7 @@ test "primitive nuclear derivative vs FD" {
         const ang_a = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
         const ang_b = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
-        const analytical = primNuclearDeriv(
+        const analytical = prim_nuclear_deriv(
             alpha_a,
             center_a,
             ang_a,
@@ -2659,7 +2672,7 @@ test "primitive nuclear derivative vs FD" {
                 .y = center_a.y - d.y,
                 .z = center_a.z - d.z,
             };
-            const v_p = obara_saika.primitiveNuclearAttraction(
+            const v_p = obara_saika.primitive_nuclear_attraction(
                 alpha_a,
                 ca_p,
                 ang_a,
@@ -2669,7 +2682,7 @@ test "primitive nuclear derivative vs FD" {
                 nuc_pos,
                 nuc_charge,
             );
-            const v_m = obara_saika.primitiveNuclearAttraction(
+            const v_m = obara_saika.primitive_nuclear_attraction(
                 alpha_a,
                 ca_m,
                 ang_a,
@@ -2689,7 +2702,7 @@ test "primitive nuclear derivative vs FD" {
         const ang_a = AngularMomentum{ .x = 0, .y = 1, .z = 0 };
         const ang_b = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
-        const analytical = primNuclearDeriv(
+        const analytical = prim_nuclear_deriv(
             alpha_a,
             center_a,
             ang_a,
@@ -2716,7 +2729,7 @@ test "primitive nuclear derivative vs FD" {
                 .y = center_a.y - d.y,
                 .z = center_a.z - d.z,
             };
-            const v_p = obara_saika.primitiveNuclearAttraction(
+            const v_p = obara_saika.primitive_nuclear_attraction(
                 alpha_a,
                 ca_p,
                 ang_a,
@@ -2726,7 +2739,7 @@ test "primitive nuclear derivative vs FD" {
                 nuc_pos,
                 nuc_charge,
             );
-            const v_m = obara_saika.primitiveNuclearAttraction(
+            const v_m = obara_saika.primitive_nuclear_attraction(
                 alpha_a,
                 ca_m,
                 ang_a,

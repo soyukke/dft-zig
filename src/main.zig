@@ -13,7 +13,7 @@ pub fn main(init: std.process.Init) !void {
     _ = args_iter.next(); // program name
     const config_path_opt = args_iter.next();
     if (config_path_opt == null) {
-        try printUsage(io);
+        try print_usage(io);
         return;
     }
     const config_path = config_path_opt.?;
@@ -44,9 +44,9 @@ pub fn main(init: std.process.Init) !void {
     var validation = try cfg.validate(alloc);
     defer validation.deinit();
 
-    try reportValidationIssues(logger, validation.issues);
+    try report_validation_issues(logger, validation.issues);
 
-    if (has_file_errors or validation.hasErrors()) {
+    if (has_file_errors or validation.has_errors()) {
         try logger.print(.err, "Config validation failed. Aborting.\n", .{});
         return;
     }
@@ -54,12 +54,12 @@ pub fn main(init: std.process.Init) !void {
     var atoms = try dft.xyz.load(alloc, io, cfg.xyz_path);
     defer atoms.deinit(alloc);
 
-    try dft.xyz.validateInCell(atoms.items, cfg.cell);
+    try dft.xyz.validate_in_cell(atoms.items, cfg.cell);
 
     try dft.dft.run(alloc, io, cfg, atoms.items);
 }
 
-fn reportValidationIssues(
+fn report_validation_issues(
     logger: dft.runtime_logging.Logger,
     issues: []const dft.config.ValidationIssue,
 ) !void {
@@ -84,7 +84,7 @@ fn reportValidationIssues(
 }
 
 /// Print CLI usage.
-fn printUsage(io: std.Io) !void {
+fn print_usage(io: std.Io) !void {
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
     const stdout = &stdout_writer.interface;

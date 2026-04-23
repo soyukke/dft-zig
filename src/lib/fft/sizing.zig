@@ -1,12 +1,12 @@
 /// Return the next FFT-friendly size whose factors are only 2, 3, and 5.
-pub fn nextFftSize(value: usize) usize {
+pub fn next_fft_size(value: usize) usize {
     if (value <= 1) return 1;
     var n = value;
-    while (!isFftSize(n)) : (n += 1) {}
+    while (!is_fft_size(n)) : (n += 1) {}
     return n;
 }
 
-fn isFftSize(value: usize) bool {
+fn is_fft_size(value: usize) bool {
     var n = value;
     while (n % 2 == 0) n /= 2;
     while (n % 3 == 0) n /= 3;
