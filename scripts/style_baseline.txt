@@ -11,7 +11,6 @@ src/features/dfpt/dfpt.zig	function_too_long	1
 src/features/dfpt/dynmat.zig	function_too_long	3
 src/features/dfpt/electric.zig	function_too_long	3
 src/features/dfpt/gamma.zig	function_too_long	3
-src/features/dfpt/perturbation.zig	function_too_long	1
 src/features/dfpt/phonon_q/band_direct.zig	function_too_long	3
 src/features/dfpt/phonon_q/band_ifc.zig	function_too_long	3
 src/features/dfpt/phonon_q/dynmat_build.zig	function_too_long	4
@@ -22,7 +21,6 @@ src/features/dfpt/phonon_q/solver_single.zig	function_too_long	3
 src/features/dfpt/sternheimer.zig	function_too_long	1
 src/features/dft/dft.zig	function_too_long	1
 src/features/forces/forces.zig	function_too_long	1
-src/features/gto_scf/gto_scf.zig	function_too_long	1
 src/features/gto_scf/kohn_sham.zig	function_too_long	2
 src/features/integrals/libcint.zig	function_too_long	3
 src/features/integrals/obara_saika.zig	function_too_long	2
@@ -33,12 +31,10 @@ src/features/linear_scaling/local_orbital_scf.zig	function_too_long	2
 src/features/paw/paw_xc.zig	function_too_long	3
 src/features/relax/relax.zig	function_too_long	3
 src/features/scf/apply.zig	function_too_long	2
-src/features/scf/band_solver.zig	function_too_long	2
 src/features/scf/kpoint_parallel.zig	function_too_long	7
 src/features/scf/mixing.zig	function_too_long	3
 src/features/scf/paw_scf.zig	function_too_long	2
 src/features/scf/scf.zig	function_too_long	5
 src/features/scf/scf_spin.zig	function_too_long	2
 src/features/scf/smearing.zig	function_too_long	4
-src/features/stress/nlcc_stress.zig	function_too_long	1
 src/features/stress/stress.zig	function_too_long	2

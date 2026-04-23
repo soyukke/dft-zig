@@ -271,29 +271,78 @@ pub fn build_xc_perturbation_full_complex(
     const result = try alloc.alloc(math.Complex, total);
     errdefer alloc.free(result);
 
-    for (0..total) |i| {
-        // σ¹ = 2·(∇n₀·∇n¹) — ∇n₀ is real, ∇n¹ is complex
-        const sigma1 = math.complex.scale(
-            math.complex.add(
-                math.complex.add(
-                    math.complex.scale(grad1.x[i], gn0_x[i]),
-                    math.complex.scale(grad1.y[i], gn0_y[i]),
-                ),
-                math.complex.scale(grad1.z[i], gn0_z[i]),
-            ),
-            2.0,
-        );
+    fill_complex_gga_xc_terms(
+        rho1_r,
+        grad1,
+        gn0_x,
+        gn0_y,
+        gn0_z,
+        f_nn,
+        f_ns,
+        f_ss,
+        v_s,
+        result,
+        ax,
+        ay,
+        az,
+    );
 
-        // direct = f_nn·n¹ + f_nσ·σ¹
+    // 5. div_A = divergence_from_complex(A_x, A_y, A_z)
+    const div_a = try divergence_from_complex(alloc, grid, ax, ay, az);
+    defer alloc.free(div_a);
+
+    // 6. result -= 2·div_A
+    for (0..total) |i| {
+        result[i] = math.complex.sub(result[i], math.complex.scale(div_a[i], 2.0));
+    }
+
+    return result;
+}
+
+fn complex_sigma1(
+    grad1: ComplexGradient,
+    gn0_x: []const f64,
+    gn0_y: []const f64,
+    gn0_z: []const f64,
+    i: usize,
+) math.Complex {
+    return math.complex.scale(
+        math.complex.add(
+            math.complex.add(
+                math.complex.scale(grad1.x[i], gn0_x[i]),
+                math.complex.scale(grad1.y[i], gn0_y[i]),
+            ),
+            math.complex.scale(grad1.z[i], gn0_z[i]),
+        ),
+        2.0,
+    );
+}
+
+fn fill_complex_gga_xc_terms(
+    rho1_r: []const math.Complex,
+    grad1: ComplexGradient,
+    gn0_x: []const f64,
+    gn0_y: []const f64,
+    gn0_z: []const f64,
+    f_nn: []const f64,
+    f_ns: []const f64,
+    f_ss: []const f64,
+    v_s: []const f64,
+    result: []math.Complex,
+    ax: []math.Complex,
+    ay: []math.Complex,
+    az: []math.Complex,
+) void {
+    for (0..rho1_r.len) |i| {
+        const sigma1 = complex_sigma1(grad1, gn0_x, gn0_y, gn0_z, i);
         result[i] = math.complex.add(
             math.complex.scale(rho1_r[i], f_nn[i]),
             math.complex.scale(sigma1, f_ns[i]),
         );
-
-        // A_α = (f_nσ·n¹ + f_σσ·σ¹)·∂n₀/∂x_α + v_σ·∂n¹/∂x_α
-        const fns_n1 = math.complex.scale(rho1_r[i], f_ns[i]);
-        const fss_s1 = math.complex.scale(sigma1, f_ss[i]);
-        const coeff = math.complex.add(fns_n1, fss_s1);
+        const coeff = math.complex.add(
+            math.complex.scale(rho1_r[i], f_ns[i]),
+            math.complex.scale(sigma1, f_ss[i]),
+        );
         ax[i] = math.complex.add(
             math.complex.scale(coeff, gn0_x[i]),
             math.complex.scale(grad1.x[i], v_s[i]),
@@ -307,17 +356,6 @@ pub fn build_xc_perturbation_full_complex(
             math.complex.scale(grad1.z[i], v_s[i]),
         );
     }
-
-    // 5. div_A = divergence_from_complex(A_x, A_y, A_z)
-    const div_a = try divergence_from_complex(alloc, grid, ax, ay, az);
-    defer alloc.free(div_a);
-
-    // 6. result -= 2·div_A
-    for (0..total) |i| {
-        result[i] = math.complex.sub(result[i], math.complex.scale(div_a[i], 2.0));
-    }
-
-    return result;
 }
 
 /// Complex gradient: ∇f(r) from complex f(r) on FFT grid.

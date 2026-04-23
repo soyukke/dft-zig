@@ -65,6 +65,35 @@ fn accumulate_nlcc_stress_g(
     }
 }
 
+fn combine_density_with_core(
+    alloc: std.mem.Allocator,
+    rho_r: []const f64,
+    rho_core: []const f64,
+) ![]f64 {
+    std.debug.assert(rho_r.len == rho_core.len);
+    const rho_total = try alloc.alloc(f64, rho_r.len);
+    for (0..rho_r.len) |i| {
+        rho_total[i] = rho_r[i] + rho_core[i];
+    }
+    return rho_total;
+}
+
+fn accumulate_nlcc_diagonal(
+    grid: Grid,
+    rho_core: []const f64,
+    vxc_r: []const f64,
+    inv_volume: f64,
+    sigma: *Stress3x3,
+) void {
+    const dv = grid.volume / @as(f64, @floatFromInt(rho_core.len));
+    var vxc_core: f64 = 0.0;
+    for (0..rho_core.len) |i| {
+        vxc_core += vxc_r[i] * rho_core[i] * dv;
+    }
+    const nlcc_diag = -vxc_core * inv_volume;
+    for (0..3) |a| sigma[a][a] += nlcc_diag;
+}
+
 /// NLCC stress: contribution from core charge density dependence on strain.
 /// σ_αβ = -(1/Ω) Σ_{G≠0} V_xc(G) × Σ_I ρ_core_form'(|G|) × G_αG_β/|G| × Re[S*_I(G)]
 ///        -(E_nlcc/Ω) δ_αβ  (volume scaling)
@@ -86,16 +115,9 @@ pub fn nlcc_stress(
     if (rho_core == null) return sigma;
 
     const inv_volume = 1.0 / grid.volume;
-
-    // Compute V_xc(G) from V_xc(r)
-    const n_grid = grid.nx * grid.ny * grid.nz;
-    const rho_total = try alloc.alloc(f64, n_grid);
+    const rho_core_values = rho_core.?;
+    const rho_total = try combine_density_with_core(alloc, rho_r, rho_core_values);
     defer alloc.free(rho_total);
-
-    for (0..n_grid) |i| {
-        rho_total[i] = rho_r[i];
-        if (rho_core) |rc| rho_total[i] += rc[i];
-    }
 
     const scf_grid = to_scf_grid(grid);
     const xc_fields = try scf.compute_xc_fields(alloc, scf_grid, rho_total, null, false, xc_func);
@@ -129,18 +151,7 @@ pub fn nlcc_stress(
         );
     }
 
-    // NLCC diagonal: -(∫V_xc × ρ_core dr)/Ω δ_αβ
-    {
-        const dv = grid.volume / @as(f64, @floatFromInt(n_grid));
-        var vxc_core: f64 = 0.0;
-        for (0..n_grid) |i| {
-            if (rho_core) |rc| {
-                vxc_core += xc_fields.vxc[i] * rc[i] * dv;
-            }
-        }
-        const nlcc_diag = -vxc_core * inv_volume;
-        for (0..3) |a| sigma[a][a] += nlcc_diag;
-    }
+    accumulate_nlcc_diagonal(grid, rho_core_values, xc_fields.vxc, inv_volume, &sigma);
 
     // Symmetrize
     for (0..3) |a| {

@@ -101,6 +101,31 @@ const RhfLoopResult = struct {
     eigen: linalg.RealEigenDecomp,
 };
 
+fn rhf_has_converged(
+    iter: usize,
+    e_total: f64,
+    e_old: f64,
+    p_mat: []const f64,
+    p_old: []const f64,
+    params: ScfParams,
+) bool {
+    const delta_e = @abs(e_total - e_old);
+    const rms_p = density_matrix.density_rms_diff(p_mat.len, p_mat, p_old);
+    return iter > 0 and delta_e < params.energy_threshold and rms_p < params.density_threshold;
+}
+
+fn finalize_rhf_total_energy(
+    n: usize,
+    h_core: []const f64,
+    eri_table: anytype,
+    p_mat: []f64,
+    f_mat: []f64,
+    v_nn: f64,
+) f64 {
+    fock.update_fock_matrix(n, h_core, p_mat, eri_table, f_mat);
+    return energy_mod.electronic_energy(n, p_mat, h_core, f_mat) + v_nn;
+}
+
 fn run_rhf_scf_loop(
     alloc: std.mem.Allocator,
     n: usize,
@@ -135,11 +160,7 @@ fn run_rhf_scf_loop(
         const e_elec = energy_mod.electronic_energy(n, p_mat, h_core, f_mat);
         e_total = e_elec + v_nn;
 
-        // Check convergence
-        const delta_e = @abs(e_total - e_old);
-        const rms_p = density_matrix.density_rms_diff(n, p_mat, p_old);
-
-        if (iter > 0 and delta_e < params.energy_threshold and rms_p < params.density_threshold) {
+        if (rhf_has_converged(iter, e_total, e_old, p_mat, p_old, params)) {
             converged = true;
             break;
         }
@@ -160,9 +181,7 @@ fn run_rhf_scf_loop(
 
     // If not converged, do a final energy evaluation
     if (!converged) {
-        fock.update_fock_matrix(n, h_core, p_mat, eri_table, f_mat);
-        const e_elec = energy_mod.electronic_energy(n, p_mat, h_core, f_mat);
-        e_total = e_elec + v_nn;
+        e_total = finalize_rhf_total_energy(n, h_core, eri_table, p_mat, f_mat, v_nn);
     }
 
     return .{

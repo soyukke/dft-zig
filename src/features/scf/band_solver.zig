@@ -152,6 +152,16 @@ const BandInitVectors = struct {
     cols: usize = 0,
 };
 
+const BandProblem = struct {
+    nbands_use: usize,
+    diag: []f64,
+    init_vectors: BandInitVectors,
+
+    fn deinit(self: BandProblem, alloc: std.mem.Allocator) void {
+        alloc.free(self.diag);
+    }
+};
+
 const BandNonlocalSetup = struct {
     nonlocal_enabled: bool,
     has_paw: bool,
@@ -214,30 +224,15 @@ pub fn band_eigenvalues_iterative_ext(
 
     if (basis.gvecs.len == 0) return error.NoPlaneWaves;
 
-    const nbands_use = @min(nbands, basis.gvecs.len);
-    if (nbands_use == 0) return error.InvalidBandConfig;
+    const problem = try init_band_problem(alloc, ctx, basis.gvecs, nbands, cache, opts);
+    defer problem.deinit(alloc);
 
-    const req = grid_requirement(basis.gvecs);
-    if (req.nx > ctx.grid.nx or req.ny > ctx.grid.ny or req.nz > ctx.grid.nz) {
-        return error.InvalidGrid;
-    }
-    const diag = try alloc.alloc(f64, basis.gvecs.len);
-    defer alloc.free(diag);
-
-    fill_band_diagonal(diag, basis.gvecs);
-
-    const init_vectors = load_band_init_vectors(
-        cache,
-        opts.reuse_vectors,
-        basis.gvecs.len,
-        nbands_use,
-    );
     var nonlocal_setup = try init_band_nonlocal_setup(
         alloc,
         species,
         atoms,
         basis.gvecs,
-        nbands_use,
+        problem.nbands_use,
         opts,
         cfg.scf.enable_nonlocal and has_nonlocal(species),
     );
@@ -261,13 +256,36 @@ pub fn band_eigenvalues_iterative_ext(
         cfg,
         &apply_ctx,
         basis.gvecs.len,
-        nbands_use,
-        diag,
-        init_vectors,
+        problem.nbands_use,
+        problem.diag,
+        problem.init_vectors,
         cache,
         opts,
         nonlocal_setup.has_paw,
     );
+}
+
+fn init_band_problem(
+    alloc: std.mem.Allocator,
+    ctx: *const BandIterativeContext,
+    gvecs: []const plane_wave.GVector,
+    nbands: usize,
+    cache: ?*BandVectorCache,
+    opts: BandEigenOptions,
+) !BandProblem {
+    const nbands_use = @min(nbands, gvecs.len);
+    if (nbands_use == 0) return error.InvalidBandConfig;
+    const req = grid_requirement(gvecs);
+    if (req.nx > ctx.grid.nx or req.ny > ctx.grid.ny or req.nz > ctx.grid.nz) {
+        return error.InvalidGrid;
+    }
+    const diag = try alloc.alloc(f64, gvecs.len);
+    fill_band_diagonal(diag, gvecs);
+    return .{
+        .nbands_use = nbands_use,
+        .diag = diag,
+        .init_vectors = load_band_init_vectors(cache, opts.reuse_vectors, gvecs.len, nbands_use),
+    };
 }
 
 fn fill_band_diagonal(diag: []f64, gvecs: []const plane_wave.GVector) void {
@@ -375,43 +393,16 @@ fn init_band_apply_context(
     nonlocal_setup: *BandNonlocalSetup,
 ) !ApplyContext {
     if (nonlocal_setup.build_nonlocal_ourselves) {
-        var map = try PwGridMap.init(alloc, gvecs, ctx.grid);
-        errdefer map.deinit(alloc);
-        if (ctx.fft_index_map) |idx_map| {
-            try map.build_fft_indices(alloc, idx_map);
-        }
-        const fft_plan = if (opts.shared_fft_plan) |plan|
-            plan
-        else
-            try fft.Fft3dPlan.init_with_backend(
-                alloc,
-                io,
-                ctx.grid.nx,
-                ctx.grid.ny,
-                ctx.grid.nz,
-                cfg.scf.fft_backend,
-            );
-        const owns_plan = opts.shared_fft_plan == null;
-        var apply_ctx = try ApplyContext.init_with_cache(
+        return try init_owned_nonlocal_apply_context(
             alloc,
             io,
-            ctx.grid,
             gvecs,
-            ctx.local_r,
-            null,
-            nonlocal_setup.owned_nonlocal_ctx,
-            map,
+            cfg,
+            ctx,
             atoms,
-            ctx.inv_volume,
-            null,
-            ctx.fft_index_map,
-            fft_plan,
-            owns_plan,
+            opts,
+            nonlocal_setup,
         );
-        apply_ctx.owns_nonlocal = true;
-        apply_ctx.owns_map = true;
-        nonlocal_setup.owned_nonlocal_ctx = null;
-        return apply_ctx;
     }
     if (opts.shared_fft_plan != null and nonlocal_setup.num_workspaces <= 1) {
         return try ApplyContext.init_with_fft_plan(
@@ -446,6 +437,55 @@ fn init_band_apply_context(
         cfg.scf.fft_backend,
         nonlocal_setup.num_workspaces,
     );
+}
+
+fn init_owned_nonlocal_apply_context(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    gvecs: []const plane_wave.GVector,
+    cfg: config.Config,
+    ctx: *const BandIterativeContext,
+    atoms: []const hamiltonian.AtomData,
+    opts: BandEigenOptions,
+    nonlocal_setup: *BandNonlocalSetup,
+) !ApplyContext {
+    var map = try PwGridMap.init(alloc, gvecs, ctx.grid);
+    errdefer map.deinit(alloc);
+    if (ctx.fft_index_map) |idx_map| {
+        try map.build_fft_indices(alloc, idx_map);
+    }
+    const fft_plan = if (opts.shared_fft_plan) |plan|
+        plan
+    else
+        try fft.Fft3dPlan.init_with_backend(
+            alloc,
+            io,
+            ctx.grid.nx,
+            ctx.grid.ny,
+            ctx.grid.nz,
+            cfg.scf.fft_backend,
+        );
+    const owns_plan = opts.shared_fft_plan == null;
+    var apply_ctx = try ApplyContext.init_with_cache(
+        alloc,
+        io,
+        ctx.grid,
+        gvecs,
+        ctx.local_r,
+        null,
+        nonlocal_setup.owned_nonlocal_ctx,
+        map,
+        atoms,
+        ctx.inv_volume,
+        null,
+        ctx.fft_index_map,
+        fft_plan,
+        owns_plan,
+    );
+    apply_ctx.owns_nonlocal = true;
+    apply_ctx.owns_map = true;
+    nonlocal_setup.owned_nonlocal_ctx = null;
+    return apply_ctx;
 }
 
 fn band_overlap_apply_fn(
