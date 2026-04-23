@@ -43,6 +43,99 @@ fn hartree_potential_at_g(rho_g: math.Complex, g2: f64, coulomb_r_cut: ?f64) mat
     return math.complex.init(0.0, 0.0);
 }
 
+fn sum_spin_density(
+    alloc: std.mem.Allocator,
+    rho_up: []const f64,
+    rho_down: []const f64,
+) ![]f64 {
+    std.debug.assert(rho_up.len == rho_down.len);
+    const rho_total = try alloc.alloc(f64, rho_up.len);
+    for (0..rho_up.len) |i| {
+        rho_total[i] = rho_up[i] + rho_down[i];
+    }
+    return rho_total;
+}
+
+const SpinPotentialValues = struct {
+    up: []math.Complex,
+    down: []math.Complex,
+};
+
+fn build_spin_potential_values(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    rho_g: []const math.Complex,
+    vxc_up_g: []const math.Complex,
+    vxc_down_g: []const math.Complex,
+    coulomb_r_cut: ?f64,
+) !SpinPotentialValues {
+    const total = grid.count();
+    const values_up = try alloc.alloc(math.Complex, total);
+    errdefer alloc.free(values_up);
+
+    const values_down = try alloc.alloc(math.Complex, total);
+    errdefer alloc.free(values_down);
+
+    var it = gvec_iter.GVecIterator.init(grid);
+    while (it.next()) |g| {
+        const vh = hartree_potential_at_g(rho_g[g.idx], g.g2, coulomb_r_cut);
+        values_up[g.idx] = math.complex.add(vh, vxc_up_g[g.idx]);
+        values_down[g.idx] = math.complex.add(vh, vxc_down_g[g.idx]);
+    }
+    return .{ .up = values_up, .down = values_down };
+}
+
+const SpinReciprocalXc = struct {
+    vxc_up_g: []math.Complex,
+    vxc_down_g: []math.Complex,
+
+    fn deinit(self: SpinReciprocalXc, alloc: std.mem.Allocator) void {
+        alloc.free(self.vxc_up_g);
+        alloc.free(self.vxc_down_g);
+    }
+};
+
+fn build_spin_reciprocal_xc(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    rho_up: []const f64,
+    rho_down: []const f64,
+    rho_core: ?[]const f64,
+    use_rfft: bool,
+    xc_func: xc.Functional,
+    vxc_r_out_up: ?*?[]f64,
+    vxc_r_out_down: ?*?[]f64,
+) !SpinReciprocalXc {
+    const xc_fields = try compute_xc_fields_spin(
+        alloc,
+        grid,
+        rho_up,
+        rho_down,
+        rho_core,
+        use_rfft,
+        xc_func,
+    );
+    defer {
+        if (vxc_r_out_up) |out| {
+            out.* = xc_fields.vxc_up;
+        } else {
+            alloc.free(xc_fields.vxc_up);
+        }
+        if (vxc_r_out_down) |out| {
+            out.* = xc_fields.vxc_down;
+        } else {
+            alloc.free(xc_fields.vxc_down);
+        }
+        alloc.free(xc_fields.exc);
+    }
+
+    const vxc_up_g = try real_to_reciprocal(alloc, grid, xc_fields.vxc_up, use_rfft);
+    errdefer alloc.free(vxc_up_g);
+    const vxc_down_g = try real_to_reciprocal(alloc, grid, xc_fields.vxc_down, use_rfft);
+    errdefer alloc.free(vxc_down_g);
+    return .{ .vxc_up_g = vxc_up_g, .vxc_down_g = vxc_down_g };
+}
+
 /// Build Hartree+XC potential grid.
 /// If vxc_r_out is non-null, the real-space V_xc(r) is transferred to the caller
 /// instead of being freed (useful for NLCC force calculation).
@@ -130,20 +223,13 @@ pub fn build_potential_grid_spin(
     vxc_r_out_down: ?*?[]f64,
     coulomb_r_cut: ?f64,
 ) !SpinPotentialGrids {
-    const total = grid.count();
-
-    // Compute rho_total for Hartree
-    const rho_total = try alloc.alloc(f64, total);
+    const rho_total = try sum_spin_density(alloc, rho_up, rho_down);
     defer alloc.free(rho_total);
 
-    for (0..total) |i| {
-        rho_total[i] = rho_up[i] + rho_down[i];
-    }
     const rho_g = try real_to_reciprocal(alloc, grid, rho_total, use_rfft);
     defer alloc.free(rho_g);
 
-    // Compute spin XC fields
-    const xc_fields = try compute_xc_fields_spin(
+    const reciprocal_xc = try build_spin_reciprocal_xc(
         alloc,
         grid,
         rho_up,
@@ -151,45 +237,19 @@ pub fn build_potential_grid_spin(
         rho_core,
         use_rfft,
         xc_func,
+        vxc_r_out_up,
+        vxc_r_out_down,
     );
-    defer {
-        if (vxc_r_out_up) |out| {
-            out.* = xc_fields.vxc_up;
-        } else {
-            alloc.free(xc_fields.vxc_up);
-        }
-        if (vxc_r_out_down) |out| {
-            out.* = xc_fields.vxc_down;
-        } else {
-            alloc.free(xc_fields.vxc_down);
-        }
-        alloc.free(xc_fields.exc);
-    }
+    defer reciprocal_xc.deinit(alloc);
 
-    const vxc_up_g = try real_to_reciprocal(alloc, grid, xc_fields.vxc_up, use_rfft);
-    defer alloc.free(vxc_up_g);
-
-    const vxc_down_g = try real_to_reciprocal(alloc, grid, xc_fields.vxc_down, use_rfft);
-    defer alloc.free(vxc_down_g);
-
-    // Build V_H(G) + V_xc_up(G) and V_H(G) + V_xc_down(G)
-    const values_up = try alloc.alloc(math.Complex, total);
-    const values_down = try alloc.alloc(math.Complex, total);
-    var it = gvec_iter.GVecIterator.init(grid);
-    while (it.next()) |g| {
-        var vh = math.complex.init(0.0, 0.0);
-        if (coulomb_r_cut) |r_cut| {
-            const g_mag = @sqrt(g.g2);
-            const kernel = coulomb.cutoff_coulomb_kernel(g.g2, g_mag, r_cut);
-            vh = math.complex.scale(rho_g[g.idx], kernel);
-        } else {
-            if (g.g2 > 1e-12) {
-                vh = math.complex.scale(rho_g[g.idx], 8.0 * std.math.pi / g.g2);
-            }
-        }
-        values_up[g.idx] = math.complex.add(vh, vxc_up_g[g.idx]);
-        values_down[g.idx] = math.complex.add(vh, vxc_down_g[g.idx]);
-    }
+    const values = try build_spin_potential_values(
+        alloc,
+        grid,
+        rho_g,
+        reciprocal_xc.vxc_up_g,
+        reciprocal_xc.vxc_down_g,
+        coulomb_r_cut,
+    );
 
     return .{
         .up = .{
@@ -199,7 +259,7 @@ pub fn build_potential_grid_spin(
             .min_h = grid.min_h,
             .min_k = grid.min_k,
             .min_l = grid.min_l,
-            .values = values_up,
+            .values = values.up,
         },
         .down = .{
             .nx = grid.nx,
@@ -208,7 +268,7 @@ pub fn build_potential_grid_spin(
             .min_h = grid.min_h,
             .min_k = grid.min_k,
             .min_l = grid.min_l,
-            .values = values_down,
+            .values = values.down,
         },
     };
 }

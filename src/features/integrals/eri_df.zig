@@ -501,7 +501,34 @@ fn prepare_three_center_primitive_pair(
     };
     const diff_pq = math.Vec3.sub(bra.center, aux_center);
     const rho = bra.p_val * q_val / pq_sum;
+    fill_three_center_root_arrays(
+        workspace,
+        setup,
+        bra,
+        aux_center,
+        weighted_center,
+        pq_sum,
+        q_val,
+        rho,
+        prefactor,
+        diff_pq,
+    );
+    build_three_center_g_terms(workspace, setup);
+    return coeff_abp;
+}
 
+fn fill_three_center_root_arrays(
+    workspace: *ThreeCenterWorkspace,
+    setup: ThreeCenterSetup,
+    bra: ThreeCenterBraPair,
+    aux_center: math.Vec3,
+    weighted_center: math.Vec3,
+    pq_sum: f64,
+    q_val: f64,
+    rho: f64,
+    prefactor: f64,
+    diff_pq: math.Vec3,
+) void {
     rys_roots_mod.rys_roots(
         setup.nroots,
         rho * math.Vec3.dot(diff_pq, diff_pq),
@@ -521,7 +548,10 @@ fn prepare_three_center_primitive_pair(
         workspace.c0pz[r] = (weighted_center.z - aux_center.z) * t2;
         workspace.w_pref[r] = workspace.rys_w[r] * prefactor;
     }
+}
 
+fn build_three_center_g_terms(workspace: *ThreeCenterWorkspace, setup: ThreeCenterSetup) void {
+    const g_len = setup.nroots * setup.dim_ij * setup.dim_kl;
     build_g2d(
         setup.nroots,
         setup.dim_ij,
@@ -531,7 +561,7 @@ fn prepare_three_center_primitive_pair(
         &workspace.b10_arr,
         &workspace.b01_arr,
         &workspace.b00_arr,
-        workspace.gx[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
+        workspace.gx[0..g_len],
     );
     build_g2d(
         setup.nroots,
@@ -542,7 +572,7 @@ fn prepare_three_center_primitive_pair(
         &workspace.b10_arr,
         &workspace.b01_arr,
         &workspace.b00_arr,
-        workspace.gy[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
+        workspace.gy[0..g_len],
     );
     build_g2d_weighted(
         setup.nroots,
@@ -554,9 +584,8 @@ fn prepare_three_center_primitive_pair(
         &workspace.b01_arr,
         &workspace.b00_arr,
         &workspace.w_pref,
-        workspace.gz[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
+        workspace.gz[0..g_len],
     );
-    return coeff_abp;
 }
 
 fn build_three_center_bra_hr_axis(
@@ -777,28 +806,62 @@ pub fn contracted3_center_eri(
     const setup = init_three_center_setup(shell_a, shell_b, shell_p, output);
     std.debug.assert(setup.nroots <= MAX_NROOTS);
 
-    var norm_a: [MAX_NORM_TABLE]f64 = undefined;
-    var norm_b: [MAX_NORM_TABLE]f64 = undefined;
-    var norm_p: [MAX_NORM_TABLE]f64 = undefined;
-    var max_norm_a: [MAX_PRIM]f64 = undefined;
-    var max_norm_b: [MAX_PRIM]f64 = undefined;
+    var norms = init_three_center_norms(shell_a, shell_b, shell_p, setup);
+    var workspace: ThreeCenterWorkspace = .{};
+    accumulate_three_center_shell_pairs(
+        &workspace,
+        setup,
+        shell_a,
+        shell_b,
+        shell_p,
+        &norms,
+        output,
+    );
+    return setup.total_out;
+}
+
+const ThreeCenterNorms = struct {
+    norm_a: [MAX_NORM_TABLE]f64 = undefined,
+    norm_b: [MAX_NORM_TABLE]f64 = undefined,
+    norm_p: [MAX_NORM_TABLE]f64 = undefined,
+    max_norm_a: [MAX_PRIM]f64 = undefined,
+    max_norm_b: [MAX_PRIM]f64 = undefined,
+};
+
+fn init_three_center_norms(
+    shell_a: ContractedShell,
+    shell_b: ContractedShell,
+    shell_p: ContractedShell,
+    setup: ThreeCenterSetup,
+) ThreeCenterNorms {
+    var norms: ThreeCenterNorms = .{};
     fill_normalization_table_and_max(
         shell_a,
         setup.na,
         &setup.cart_a,
-        norm_a[0..],
-        max_norm_a[0..],
+        norms.norm_a[0..],
+        norms.max_norm_a[0..],
     );
     fill_normalization_table_and_max(
         shell_b,
         setup.nb,
         &setup.cart_b,
-        norm_b[0..],
-        max_norm_b[0..],
+        norms.norm_b[0..],
+        norms.max_norm_b[0..],
     );
-    fill_normalization_table(shell_p, setup.np, &setup.cart_p, norm_p[0..]);
+    fill_normalization_table(shell_p, setup.np, &setup.cart_p, norms.norm_p[0..]);
+    return norms;
+}
 
-    var workspace: ThreeCenterWorkspace = .{};
+fn accumulate_three_center_shell_pairs(
+    workspace: *ThreeCenterWorkspace,
+    setup: ThreeCenterSetup,
+    shell_a: ContractedShell,
+    shell_b: ContractedShell,
+    shell_p: ContractedShell,
+    norms: *const ThreeCenterNorms,
+    output: []f64,
+) void {
     for (shell_a.primitives, 0..) |prim_a, ipa| {
         for (shell_b.primitives, 0..) |prim_b, ipb| {
             const bra = init_three_center_bra_pair(
@@ -808,28 +871,26 @@ pub fn contracted3_center_eri(
                 prim_b,
                 ipa,
                 ipb,
-                max_norm_a[0..],
-                max_norm_b[0..],
+                norms.max_norm_a[0..],
+                norms.max_norm_b[0..],
                 setup.r2_ab,
             );
             for (shell_p.primitives, 0..) |prim_p, ipp| {
                 accumulate_three_center_primitive_pair(
-                    &workspace,
+                    workspace,
                     setup,
                     shell_p.center,
                     bra,
                     prim_p,
                     ipp,
-                    norm_a[0..],
-                    norm_b[0..],
-                    norm_p[0..],
+                    norms.norm_a[0..],
+                    norms.norm_b[0..],
+                    norms.norm_p[0..],
                     output,
                 );
             }
         }
     }
-
-    return setup.total_out;
 }
 
 // ============================================================================

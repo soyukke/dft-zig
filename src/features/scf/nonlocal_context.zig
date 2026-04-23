@@ -312,9 +312,48 @@ fn build_nonlocal_species_with_tables(
     const m_counts = try alloc.alloc(usize, beta_count);
     errdefer alloc.free(m_counts);
 
-    var radial = try alloc.alloc(f64, beta_count * g_count);
+    const radial = try alloc.alloc(f64, beta_count * g_count);
     defer alloc.free(radial);
 
+    const total_m = fill_nonlocal_radial_terms(
+        upf,
+        gvecs,
+        radial_tables,
+        l_list,
+        m_offsets,
+        m_counts,
+        radial,
+    );
+
+    const phi = try alloc.alloc(f64, total_m * g_count);
+    errdefer alloc.free(phi);
+
+    fill_nonlocal_phi(gvecs, l_list, m_offsets, m_counts, radial, phi);
+
+    return NonlocalSpecies{
+        .species_index = species_index,
+        .beta_count = beta_count,
+        .g_count = g_count,
+        .l_list = l_list,
+        .coeffs = upf.dij,
+        .m_offsets = m_offsets,
+        .m_counts = m_counts,
+        .m_total = total_m,
+        .phi = phi,
+    };
+}
+
+fn fill_nonlocal_radial_terms(
+    upf: pseudo.UpfData,
+    gvecs: []const plane_wave.GVector,
+    radial_tables: ?*const nonlocal.RadialTableSet,
+    l_list: []i32,
+    m_offsets: []usize,
+    m_counts: []usize,
+    radial: []f64,
+) usize {
+    const beta_count = upf.beta.len;
+    const g_count = gvecs.len;
     var total_m: usize = 0;
     var b: usize = 0;
     while (b < beta_count) : (b += 1) {
@@ -343,12 +382,20 @@ fn build_nonlocal_species_with_tables(
             }
         }
     }
+    return total_m;
+}
 
-    const phi = try alloc.alloc(f64, total_m * g_count);
-    errdefer alloc.free(phi);
-
-    b = 0;
-    while (b < beta_count) : (b += 1) {
+fn fill_nonlocal_phi(
+    gvecs: []const plane_wave.GVector,
+    l_list: []const i32,
+    m_offsets: []const usize,
+    m_counts: []const usize,
+    radial: []const f64,
+    phi: []f64,
+) void {
+    const g_count = gvecs.len;
+    var b: usize = 0;
+    while (b < l_list.len) : (b += 1) {
         const l_val = l_list[b];
         const m_count = m_counts[b];
         var m_idx: usize = 0;
@@ -359,21 +406,8 @@ fn build_nonlocal_species_with_tables(
             while (g < g_count) : (g += 1) {
                 const kpg = gvecs[g].kpg;
                 const ylm = nonlocal.real_spherical_harmonic(l_val, m, kpg.x, kpg.y, kpg.z);
-                const base = radial[b * g_count + g];
-                phi[offset * g_count + g] = 4.0 * std.math.pi * base * ylm;
+                phi[offset * g_count + g] = 4.0 * std.math.pi * radial[b * g_count + g] * ylm;
             }
         }
     }
-
-    return NonlocalSpecies{
-        .species_index = species_index,
-        .beta_count = beta_count,
-        .g_count = g_count,
-        .l_list = l_list,
-        .coeffs = upf.dij,
-        .m_offsets = m_offsets,
-        .m_counts = m_counts,
-        .m_total = total_m,
-        .phi = phi,
-    };
 }

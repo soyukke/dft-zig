@@ -432,42 +432,93 @@ fn parse_paw_data(alloc: std.mem.Allocator, content: []const u8) !?PawData {
     // Check if PP_PAW section exists
     const paw_tag = find_tag_by_name(content, "PP_PAW") orelse return null;
 
-    // Parse core_energy from PP_PAW attributes
+    const core_fields = try parse_paw_core_fields(alloc, paw_tag);
+    errdefer core_fields.deinit(alloc);
+    const aug_attrs = try parse_augmentation_attrs(alloc, content);
+    const qijl = try collect_qijl_entries(alloc, content);
+    errdefer free_qijl_entries(alloc, qijl);
+    const partial_waves = try collect_paw_partial_waves(alloc, content);
+    errdefer partial_waves.deinit(alloc);
+
+    // D^0_ij: use PP_DIJ values as the initial reference (these are D^0 for PAW)
+    // The actual D^0_ij from PP_PAW is stored in PP_DIJ for PAW UPF files
+    const dij0 = try parse_optional_float_tag(alloc, content, "PP_DIJ");
+    errdefer if (dij0.len > 0) alloc.free(dij0);
+
+    const number_of_proj = partial_waves.ae_wfc.len;
+
+    return PawData{
+        .ae_wfc = partial_waves.ae_wfc,
+        .ps_wfc = partial_waves.ps_wfc,
+        .qijl = qijl,
+        .lmax_aug = aug_attrs.lmax_aug,
+        .cutoff_r = aug_attrs.cutoff_r,
+        .cutoff_r_index = aug_attrs.cutoff_r_index,
+        .q_with_l = aug_attrs.q_with_l,
+        .dij0 = dij0,
+        .ae_core_density = core_fields.ae_core_density,
+        .ae_local_potential = core_fields.ae_local_potential,
+        .occupations = core_fields.occupations,
+        .core_energy = core_fields.core_energy,
+        .number_of_proj = number_of_proj,
+    };
+}
+
+const PawCoreFields = struct {
+    occupations: []f64,
+    ae_core_density: []f64,
+    ae_local_potential: []f64,
+    core_energy: f64,
+
+    fn deinit(self: PawCoreFields, alloc: std.mem.Allocator) void {
+        if (self.occupations.len > 0) alloc.free(self.occupations);
+        if (self.ae_core_density.len > 0) alloc.free(self.ae_core_density);
+        if (self.ae_local_potential.len > 0) alloc.free(self.ae_local_potential);
+    }
+};
+
+fn parse_paw_core_fields(alloc: std.mem.Allocator, paw_tag: Tag) !PawCoreFields {
     var core_energy: f64 = 0.0;
     if (find_attribute_value(paw_tag.start_tag, "core_energy")) |value| {
         core_energy = try parse_float_token(alloc, value);
     }
 
-    // Parse PP_OCCUPATIONS, PP_AE_NLCC, PP_AE_VLOC (all inside PP_PAW body)
     const occupations = try parse_optional_float_tag(alloc, paw_tag.body, "PP_OCCUPATIONS");
     errdefer if (occupations.len > 0) alloc.free(occupations);
-
     const ae_core_density = try parse_optional_float_tag(alloc, paw_tag.body, "PP_AE_NLCC");
     errdefer if (ae_core_density.len > 0) alloc.free(ae_core_density);
-
     const ae_local_potential = try parse_optional_float_tag(alloc, paw_tag.body, "PP_AE_VLOC");
     errdefer if (ae_local_potential.len > 0) alloc.free(ae_local_potential);
+    return .{
+        .occupations = occupations,
+        .ae_core_density = ae_core_density,
+        .ae_local_potential = ae_local_potential,
+        .core_energy = core_energy,
+    };
+}
 
-    // Parse PP_AUGMENTATION attributes
-    const aug_attrs = try parse_augmentation_attrs(alloc, content);
+const PawPartialWaveSet = struct {
+    ae_wfc: []paw_data.PawPartialWave,
+    ps_wfc: []paw_data.PawPartialWave,
 
-    // Parse PP_QIJL entries
-    const qijl = try collect_qijl_entries(alloc, content);
-    errdefer {
-        for (qijl) |*q| q.deinit(alloc);
-        alloc.free(qijl);
+    fn deinit(self: PawPartialWaveSet, alloc: std.mem.Allocator) void {
+        for (self.ae_wfc) |*w| w.deinit(alloc);
+        alloc.free(self.ae_wfc);
+        for (self.ps_wfc) |*w| w.deinit(alloc);
+        if (self.ps_wfc.len > 0) alloc.free(self.ps_wfc);
     }
+};
 
-    // Parse PP_FULL_WFC > PP_AEWFC
-    // (all-electron partial waves)
+fn collect_paw_partial_waves(
+    alloc: std.mem.Allocator,
+    content: []const u8,
+) !PawPartialWaveSet {
     const ae_wfc = try collect_partial_waves(alloc, content, "PP_AEWFC");
     errdefer {
         for (ae_wfc) |*w| w.deinit(alloc);
         alloc.free(ae_wfc);
     }
 
-    // Parse PP_FULL_WFC > PP_PSWFC (pseudo partial waves)
-    // These are inside PP_FULL_WFC, distinct from PP_PSWFC > PP_CHI
     const ps_wfc: []paw_data.PawPartialWave =
         if (find_tag_by_name(content, "PP_FULL_WFC")) |full_wfc_tag|
             try collect_partial_waves(alloc, full_wfc_tag.body, "PP_PSWFC")
@@ -477,29 +528,12 @@ fn parse_paw_data(alloc: std.mem.Allocator, content: []const u8) !?PawData {
         for (ps_wfc) |*w| w.deinit(alloc);
         if (ps_wfc.len > 0) alloc.free(ps_wfc);
     }
+    return .{ .ae_wfc = ae_wfc, .ps_wfc = ps_wfc };
+}
 
-    // D^0_ij: use PP_DIJ values as the initial reference (these are D^0 for PAW)
-    // The actual D^0_ij from PP_PAW is stored in PP_DIJ for PAW UPF files
-    const dij0 = try parse_optional_float_tag(alloc, content, "PP_DIJ");
-    errdefer if (dij0.len > 0) alloc.free(dij0);
-
-    const number_of_proj = ae_wfc.len;
-
-    return PawData{
-        .ae_wfc = ae_wfc,
-        .ps_wfc = ps_wfc,
-        .qijl = qijl,
-        .lmax_aug = aug_attrs.lmax_aug,
-        .cutoff_r = aug_attrs.cutoff_r,
-        .cutoff_r_index = aug_attrs.cutoff_r_index,
-        .q_with_l = aug_attrs.q_with_l,
-        .dij0 = dij0,
-        .ae_core_density = ae_core_density,
-        .ae_local_potential = ae_local_potential,
-        .occupations = occupations,
-        .core_energy = core_energy,
-        .number_of_proj = number_of_proj,
-    };
+fn free_qijl_entries(alloc: std.mem.Allocator, qijl: []paw_data.QijlEntry) void {
+    for (qijl) |*q| q.deinit(alloc);
+    alloc.free(qijl);
 }
 
 const Tag = struct {
