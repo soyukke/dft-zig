@@ -70,12 +70,12 @@ const RunResult = struct {
 };
 
 fn runScf(alloc: std.mem.Allocator, io: std.Io, ref: MolRef, params: KsParams) !RunResult {
-    var mol = try molecule_mod.loadXyzFile(alloc, io, ref.xyz_file, .@"6-31g_2dfp", 0);
+    var mol = try molecule_mod.load_xyz_file(alloc, io, ref.xyz_file, .@"6-31g_2dfp", 0);
     defer mol.deinit();
 
     const timer_start = std.Io.Clock.Timestamp.now(io, .awake);
 
-    var result = try kohn_sham.runKohnShamScf(
+    var result = try kohn_sham.run_kohn_sham_scf(
         alloc,
         io,
         mol.shells,

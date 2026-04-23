@@ -15,17 +15,17 @@ fn checkERI(
     shell_d: ContractedShell,
     tol: f64,
 ) !void {
-    const na = basis_mod.numCartesian(@as(u32, @intCast(shell_a.l)));
-    const nb = basis_mod.numCartesian(@as(u32, @intCast(shell_b.l)));
-    const nc = basis_mod.numCartesian(@as(u32, @intCast(shell_c.l)));
-    const nd = basis_mod.numCartesian(@as(u32, @intCast(shell_d.l)));
+    const na = basis_mod.num_cartesian(@as(u32, @intCast(shell_a.l)));
+    const nb = basis_mod.num_cartesian(@as(u32, @intCast(shell_b.l)));
+    const nc = basis_mod.num_cartesian(@as(u32, @intCast(shell_c.l)));
+    const nd = basis_mod.num_cartesian(@as(u32, @intCast(shell_d.l)));
     const total = na * nb * nc * nd;
 
     var output_rys: [10000]f64 = undefined;
     var output_os: [10000]f64 = undefined;
 
-    _ = rys_eri.contractedShellQuartetERI(shell_a, shell_b, shell_c, shell_d, output_rys[0..total]);
-    _ = obara_saika.contractedShellQuartetERI(shell_a, shell_b, shell_c, shell_d, output_os[0..total]);
+    _ = rys_eri.contracted_shell_quartet_eri(shell_a, shell_b, shell_c, shell_d, output_rys[0..total]);
+    _ = obara_saika.contracted_shell_quartet_eri(shell_a, shell_b, shell_c, shell_d, output_os[0..total]);
 
     var max_err: f64 = 0.0;
     var max_val: f64 = 0.0;
@@ -207,14 +207,14 @@ pub fn main(init: std.process.Init) !void {
         // Time Rys
         const t_start = std.Io.Clock.Timestamp.now(io, .awake);
         for (0..n_repeats) |_| {
-            _ = rys_eri.contractedShellQuartetERI(shell_p_multi, shell_p2_multi, shell_p_multi, shell_p2_multi, &output_rys);
+            _ = rys_eri.contracted_shell_quartet_eri(shell_p_multi, shell_p2_multi, shell_p_multi, shell_p2_multi, &output_rys);
         }
         const rys_ns: u64 = @intCast(t_start.untilNow(io).raw.nanoseconds);
         const t_start2 = std.Io.Clock.Timestamp.now(io, .awake);
 
         // Time OS
         for (0..n_repeats) |_| {
-            _ = obara_saika.contractedShellQuartetERI(shell_p_multi, shell_p2_multi, shell_p_multi, shell_p2_multi, &output_os);
+            _ = obara_saika.contracted_shell_quartet_eri(shell_p_multi, shell_p2_multi, shell_p_multi, shell_p2_multi, &output_os);
         }
         const os_ns: u64 = @intCast(t_start2.untilNow(io).raw.nanoseconds);
 
@@ -242,7 +242,7 @@ pub fn main(init: std.process.Init) !void {
                 .{ .alpha = 1.8, .coeff = 1.0 },
             },
         };
-        const nd_cart = basis_mod.numCartesian(2);
+        const nd_cart = basis_mod.num_cartesian(2);
         const total_dd = nd_cart * nd_cart * nd_cart * nd_cart;
         var output_rys2: [1296]f64 = undefined;
         var output_os2: [1296]f64 = undefined;
@@ -250,12 +250,12 @@ pub fn main(init: std.process.Init) !void {
         const n_repeats2: usize = 10000;
         const t2_start = std.Io.Clock.Timestamp.now(io, .awake);
         for (0..n_repeats2) |_| {
-            _ = rys_eri.contractedShellQuartetERI(shell_d1, shell_d2, shell_d1, shell_d2, output_rys2[0..total_dd]);
+            _ = rys_eri.contracted_shell_quartet_eri(shell_d1, shell_d2, shell_d1, shell_d2, output_rys2[0..total_dd]);
         }
         const rys_ns2: u64 = @intCast(t2_start.untilNow(io).raw.nanoseconds);
         const t2_start2 = std.Io.Clock.Timestamp.now(io, .awake);
         for (0..n_repeats2) |_| {
-            _ = obara_saika.contractedShellQuartetERI(shell_d1, shell_d2, shell_d1, shell_d2, output_os2[0..total_dd]);
+            _ = obara_saika.contracted_shell_quartet_eri(shell_d1, shell_d2, shell_d1, shell_d2, output_os2[0..total_dd]);
         }
         const os_ns2: u64 = @intCast(t2_start2.untilNow(io).raw.nanoseconds);
         const rys_us2 = @as(f64, @floatFromInt(rys_ns2)) / 1000.0 / @as(f64, @floatFromInt(n_repeats2));
@@ -282,7 +282,7 @@ pub fn main(init: std.process.Init) !void {
                 .{ .alpha = 1.2, .coeff = 1.0 },
             },
         };
-        const nf = basis_mod.numCartesian(3);
+        const nf = basis_mod.num_cartesian(3);
         const total_ff = nf * nf * nf * nf;
         var output_rys3: [10000]f64 = undefined;
         var output_os3: [10000]f64 = undefined;
@@ -290,13 +290,13 @@ pub fn main(init: std.process.Init) !void {
         const n_repeats3: usize = 100;
         const t3_start = std.Io.Clock.Timestamp.now(io, .awake);
         for (0..n_repeats3) |_| {
-            _ = rys_eri.contractedShellQuartetERI(shell_f1, shell_f2, shell_f1, shell_f2, output_rys3[0..total_ff]);
+            _ = rys_eri.contracted_shell_quartet_eri(shell_f1, shell_f2, shell_f1, shell_f2, output_rys3[0..total_ff]);
         }
         const rys_ns3: u64 = @intCast(t3_start.untilNow(io).raw.nanoseconds);
         const t3_start2 = std.Io.Clock.Timestamp.now(io, .awake);
         // Note: OS (ff|ff) hits the per-integral fallback and is ~100x slower.
         // Only time 1 repeat for OS to avoid timeout.
-        _ = obara_saika.contractedShellQuartetERI(shell_f1, shell_f2, shell_f1, shell_f2, output_os3[0..total_ff]);
+        _ = obara_saika.contracted_shell_quartet_eri(shell_f1, shell_f2, shell_f1, shell_f2, output_os3[0..total_ff]);
         const os_ns3: u64 = @intCast(t3_start2.untilNow(io).raw.nanoseconds);
         const rys_us3 = @as(f64, @floatFromInt(rys_ns3)) / 1000.0 / @as(f64, @floatFromInt(n_repeats3));
         const os_us3 = @as(f64, @floatFromInt(os_ns3)) / 1000.0; // only 1 repeat

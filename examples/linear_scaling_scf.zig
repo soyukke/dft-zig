@@ -15,7 +15,7 @@ pub fn main(init: std.process.Init) !void {
         .{ .element = "Si", .path = "pseudo/Si.upf", .format = .upf },
     };
 
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 5.431, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 5.431, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 5.431 },
@@ -45,7 +45,7 @@ pub fn main(init: std.process.Init) !void {
         .nonlocal_basis = if (use_sp) local_orbital.BasisType.sp else local_orbital.BasisType.s_only,
     };
 
-    var result = try linear_scaling.runScfFromXyz(
+    var result = try linear_scaling.run_scf_from_xyz(
         alloc,
         io,
         "examples/silicon.xyz",
