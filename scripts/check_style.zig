@@ -12,14 +12,14 @@
 //!     style_checker := env("ZIG_STYLE_CHECKER", "scripts/check_style.zig")
 //!
 //!     lint:
-//!         zig run {{style_checker}} -- --root src
+//!         zig run {{style_checker}} -- --root src --root ppgen/src
 //!     lint-strict:
-//!         zig run {{style_checker}} -- --root src --strict
+//!         zig run {{style_checker}} -- --root src --root ppgen/src --strict
 //!     lint-update-baseline:
-//!         zig run {{style_checker}} -- --root src --update-baseline
+//!         zig run {{style_checker}} -- --root src --root ppgen/src --update-baseline
 //!
 //! CLI:
-//!     --root <dir>         Directory to scan (default: src).
+//!     --root <dir>         Directory to scan. Repeatable (default: src).
 //!     --baseline <path>    Baseline file (default: scripts/style_baseline.txt).
 //!     --line-limit <n>     Column limit for line_too_long (default: 100).
 //!     --function-line-limit <n>
@@ -84,7 +84,7 @@ const rule_count: usize = rule_names.len;
 const line_limit_default: usize = 100;
 const function_line_limit_default: usize = 70;
 const baseline_path_default: []const u8 = "scripts/style_baseline.txt";
-const root_default: []const u8 = "src";
+const roots_default = [_][]const u8{"src"};
 const max_file_bytes: usize = 16 * 1024 * 1024;
 
 const Counts = [rule_count]u32;
@@ -662,7 +662,7 @@ fn printTotals(io: Io, out: File, counter: *const Counter) !void {
 // -------- CLI --------
 
 const Args = struct {
-    root: []const u8 = root_default,
+    roots: std.ArrayListUnmanaged([]const u8) = .empty,
     baseline: []const u8 = baseline_path_default,
     cfg: Config = .{},
     mode: Mode = .check,
@@ -677,7 +677,7 @@ fn parseArgs(allocator: mem.Allocator, process_args: std.process.Args) !Args {
     while (it.next()) |arg| {
         if (mem.eql(u8, arg, "--root")) {
             const v = it.next() orelse return error.MissingValue;
-            out.root = try allocator.dupe(u8, v);
+            try out.roots.append(allocator, try allocator.dupe(u8, v));
         } else if (mem.eql(u8, arg, "--baseline")) {
             const v = it.next() orelse return error.MissingValue;
             out.baseline = try allocator.dupe(u8, v);
@@ -714,6 +714,11 @@ fn parseArgs(allocator: mem.Allocator, process_args: std.process.Args) !Args {
             std.process.exit(2);
         }
     }
+
+    if (out.roots.items.len == 0) {
+        try out.roots.appendSlice(allocator, &roots_default);
+    }
+
     return out;
 }
 
@@ -725,7 +730,7 @@ fn printHelp() !void {
         \\  zig run scripts/check_style.zig -- [options]
         \\
         \\Options:
-        \\  --root <dir>         Directory to scan (default: src).
+        \\  --root <dir>         Directory to scan. Repeatable (default: src).
         \\  --baseline <path>    Baseline file (default: scripts/style_baseline.txt).
         \\  --line-limit <n>     Column limit for line_too_long (default: 100).
         \\  --function-line-limit <n>
@@ -761,7 +766,9 @@ pub fn main(init: std.process.Init) !void {
     const args = try parseArgs(allocator, init.minimal.args);
 
     var current = Counter.init(allocator);
-    try walkRoot(allocator, io, &args.cfg, &current, args.root);
+    for (args.roots.items) |root| {
+        try walkRoot(allocator, io, &args.cfg, &current, root);
+    }
 
     const stdout = File.stdout();
 

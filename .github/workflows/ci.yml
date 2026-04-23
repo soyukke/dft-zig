@@ -10,6 +10,15 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: DeterminateSystems/nix-installer-action@main
+      - run: nix develop --command just fmt-check
+      - run: nix develop --command just lint
+
   unit-test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
