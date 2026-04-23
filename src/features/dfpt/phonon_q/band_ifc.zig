@@ -28,6 +28,7 @@ const logDfptInfo = dfpt.logDfptInfo;
 const qpath_mod = @import("qpath.zig");
 const generateFccQPath = qpath_mod.generateFccQPath;
 const generateQPathFromConfig = qpath_mod.generateQPathFromConfig;
+const GeneratedQPath = qpath_mod.GeneratedQPath;
 
 const kpt_gs = @import("kpt_gs.zig");
 
@@ -148,7 +149,7 @@ fn computeIfcQGridPointResponse(
     volume: f64,
     grid: Grid,
     sym_data: *const BandSymmetryData,
-    kpts: []const KPointDfptData,
+    kpts: []KPointDfptData,
     q_cart: math.Vec3,
     qf: math.Vec3,
     iq: usize,
@@ -352,13 +353,7 @@ fn initIfcQPath(
     alloc: std.mem.Allocator,
     cfg: config_mod.Config,
     recip: math.Mat3,
-) !struct {
-    q_points_frac: []math.Vec3,
-    q_points_cart: []math.Vec3,
-    distances: []f64,
-    labels: [][]const u8,
-    label_positions: []usize,
-} {
+) !GeneratedQPath {
     const npoints_per_seg = cfg.dfpt.qpath_npoints;
     if (cfg.dfpt.qpath.len >= 2) {
         return generateQPathFromConfig(alloc, cfg.dfpt.qpath, npoints_per_seg, recip);

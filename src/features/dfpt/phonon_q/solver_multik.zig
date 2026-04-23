@@ -1037,6 +1037,7 @@ pub fn solvePerturbationQMultiK(
     defer alloc.free(vloc1_g);
 
     const rho1_core_r = try buildCorePerturbationReal(
+        alloc,
         grid,
         atoms[atom_index],
         species,

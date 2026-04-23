@@ -26,7 +26,7 @@ const computeXcFieldsSpin = xc_fields_mod.computeXcFieldsSpin;
 pub fn buildPotentialGrid(
     alloc: std.mem.Allocator,
     grid: Grid,
-    rho: []f64,
+    rho: []const f64,
     rho_core: ?[]const f64,
     use_rfft: bool,
     xc_func: xc.Functional,

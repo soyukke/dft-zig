@@ -158,7 +158,7 @@ pub const NonlocalContext = struct {
 pub fn buildNonlocalContextPub(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
-    gvecs: []plane_wave.GVector,
+    gvecs: []const plane_wave.GVector,
 ) !?NonlocalContext {
     return buildNonlocalContext(alloc, species, gvecs);
 }
@@ -167,7 +167,7 @@ pub fn buildNonlocalContextPub(
 pub fn buildNonlocalContextWithTables(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
-    gvecs: []plane_wave.GVector,
+    gvecs: []const plane_wave.GVector,
     radial_tables: []const nonlocal.RadialTableSet,
 ) !?NonlocalContext {
     var list: std.ArrayList(NonlocalSpecies) = .empty;
@@ -200,7 +200,7 @@ pub fn buildNonlocalContextWithTables(
 pub fn buildNonlocalContextPaw(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
-    gvecs: []plane_wave.GVector,
+    gvecs: []const plane_wave.GVector,
     radial_tables: ?[]const nonlocal.RadialTableSet,
     paw_tabs: []const paw_mod.PawTab,
 ) !?NonlocalContext {
@@ -260,7 +260,7 @@ pub fn buildNonlocalContextPaw(
 fn buildNonlocalContext(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
-    gvecs: []plane_wave.GVector,
+    gvecs: []const plane_wave.GVector,
 ) !?NonlocalContext {
     var list: std.ArrayList(NonlocalSpecies) = .empty;
     errdefer {
@@ -288,7 +288,7 @@ fn buildNonlocalSpecies(
     alloc: std.mem.Allocator,
     species_index: usize,
     upf: pseudo.UpfData,
-    gvecs: []plane_wave.GVector,
+    gvecs: []const plane_wave.GVector,
 ) !NonlocalSpecies {
     return buildNonlocalSpeciesWithTables(alloc, species_index, upf, gvecs, null);
 }
@@ -297,7 +297,7 @@ fn buildNonlocalSpeciesWithTables(
     alloc: std.mem.Allocator,
     species_index: usize,
     upf: pseudo.UpfData,
-    gvecs: []plane_wave.GVector,
+    gvecs: []const plane_wave.GVector,
     radial_tables: ?*const nonlocal.RadialTableSet,
 ) !NonlocalSpecies {
     const beta_count = upf.beta.len;

@@ -172,7 +172,7 @@ fn solveDirectKpoint(
     recip: math.Mat3,
     volume: f64,
     grid: Grid,
-    kp: mesh_mod.KPoint,
+    kp: symmetry.KPoint,
 ) !KPointGsData {
     var basis_k = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, kp.k_cart);
     errdefer basis_k.deinit(alloc);
@@ -332,7 +332,7 @@ fn expandIbzKpoint(
     ibz_frac: math.Vec3,
     total: usize,
     ibz: *const IbzKData,
-    full_kp: mesh_mod.KPoint,
+    full_kp: symmetry.KPoint,
 ) !KPointGsData {
     const found = findSymopForKpoint(symops, ibz_frac, full_kp.k_frac, 1e-6);
     var rotated = try buildRotatedBasis(

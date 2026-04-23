@@ -76,7 +76,7 @@ pub const BandGroundStateData = struct {
     rho0_g: []math.Complex,
     vxc_g: ?[]math.Complex,
 
-    fn deinit(self: *BandGroundStateData, alloc: std.mem.Allocator) void {
+    pub fn deinit(self: *BandGroundStateData, alloc: std.mem.Allocator) void {
         if (self.vxc_g) |values| {
             alloc.free(values);
         }
@@ -91,7 +91,7 @@ pub const BandSymmetryData = struct {
     indsym: [][]usize,
     tnons_shift: [][]math.Vec3,
 
-    fn deinit(self: *BandSymmetryData, alloc: std.mem.Allocator) void {
+    pub fn deinit(self: *BandSymmetryData, alloc: std.mem.Allocator) void {
         deinitSymData(alloc, self.*);
         alloc.free(self.symops);
     }
@@ -123,7 +123,7 @@ pub const QPointPertBuffers = struct {
         };
     }
 
-    fn deinit(self: *QPointPertBuffers, alloc: std.mem.Allocator) void {
+    pub fn deinit(self: *QPointPertBuffers, alloc: std.mem.Allocator) void {
         for (self.pert_results_mk) |*result| {
             if (result.rho1_g.len > 0 or result.psi1_per_k.len > 0) {
                 result.deinit(alloc);

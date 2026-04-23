@@ -16,7 +16,7 @@ pub fn writeRunInfo(
     io: std.Io,
     dir: std.Io.Dir,
     cfg: config.Config,
-    atoms: []xyz.Atom,
+    atoms: []const xyz.Atom,
     cell_ang: math.Mat3,
 ) !void {
     var file = try dir.createFile(io, "run_info.txt", .{ .truncate = true });
@@ -96,7 +96,7 @@ fn writeRunInfoBand(out: anytype, cfg: config.Config) !void {
 fn writeRunInfoAtoms(
     out: anytype,
     cfg: config.Config,
-    atoms: []xyz.Atom,
+    atoms: []const xyz.Atom,
     cell_ang: math.Mat3,
 ) !void {
     try out.print("atoms = {d}\n", .{atoms.len});
@@ -149,7 +149,7 @@ pub fn writeKpoints(io: std.Io, dir: std.Io.Dir, path: kpath.KPath) !void {
 }
 
 /// Write atoms to CSV in angstrom.
-pub fn writeAtoms(io: std.Io, dir: std.Io.Dir, atoms: []xyz.Atom, unit_scale: f64) !void {
+pub fn writeAtoms(io: std.Io, dir: std.Io.Dir, atoms: []const xyz.Atom, unit_scale: f64) !void {
     var file = try dir.createFile(io, "atoms.csv", .{ .truncate = true });
     defer file.close(io);
 
@@ -271,7 +271,7 @@ pub fn writeStatus(
 }
 
 /// Write parsed pseudopotential metadata.
-pub fn writePseudopotentials(io: std.Io, dir: std.Io.Dir, items: []pseudo.Parsed) !void {
+pub fn writePseudopotentials(io: std.Io, dir: std.Io.Dir, items: []const pseudo.Parsed) !void {
     var file = try dir.createFile(io, "pseudopotentials.csv", .{ .truncate = true });
     defer file.close(io);
 

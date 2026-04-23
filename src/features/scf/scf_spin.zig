@@ -348,10 +348,10 @@ fn cloneSpinRhoij(
     alloc: std.mem.Allocator,
     common: *scf_mod.ScfCommon,
 ) !struct { up: ?paw_mod.RhoIJ, down: ?paw_mod.RhoIJ } {
-    const up = if (common.paw_rhoij) |*prij| try prij.clone(alloc) else null;
+    var up = if (common.paw_rhoij) |*prij| try prij.clone(alloc) else null;
     errdefer if (up) |*rij| rij.deinit(alloc);
 
-    const down = if (common.paw_rhoij) |*prij| try prij.clone(alloc) else null;
+    var down = if (common.paw_rhoij) |*prij| try prij.clone(alloc) else null;
     errdefer if (down) |*rij| rij.deinit(alloc);
 
     return .{ .up = up, .down = down };
@@ -1415,6 +1415,11 @@ fn computeSpinAtomHartreeDc(
     return sum_dxc_rhoij;
 }
 
+const SpinAtomDxcAndDc = struct {
+    dxc: []f64,
+    sum: f64,
+};
+
 fn computePolarizedAtomDxcAndDc(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
@@ -1424,7 +1429,7 @@ fn computePolarizedAtomDxcAndDc(
     mt: usize,
     sp_m_offsets: anytype,
     upf: anytype,
-) !struct { dxc: []f64, sum: f64 } {
+) !SpinAtomDxcAndDc {
     const dxc_up = try ctx.alloc.alloc(f64, mt * mt);
     errdefer ctx.alloc.free(dxc_up);
 
@@ -1478,7 +1483,7 @@ fn computeUnpolarizedAtomDxcAndDc(
     mt: usize,
     sp_m_offsets: anytype,
     upf: anytype,
-) !struct { dxc: []f64, sum: f64 } {
+) !SpinAtomDxcAndDc {
     const dxc_m = try ctx.alloc.alloc(f64, mt * mt);
     errdefer ctx.alloc.free(dxc_m);
 
@@ -1515,7 +1520,7 @@ fn computeSpinAtomDxcAndDc(
     prij: *const paw_mod.RhoIJ,
     tabs: []const paw_mod.PawTab,
     atom_index: usize,
-) !struct { dxc: []f64, sum: f64 } {
+) !SpinAtomDxcAndDc {
     const atom = ctx.atoms[atom_index];
     const species_index = atom.species_index;
     const upf = ctx.species[species_index].upf;

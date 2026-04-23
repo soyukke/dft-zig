@@ -2069,6 +2069,11 @@ fn runDijXcAngularPass(
 /// augmented PW density (ρ̃ + n̂). This is the QE "newd" convention.
 /// Integrate ∫ f(ρ, σ) r² dr using the full-gradient σ formula at a single
 /// angular point. Returns (exc_ae_contribution, exc_ps_contribution).
+const ExcRadialPair = struct {
+    ae: f64,
+    ps: f64,
+};
+
 fn integrateExcRadial(
     w_ang: f64,
     n_mesh: usize,
@@ -2081,7 +2086,7 @@ fn integrateExcRadial(
     grad_s_rho_ae: []const [3]f64,
     grad_s_rho_ps: []const [3]f64,
     xc_func: xc.Functional,
-) struct { ae: f64, ps: f64 } {
+) ExcRadialPair {
     var exc_ae: f64 = 0.0;
     var exc_ps: f64 = 0.0;
     for (0..n_mesh) |k| {
@@ -2125,7 +2130,7 @@ fn processExcOneAngular(
     rab: []const f64,
     n_mesh: usize,
     xc_func: xc.Functional,
-) struct { ae: f64, ps: f64 } {
+) ExcRadialPair {
     _ = alpha;
     buildDensityAtAngularPoint(dens);
     @memcpy(tmp_rho, dens.rho_ae);

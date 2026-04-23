@@ -596,7 +596,7 @@ fn deriveScfCommonData(
     recip: math.Mat3,
     volume_bohr: f64,
 ) ScfInitDerived {
-    const grid = grid_mod.gridFromConfig(cfg, recip, volume_bohr);
+    const grid = grid_mod.gridFromConfig(cfg.*, recip, volume_bohr);
     const is_paw = hasPaw(species);
     return .{
         .grid = grid,
@@ -617,7 +617,7 @@ fn deriveScfCommonData(
 fn initScfCommon(params: ScfParams) !ScfCommon {
     const alloc = params.alloc;
     const io = params.io;
-    const cfg = params.cfg;
+    const cfg = &params.cfg;
     const species = params.model.species;
     const atoms = params.model.atoms;
     const recip = params.model.recip;
@@ -709,7 +709,7 @@ const ScfCommonSetup = struct {
     grid: grid_mod.Grid,
     total_electrons: f64,
     local_cfg: local_potential.LocalPotentialConfig,
-    ionic: potential_mod.IonicPotentialGrid,
+    ionic: hamiltonian.PotentialGrid,
     log: ScfLog,
     kpoints: []KPoint,
     sym_ops: ?[]symmetry.SymOp,
@@ -725,7 +725,7 @@ const ScfCommonSetup = struct {
 fn buildScfCommonStruct(s: ScfCommonSetup) ScfCommon {
     return ScfCommon{
         .alloc = s.alloc,
-        .cfg = s.cfg,
+        .cfg = s.cfg.*,
         .species = s.species,
         .atoms = s.atoms,
         .recip = s.recip,
@@ -1395,7 +1395,10 @@ const ScfIterationPotential = struct {
     keep: bool = false,
 
     fn deinit(self: *const ScfIterationPotential, alloc: std.mem.Allocator) void {
-        if (!self.keep) self.potential_out.deinit(alloc);
+        if (!self.keep) {
+            var potential_out = self.potential_out;
+            potential_out.deinit(alloc);
+        }
     }
 };
 
@@ -1774,7 +1777,7 @@ fn extractFinalPawResults(
     if (!ctx.common.is_paw) return result;
     try extractPawResults(
         ctx.alloc,
-        ctx.cfg.*,
+        ctx.cfg,
         ctx.species,
         ctx.atoms,
         caches.apply_caches,
@@ -1879,7 +1882,7 @@ pub fn run(params: ScfParams) !ScfResult {
         return scf_spin.runSpinPolarizedLoop(alloc, io, cfg, species, atoms, volume_bohr, &common);
     }
 
-    const paw_ecutrho = pawEcutrho(cfg, common.is_paw);
+    const paw_ecutrho = pawEcutrho(&cfg, common.is_paw);
     const ctx = ScfRunContext{
         .alloc = alloc,
         .io = io,

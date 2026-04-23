@@ -15,7 +15,11 @@ pub const PwGridMap = struct {
     min_k: i32,
     min_l: i32,
 
-    pub fn init(alloc: std.mem.Allocator, gvecs: []plane_wave.GVector, grid: Grid) !PwGridMap {
+    pub fn init(
+        alloc: std.mem.Allocator,
+        gvecs: []const plane_wave.GVector,
+        grid: Grid,
+    ) !PwGridMap {
         const idxs = try alloc.alloc(usize, gvecs.len);
         errdefer alloc.free(idxs);
         for (gvecs, 0..) |g, i| {

@@ -27,6 +27,7 @@ const phonon_q = dfpt.phonon_q;
 const GroundState = dfpt.GroundState;
 const DfptConfig = dfpt.DfptConfig;
 const KPointGsData = phonon_q.KPointGsData;
+const Grid = scf_mod.Grid;
 
 const logDfpt = dfpt.logDfpt;
 const logDfptInfo = dfpt.logDfptInfo;
@@ -349,7 +350,7 @@ fn solveDdkDirection(
 
 fn cachePsi0RealSpace(
     alloc: std.mem.Allocator,
-    grid: plane_wave.Grid,
+    grid: Grid,
     kgs: []const KPointGsData,
 ) !Psi0Cache {
     const total = grid.count();
@@ -392,7 +393,7 @@ fn cachePsi0RealSpace(
 
 fn computeDielectricTensor(
     alloc: std.mem.Allocator,
-    grid: plane_wave.Grid,
+    grid: Grid,
     gs: *const GroundState,
     dfpt_cfg: DfptConfig,
     kgs: []const KPointGsData,
@@ -421,7 +422,7 @@ fn computeDielectricTensor(
 
 fn computeDielectricColumn(
     alloc: std.mem.Allocator,
-    grid: plane_wave.Grid,
+    grid: Grid,
     gs: *const GroundState,
     dfpt_cfg: DfptConfig,
     kgs: []const KPointGsData,
@@ -495,7 +496,7 @@ fn initEfieldResponse(
 
 fn runEfieldScfDirection(
     alloc: std.mem.Allocator,
-    grid: plane_wave.Grid,
+    grid: Grid,
     gs: *const GroundState,
     dfpt_cfg: DfptConfig,
     kgs: []const KPointGsData,
@@ -546,7 +547,7 @@ fn runEfieldScfDirection(
 
 fn reciprocalToRealComplexCopy(
     alloc: std.mem.Allocator,
-    grid: plane_wave.Grid,
+    grid: Grid,
     values_g: []const math.Complex,
 ) ![]math.Complex {
     const work = try alloc.alloc(math.Complex, values_g.len);
@@ -560,7 +561,7 @@ fn reciprocalToRealComplexCopy(
 
 fn accumulateEfieldDensity(
     alloc: std.mem.Allocator,
-    grid: plane_wave.Grid,
+    grid: Grid,
     dfpt_cfg: DfptConfig,
     kgs: []const KPointGsData,
     psi1_ddk: []const DirectionBandSet,
@@ -592,7 +593,7 @@ fn accumulateEfieldDensity(
 
 fn updateEfieldKpoint(
     alloc: std.mem.Allocator,
-    grid: plane_wave.Grid,
+    grid: Grid,
     dfpt_cfg: DfptConfig,
     kg: *const KPointGsData,
     psi1_ddk_beta: BandSet,
@@ -639,7 +640,7 @@ fn updateEfieldKpoint(
 
 fn solveEfieldBand(
     alloc: std.mem.Allocator,
-    grid: plane_wave.Grid,
+    grid: Grid,
     dfpt_cfg: DfptConfig,
     kg: *const KPointGsData,
     psi1_ddk_beta: []const math.Complex,
@@ -709,7 +710,7 @@ fn addDensityInPlace(
 
 fn buildEfieldOutputPotential(
     alloc: std.mem.Allocator,
-    grid: plane_wave.Grid,
+    grid: Grid,
     gs: *const GroundState,
     rho1_r: []const math.Complex,
 ) ![]math.Complex {

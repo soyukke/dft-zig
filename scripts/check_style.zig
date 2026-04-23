@@ -39,7 +39,7 @@
 //!     tab_character         Tab character in source.
 //!     trailing_whitespace   Line ends with space or tab.
 //!     missing_final_newline File does not end with '\n'.
-//!     debug_print           `std.debug.print` committed in source.
+//!     debug_print           Debug print call committed in source.
 //!     function_too_long     Function body exceeds --function-line-limit lines.
 //!     control_character     Non-tab ASCII control character in source.
 //!     ambiguous_precedence  Bitwise and arithmetic operators mixed without
@@ -86,6 +86,7 @@ const function_line_limit_default: usize = 70;
 const baseline_path_default: []const u8 = "scripts/style_baseline.txt";
 const roots_default = [_][]const u8{"src"};
 const max_file_bytes: usize = 16 * 1024 * 1024;
+const debug_print_pattern = "std.debug" ++ ".print";
 
 const Counts = [rule_count]u32;
 const RuleMask = [rule_count]bool;
@@ -186,7 +187,9 @@ fn checkLine(
     if (cfg.isEnabled(.line_too_long) and lineTooLong(cfg, line)) {
         try counter.bump(path, .line_too_long);
     }
-    if (cfg.isEnabled(.debug_print) and mem.indexOf(u8, line, "std.debug.print") != null) {
+    if (cfg.isEnabled(.debug_print) and
+        mem.indexOf(u8, line, debug_print_pattern) != null)
+    {
         try counter.bump(path, .debug_print);
     }
 }
@@ -318,7 +321,9 @@ fn checkNodes(
 
     for (functions.items, 0..) |fn_range, i| {
         // Match TigerBeetle's behavior: skip outer function when nested fn exists inside.
-        if (i + 1 < functions.items.len and functions.items[i + 1].line_opening <= fn_range.line_closing) {
+        if (i + 1 < functions.items.len and
+            functions.items[i + 1].line_opening <= fn_range.line_closing)
+        {
             continue;
         }
 
@@ -333,7 +338,11 @@ fn checkNodes(
     }
 }
 
-fn countMeaningfulFunctionLines(content: []const u8, line_opening: usize, line_closing: usize) usize {
+fn countMeaningfulFunctionLines(
+    content: []const u8,
+    line_opening: usize,
+    line_closing: usize,
+) usize {
     var count: usize = 0;
     var line_index: usize = 0;
     var start: usize = 0;
@@ -497,7 +506,12 @@ fn walkRoot(
 ) !void {
     const cwd = Dir.cwd();
     var dir = cwd.openDir(io, root, .{ .iterate = true }) catch |err| {
-        std.debug.print("error: cannot open --root {s}: {s}\n", .{ root, @errorName(err) });
+        printLine(
+            io,
+            File.stderr(),
+            "error: cannot open --root {s}: {s}\n",
+            .{ root, @errorName(err) },
+        ) catch {};
         return err;
     };
     defer dir.close(io);
@@ -524,7 +538,12 @@ fn walkRoot(
 fn loadBaseline(allocator: mem.Allocator, io: Io, path: []const u8) !Counter {
     var counter = Counter.init(allocator);
     const cwd = Dir.cwd();
-    const content = cwd.readFileAlloc(io, path, allocator, .limited(max_file_bytes)) catch |err| switch (err) {
+    const content = cwd.readFileAlloc(
+        io,
+        path,
+        allocator,
+        .limited(max_file_bytes),
+    ) catch |err| switch (err) {
         error.FileNotFound => return counter,
         else => return err,
     };
@@ -647,82 +666,13 @@ fn printLine(io: Io, out: File, comptime fmt: []const u8, args: anytype) !void {
     try out.writeStreamingAll(io, s);
 }
 
-fn printTotals(io: Io, out: File, counter: *const Counter) !void {
-    var totals = [_]u64{0} ** rule_count;
-    var it = counter.map.iterator();
-    while (it.next()) |e| {
-        for (e.value_ptr.*, 0..) |n, i| totals[i] += n;
-    }
-    try writeAllTo(io, out, "violation totals:\n");
-    for (totals, 0..) |n, i| {
-        try printLine(io, out, "  {s:<24} {d}\n", .{ rule_names[i], n });
+fn printRuleNames(io: Io, out: File) !void {
+    for (rule_names) |name| {
+        try printLine(io, out, "  {s}\n", .{name});
     }
 }
 
-// -------- CLI --------
-
-const Args = struct {
-    roots: std.ArrayListUnmanaged([]const u8) = .empty,
-    baseline: []const u8 = baseline_path_default,
-    cfg: Config = .{},
-    mode: Mode = .check,
-};
-
-fn parseArgs(allocator: mem.Allocator, process_args: std.process.Args) !Args {
-    var out: Args = .{};
-    var it = process_args.iterate();
-    defer it.deinit();
-    _ = it.next(); // program name
-
-    while (it.next()) |arg| {
-        if (mem.eql(u8, arg, "--root")) {
-            const v = it.next() orelse return error.MissingValue;
-            try out.roots.append(allocator, try allocator.dupe(u8, v));
-        } else if (mem.eql(u8, arg, "--baseline")) {
-            const v = it.next() orelse return error.MissingValue;
-            out.baseline = try allocator.dupe(u8, v);
-        } else if (mem.eql(u8, arg, "--line-limit")) {
-            const v = it.next() orelse return error.MissingValue;
-            out.cfg.line_limit = std.fmt.parseInt(usize, v, 10) catch {
-                std.debug.print("error: --line-limit expects a non-negative integer, got {s}\n", .{v});
-                std.process.exit(2);
-            };
-        } else if (mem.eql(u8, arg, "--function-line-limit")) {
-            const v = it.next() orelse return error.MissingValue;
-            out.cfg.function_line_limit = std.fmt.parseInt(usize, v, 10) catch {
-                std.debug.print("error: --function-line-limit expects a non-negative integer, got {s}\n", .{v});
-                std.process.exit(2);
-            };
-        } else if (mem.eql(u8, arg, "--disable")) {
-            const v = it.next() orelse return error.MissingValue;
-            const rule = parseRule(v) orelse {
-                std.debug.print("error: unknown rule {s}. Known rules:\n", .{v});
-                for (rule_names) |n| std.debug.print("  {s}\n", .{n});
-                std.process.exit(2);
-            };
-            out.cfg.disable(rule);
-        } else if (mem.eql(u8, arg, "--update-baseline")) {
-            out.mode = .update;
-        } else if (mem.eql(u8, arg, "--strict")) {
-            out.mode = .strict;
-        } else if (mem.eql(u8, arg, "--help") or mem.eql(u8, arg, "-h")) {
-            try printHelp();
-            std.process.exit(0);
-        } else {
-            std.debug.print("unknown argument: {s}\n", .{arg});
-            try printHelp();
-            std.process.exit(2);
-        }
-    }
-
-    if (out.roots.items.len == 0) {
-        try out.roots.appendSlice(allocator, &roots_default);
-    }
-
-    return out;
-}
-
-fn printHelp() !void {
+fn printHelp(io: Io, out: File) !void {
     const msg =
         \\zig-tools/check_style — Zig style checker (ratcheting baseline).
         \\
@@ -745,14 +695,123 @@ fn printHelp() !void {
         \\  tab_character         Tab character in source.
         \\  trailing_whitespace   Line ends with space or tab.
         \\  missing_final_newline File does not end with '\n'.
-        \\  debug_print           `std.debug.print` committed in source.
+        \\  debug_print           Debug print call committed in source.
         \\  function_too_long     Function exceeds --function-line-limit lines.
         \\  control_character     Non-tab ASCII control character in source.
         \\  ambiguous_precedence  Bitwise/arithmetic mix without parens.
         \\  defer_no_blank_line   `defer` not followed by a blank line.
         \\
     ;
-    std.debug.print("{s}", .{msg});
+    try writeAllTo(io, out, msg);
+}
+
+fn exitWithCode(
+    io: Io,
+    out: File,
+    code: u8,
+    comptime fmt: []const u8,
+    args: anytype,
+) noreturn {
+    printLine(io, out, fmt, args) catch {};
+    std.process.exit(code);
+}
+
+fn exitUsageError(io: Io, comptime fmt: []const u8, args: anytype) noreturn {
+    exitWithCode(io, File.stderr(), 2, fmt, args);
+}
+
+fn exitUnknownRule(io: Io, value: []const u8) noreturn {
+    const stderr = File.stderr();
+    printLine(io, stderr, "error: unknown rule {s}. Known rules:\n", .{value}) catch {};
+    printRuleNames(io, stderr) catch {};
+    std.process.exit(2);
+}
+
+fn exitWithHelp(io: Io, comptime fmt: []const u8, args: anytype) noreturn {
+    const stderr = File.stderr();
+    printLine(io, stderr, fmt, args) catch {};
+    printHelp(io, stderr) catch {};
+    std.process.exit(2);
+}
+
+fn printTotals(io: Io, out: File, counter: *const Counter) !void {
+    var totals = [_]u64{0} ** rule_count;
+    var it = counter.map.iterator();
+    while (it.next()) |e| {
+        for (e.value_ptr.*, 0..) |n, i| totals[i] += n;
+    }
+    try writeAllTo(io, out, "violation totals:\n");
+    for (totals, 0..) |n, i| {
+        try printLine(io, out, "  {s:<24} {d}\n", .{ rule_names[i], n });
+    }
+}
+
+// -------- CLI --------
+
+const Args = struct {
+    roots: std.ArrayListUnmanaged([]const u8) = .empty,
+    baseline: []const u8 = baseline_path_default,
+    cfg: Config = .{},
+    mode: Mode = .check,
+};
+
+fn parseArgs(
+    allocator: mem.Allocator,
+    io: Io,
+    process_args: std.process.Args,
+) !Args {
+    var out: Args = .{};
+    var it = process_args.iterate();
+    defer it.deinit();
+
+    _ = it.next(); // program name
+
+    while (it.next()) |arg| {
+        if (mem.eql(u8, arg, "--root")) {
+            const v = it.next() orelse return error.MissingValue;
+            try out.roots.append(allocator, try allocator.dupe(u8, v));
+        } else if (mem.eql(u8, arg, "--baseline")) {
+            const v = it.next() orelse return error.MissingValue;
+            out.baseline = try allocator.dupe(u8, v);
+        } else if (mem.eql(u8, arg, "--line-limit")) {
+            const v = it.next() orelse return error.MissingValue;
+            out.cfg.line_limit = std.fmt.parseInt(usize, v, 10) catch {
+                exitUsageError(
+                    io,
+                    "error: --line-limit expects a non-negative integer, got {s}\n",
+                    .{v},
+                );
+            };
+        } else if (mem.eql(u8, arg, "--function-line-limit")) {
+            const v = it.next() orelse return error.MissingValue;
+            out.cfg.function_line_limit = std.fmt.parseInt(usize, v, 10) catch {
+                exitUsageError(
+                    io,
+                    "error: --function-line-limit expects a non-negative integer, got {s}\n",
+                    .{v},
+                );
+            };
+        } else if (mem.eql(u8, arg, "--disable")) {
+            const v = it.next() orelse return error.MissingValue;
+            const rule = parseRule(v) orelse exitUnknownRule(io, v);
+            out.cfg.disable(rule);
+        } else if (mem.eql(u8, arg, "--update-baseline")) {
+            out.mode = .update;
+        } else if (mem.eql(u8, arg, "--strict")) {
+            out.mode = .strict;
+        } else if (mem.eql(u8, arg, "--help") or mem.eql(u8, arg, "-h")) {
+            try printHelp(io, File.stdout());
+            std.process.exit(0);
+        } else {
+            exitWithHelp(io, "unknown argument: {s}\n", .{arg});
+        }
+    }
+
+    if (out.roots.items.len == 0) {
+        try out.roots.appendSlice(allocator, &roots_default);
+    }
+
+    return out;
 }
 
 // -------- main --------
@@ -763,7 +822,7 @@ pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
     const io = init.io;
 
-    const args = try parseArgs(allocator, init.minimal.args);
+    const args = try parseArgs(allocator, io, init.minimal.args);
 
     var current = Counter.init(allocator);
     for (args.roots.items) |root| {
@@ -786,7 +845,12 @@ pub fn main(init: std.process.Init) !void {
                 for (e.value_ptr.*, 0..) |n, i| {
                     if (n == 0) continue;
                     any = true;
-                    try printLine(io, stdout, "  {s}: {s} x{d}\n", .{ e.key_ptr.*, rule_names[i], n });
+                    try printLine(
+                        io,
+                        stdout,
+                        "  {s}: {s} x{d}\n",
+                        .{ e.key_ptr.*, rule_names[i], n },
+                    );
                 }
             }
             if (any) std.process.exit(1);
@@ -803,7 +867,12 @@ pub fn main(init: std.process.Init) !void {
                 return;
             }
 
-            try printLine(io, stdout, "style: {d} new violation(s) above baseline:\n", .{regressions.items.len});
+            try printLine(
+                io,
+                stdout,
+                "style: {d} new violation(s) above baseline:\n",
+                .{regressions.items.len},
+            );
             const Ctx = struct {
                 fn lessThan(_: void, a: Regression, b: Regression) bool {
                     const cmp = mem.order(u8, a.path, b.path);

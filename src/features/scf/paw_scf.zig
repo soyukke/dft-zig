@@ -6,6 +6,7 @@ const gvec_iter = @import("gvec_iter.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const math = @import("../math/math.zig");
 const nonlocal_mod = @import("../pseudopotential/nonlocal.zig");
+const paw_data = @import("../pseudopotential/paw_data.zig");
 const paw_mod = @import("../paw/paw.zig");
 const xc = @import("../xc/xc.zig");
 
@@ -18,7 +19,7 @@ const MAX_PAW_BETA: usize = 32;
 const SpeciesPawSetup = struct {
     si: usize,
     tab: *const paw_mod.PawTab,
-    paw: paw_mod.PawData,
+    paw: paw_data.PawData,
     dij0: []const f64,
     r: []const f64,
     rab: []const f64,

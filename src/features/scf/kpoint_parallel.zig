@@ -304,7 +304,7 @@ fn dispatchKpointEigenData(
     idx: usize,
     kalloc: std.mem.Allocator,
     profile_ptr: ?*ScfProfile,
-) !@typeInfo(@TypeOf(computeKpointEigenData)).@"fn".return_type.?.error_union.payload {
+) !KpointEigenData {
     const thread_fft_plan: ?fft.Fft3dPlan = if (shared.fft_plans.len > thread_index)
         shared.fft_plans[thread_index]
     else
@@ -807,13 +807,18 @@ fn buildVnlIfNeeded(
 }
 
 /// Pick the cached initial vectors for LOBPCG warm-start when they match the current basis.
+const InitVectors = struct {
+    init_vectors: ?[]const math.Complex,
+    init_cols: usize,
+};
+
 fn pickInitVectors(
     cache: *const KpointCache,
     basis_len: usize,
     nbands: usize,
     use_iterative: bool,
     reuse_vectors: bool,
-) struct { init_vectors: ?[]const math.Complex, init_cols: usize } {
+) InitVectors {
     if (use_iterative and reuse_vectors and
         cache.vectors.len > 0 and
         cache.n == basis_len and
@@ -1340,7 +1345,7 @@ fn pickInitVectorsLoose(
     nbands: usize,
     use_iterative: bool,
     reuse_vectors: bool,
-) struct { init_vectors: ?[]const math.Complex, init_cols: usize } {
+) InitVectors {
     if (use_iterative and reuse_vectors and
         cache.vectors.len > 0 and
         cache.n == basis_len and

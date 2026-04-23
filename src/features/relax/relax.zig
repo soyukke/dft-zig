@@ -421,7 +421,7 @@ fn initRelaxContext(
 fn initRelaxState(
     alloc: std.mem.Allocator,
     cfg: config_mod.Config,
-    initial_atoms: []hamiltonian.AtomData,
+    initial_atoms: []const hamiltonian.AtomData,
     cell: math.Mat3,
     recip: math.Mat3,
     volume: f64,
@@ -747,7 +747,7 @@ fn logRelaxStepProfile(
     iter: usize,
     scf_iterations: usize,
     relax_step_start: std.Io.Clock.Timestamp,
-    relax_step_cpu_start: u64,
+    relax_step_cpu_start: i64,
     scf_start: std.Io.Clock.Timestamp,
     scf_end: std.Io.Clock.Timestamp,
     force_start: std.Io.Clock.Timestamp,
@@ -974,7 +974,7 @@ pub fn run(
     io: std.Io,
     cfg: config_mod.Config,
     species: []const hamiltonian.SpeciesEntry,
-    initial_atoms: []hamiltonian.AtomData,
+    initial_atoms: []const hamiltonian.AtomData,
     cell: math.Mat3, // Cell in Bohr units
     recip: math.Mat3,
     volume: f64,

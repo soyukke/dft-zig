@@ -2197,9 +2197,19 @@ fn parseStandardSection(state: *LoadState, line: []const u8) !void {
 
 fn replaceOwnedString(
     alloc: std.mem.Allocator,
-    target: *[]u8,
+    target: anytype,
     value: []const u8,
 ) !void {
+    const target_info = @typeInfo(@TypeOf(target));
+    comptime {
+        if (target_info != .pointer) {
+            @compileError("replaceOwnedString target must be a pointer");
+        }
+        const child = target_info.pointer.child;
+        if (child != []u8 and child != []const u8) {
+            @compileError("replaceOwnedString target must be *[]u8 or *[]const u8");
+        }
+    }
     const parsed = try parseString(alloc, value);
     alloc.free(target.*);
     target.* = parsed;
@@ -2517,6 +2527,27 @@ fn countBySeverity(issues: []const ValidationIssue, severity: ValidationSeverity
         if (issue.severity == severity) n += 1;
     }
     return n;
+}
+
+test "load: pseudopotential section parses owned const strings" {
+    const alloc = std.testing.allocator;
+    const content =
+        \\[[pseudopotential]]
+        \\element = "Si"
+        \\path = "pseudo/Si.upf"
+        \\format = "upf"
+        \\
+    ;
+
+    var state = try LoadState.init(alloc);
+    defer state.deinit(alloc);
+
+    try processLoadLines(alloc, content, &state);
+
+    try std.testing.expectEqual(@as(usize, 1), state.pseudo_list.items.len);
+    try std.testing.expectEqualStrings("Si", state.pseudo_list.items[0].element);
+    try std.testing.expectEqualStrings("pseudo/Si.upf", state.pseudo_list.items[0].path);
+    try std.testing.expectEqual(pseudo.Format.upf, state.pseudo_list.items[0].format);
 }
 
 test "validate: valid default config produces no issues" {

@@ -246,7 +246,7 @@ pub fn computeNonlocalSelfEnergyDynmat(
         const g_count = entry.g_count;
         if (g_count != n_pw) continue;
         if (entry.m_total == 0) continue;
-        const projections = try NonlocalProjectionSet.init(alloc, entry.m_total);
+        var projections = try NonlocalProjectionSet.init(alloc, entry.m_total);
         defer projections.deinit(alloc);
 
         for (gs.atoms, 0..) |atom, atom_idx| {
