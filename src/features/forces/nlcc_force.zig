@@ -7,6 +7,74 @@ const local_force = @import("local_force.zig");
 
 pub const Grid = local_force.Grid;
 
+/// Parameters for the per-atom real-space NLCC accumulation loop.
+const NlccRealLoopInputs = struct {
+    grid: Grid,
+    vxc_r: []const f64,
+    vol_per_point: f64,
+    two_pi: f64,
+    a1: math.Vec3,
+    a2: math.Vec3,
+    a3: math.Vec3,
+};
+
+/// Accumulate the NLCC force on a single atom by summing over real-space grid points.
+fn accumulateNlccForceReal(
+    inputs: NlccRealLoopInputs,
+    entry: *const hamiltonian.SpeciesEntry,
+    pos: math.Vec3,
+) math.Vec3 {
+    var fx: f64 = 0.0;
+    var fy: f64 = 0.0;
+    var fz: f64 = 0.0;
+
+    var idx: usize = 0;
+    var iz: usize = 0;
+    while (iz < inputs.grid.nz) : (iz += 1) {
+        const frac_z = @as(f64, @floatFromInt(iz)) / @as(f64, @floatFromInt(inputs.grid.nz));
+        var iy: usize = 0;
+        while (iy < inputs.grid.ny) : (iy += 1) {
+            const frac_y = @as(f64, @floatFromInt(iy)) / @as(f64, @floatFromInt(inputs.grid.ny));
+            var ix: usize = 0;
+            while (ix < inputs.grid.nx) : (ix += 1) {
+                const frac_x = @as(f64, @floatFromInt(ix)) /
+                    @as(f64, @floatFromInt(inputs.grid.nx));
+                // Grid point in Cartesian coordinates
+                const rvec = math.Vec3.add(
+                    math.Vec3.add(
+                        math.Vec3.scale(inputs.a1, frac_x),
+                        math.Vec3.scale(inputs.a2, frac_y),
+                    ),
+                    math.Vec3.scale(inputs.a3, frac_z),
+                );
+                // Minimum-image displacement from atom to grid point
+                const delta_raw = math.Vec3.sub(rvec, pos);
+                const delta = minimumImage(
+                    inputs.grid.cell,
+                    inputs.grid.recip,
+                    inputs.two_pi,
+                    delta_raw,
+                );
+                const r = math.Vec3.norm(delta);
+
+                if (r > 1e-10) {
+                    const drho = sampleRadialDerivative(entry.upf.r, entry.upf.nlcc, r);
+                    if (drho != 0.0) {
+                        // F_{I,α} = (Ω/N) Σ_n V_xc(r_n) × ρ'(r) × d_α/r
+                        const coeff = inputs.vol_per_point * inputs.vxc_r[idx] * drho / r;
+                        fx += coeff * delta.x;
+                        fy += coeff * delta.y;
+                        fz += coeff * delta.z;
+                    }
+                }
+                idx += 1;
+            }
+        }
+    }
+
+    return math.Vec3{ .x = fx, .y = fy, .z = fz };
+}
+
 /// NLCC force correction computed in real space.
 ///
 /// F_{I,α} = (Ω/N) Σ_n V_xc(r_n) × ρ'_core(|r_n - R_I|) × (r_n - R_I)_α / |r_n - R_I|
@@ -25,62 +93,25 @@ pub fn nlccForces(
     const ngrid = grid.nx * grid.ny * grid.nz;
     if (vxc_r.len != ngrid) return error.InvalidGrid;
 
-    var forces = try alloc.alloc(math.Vec3, n_atoms);
+    const forces = try alloc.alloc(math.Vec3, n_atoms);
     for (forces) |*f| {
         f.* = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
     }
 
-    const a1 = grid.cell.row(0);
-    const a2 = grid.cell.row(1);
-    const a3 = grid.cell.row(2);
-    const two_pi = 2.0 * std.math.pi;
-    const vol_per_point = volume / @as(f64, @floatFromInt(ngrid));
+    const inputs = NlccRealLoopInputs{
+        .grid = grid,
+        .vxc_r = vxc_r,
+        .vol_per_point = volume / @as(f64, @floatFromInt(ngrid)),
+        .two_pi = 2.0 * std.math.pi,
+        .a1 = grid.cell.row(0),
+        .a2 = grid.cell.row(1),
+        .a3 = grid.cell.row(2),
+    };
 
     for (atoms, 0..) |atom, atom_index| {
         const entry = &species[atom.species_index];
         if (entry.upf.nlcc.len == 0) continue;
-        const pos = atom.position;
-
-        var fx: f64 = 0.0;
-        var fy: f64 = 0.0;
-        var fz: f64 = 0.0;
-
-        var idx: usize = 0;
-        var iz: usize = 0;
-        while (iz < grid.nz) : (iz += 1) {
-            const frac_z = @as(f64, @floatFromInt(iz)) / @as(f64, @floatFromInt(grid.nz));
-            var iy: usize = 0;
-            while (iy < grid.ny) : (iy += 1) {
-                const frac_y = @as(f64, @floatFromInt(iy)) / @as(f64, @floatFromInt(grid.ny));
-                var ix: usize = 0;
-                while (ix < grid.nx) : (ix += 1) {
-                    const frac_x = @as(f64, @floatFromInt(ix)) / @as(f64, @floatFromInt(grid.nx));
-                    // Grid point in Cartesian coordinates
-                    const rvec = math.Vec3.add(
-                        math.Vec3.add(math.Vec3.scale(a1, frac_x), math.Vec3.scale(a2, frac_y)),
-                        math.Vec3.scale(a3, frac_z),
-                    );
-                    // Minimum-image displacement from atom to grid point
-                    const delta_raw = math.Vec3.sub(rvec, pos);
-                    const delta = minimumImage(grid.cell, grid.recip, two_pi, delta_raw);
-                    const r = math.Vec3.norm(delta);
-
-                    if (r > 1e-10) {
-                        const drho = sampleRadialDerivative(entry.upf.r, entry.upf.nlcc, r);
-                        if (drho != 0.0) {
-                            // F_{I,α} = (Ω/N) Σ_n V_xc(r_n) × ρ'(r) × d_α/r
-                            const coeff = vol_per_point * vxc_r[idx] * drho / r;
-                            fx += coeff * delta.x;
-                            fy += coeff * delta.y;
-                            fz += coeff * delta.z;
-                        }
-                    }
-                    idx += 1;
-                }
-            }
-        }
-
-        forces[atom_index] = math.Vec3{ .x = fx, .y = fy, .z = fz };
+        forces[atom_index] = accumulateNlccForceReal(inputs, entry, atom.position);
     }
 
     return forces;

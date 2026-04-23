@@ -286,8 +286,10 @@ test "RealPlan3d vs complex Plan3d" {
             for (0..nx_c) |ix| {
                 const rfft_idx = ix + nx_c * (iy + ny * iz);
                 const cfft_idx = ix + nx * (iy + ny * iz);
-                try std.testing.expectApproxEqAbs(rfft_output[rfft_idx].re, cfft_data[cfft_idx].re, 1e-9);
-                try std.testing.expectApproxEqAbs(rfft_output[rfft_idx].im, cfft_data[cfft_idx].im, 1e-9);
+                const rfft_val = rfft_output[rfft_idx];
+                const cfft_val = cfft_data[cfft_idx];
+                try std.testing.expectApproxEqAbs(rfft_val.re, cfft_val.re, 1e-9);
+                try std.testing.expectApproxEqAbs(rfft_val.im, cfft_val.im, 1e-9);
             }
         }
     }

@@ -29,12 +29,14 @@ pub fn applyV1PsiQ(
     // Scatter k-basis PW coefficients to full grid
     const work_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_g);
+
     @memset(work_g, math.complex.init(0.0, 0.0));
     map_k.scatter(psi_k, work_g);
 
     // IFFT to real space
     const work_r = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_r);
+
     try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work_g, work_r, null);
 
     // Multiply by V^(1)(r) (complex × complex)
@@ -45,6 +47,7 @@ pub fn applyV1PsiQ(
     // FFT back to reciprocal space
     const work_g_out = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_g_out);
+
     try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, work_r, work_g_out, null);
 
     // Gather to k+q-basis
@@ -70,6 +73,7 @@ pub fn applyV1PsiQCached(
     // Multiply ψ^(0)(r) by V^(1)(r) (complex × complex)
     const work_r = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_r);
+
     for (0..total) |i| {
         work_r[i] = math.complex.mul(psi0_r[i], v1_r_complex[i]);
     }
@@ -77,6 +81,7 @@ pub fn applyV1PsiQCached(
     // FFT back to reciprocal space
     const work_g_out = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_g_out);
+
     try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, work_r, work_g_out, null);
 
     // Gather to k+q-basis
@@ -112,10 +117,13 @@ pub fn computeRho1Q(
 
     const work_g0 = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_g0);
+
     const work_r0 = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_r0);
+
     const work_g1 = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_g1);
+
     const work_r1 = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_r1);
 
@@ -164,6 +172,7 @@ pub fn computeRho1QCached(
 
     const work_g1 = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_g1);
+
     const work_r1 = try alloc.alloc(math.Complex, total);
     defer alloc.free(work_r1);
 

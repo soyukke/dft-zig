@@ -27,29 +27,19 @@ const ForceProjectors = struct {
     }
 };
 
-/// Build projector arrays for a species. Mirrors buildNonlocalSpeciesWithTables in apply.zig.
-fn buildForceProjectors(
-    alloc: std.mem.Allocator,
-    species_index: usize,
+/// Fill per-beta radial projector values at each (k+G) magnitude, populate l_list /
+/// m_offsets / m_counts, and return the total number of (b, m) channels.
+fn fillRadialProjectors(
     upf: pseudo.UpfData,
     gvecs: []plane_wave.GVector,
     radial_tables: ?nonlocal.RadialTableSet,
-) !ForceProjectors {
+    l_list: []i32,
+    m_offsets: []usize,
+    m_counts: []usize,
+    radial_buf: []f64,
+) usize {
     const beta_count = upf.beta.len;
     const g_count = gvecs.len;
-    if (beta_count == 0 or upf.dij.len == 0) return error.InvalidPseudopotential;
-    if (upf.dij.len != beta_count * beta_count) return error.InvalidPseudopotential;
-
-    const l_list = try alloc.alloc(i32, beta_count);
-    errdefer alloc.free(l_list);
-    const m_offsets = try alloc.alloc(usize, beta_count);
-    errdefer alloc.free(m_offsets);
-    const m_counts = try alloc.alloc(usize, beta_count);
-    errdefer alloc.free(m_counts);
-
-    var radial_buf = try alloc.alloc(f64, beta_count * g_count);
-    defer alloc.free(radial_buf);
-
     var total_m: usize = 0;
     var b: usize = 0;
     while (b < beta_count) : (b += 1) {
@@ -70,15 +60,31 @@ fn buildForceProjectors(
             var g: usize = 0;
             while (g < g_count) : (g += 1) {
                 const gmag = math.Vec3.norm(gvecs[g].kpg);
-                radial_buf[b * g_count + g] = nonlocal.radialProjector(upf.beta[b].values, upf.r, upf.rab, l_val, gmag);
+                radial_buf[b * g_count + g] = nonlocal.radialProjector(
+                    upf.beta[b].values,
+                    upf.r,
+                    upf.rab,
+                    l_val,
+                    gmag,
+                );
             }
         }
     }
+    return total_m;
+}
 
-    const phi = try alloc.alloc(f64, total_m * g_count);
-    errdefer alloc.free(phi);
-
-    b = 0;
+/// Build phi[bm * g_count + g] = 4π β_l(|k+G|) Y_lm(k+G) from radial values.
+fn buildPhiFromRadial(
+    gvecs: []plane_wave.GVector,
+    l_list: []i32,
+    m_offsets: []usize,
+    m_counts: []usize,
+    radial_buf: []f64,
+    phi: []f64,
+) void {
+    const beta_count = l_list.len;
+    const g_count = gvecs.len;
+    var b: usize = 0;
     while (b < beta_count) : (b += 1) {
         const l_val = l_list[b];
         const m_count = m_counts[b];
@@ -95,6 +101,47 @@ fn buildForceProjectors(
             }
         }
     }
+}
+
+/// Build projector arrays for a species. Mirrors buildNonlocalSpeciesWithTables in apply.zig.
+fn buildForceProjectors(
+    alloc: std.mem.Allocator,
+    species_index: usize,
+    upf: pseudo.UpfData,
+    gvecs: []plane_wave.GVector,
+    radial_tables: ?nonlocal.RadialTableSet,
+) !ForceProjectors {
+    const beta_count = upf.beta.len;
+    const g_count = gvecs.len;
+    if (beta_count == 0 or upf.dij.len == 0) return error.InvalidPseudopotential;
+    if (upf.dij.len != beta_count * beta_count) return error.InvalidPseudopotential;
+
+    const l_list = try alloc.alloc(i32, beta_count);
+    errdefer alloc.free(l_list);
+
+    const m_offsets = try alloc.alloc(usize, beta_count);
+    errdefer alloc.free(m_offsets);
+
+    const m_counts = try alloc.alloc(usize, beta_count);
+    errdefer alloc.free(m_counts);
+
+    const radial_buf = try alloc.alloc(f64, beta_count * g_count);
+    defer alloc.free(radial_buf);
+
+    const total_m = fillRadialProjectors(
+        upf,
+        gvecs,
+        radial_tables,
+        l_list,
+        m_offsets,
+        m_counts,
+        radial_buf,
+    );
+
+    const phi = try alloc.alloc(f64, total_m * g_count);
+    errdefer alloc.free(phi);
+
+    buildPhiFromRadial(gvecs, l_list, m_offsets, m_counts, radial_buf, phi);
 
     return ForceProjectors{
         .species_index = species_index,
@@ -107,6 +154,299 @@ fn buildForceProjectors(
         .m_total = total_m,
         .phi = phi,
     };
+}
+
+/// Build projectors for each species for a single k-point (null entries signal
+/// species without nonlocal channels).
+fn buildSpeciesProjectors(
+    alloc: std.mem.Allocator,
+    species: []const hamiltonian.SpeciesEntry,
+    gvecs: []plane_wave.GVector,
+    radial_tables_list: ?[]nonlocal.RadialTableSet,
+    projectors: []?ForceProjectors,
+) !void {
+    for (species, 0..) |entry, si| {
+        const upf = entry.upf;
+        if (upf.beta.len == 0 or upf.dij.len == 0) {
+            projectors[si] = null;
+            continue;
+        }
+        const tables = if (radial_tables_list) |rtl|
+            if (si < rtl.len) rtl[si] else null
+        else
+            null;
+        projectors[si] = try buildForceProjectors(alloc, si, upf.*, gvecs, tables);
+    }
+}
+
+/// Step A: p_bm = Σ_G phi_bm(G) × phase(G) × c(G).
+fn projectNonlocalBandCoeffs(
+    proj: ForceProjectors,
+    n: usize,
+    phase_buf: []const math.Complex,
+    c: []const math.Complex,
+    coeff: []math.Complex,
+) void {
+    var b: usize = 0;
+    while (b < proj.beta_count) : (b += 1) {
+        const m_off = proj.m_offsets[b];
+        const m_count = proj.m_counts[b];
+        var m_idx: usize = 0;
+        while (m_idx < m_count) : (m_idx += 1) {
+            const phi_row = proj.phi[(m_off + m_idx) * n .. (m_off + m_idx + 1) * n];
+            var sum = math.complex.init(0.0, 0.0);
+            var g: usize = 0;
+            while (g < n) : (g += 1) {
+                // phi is real, phase×c is complex
+                const pc = math.complex.mul(phase_buf[g], c[g]);
+                sum = math.complex.add(sum, math.complex.scale(pc, phi_row[g]));
+            }
+            coeff[m_off + m_idx] = sum;
+        }
+    }
+}
+
+/// Step B: Dp_bm = Σ_j (D_bj - ε_nk × q_bj) × p_jm (same l).
+fn applyDMatrixToProjectors(
+    proj: ForceProjectors,
+    atom_idx: usize,
+    species_index: usize,
+    eigenvalue: f64,
+    paw_dij: ?[]const []const f64,
+    paw_sij: ?[]const []const f64,
+    coeff: []const math.Complex,
+    coeff2: []math.Complex,
+) void {
+    const nb = proj.beta_count;
+    const use_paw_dij = paw_dij != null and atom_idx < paw_dij.?.len;
+    const use_paw_sij = paw_sij != null and species_index < paw_sij.?.len;
+    var b: usize = 0;
+    while (b < nb) : (b += 1) {
+        const l_val = proj.l_list[b];
+        const m_off = proj.m_offsets[b];
+        const m_count = proj.m_counts[b];
+        var m_idx: usize = 0;
+        while (m_idx < m_count) : (m_idx += 1) {
+            var sum = math.complex.init(0.0, 0.0);
+            var j: usize = 0;
+            while (j < nb) : (j += 1) {
+                if (proj.l_list[j] != l_val) continue;
+                // D_ij: use per-atom PAW D_full or UPF D^0
+                const d_val = if (use_paw_dij)
+                    paw_dij.?[atom_idx][b * nb + j]
+                else
+                    proj.coeffs[b * nb + j];
+                // q_ij = S_ij - δ_ij (overlap augmentation)
+                const q_val = if (use_paw_sij) blk: {
+                    const sij_arr = paw_sij.?[species_index];
+                    const delta: f64 = if (b == j) 1.0 else 0.0;
+                    break :blk sij_arr[b * nb + j] - delta;
+                } else 0.0;
+                const eff = d_val - eigenvalue * q_val;
+                if (eff == 0.0) continue;
+                sum = math.complex.add(
+                    sum,
+                    math.complex.scale(coeff[proj.m_offsets[j] + m_idx], eff),
+                );
+            }
+            coeff2[m_off + m_idx] = sum;
+        }
+    }
+}
+
+/// Compute the maximum m_total across all non-null species projectors.
+fn maxMTotal(projectors: []const ?ForceProjectors) usize {
+    var max_m_total: usize = 0;
+    for (projectors) |p| {
+        if (p) |proj| {
+            if (proj.m_total > max_m_total) max_m_total = proj.m_total;
+        }
+    }
+    return max_m_total;
+}
+
+/// Aggregate inputs for accumulating nonlocal forces from one k-point.
+const KpointForceInputs = struct {
+    gvecs: []plane_wave.GVector,
+    n: usize,
+    kp_wf: scf.KpointWavefunction,
+    projectors: []const ?ForceProjectors,
+    phase_buf: []math.Complex,
+    coeff_buf: []math.Complex,
+    coeff2_buf: []math.Complex,
+    paw_dij: ?[]const []const f64,
+    paw_sij: ?[]const []const f64,
+    spin_factor: f64,
+    inv_volume: f64,
+};
+
+/// Accumulate nonlocal force contributions from a single atom at a single k-point.
+fn accumulateAtomForceAtKpoint(
+    inputs: KpointForceInputs,
+    atom: hamiltonian.AtomData,
+    atom_idx: usize,
+    force_out: *math.Vec3,
+) void {
+    const proj_opt = inputs.projectors[atom.species_index];
+    const proj = proj_opt orelse return;
+
+    // Compute phase[g] = exp(+i G·R)
+    for (inputs.gvecs, 0..) |gv, g| {
+        inputs.phase_buf[g] = math.complex.expi(math.Vec3.dot(gv.cart, atom.position));
+    }
+
+    var band: usize = 0;
+    while (band < inputs.kp_wf.nbands) : (band += 1) {
+        const occ = inputs.kp_wf.occupations[band];
+        if (occ <= 0.0) continue;
+
+        const c = inputs.kp_wf.coefficients[band * inputs.n .. (band + 1) * inputs.n];
+        const coeff = inputs.coeff_buf[0..proj.m_total];
+        const coeff2 = inputs.coeff2_buf[0..proj.m_total];
+
+        // Step A: Project p_bm = Σ_G phi_bm(G) × phase(G) × c(G)
+        projectNonlocalBandCoeffs(proj, inputs.n, inputs.phase_buf, c, coeff);
+
+        // Step B: D-apply Dp_bm = Σ_j (D_bj - ε_nk × q_bj) × p_jm (same l)
+        // For PAW: D_bj = D_full (per-atom), q_bj = S_bj - δ_bj
+        // For NCPP: D_bj = D^0 (from UPF), q_bj = 0
+        applyDMatrixToProjectors(
+            proj,
+            atom_idx,
+            atom.species_index,
+            inputs.kp_wf.eigenvalues[band],
+            inputs.paw_dij,
+            inputs.paw_sij,
+            coeff,
+            coeff2,
+        );
+
+        // Steps C+D: Back-project q(G) and accumulate forces
+        // q(G) = Σ_bm conj(Dp_bm) × phi_bm(G)
+        // F_α += prefactor × Im[ G_α × q(G) × phase(G) × c(G) ]
+        const prefactor = 2.0 * occ * inputs.kp_wf.weight *
+            inputs.spin_factor * inputs.inv_volume;
+        accumulateBandForce(
+            proj,
+            inputs.n,
+            inputs.gvecs,
+            inputs.phase_buf,
+            c,
+            coeff2,
+            prefactor,
+            force_out,
+        );
+    }
+}
+
+/// Steps C+D: Back-project q(G) and accumulate forces for a single band.
+fn accumulateBandForce(
+    proj: ForceProjectors,
+    n: usize,
+    gvecs: []const plane_wave.GVector,
+    phase_buf: []const math.Complex,
+    c: []const math.Complex,
+    coeff2: []const math.Complex,
+    prefactor: f64,
+    force_out: *math.Vec3,
+) void {
+    var fx: f64 = 0.0;
+    var fy: f64 = 0.0;
+    var fz: f64 = 0.0;
+
+    var g: usize = 0;
+    while (g < n) : (g += 1) {
+        // Compute q(G) = Σ_bm conj(Dp_bm) × phi_bm(G)
+        var q = math.complex.init(0.0, 0.0);
+        var b: usize = 0;
+        while (b < proj.beta_count) : (b += 1) {
+            const m_off = proj.m_offsets[b];
+            const m_count = proj.m_counts[b];
+            var m_idx: usize = 0;
+            while (m_idx < m_count) : (m_idx += 1) {
+                const phi_val = proj.phi[(m_off + m_idx) * n + g];
+                const dp_conj = math.complex.conj(coeff2[m_off + m_idx]);
+                q = math.complex.add(q, math.complex.scale(dp_conj, phi_val));
+            }
+        }
+
+        // z = q(G) × phase(G) × c(G)
+        const z = math.complex.mul(q, math.complex.mul(phase_buf[g], c[g]));
+
+        // G_α × Im(z)
+        const g_cart = gvecs[g].cart;
+        fx += g_cart.x * z.i;
+        fy += g_cart.y * z.i;
+        fz += g_cart.z * z.i;
+    }
+
+    force_out.x += prefactor * fx;
+    force_out.y += prefactor * fy;
+    force_out.z += prefactor * fz;
+}
+
+/// Accumulate nonlocal force contributions from all atoms at a single k-point.
+fn accumulateKpointForces(
+    alloc: std.mem.Allocator,
+    kp_wf: scf.KpointWavefunction,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    recip: math.Mat3,
+    ecut_ry: f64,
+    radial_tables_list: ?[]nonlocal.RadialTableSet,
+    paw_dij: ?[]const []const f64,
+    paw_sij: ?[]const []const f64,
+    spin_factor: f64,
+    inv_volume: f64,
+    forces: []math.Vec3,
+) !void {
+    var basis = try plane_wave.generate(alloc, recip, ecut_ry, kp_wf.k_cart);
+    defer basis.deinit(alloc);
+
+    const gvecs = basis.gvecs;
+    const n = gvecs.len;
+    if (n != kp_wf.basis_len) return;
+
+    // Build projectors per species
+    const projectors = try alloc.alloc(?ForceProjectors, species.len);
+    defer {
+        for (projectors) |*p| {
+            if (p.*) |*proj| proj.deinit(alloc);
+        }
+        alloc.free(projectors);
+    }
+
+    try buildSpeciesProjectors(alloc, species, gvecs, radial_tables_list, projectors);
+
+    // Allocate work buffers
+    const max_m_total = maxMTotal(projectors);
+
+    const phase_buf = try alloc.alloc(math.Complex, n);
+    defer alloc.free(phase_buf);
+
+    const coeff_buf = try alloc.alloc(math.Complex, max_m_total);
+    defer alloc.free(coeff_buf);
+
+    const coeff2_buf = try alloc.alloc(math.Complex, max_m_total);
+    defer alloc.free(coeff2_buf);
+
+    const inputs = KpointForceInputs{
+        .gvecs = gvecs,
+        .n = n,
+        .kp_wf = kp_wf,
+        .projectors = projectors,
+        .phase_buf = phase_buf,
+        .coeff_buf = coeff_buf,
+        .coeff2_buf = coeff2_buf,
+        .paw_dij = paw_dij,
+        .paw_sij = paw_sij,
+        .spin_factor = spin_factor,
+        .inv_volume = inv_volume,
+    };
+
+    for (atoms, 0..) |atom, atom_idx| {
+        accumulateAtomForceAtKpoint(inputs, atom, atom_idx, &forces[atom_idx]);
+    }
 }
 
 /// Compute analytical nonlocal pseudopotential forces (Hellmann-Feynman).
@@ -139,8 +479,9 @@ pub fn nonlocalForces(
     const n_atoms = atoms.len;
     if (n_atoms == 0) return &[_]math.Vec3{};
 
-    var forces = try alloc.alloc(math.Vec3, n_atoms);
+    const forces = try alloc.alloc(math.Vec3, n_atoms);
     errdefer alloc.free(forces);
+
     for (forces) |*f| {
         f.* = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
     }
@@ -148,158 +489,20 @@ pub fn nonlocalForces(
     const inv_volume = 1.0 / volume;
 
     for (wavefunctions.kpoints) |kp_wf| {
-        var basis = try plane_wave.generate(alloc, recip, wavefunctions.ecut_ry, kp_wf.k_cart);
-        defer basis.deinit(alloc);
-        const gvecs = basis.gvecs;
-        const n = gvecs.len;
-        if (n != kp_wf.basis_len) continue;
-
-        // Build projectors per species
-        var projectors = try alloc.alloc(?ForceProjectors, species.len);
-        defer {
-            for (projectors) |*p| {
-                if (p.*) |*proj| proj.deinit(alloc);
-            }
-            alloc.free(projectors);
-        }
-        for (species, 0..) |entry, si| {
-            const upf = entry.upf;
-            if (upf.beta.len == 0 or upf.dij.len == 0) {
-                projectors[si] = null;
-                continue;
-            }
-            const tables = if (radial_tables_list) |rtl| if (si < rtl.len) rtl[si] else null else null;
-            projectors[si] = try buildForceProjectors(alloc, si, upf.*, gvecs, tables);
-        }
-
-        // Allocate work buffers
-        var max_m_total: usize = 0;
-        for (projectors) |p| {
-            if (p) |proj| {
-                if (proj.m_total > max_m_total) max_m_total = proj.m_total;
-            }
-        }
-
-        const phase_buf = try alloc.alloc(math.Complex, n);
-        defer alloc.free(phase_buf);
-        const coeff_buf = try alloc.alloc(math.Complex, max_m_total);
-        defer alloc.free(coeff_buf);
-        const coeff2_buf = try alloc.alloc(math.Complex, max_m_total);
-        defer alloc.free(coeff2_buf);
-
-        for (atoms, 0..) |atom, atom_idx| {
-            const proj_opt = projectors[atom.species_index];
-            const proj = proj_opt orelse continue;
-
-            // Compute phase[g] = exp(+i G·R)
-            for (gvecs, 0..) |gv, g| {
-                phase_buf[g] = math.complex.expi(math.Vec3.dot(gv.cart, atom.position));
-            }
-
-            var band: usize = 0;
-            while (band < kp_wf.nbands) : (band += 1) {
-                const occ = kp_wf.occupations[band];
-                if (occ <= 0.0) continue;
-
-                const c = kp_wf.coefficients[band * n .. (band + 1) * n];
-                const coeff = coeff_buf[0..proj.m_total];
-                const coeff2 = coeff2_buf[0..proj.m_total];
-
-                // Step A: Project p_bm = Σ_G phi_bm(G) × phase(G) × c(G)
-                var b: usize = 0;
-                while (b < proj.beta_count) : (b += 1) {
-                    const m_off = proj.m_offsets[b];
-                    const m_count = proj.m_counts[b];
-                    var m_idx: usize = 0;
-                    while (m_idx < m_count) : (m_idx += 1) {
-                        const phi_row = proj.phi[(m_off + m_idx) * n .. (m_off + m_idx + 1) * n];
-                        var sum = math.complex.init(0.0, 0.0);
-                        var g: usize = 0;
-                        while (g < n) : (g += 1) {
-                            // phi is real, phase×c is complex
-                            const pc = math.complex.mul(phase_buf[g], c[g]);
-                            sum = math.complex.add(sum, math.complex.scale(pc, phi_row[g]));
-                        }
-                        coeff[m_off + m_idx] = sum;
-                    }
-                }
-
-                // Step B: D-apply Dp_bm = Σ_j (D_bj - ε_nk × q_bj) × p_jm (same l)
-                // For PAW: D_bj = D_full (per-atom), q_bj = S_bj - δ_bj
-                // For NCPP: D_bj = D^0 (from UPF), q_bj = 0
-                const nb = proj.beta_count;
-                const use_paw_dij = paw_dij != null and atom_idx < paw_dij.?.len;
-                const use_paw_sij = paw_sij != null and atom.species_index < paw_sij.?.len;
-                const eigenvalue = kp_wf.eigenvalues[band];
-                b = 0;
-                while (b < nb) : (b += 1) {
-                    const l_val = proj.l_list[b];
-                    const m_off = proj.m_offsets[b];
-                    const m_count = proj.m_counts[b];
-                    var m_idx: usize = 0;
-                    while (m_idx < m_count) : (m_idx += 1) {
-                        var sum = math.complex.init(0.0, 0.0);
-                        var j: usize = 0;
-                        while (j < nb) : (j += 1) {
-                            if (proj.l_list[j] != l_val) continue;
-                            // D_ij: use per-atom PAW D_full or UPF D^0
-                            const d_val = if (use_paw_dij)
-                                paw_dij.?[atom_idx][b * nb + j]
-                            else
-                                proj.coeffs[b * nb + j];
-                            // q_ij = S_ij - δ_ij (overlap augmentation)
-                            const q_val = if (use_paw_sij) blk: {
-                                const sij_arr = paw_sij.?[atom.species_index];
-                                const delta: f64 = if (b == j) 1.0 else 0.0;
-                                break :blk sij_arr[b * nb + j] - delta;
-                            } else 0.0;
-                            const eff = d_val - eigenvalue * q_val;
-                            if (eff == 0.0) continue;
-                            sum = math.complex.add(sum, math.complex.scale(coeff[proj.m_offsets[j] + m_idx], eff));
-                        }
-                        coeff2[m_off + m_idx] = sum;
-                    }
-                }
-
-                // Steps C+D: Back-project q(G) and accumulate forces
-                // q(G) = Σ_bm conj(Dp_bm) × phi_bm(G)
-                // F_α += prefactor × Im[ G_α × q(G) × phase(G) × c(G) ]
-                const prefactor = 2.0 * occ * kp_wf.weight * spin_factor * inv_volume;
-                var fx: f64 = 0.0;
-                var fy: f64 = 0.0;
-                var fz: f64 = 0.0;
-
-                var g: usize = 0;
-                while (g < n) : (g += 1) {
-                    // Compute q(G) = Σ_bm conj(Dp_bm) × phi_bm(G)
-                    var q = math.complex.init(0.0, 0.0);
-                    b = 0;
-                    while (b < proj.beta_count) : (b += 1) {
-                        const m_off = proj.m_offsets[b];
-                        const m_count = proj.m_counts[b];
-                        var m_idx: usize = 0;
-                        while (m_idx < m_count) : (m_idx += 1) {
-                            const phi_val = proj.phi[(m_off + m_idx) * n + g];
-                            const dp_conj = math.complex.conj(coeff2[m_off + m_idx]);
-                            q = math.complex.add(q, math.complex.scale(dp_conj, phi_val));
-                        }
-                    }
-
-                    // z = q(G) × phase(G) × c(G)
-                    const z = math.complex.mul(q, math.complex.mul(phase_buf[g], c[g]));
-
-                    // G_α × Im(z)
-                    const g_cart = gvecs[g].cart;
-                    fx += g_cart.x * z.i;
-                    fy += g_cart.y * z.i;
-                    fz += g_cart.z * z.i;
-                }
-
-                forces[atom_idx].x += prefactor * fx;
-                forces[atom_idx].y += prefactor * fy;
-                forces[atom_idx].z += prefactor * fz;
-            }
-        }
+        try accumulateKpointForces(
+            alloc,
+            kp_wf,
+            species,
+            atoms,
+            recip,
+            wavefunctions.ecut_ry,
+            radial_tables_list,
+            paw_dij,
+            paw_sij,
+            spin_factor,
+            inv_volume,
+            forces,
+        );
     }
 
     return forces;
@@ -362,14 +565,17 @@ test "nonlocal force analytical vs finite difference" {
 
     const eigenvalues = try alloc.alloc(f64, 1);
     defer alloc.free(eigenvalues);
+
     eigenvalues[0] = 0.0;
 
     const occupations = try alloc.alloc(f64, 1);
     defer alloc.free(occupations);
+
     occupations[0] = 1.0;
 
     const coefficients = try alloc.alloc(math.Complex, n);
     defer alloc.free(coefficients);
+
     for (coefficients, 0..) |*c_val, i| {
         const re = 0.05 * @as(f64, @floatFromInt(i + 1));
         const im = -0.03 * @as(f64, @floatFromInt(i + 2));
@@ -378,6 +584,7 @@ test "nonlocal force analytical vs finite difference" {
 
     const kpoints = try alloc.alloc(scf.KpointWavefunction, 1);
     defer alloc.free(kpoints);
+
     kpoints[0] = .{
         .k_frac = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 },
         .k_cart = k_cart,
@@ -396,7 +603,18 @@ test "nonlocal force analytical vs finite difference" {
     };
 
     // Analytical forces (NCPP mode: no PAW)
-    const forces = try nonlocalForces(alloc, wf, species_entries, atoms_arr[0..], recip, volume, null, null, null, 2.0);
+    const forces = try nonlocalForces(
+        alloc,
+        wf,
+        species_entries,
+        atoms_arr[0..],
+        recip,
+        volume,
+        null,
+        null,
+        null,
+        2.0,
+    );
     defer alloc.free(forces);
 
     // Finite-difference reference
@@ -414,7 +632,13 @@ test "nonlocal force analytical vs finite difference" {
             psi: []const math.Complex,
             occ: f64,
         ) !f64 {
-            const vnl = try hamiltonian.buildNonlocalMatrix(alloc_inner, gvecs, sp, atoms_local, inv_vol);
+            const vnl = try hamiltonian.buildNonlocalMatrix(
+                alloc_inner,
+                gvecs,
+                sp,
+                atoms_local,
+                inv_vol,
+            );
             defer alloc_inner.free(vnl);
 
             var sum = math.complex.init(0.0, 0.0);
@@ -439,8 +663,24 @@ test "nonlocal force analytical vs finite difference" {
         var atoms_minus = atoms_arr;
         atoms_plus[0].position.x += delta;
         atoms_minus[0].position.x -= delta;
-        const e_plus = try nonlocalEnergyEval.eval(alloc, basis.gvecs, species_entries, atoms_plus[0..], inv_volume, coefficients, occupations[0]);
-        const e_minus = try nonlocalEnergyEval.eval(alloc, basis.gvecs, species_entries, atoms_minus[0..], inv_volume, coefficients, occupations[0]);
+        const e_plus = try nonlocalEnergyEval.eval(
+            alloc,
+            basis.gvecs,
+            species_entries,
+            atoms_plus[0..],
+            inv_volume,
+            coefficients,
+            occupations[0],
+        );
+        const e_minus = try nonlocalEnergyEval.eval(
+            alloc,
+            basis.gvecs,
+            species_entries,
+            atoms_minus[0..],
+            inv_volume,
+            coefficients,
+            occupations[0],
+        );
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
     const fy_num = blk: {
@@ -448,8 +688,24 @@ test "nonlocal force analytical vs finite difference" {
         var atoms_minus = atoms_arr;
         atoms_plus[0].position.y += delta;
         atoms_minus[0].position.y -= delta;
-        const e_plus = try nonlocalEnergyEval.eval(alloc, basis.gvecs, species_entries, atoms_plus[0..], inv_volume, coefficients, occupations[0]);
-        const e_minus = try nonlocalEnergyEval.eval(alloc, basis.gvecs, species_entries, atoms_minus[0..], inv_volume, coefficients, occupations[0]);
+        const e_plus = try nonlocalEnergyEval.eval(
+            alloc,
+            basis.gvecs,
+            species_entries,
+            atoms_plus[0..],
+            inv_volume,
+            coefficients,
+            occupations[0],
+        );
+        const e_minus = try nonlocalEnergyEval.eval(
+            alloc,
+            basis.gvecs,
+            species_entries,
+            atoms_minus[0..],
+            inv_volume,
+            coefficients,
+            occupations[0],
+        );
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
     const fz_num = blk: {
@@ -457,8 +713,24 @@ test "nonlocal force analytical vs finite difference" {
         var atoms_minus = atoms_arr;
         atoms_plus[0].position.z += delta;
         atoms_minus[0].position.z -= delta;
-        const e_plus = try nonlocalEnergyEval.eval(alloc, basis.gvecs, species_entries, atoms_plus[0..], inv_volume, coefficients, occupations[0]);
-        const e_minus = try nonlocalEnergyEval.eval(alloc, basis.gvecs, species_entries, atoms_minus[0..], inv_volume, coefficients, occupations[0]);
+        const e_plus = try nonlocalEnergyEval.eval(
+            alloc,
+            basis.gvecs,
+            species_entries,
+            atoms_plus[0..],
+            inv_volume,
+            coefficients,
+            occupations[0],
+        );
+        const e_minus = try nonlocalEnergyEval.eval(
+            alloc,
+            basis.gvecs,
+            species_entries,
+            atoms_minus[0..],
+            inv_volume,
+            coefficients,
+            occupations[0],
+        );
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
 

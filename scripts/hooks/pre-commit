@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# DFT-Zig pre-commit hook: enforce formatting and style checks.
+# Install via `just install-hooks`.
+
+set -euo pipefail
+
+if ! command -v zig >/dev/null 2>&1; then
+    echo "pre-commit: 'zig' not found in PATH." >&2
+    echo "pre-commit: run commits from inside 'nix develop' (direnv also works)." >&2
+    exit 1
+fi
+
+if ! zig fmt --check src ppgen/src scripts; then
+    echo "" >&2
+    echo "pre-commit: formatting issues found." >&2
+    echo "pre-commit: run 'just fmt' and re-stage the changes." >&2
+    exit 1
+fi
+
+if ! ZIG_GLOBAL_CACHE_DIR=.zig-global-cache ZIG_LOCAL_CACHE_DIR=.zig-cache \
+    zig run scripts/check_style.zig -- --root src --root ppgen/src; then
+    echo "" >&2
+    echo "pre-commit: style check failed." >&2
+    echo "pre-commit: run 'just lint' and re-stage the changes." >&2
+    exit 1
+fi

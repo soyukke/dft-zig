@@ -209,6 +209,7 @@ fn realSymmetricGenEigenDecompLapack(
 ) !RealEigenDecomp {
     lapack_mutex.lock();
     defer lapack_mutex.unlock();
+
     if (a.len != n * n or b.len != n * n) return error.InvalidMatrixSize;
     if (n == 0) {
         return RealEigenDecomp{
@@ -292,6 +293,7 @@ fn realSymmetricEigenDecompLapack(
 ) !RealEigenDecomp {
     lapack_mutex.lock();
     defer lapack_mutex.unlock();
+
     if (a.len != n * n) return error.InvalidMatrixSize;
     if (n == 0) {
         return RealEigenDecomp{
@@ -358,11 +360,13 @@ fn realSymmetricEigenDecompLapack(
 fn hermitianEigenvaluesLapack(alloc: std.mem.Allocator, n: usize, a: []math.Complex) ![]f64 {
     lapack_mutex.lock();
     defer lapack_mutex.unlock();
+
     if (a.len != n * n) return error.InvalidMatrixSize;
     if (n == 0) return try alloc.alloc(f64, 0);
 
     const matrix = try alloc.alloc(math.Complex, n * n);
     defer alloc.free(matrix);
+
     @memcpy(matrix, a);
 
     const lda: c_int = @intCast(n);
@@ -427,9 +431,14 @@ fn hermitianEigenvaluesLapack(alloc: std.mem.Allocator, n: usize, a: []math.Comp
 fn hermitianEigenDecompLapack(alloc: std.mem.Allocator, n: usize, a: []math.Complex) !EigenDecomp {
     lapack_mutex.lock();
     defer lapack_mutex.unlock();
+
     if (a.len != n * n) return error.InvalidMatrixSize;
     if (n == 0) {
-        return EigenDecomp{ .values = try alloc.alloc(f64, 0), .vectors = try alloc.alloc(math.Complex, 0), .n = 0 };
+        return EigenDecomp{
+            .values = try alloc.alloc(f64, 0),
+            .vectors = try alloc.alloc(math.Complex, 0),
+            .n = 0,
+        };
     }
 
     const matrix = try alloc.alloc(math.Complex, n * n);
@@ -498,6 +507,7 @@ fn hermitianGenEigenvaluesLapack(
 ) ![]f64 {
     lapack_mutex.lock();
     defer lapack_mutex.unlock();
+
     if (a.len != n * n or b.len != n * n) return error.InvalidMatrixSize;
     if (n == 0) return try alloc.alloc(f64, 0);
 
@@ -578,9 +588,14 @@ fn hermitianGenEigenDecompLapack(
 ) !EigenDecomp {
     lapack_mutex.lock();
     defer lapack_mutex.unlock();
+
     if (a.len != n * n or b.len != n * n) return error.InvalidMatrixSize;
     if (n == 0) {
-        return EigenDecomp{ .values = try alloc.alloc(f64, 0), .vectors = try alloc.alloc(math.Complex, 0), .n = 0 };
+        return EigenDecomp{
+            .values = try alloc.alloc(f64, 0),
+            .vectors = try alloc.alloc(math.Complex, 0),
+            .n = 0,
+        };
     }
 
     const matrix_a = try alloc.alloc(math.Complex, n * n);

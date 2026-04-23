@@ -470,6 +470,63 @@ pub fn primitiveNuclearAttraction(
     return prefactor * aux_result;
 }
 
+fn firstNonZeroAxis(comptime T: type, values: [3]T) ?usize {
+    for (0..3) |axis| {
+        if (values[axis] != 0) return axis;
+    }
+    return null;
+}
+
+fn nuclearAux3DArr(
+    a_arr: [3]u32,
+    b_arr: [3]u32,
+    m: u32,
+    pa: [3]f64,
+    pb: [3]f64,
+    cp: [3]f64,
+    inv_2p: f64,
+    boys: []const f64,
+) f64 {
+    if (firstNonZeroAxis(u32, b_arr)) |axis| {
+        var b_dec = b_arr;
+        b_dec[axis] -= 1;
+        var a_inc = a_arr;
+        a_inc[axis] += 1;
+        const t1 = nuclearAux3DArr(a_inc, b_dec, m, pa, pb, cp, inv_2p, boys);
+        const t2 = nuclearAux3DArr(a_arr, b_dec, m, pa, pb, cp, inv_2p, boys);
+        return t1 + (pb[axis] - pa[axis]) * t2;
+    }
+
+    return nuclearAuxVerticalArr(a_arr, m, pa, cp, inv_2p, boys);
+}
+
+fn nuclearAuxVerticalArr(
+    a_arr: [3]u32,
+    m: u32,
+    pa: [3]f64,
+    cp: [3]f64,
+    inv_2p: f64,
+    boys: []const f64,
+) f64 {
+    if (firstNonZeroAxis(u32, a_arr)) |axis| {
+        var a_dec = a_arr;
+        a_dec[axis] -= 1;
+        const t_m0 = nuclearAuxVerticalArr(a_dec, m, pa, cp, inv_2p, boys);
+        const t_m1 = nuclearAuxVerticalArr(a_dec, m + 1, pa, cp, inv_2p, boys);
+        var result = pa[axis] * t_m0 + cp[axis] * t_m1;
+        if (a_dec[axis] > 0) {
+            var a_dec2 = a_dec;
+            a_dec2[axis] -= 1;
+            const ai = @as(f64, @floatFromInt(a_dec[axis]));
+            result += ai * inv_2p * (nuclearAuxVerticalArr(a_dec2, m, pa, cp, inv_2p, boys) -
+                nuclearAuxVerticalArr(a_dec2, m + 1, pa, cp, inv_2p, boys));
+        }
+        return result;
+    }
+
+    return boys[m];
+}
+
 /// Recursive 3D Obara-Saika auxiliary nuclear attraction integral.
 /// Θ^(m)_{a,b} with a = (ax,ay,az), b = (bx,by,bz).
 ///
@@ -494,39 +551,16 @@ fn nuclearAux3D(
     inv_2p: f64,
     boys: []const f64,
 ) f64 {
-    // Step 1: Transfer from b to a using horizontal recurrence
-    // Θ^(m)_{a,b+1_i} = Θ^(m)_{a+1_i,b} + (A_i - B_i) × Θ^(m)_{a,b}
-    // So: Θ^(m)_{a,b} = Θ^(m)_{a+1_i,b-1_i} - (A_i - B_i) × Θ^(m)_{a,b-1_i}
-    //
-    // Actually the standard horizontal transfer relation is:
-    //   Θ_{a,b+1_i}^(m) = Θ_{a+1_i,b}^(m) + (Ai-Bi) × Θ_{a,b}^(m)
-    //
-    // So to reduce b, we use: b_i > 0 =>
-    //   Θ_{a,b}^(m) = Θ_{a+1_i,b-1_i}^(m) + (Bi-Ai) × Θ_{a,b-1_i}^(m)
-    //                                         ^-- note sign!
-    // Wait, from Θ_{a,b+1_i} = Θ_{a+1_i,b} + (Ai-Bi) Θ_{a,b}:
-    // Set b' = b-1_i: Θ_{a,b} = Θ_{a+1_i,b-1_i} + (Ai-Bi) Θ_{a,b-1_i}
-    //
-    // So if bx > 0:
-    if (bx > 0) {
-        // Horizontal transfer: Θ_{a,b} = Θ_{a+1_i,b-1_i} + (Ai-Bi) Θ_{a,b-1_i}
-        // PA = P - A, PB = P - B, so A - B = PB - PA.
-        return nuclearAux3D(ax + 1, ay, az, bx - 1, by, bz, m, pa_x, pa_y, pa_z, pb_x, pb_y, pb_z, cp_x, cp_y, cp_z, inv_2p, boys) +
-            (pb_x - pa_x) * nuclearAux3D(ax, ay, az, bx - 1, by, bz, m, pa_x, pa_y, pa_z, pb_x, pb_y, pb_z, cp_x, cp_y, cp_z, inv_2p, boys);
-    }
-    if (by > 0) {
-        return nuclearAux3D(ax, ay + 1, az, bx, by - 1, bz, m, pa_x, pa_y, pa_z, pb_x, pb_y, pb_z, cp_x, cp_y, cp_z, inv_2p, boys) +
-            (pb_y - pa_y) * nuclearAux3D(ax, ay, az, bx, by - 1, bz, m, pa_x, pa_y, pa_z, pb_x, pb_y, pb_z, cp_x, cp_y, cp_z, inv_2p, boys);
-    }
-    if (bz > 0) {
-        return nuclearAux3D(ax, ay, az + 1, bx, by, bz - 1, m, pa_x, pa_y, pa_z, pb_x, pb_y, pb_z, cp_x, cp_y, cp_z, inv_2p, boys) +
-            (pb_z - pa_z) * nuclearAux3D(ax, ay, az, bx, by, bz - 1, m, pa_x, pa_y, pa_z, pb_x, pb_y, pb_z, cp_x, cp_y, cp_z, inv_2p, boys);
-    }
-
-    // Step 2: b = (0,0,0), use vertical recurrence on a
-    // Θ^(m)_{a+1_i,0} = PA_i × Θ^(m)_{a,0} + CP_i × Θ^(m+1)_{a,0}
-    //     + a_i/(2p) × [Θ^(m)_{a-1_i,0} - Θ^(m+1)_{a-1_i,0}]
-    return nuclearAuxVertical(ax, ay, az, m, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys);
+    return nuclearAux3DArr(
+        .{ ax, ay, az },
+        .{ bx, by, bz },
+        m,
+        .{ pa_x, pa_y, pa_z },
+        .{ pb_x, pb_y, pb_z },
+        .{ cp_x, cp_y, cp_z },
+        inv_2p,
+        boys,
+    );
 }
 
 /// Vertical recurrence for nuclear attraction with b = (0,0,0).
@@ -545,44 +579,14 @@ fn nuclearAuxVertical(
     inv_2p: f64,
     boys: []const f64,
 ) f64 {
-    // Base case: a = (0,0,0)
-    if (ax == 0 and ay == 0 and az == 0) {
-        return boys[m];
-    }
-
-    // Choose axis to decrement: pick one with nonzero angular momentum
-    if (ax > 0) {
-        // Θ^(m)_{ax,ay,az,0} via x-axis recurrence from (ax-1)
-        var result = pa_x * nuclearAuxVertical(ax - 1, ay, az, m, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys);
-        result += cp_x * nuclearAuxVertical(ax - 1, ay, az, m + 1, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys);
-        if (ax >= 2) {
-            const ai = @as(f64, @floatFromInt(ax - 1));
-            result += ai * inv_2p * (nuclearAuxVertical(ax - 2, ay, az, m, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys) -
-                nuclearAuxVertical(ax - 2, ay, az, m + 1, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys));
-        }
-        return result;
-    }
-
-    if (ay > 0) {
-        var result = pa_y * nuclearAuxVertical(ax, ay - 1, az, m, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys);
-        result += cp_y * nuclearAuxVertical(ax, ay - 1, az, m + 1, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys);
-        if (ay >= 2) {
-            const ai = @as(f64, @floatFromInt(ay - 1));
-            result += ai * inv_2p * (nuclearAuxVertical(ax, ay - 2, az, m, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys) -
-                nuclearAuxVertical(ax, ay - 2, az, m + 1, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys));
-        }
-        return result;
-    }
-
-    // az > 0
-    var result = pa_z * nuclearAuxVertical(ax, ay, az - 1, m, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys);
-    result += cp_z * nuclearAuxVertical(ax, ay, az - 1, m + 1, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys);
-    if (az >= 2) {
-        const ai = @as(f64, @floatFromInt(az - 1));
-        result += ai * inv_2p * (nuclearAuxVertical(ax, ay, az - 2, m, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys) -
-            nuclearAuxVertical(ax, ay, az - 2, m + 1, pa_x, pa_y, pa_z, cp_x, cp_y, cp_z, inv_2p, boys));
-    }
-    return result;
+    return nuclearAuxVerticalArr(
+        .{ ax, ay, az },
+        m,
+        .{ pa_x, pa_y, pa_z },
+        .{ cp_x, cp_y, cp_z },
+        inv_2p,
+        boys,
+    );
 }
 
 /// Compute nuclear attraction integral between two contracted shells for
@@ -629,7 +633,14 @@ pub fn contractedTotalNuclearAttraction(
 ) f64 {
     var result: f64 = 0.0;
     for (nuc_positions, 0..) |pos, i| {
-        result += contractedNuclearAttraction(shell_a, a_cart, shell_b, b_cart, pos, nuc_charges[i]);
+        result += contractedNuclearAttraction(
+            shell_a,
+            a_cart,
+            shell_b,
+            b_cart,
+            pos,
+            nuc_charges[i],
+        );
     }
     return result;
 }
@@ -671,6 +682,385 @@ const ERI_CART_STRIDE: usize = ERI_MAX_AM * ERI_MAX_AM * ERI_MAX_AM; // 343
 /// We use a flat array: theta[idx_a * ERI_CART_STRIDE * ERI_MAX_M + idx_c * ERI_MAX_M + m]
 const THETA_SIZE: usize = ERI_CART_STRIDE * ERI_CART_STRIDE * ERI_MAX_M;
 
+const ThetaView = struct {
+    theta: []const f64,
+    a_stride_x: usize,
+    a_stride_y: usize,
+    c_size: usize,
+    c_stride_x: usize,
+    c_stride_y: usize,
+    m_stride: usize,
+};
+
+fn thetaLookup(view: ThetaView, a_arr: [3]u32, c_arr: [3]u32, m: usize) f64 {
+    const a_idx = @as(usize, a_arr[0]) * view.a_stride_x +
+        @as(usize, a_arr[1]) * view.a_stride_y +
+        @as(usize, a_arr[2]);
+    const c_idx = @as(usize, c_arr[0]) * view.c_stride_x +
+        @as(usize, c_arr[1]) * view.c_stride_y +
+        @as(usize, c_arr[2]);
+    return view.theta[a_idx * view.c_size * view.m_stride + c_idx * view.m_stride + m];
+}
+
+fn eriHorizontalArr(
+    a_arr: [3]u32,
+    b_arr: [3]u32,
+    c_arr: [3]u32,
+    d_arr: [3]u32,
+    view: ThetaView,
+    ab: [3]f64,
+    cd_vec: [3]f64,
+) f64 {
+    if (firstNonZeroAxis(u32, d_arr)) |axis| {
+        var d_dec = d_arr;
+        d_dec[axis] -= 1;
+        var c_inc = c_arr;
+        c_inc[axis] += 1;
+        const t1 = eriHorizontalArr(a_arr, b_arr, c_inc, d_dec, view, ab, cd_vec);
+        const t2 = eriHorizontalArr(a_arr, b_arr, c_arr, d_dec, view, ab, cd_vec);
+        return t1 + cd_vec[axis] * t2;
+    }
+    if (firstNonZeroAxis(u32, b_arr)) |axis| {
+        var b_dec = b_arr;
+        b_dec[axis] -= 1;
+        var a_inc = a_arr;
+        a_inc[axis] += 1;
+        const t1 = eriHorizontalArr(a_inc, b_dec, c_arr, d_arr, view, ab, cd_vec);
+        const t2 = eriHorizontalArr(a_arr, b_dec, c_arr, d_arr, view, ab, cd_vec);
+        return t1 + ab[axis] * t2;
+    }
+    return thetaLookup(view, a_arr, c_arr, 0);
+}
+
+const MAX_STACK_THETA_TABLE: usize = 256 * 1024;
+
+fn coordIndex3(coords: [3]usize, stride_x: usize, stride_y: usize) usize {
+    return coords[0] * stride_x + coords[1] * stride_y + coords[2];
+}
+
+const ThetaLayout = struct {
+    La: usize,
+    Lc: usize,
+    m_max: usize,
+    a_stride_x: usize,
+    a_stride_y: usize,
+    c_size: usize,
+    c_stride_x: usize,
+    c_stride_y: usize,
+    m_stride: usize,
+    theta_size: usize,
+
+    fn init(La: usize, Lc: usize) ThetaLayout {
+        const a_stride_y = La + 1;
+        const a_stride_x = (La + 1) * a_stride_y;
+        const c_stride_y = Lc + 1;
+        const c_stride_x = (Lc + 1) * c_stride_y;
+        const c_size = (Lc + 1) * c_stride_x;
+        const m_stride = La + Lc + 1;
+        return .{
+            .La = La,
+            .Lc = Lc,
+            .m_max = La + Lc,
+            .a_stride_x = a_stride_x,
+            .a_stride_y = a_stride_y,
+            .c_size = c_size,
+            .c_stride_x = c_stride_x,
+            .c_stride_y = c_stride_y,
+            .m_stride = m_stride,
+            .theta_size = ((La + 1) * a_stride_x) * c_size * m_stride,
+        };
+    }
+
+    fn view(self: ThetaLayout, theta: []const f64) ThetaView {
+        return .{
+            .theta = theta,
+            .a_stride_x = self.a_stride_x,
+            .a_stride_y = self.a_stride_y,
+            .c_size = self.c_size,
+            .c_stride_x = self.c_stride_x,
+            .c_stride_y = self.c_stride_y,
+            .m_stride = self.m_stride,
+        };
+    }
+};
+
+const ThetaBuildInputs = struct {
+    boys: []const f64,
+    pa: [3]f64,
+    qc: [3]f64,
+    wp: [3]f64,
+    wq: [3]f64,
+    inv_2p: f64,
+    inv_2q: f64,
+    inv_2pq: f64,
+    rho_over_p: f64,
+    rho_over_q: f64,
+};
+
+const PrimitiveEriSetup = struct {
+    prefactor: f64,
+    layout: ThetaLayout,
+    boys: [ERI_MAX_M]f64,
+    pa: [3]f64,
+    qc: [3]f64,
+    wp: [3]f64,
+    wq: [3]f64,
+    ab: [3]f64,
+    cd: [3]f64,
+    inv_2p: f64,
+    inv_2q: f64,
+    inv_2pq: f64,
+    rho_over_p: f64,
+    rho_over_q: f64,
+};
+
+fn initPrimitiveEriSetup(
+    alpha: f64,
+    center_a: math.Vec3,
+    a: AngularMomentum,
+    beta: f64,
+    center_b: math.Vec3,
+    b: AngularMomentum,
+    gamma: f64,
+    center_c: math.Vec3,
+    c_am: AngularMomentum,
+    delta: f64,
+    center_d: math.Vec3,
+    d_am: AngularMomentum,
+) PrimitiveEriSetup {
+    const p = alpha + beta;
+    const q = gamma + delta;
+    const rho = p * q / (p + q);
+    const p_center = math.Vec3{
+        .x = (alpha * center_a.x + beta * center_b.x) / p,
+        .y = (alpha * center_a.y + beta * center_b.y) / p,
+        .z = (alpha * center_a.z + beta * center_b.z) / p,
+    };
+    const q_center = math.Vec3{
+        .x = (gamma * center_c.x + delta * center_d.x) / q,
+        .y = (gamma * center_c.y + delta * center_d.y) / q,
+        .z = (gamma * center_c.z + delta * center_d.z) / q,
+    };
+    const w_center = math.Vec3{
+        .x = (p * p_center.x + q * q_center.x) / (p + q),
+        .y = (p * p_center.y + q * q_center.y) / (p + q),
+        .z = (p * p_center.z + q * q_center.z) / (p + q),
+    };
+    const mu_ab = alpha * beta / p;
+    const mu_cd = gamma * delta / q;
+    const diff_ab = math.Vec3.sub(center_a, center_b);
+    const diff_cd = math.Vec3.sub(center_c, center_d);
+    const r2_ab = math.Vec3.dot(diff_ab, diff_ab);
+    const r2_cd = math.Vec3.dot(diff_cd, diff_cd);
+    const diff_pq = math.Vec3.sub(p_center, q_center);
+    const arg = rho * math.Vec3.dot(diff_pq, diff_pq);
+    const la = a.x + a.y + a.z;
+    const lb = b.x + b.y + b.z;
+    const lc = c_am.x + c_am.y + c_am.z;
+    const ld = d_am.x + d_am.y + d_am.z;
+    var boys: [ERI_MAX_M]f64 = undefined;
+    boys_mod.boysBatch(@as(u32, @intCast(la + lb + lc + ld)), arg, &boys);
+    return .{
+        .prefactor = 2.0 * std.math.pow(f64, std.math.pi, 2.5) /
+            (p * q * @sqrt(p + q)) * @exp(-mu_ab * r2_ab - mu_cd * r2_cd),
+        .layout = ThetaLayout.init(la + lb, lc + ld),
+        .boys = boys,
+        .pa = .{ p_center.x - center_a.x, p_center.y - center_a.y, p_center.z - center_a.z },
+        .qc = .{ q_center.x - center_c.x, q_center.y - center_c.y, q_center.z - center_c.z },
+        .wp = .{ w_center.x - p_center.x, w_center.y - p_center.y, w_center.z - p_center.z },
+        .wq = .{ w_center.x - q_center.x, w_center.y - q_center.y, w_center.z - q_center.z },
+        .ab = .{ center_a.x - center_b.x, center_a.y - center_b.y, center_a.z - center_b.z },
+        .cd = .{ center_c.x - center_d.x, center_c.y - center_d.y, center_c.z - center_d.z },
+        .inv_2p = 0.5 / p,
+        .inv_2q = 0.5 / q,
+        .inv_2pq = 0.5 / (p + q),
+        .rho_over_p = rho / p,
+        .rho_over_q = rho / q,
+    };
+}
+
+fn thetaBuildInputs(setup: *const PrimitiveEriSetup) ThetaBuildInputs {
+    return .{
+        .boys = &setup.boys,
+        .pa = setup.pa,
+        .qc = setup.qc,
+        .wp = setup.wp,
+        .wq = setup.wq,
+        .inv_2p = setup.inv_2p,
+        .inv_2q = setup.inv_2q,
+        .inv_2pq = setup.inv_2pq,
+        .rho_over_p = setup.rho_over_p,
+        .rho_over_q = setup.rho_over_q,
+    };
+}
+
+fn initThetaBase(
+    theta: []f64,
+    layout: ThetaLayout,
+    boys: []const f64,
+    zero_used: bool,
+) void {
+    if (zero_used) @memset(theta[0..layout.theta_size], 0.0);
+    for (0..layout.m_max + 1) |m| {
+        theta[m] = boys[m];
+    }
+}
+
+fn fillThetaCEntry(
+    theta: []f64,
+    layout: ThetaLayout,
+    inputs: ThetaBuildInputs,
+    c_coords: [3]usize,
+    lc_total: usize,
+) void {
+    const axis = firstNonZeroAxis(usize, c_coords).?;
+    var c_dec = c_coords;
+    c_dec[axis] -= 1;
+    const c_idx = coordIndex3(c_coords, layout.c_stride_x, layout.c_stride_y);
+    const c_dec_idx = coordIndex3(c_dec, layout.c_stride_x, layout.c_stride_y);
+    const base_dec = c_dec_idx * layout.m_stride;
+    const base_out = c_idx * layout.m_stride;
+    const ci_after = @as(f64, @floatFromInt(c_dec[axis]));
+    for (0..layout.m_max + 1 - lc_total) |m| {
+        var val = inputs.qc[axis] * theta[base_dec + m] + inputs.wq[axis] * theta[base_dec + m + 1];
+        if (c_dec[axis] > 0) {
+            var c_dec2 = c_dec;
+            c_dec2[axis] -= 1;
+            const base_dec2 =
+                coordIndex3(c_dec2, layout.c_stride_x, layout.c_stride_y) * layout.m_stride;
+            val += ci_after * inputs.inv_2q *
+                (theta[base_dec2 + m] - inputs.rho_over_q * theta[base_dec2 + m + 1]);
+        }
+        theta[base_out + m] = val;
+    }
+}
+
+fn buildThetaCDirection(theta: []f64, layout: ThetaLayout, inputs: ThetaBuildInputs) void {
+    for (1..layout.Lc + 1) |lc_total| {
+        var cx: usize = lc_total;
+        while (true) {
+            var cy: usize = lc_total - cx;
+            while (true) {
+                fillThetaCEntry(theta, layout, inputs, .{ cx, cy, lc_total - cx - cy }, lc_total);
+                if (cy == 0) break;
+                cy -= 1;
+            }
+            if (cx == 0) break;
+            cx -= 1;
+        }
+    }
+}
+
+fn fillThetaAEntry(
+    theta: []f64,
+    layout: ThetaLayout,
+    inputs: ThetaBuildInputs,
+    a_coords: [3]usize,
+    a_dec: [3]usize,
+    axis: usize,
+    c_coords: [3]usize,
+    la_total: usize,
+    lc_total: usize,
+) void {
+    const a_idx = coordIndex3(a_coords, layout.a_stride_x, layout.a_stride_y);
+    const a_dec_idx = coordIndex3(a_dec, layout.a_stride_x, layout.a_stride_y);
+    const c_idx = coordIndex3(c_coords, layout.c_stride_x, layout.c_stride_y);
+    const base_dec = a_dec_idx * layout.c_size * layout.m_stride + c_idx * layout.m_stride;
+    const base_out = a_idx * layout.c_size * layout.m_stride + c_idx * layout.m_stride;
+    const ai_after = @as(f64, @floatFromInt(a_dec[axis]));
+    for (0..layout.m_max + 1 - la_total - lc_total) |m| {
+        var val = inputs.pa[axis] * theta[base_dec + m] + inputs.wp[axis] * theta[base_dec + m + 1];
+        if (a_dec[axis] > 0) {
+            var a_dec2 = a_dec;
+            a_dec2[axis] -= 1;
+            const base_dec2 =
+                coordIndex3(a_dec2, layout.a_stride_x, layout.a_stride_y) *
+                layout.c_size *
+                layout.m_stride +
+                c_idx * layout.m_stride;
+            val += ai_after * inputs.inv_2p *
+                (theta[base_dec2 + m] - inputs.rho_over_p * theta[base_dec2 + m + 1]);
+        }
+        if (c_coords[axis] > 0) {
+            var c_dec = c_coords;
+            c_dec[axis] -= 1;
+            const coupling_base =
+                a_dec_idx * layout.c_size * layout.m_stride +
+                coordIndex3(c_dec, layout.c_stride_x, layout.c_stride_y) * layout.m_stride;
+            val += @as(f64, @floatFromInt(c_coords[axis])) *
+                inputs.inv_2pq *
+                theta[coupling_base + m + 1];
+        }
+        theta[base_out + m] = val;
+    }
+}
+
+fn buildThetaADirection(theta: []f64, layout: ThetaLayout, inputs: ThetaBuildInputs) void {
+    for (1..layout.La + 1) |la_total| {
+        var ax: usize = la_total;
+        while (true) {
+            var ay: usize = la_total - ax;
+            while (true) {
+                const a_coords = [3]usize{ ax, ay, la_total - ax - ay };
+                const axis = firstNonZeroAxis(usize, a_coords).?;
+                var a_dec = a_coords;
+                a_dec[axis] -= 1;
+                for (0..layout.Lc + 1) |lc_total| {
+                    var cx: usize = lc_total;
+                    while (true) {
+                        var cy: usize = lc_total - cx;
+                        while (true) {
+                            fillThetaAEntry(
+                                theta,
+                                layout,
+                                inputs,
+                                a_coords,
+                                a_dec,
+                                axis,
+                                .{ cx, cy, lc_total - cx - cy },
+                                la_total,
+                                lc_total,
+                            );
+                            if (cy == 0) break;
+                            cy -= 1;
+                        }
+                        if (cx == 0) break;
+                        cx -= 1;
+                    }
+                }
+                if (ay == 0) break;
+                ay -= 1;
+            }
+            if (ax == 0) break;
+            ax -= 1;
+        }
+    }
+}
+
+fn buildThetaTable(
+    theta: []f64,
+    layout: ThetaLayout,
+    inputs: ThetaBuildInputs,
+    zero_used: bool,
+) void {
+    initThetaBase(theta, layout, inputs.boys, zero_used);
+    buildThetaCDirection(theta, layout, inputs);
+    buildThetaADirection(theta, layout, inputs);
+}
+
+fn eriHorizontalWithLayout(
+    a_arr: [3]u32,
+    b_arr: [3]u32,
+    c_arr: [3]u32,
+    d_arr: [3]u32,
+    theta: []const f64,
+    layout: ThetaLayout,
+    ab: [3]f64,
+    cd_vec: [3]f64,
+) f64 {
+    return eriHorizontalArr(a_arr, b_arr, c_arr, d_arr, layout.view(theta), ab, cd_vec);
+}
+
 /// Compute ERI between four primitive Cartesian Gaussians using table-based Obara-Saika.
 ///
 /// (ab|cd) = <ab|1/r₁₂|cd>
@@ -693,308 +1083,58 @@ pub fn primitiveERI(
     center_d: math.Vec3,
     d_am: AngularMomentum,
 ) f64 {
-    const p = alpha + beta;
-    const q = gamma + delta;
-    const rho = p * q / (p + q);
-
-    // Gaussian product centers
-    const p_center = math.Vec3{
-        .x = (alpha * center_a.x + beta * center_b.x) / p,
-        .y = (alpha * center_a.y + beta * center_b.y) / p,
-        .z = (alpha * center_a.z + beta * center_b.z) / p,
-    };
-    const q_center = math.Vec3{
-        .x = (gamma * center_c.x + delta * center_d.x) / q,
-        .y = (gamma * center_c.y + delta * center_d.y) / q,
-        .z = (gamma * center_c.z + delta * center_d.z) / q,
-    };
-    const w_center = math.Vec3{
-        .x = (p * p_center.x + q * q_center.x) / (p + q),
-        .y = (p * p_center.y + q * q_center.y) / (p + q),
-        .z = (p * p_center.z + q * q_center.z) / (p + q),
-    };
-
-    const diff_ab = math.Vec3.sub(center_a, center_b);
-    const diff_cd = math.Vec3.sub(center_c, center_d);
-    const diff_pq = math.Vec3.sub(p_center, q_center);
-
-    const r2_ab = math.Vec3.dot(diff_ab, diff_ab);
-    const r2_cd = math.Vec3.dot(diff_cd, diff_cd);
-    const r2_pq = math.Vec3.dot(diff_pq, diff_pq);
-
-    const mu_ab = alpha * beta / p;
-    const mu_cd = gamma * delta / q;
-
-    const exp_factor = @exp(-mu_ab * r2_ab - mu_cd * r2_cd);
-    const prefactor = 2.0 * std.math.pow(f64, std.math.pi, 2.5) / (p * q * @sqrt(p + q)) * exp_factor;
-
-    // Boys function argument
-    const arg = rho * r2_pq;
-
-    const la = a.x + a.y + a.z;
-    const lb = b.x + b.y + b.z;
-    const lc = c_am.x + c_am.y + c_am.z;
-    const ld = d_am.x + d_am.y + d_am.z;
-    const total_am = la + lb + lc + ld;
-
-    // Pre-compute Boys function values F_m(T) for m = 0..total_am
-    var boys: [ERI_MAX_M]f64 = undefined;
-    boys_mod.boysBatch(@as(u32, @intCast(total_am)), arg, &boys);
-
-    // Intermediate vectors
-    const pa = [3]f64{ p_center.x - center_a.x, p_center.y - center_a.y, p_center.z - center_a.z };
-    const qc = [3]f64{ q_center.x - center_c.x, q_center.y - center_c.y, q_center.z - center_c.z };
-    const wp = [3]f64{ w_center.x - p_center.x, w_center.y - p_center.y, w_center.z - p_center.z };
-    const wq = [3]f64{ w_center.x - q_center.x, w_center.y - q_center.y, w_center.z - q_center.z };
-    const ab = [3]f64{ center_a.x - center_b.x, center_a.y - center_b.y, center_a.z - center_b.z };
-    const cd = [3]f64{ center_c.x - center_d.x, center_c.y - center_d.y, center_c.z - center_d.z };
-
-    const inv_2p = 0.5 / p;
-    const inv_2q = 0.5 / q;
-    const inv_2pq = 0.5 / (p + q);
-    const rho_over_p = rho / p;
-    const rho_over_q = rho / q;
-
-    // La = la + lb, Lc = lc + ld: maximum angular momentum on each side
-    // after horizontal transfer moves b→a and d→c.
-    const La: usize = la + lb;
-    const Lc: usize = lc + ld;
-    const m_max: usize = La + Lc;
-
-    // ---------------------------------------------------------------
-    // Step 1: Build vertical recurrence table [a,0|c,0]^(m) bottom-up
-    // ---------------------------------------------------------------
-    // We allocate on the stack. The table is indexed as:
-    // theta[eriCartIndex(ax,ay,az)][eriCartIndex(cx,cy,cz)][m]
-    // but stored flat as theta_flat[(idx_a * cart_c_stride + idx_c) * m_stride + m].
-    //
-    // For compactness, we only allocate entries needed: ax+ay+az <= La, cx+cy+cz <= Lc, m <= m_max.
-
-    // Use a flat heap-allocated table would be cleaner, but for performance we use
-    // a comptime-sized stack buffer. The maximum size is ERI_CART_STRIDE^2 * ERI_MAX_M.
-    // For f+f|f+f: 343^2 * 13 ≈ 1.5M entries × 8 bytes = 12MB — too large for stack.
-    //
-    // Instead, we use a more compact indexing where each axis is bounded by
-    // its actual range, not the global maximum. But that makes indexing complex.
-    //
-    // Pragmatic approach: use the simple 3D indexing but note that most entries
-    // are never touched. With (La+1)^3 * (Lc+1)^3 * (m_max+1) actual entries:
-    // f+f|f+f: 7^3 * 7^3 * 13 = 343 * 343 * 13 = 1,529,437 → 12MB (too big for stack)
-    //
-    // For stack-friendly: limit each axis to La+1 and Lc+1 by using strides La+1 and Lc+1.
-    const a_stride_z: usize = 1;
-    const a_stride_y: usize = (La + 1) * a_stride_z;
-    const a_stride_x: usize = (La + 1) * a_stride_y;
-    const a_size: usize = (La + 1) * a_stride_x;
-
-    const c_stride_z: usize = 1;
-    const c_stride_y: usize = (Lc + 1) * c_stride_z;
-    const c_stride_x: usize = (Lc + 1) * c_stride_y;
-    const c_size: usize = (Lc + 1) * c_stride_x;
-
-    const m_stride: usize = m_max + 1;
-    const theta_size = a_size * c_size * m_stride;
-
-    // Stack allocation: worst case f+f|f+f = 343 * 343 * 13 ≈ 1.5M × 8 = 12MB.
-    // This may exceed default stack. Use a static thread-local buffer instead.
-    // Actually, for practical cases (up to d+p or so), this is much smaller.
-    // For safety, we cap at a reasonable stack size and fall back to a simpler approach.
-    const MAX_STACK_THETA: usize = 256 * 1024; // 256K entries = 2MB
-    if (theta_size > MAX_STACK_THETA) {
-        // Fall back to recursive implementation for very large angular momentum.
-        return primitiveERIRecursive(a, b, c_am, d_am, &boys, pa, qc, wp, wq, ab, cd, inv_2p, inv_2q, inv_2pq, rho_over_p, rho_over_q) * prefactor;
+    const setup = initPrimitiveEriSetup(
+        alpha,
+        center_a,
+        a,
+        beta,
+        center_b,
+        b,
+        gamma,
+        center_c,
+        c_am,
+        delta,
+        center_d,
+        d_am,
+    );
+    if (setup.layout.theta_size > MAX_STACK_THETA_TABLE) {
+        return setup.prefactor * primitiveERIRecursive(
+            a,
+            b,
+            c_am,
+            d_am,
+            &setup.boys,
+            setup.pa,
+            setup.qc,
+            setup.wp,
+            setup.wq,
+            setup.ab,
+            setup.cd,
+            setup.inv_2p,
+            setup.inv_2q,
+            setup.inv_2pq,
+            setup.rho_over_p,
+            setup.rho_over_q,
+        );
     }
 
-    var theta: [MAX_STACK_THETA]f64 = undefined;
-    // Zero the used portion
-    @memset(theta[0..theta_size], 0.0);
-
-    // Base case: [0,0,0 | 0,0,0]^(m) = boys[m]
-    for (0..m_max + 1) |m| {
-        theta[0 * c_size * m_stride + 0 * m_stride + m] = boys[m];
-    }
-
-    // Build c-direction first (increment c while a=0):
-    // [0,0|c+1_i,0]^(m) = QC_i [0,0|c,0]^(m) + WQ_i [0,0|c,0]^(m+1)
-    //     + c_i/(2q) {[0,0|c-1_i,0]^(m) - ρ/q [0,0|c-1_i,0]^(m+1)}
-    for (1..Lc + 1) |lc_total| {
-        // Iterate over all (cx,cy,cz) with cx+cy+cz = lc_total
-        var cx: usize = lc_total;
-        while (true) {
-            var cy: usize = lc_total - cx;
-            while (true) {
-                const cz: usize = lc_total - cx - cy;
-                const c_idx = cx * c_stride_x + cy * c_stride_y + cz * c_stride_z;
-                const a_idx: usize = 0; // a = (0,0,0)
-
-                // Find which axis to decrement: pick first non-zero
-                var axis: usize = undefined;
-                if (cx > 0) {
-                    axis = 0;
-                } else if (cy > 0) {
-                    axis = 1;
-                } else {
-                    axis = 2;
-                }
-
-                // c_dec = c - e_{axis}
-                var cx_d = cx;
-                var cy_d = cy;
-                var cz_d = cz;
-                if (axis == 0) cx_d -= 1 else if (axis == 1) cy_d -= 1 else cz_d -= 1;
-                const c_dec_idx = cx_d * c_stride_x + cy_d * c_stride_y + cz_d * c_stride_z;
-
-                // c_dec[axis] value (after decrement)
-                const ci_after: f64 = @floatFromInt(if (axis == 0) cx_d else if (axis == 1) cy_d else cz_d);
-
-                for (0..m_max + 1 - lc_total) |m| {
-                    var val = qc[axis] * theta[a_idx * c_size * m_stride + c_dec_idx * m_stride + m] +
-                        wq[axis] * theta[a_idx * c_size * m_stride + c_dec_idx * m_stride + m + 1];
-
-                    if (ci_after >= 1.0) {
-                        // c_dec2 = c_dec - e_{axis}
-                        var cx_d2 = cx_d;
-                        var cy_d2 = cy_d;
-                        var cz_d2 = cz_d;
-                        if (axis == 0) cx_d2 -= 1 else if (axis == 1) cy_d2 -= 1 else cz_d2 -= 1;
-                        const c_dec2_idx = cx_d2 * c_stride_x + cy_d2 * c_stride_y + cz_d2 * c_stride_z;
-
-                        val += ci_after * inv_2q * (theta[a_idx * c_size * m_stride + c_dec2_idx * m_stride + m] -
-                            rho_over_q * theta[a_idx * c_size * m_stride + c_dec2_idx * m_stride + m + 1]);
-                    }
-
-                    theta[a_idx * c_size * m_stride + c_idx * m_stride + m] = val;
-                }
-
-                if (cy == 0) break;
-                cy -= 1;
-            }
-            if (cx == 0) break;
-            cx -= 1;
-        }
-    }
-
-    // Build a-direction (increment a for all c values):
-    // [a+1_i,0|c,0]^(m) = PA_i [a,0|c,0]^(m) + WP_i [a,0|c,0]^(m+1)
-    //     + a_i/(2p) {[a-1_i,0|c,0]^(m) - ρ/p [a-1_i,0|c,0]^(m+1)}
-    //     + c_i/(2(p+q)) [a,0|c-1_i,0]^(m+1)
-    for (1..La + 1) |la_total| {
-        var ax: usize = la_total;
-        while (true) {
-            var ay: usize = la_total - ax;
-            while (true) {
-                const az: usize = la_total - ax - ay;
-                const a_idx = ax * a_stride_x + ay * a_stride_y + az * a_stride_z;
-
-                // Find which axis to decrement
-                var axis: usize = undefined;
-                if (ax > 0) {
-                    axis = 0;
-                } else if (ay > 0) {
-                    axis = 1;
-                } else {
-                    axis = 2;
-                }
-
-                // a_dec = a - e_{axis}
-                var ax_d = ax;
-                var ay_d = ay;
-                var az_d = az;
-                if (axis == 0) ax_d -= 1 else if (axis == 1) ay_d -= 1 else az_d -= 1;
-                const a_dec_idx = ax_d * a_stride_x + ay_d * a_stride_y + az_d * a_stride_z;
-
-                const ai_after: f64 = @floatFromInt(if (axis == 0) ax_d else if (axis == 1) ay_d else az_d);
-
-                // For all c indices with cx+cy+cz <= Lc
-                for (0..Lc + 1) |lc_total| {
-                    var cx2: usize = lc_total;
-                    while (true) {
-                        var cy2: usize = lc_total - cx2;
-                        while (true) {
-                            const cz2: usize = lc_total - cx2 - cy2;
-                            const c_idx = cx2 * c_stride_x + cy2 * c_stride_y + cz2 * c_stride_z;
-
-                            const m_limit = m_max + 1 - la_total - lc_total;
-                            for (0..m_limit) |m| {
-                                var val = pa[axis] * theta[a_dec_idx * c_size * m_stride + c_idx * m_stride + m] +
-                                    wp[axis] * theta[a_dec_idx * c_size * m_stride + c_idx * m_stride + m + 1];
-
-                                if (ai_after >= 1.0) {
-                                    var ax_d2 = ax_d;
-                                    var ay_d2 = ay_d;
-                                    var az_d2 = az_d;
-                                    if (axis == 0) ax_d2 -= 1 else if (axis == 1) ay_d2 -= 1 else az_d2 -= 1;
-                                    const a_dec2_idx = ax_d2 * a_stride_x + ay_d2 * a_stride_y + az_d2 * a_stride_z;
-
-                                    val += ai_after * inv_2p * (theta[a_dec2_idx * c_size * m_stride + c_idx * m_stride + m] -
-                                        rho_over_p * theta[a_dec2_idx * c_size * m_stride + c_idx * m_stride + m + 1]);
-                                }
-
-                                // Coupling term: c_i/(2(p+q)) [a_dec,0|c-1_i,0]^(m+1)
-                                const ci_val: f64 = @floatFromInt(if (axis == 0) cx2 else if (axis == 1) cy2 else cz2);
-                                if (ci_val >= 1.0) {
-                                    var cx2_d = cx2;
-                                    var cy2_d = cy2;
-                                    var cz2_d = cz2;
-                                    if (axis == 0) cx2_d -= 1 else if (axis == 1) cy2_d -= 1 else cz2_d -= 1;
-                                    const c_dec_idx = cx2_d * c_stride_x + cy2_d * c_stride_y + cz2_d * c_stride_z;
-
-                                    val += ci_val * inv_2pq * theta[a_dec_idx * c_size * m_stride + c_dec_idx * m_stride + m + 1];
-                                }
-
-                                theta[a_idx * c_size * m_stride + c_idx * m_stride + m] = val;
-                            }
-
-                            if (cy2 == 0) break;
-                            cy2 -= 1;
-                        }
-                        if (cx2 == 0) break;
-                        cx2 -= 1;
-                    }
-                }
-
-                if (ay == 0) break;
-                ay -= 1;
-            }
-            if (ax == 0) break;
-            ax -= 1;
-        }
-    }
-
-    // ---------------------------------------------------------------
-    // Step 2: Horizontal recurrence [a,b|c,d] from theta = [a',0|c',0]^(0)
-    // ---------------------------------------------------------------
-    // [a, b+1_i | c, d] = [a+1_i, b | c, d] + (A_i - B_i) [a, b | c, d]
-    // [a, b | c, d+1_i] = [a, b | c+1_i, d] + (C_i - D_i) [a, b | c, d]
-    //
-    // We apply horizontal in two stages:
-    // Stage A: Build [a',0|c',d]^(0) for target d from theta[a'][c'][0].
-    //   [a',0|c'+1_i,d-1_i]^(0) + (C_i-D_i) [a',0|c',d-1_i]^(0) = [a',0|c',d]^(0)
-    //   Start from d=0: [a',0|c',0] = theta[a'][c'][0].
-    //   Then increment d: for each component of d.
-    // Stage B: Build [a,b|c,d] from [a',0|c,d].
-    //   [a'+1_i,b-1_i|c,d] + (A_i-B_i) [a',b-1_i|c,d] = [a',b|c,d]
-    //
-    // For a single (a,b,c_am,d_am) we can use recursion with the theta table.
-    // The recursion is now cheap because theta lookups are O(1).
-
-    const result = eriHorizontal(
+    var theta: [MAX_STACK_THETA_TABLE]f64 = undefined;
+    buildThetaTable(
+        theta[0..setup.layout.theta_size],
+        setup.layout,
+        thetaBuildInputs(&setup),
+        true,
+    );
+    return setup.prefactor * eriHorizontalWithLayout(
         .{ a.x, a.y, a.z },
         .{ b.x, b.y, b.z },
         .{ c_am.x, c_am.y, c_am.z },
         .{ d_am.x, d_am.y, d_am.z },
-        &theta,
-        a_stride_x,
-        a_stride_y,
-        c_size,
-        c_stride_x,
-        c_stride_y,
-        m_stride,
-        ab,
-        cd,
+        theta[0..setup.layout.theta_size],
+        setup.layout,
+        setup.ab,
+        setup.cd,
     );
-
-    return prefactor * result;
 }
 
 /// Horizontal recurrence using the pre-built vertical table.
@@ -1016,34 +1156,15 @@ fn eriHorizontal(
     ab: [3]f64,
     cd_vec: [3]f64,
 ) f64 {
-    // Transfer d → c first
-    for (0..3) |i| {
-        if (d_arr[i] > 0) {
-            var d_dec = d_arr;
-            d_dec[i] -= 1;
-            var c_inc = c_arr;
-            c_inc[i] += 1;
-            return eriHorizontal(a_arr, b_arr, c_inc, d_dec, theta, a_stride_x, a_stride_y, c_size, c_stride_x, c_stride_y, m_stride, ab, cd_vec) +
-                cd_vec[i] * eriHorizontal(a_arr, b_arr, c_arr, d_dec, theta, a_stride_x, a_stride_y, c_size, c_stride_x, c_stride_y, m_stride, ab, cd_vec);
-        }
-    }
-
-    // Transfer b → a
-    for (0..3) |i| {
-        if (b_arr[i] > 0) {
-            var b_dec = b_arr;
-            b_dec[i] -= 1;
-            var a_inc = a_arr;
-            a_inc[i] += 1;
-            return eriHorizontal(a_inc, b_dec, c_arr, d_arr, theta, a_stride_x, a_stride_y, c_size, c_stride_x, c_stride_y, m_stride, ab, cd_vec) +
-                ab[i] * eriHorizontal(a_arr, b_dec, c_arr, d_arr, theta, a_stride_x, a_stride_y, c_size, c_stride_x, c_stride_y, m_stride, ab, cd_vec);
-        }
-    }
-
-    // b = d = (0,0,0): look up from theta table at m=0
-    const a_idx = @as(usize, a_arr[0]) * a_stride_x + @as(usize, a_arr[1]) * a_stride_y + @as(usize, a_arr[2]);
-    const c_idx = @as(usize, c_arr[0]) * c_stride_x + @as(usize, c_arr[1]) * c_stride_y + @as(usize, c_arr[2]);
-    return theta[a_idx * c_size * m_stride + c_idx * m_stride + 0];
+    return eriHorizontalArr(a_arr, b_arr, c_arr, d_arr, .{
+        .theta = theta,
+        .a_stride_x = a_stride_x,
+        .a_stride_y = a_stride_y,
+        .c_size = c_size,
+        .c_stride_x = c_stride_x,
+        .c_stride_y = c_stride_y,
+        .m_stride = m_stride,
+    }, ab, cd_vec);
 }
 
 /// Fallback recursive ERI for very large angular momentum (exceeds stack table size).
@@ -1256,9 +1377,13 @@ pub fn contractedERI(
                     const q_val = pc.alpha + pd.alpha;
                     const mu_cd = pc.alpha * pd.alpha / q_val;
                     const exp_factor = exp_ab * @exp(-mu_cd * r2_cd);
-                    const prefactor_bound = 2.0 * std.math.pow(f64, std.math.pi, 2.5) / (p_val * q_val * @sqrt(p_val + q_val)) * exp_factor;
+                    const two_pi_2p5 = 2.0 * std.math.pow(f64, std.math.pi, 2.5);
+                    const prefactor_bound =
+                        two_pi_2p5 / (p_val * q_val * @sqrt(p_val + q_val)) * exp_factor;
                     const coeff_product = pa.coeff * pb.coeff * pc.coeff * pd.coeff;
-                    if (@abs(coeff_product) * na * nb * nc * nd * prefactor_bound < prim_screen_threshold) continue;
+                    const norm_product = na * nb * nc * nd;
+                    if (@abs(coeff_product) * norm_product * prefactor_bound <
+                        prim_screen_threshold) continue;
 
                     const prim = primitiveERI(
                         pa.alpha,
@@ -1288,10 +1413,447 @@ pub fn contractedERI(
 // ============================================================================
 
 /// Pre-computed normalization constants for all primitives × all Cartesian components in a shell.
-/// norm_table[ip * num_cart + ic] = normalization(prim[ip].alpha, cart[ic].x, cart[ic].y, cart[ic].z)
+/// norm_table[ip * num_cart + ic] =
+///   normalization(prim[ip].alpha, cart[ic].x, cart[ic].y, cart[ic].z)
 const MAX_PRIM: usize = 16; // max primitives per shell
 const MAX_CART_BATCH: usize = 15; // max Cartesian components (f-type = 10, d-type = 6)
 const MAX_NORM_TABLE: usize = MAX_PRIM * MAX_CART_BATCH; // 240
+const MAX_SHELL_BATCH: usize = 15 * 15 * 15 * 15;
+const PRIM_SCREEN_THRESHOLD: f64 = 1e-15;
+const SCHWARZ_THRESHOLD: f64 = 1e-12;
+
+const NormTable = struct {
+    values: [MAX_NORM_TABLE]f64,
+    max: [MAX_PRIM]f64,
+};
+
+const ShellQuartetBatchSetup = struct {
+    shell_a: ContractedShell,
+    shell_b: ContractedShell,
+    shell_c: ContractedShell,
+    shell_d: ContractedShell,
+    cart_a: [MAX_CART_BATCH]AngularMomentum,
+    cart_b: [MAX_CART_BATCH]AngularMomentum,
+    cart_c: [MAX_CART_BATCH]AngularMomentum,
+    cart_d: [MAX_CART_BATCH]AngularMomentum,
+    na: usize,
+    nb: usize,
+    nc: usize,
+    nd: usize,
+    total_out: usize,
+    layout: ThetaLayout,
+    ab: [3]f64,
+    cd: [3]f64,
+    r2_ab: f64,
+    r2_cd: f64,
+};
+
+const BatchNormTables = struct {
+    a: NormTable,
+    b: NormTable,
+    c: NormTable,
+    d: NormTable,
+};
+
+const PrimitiveAbSetup = struct {
+    ipa: usize,
+    ipb: usize,
+    coeff_ab: f64,
+    exp_ab: f64,
+    p_val: f64,
+    p_center: math.Vec3,
+    pa: [3]f64,
+    inv_2p: f64,
+};
+
+fn initNormTable(
+    primitives: []const PrimitiveGaussian,
+    cart: []const AngularMomentum,
+    num_cart: usize,
+) NormTable {
+    var table: NormTable = undefined;
+    for (primitives, 0..) |prim, ip| {
+        var mx: f64 = 0.0;
+        for (0..num_cart) |ic| {
+            const am = cart[ic];
+            const norm = basis_mod.normalization(prim.alpha, am.x, am.y, am.z);
+            table.values[ip * num_cart + ic] = norm;
+            if (norm > mx) mx = norm;
+        }
+        table.max[ip] = mx;
+    }
+    return table;
+}
+
+fn initShellQuartetBatchSetup(
+    shell_a: ContractedShell,
+    shell_b: ContractedShell,
+    shell_c: ContractedShell,
+    shell_d: ContractedShell,
+) ShellQuartetBatchSetup {
+    const na = basis_mod.numCartesian(shell_a.l);
+    const nb = basis_mod.numCartesian(shell_b.l);
+    const nc = basis_mod.numCartesian(shell_c.l);
+    const nd = basis_mod.numCartesian(shell_d.l);
+    const diff_ab = math.Vec3.sub(shell_a.center, shell_b.center);
+    const diff_cd = math.Vec3.sub(shell_c.center, shell_d.center);
+    return .{
+        .shell_a = shell_a,
+        .shell_b = shell_b,
+        .shell_c = shell_c,
+        .shell_d = shell_d,
+        .cart_a = basis_mod.cartesianExponents(shell_a.l),
+        .cart_b = basis_mod.cartesianExponents(shell_b.l),
+        .cart_c = basis_mod.cartesianExponents(shell_c.l),
+        .cart_d = basis_mod.cartesianExponents(shell_d.l),
+        .na = na,
+        .nb = nb,
+        .nc = nc,
+        .nd = nd,
+        .total_out = na * nb * nc * nd,
+        .layout = ThetaLayout.init(shell_a.l + shell_b.l, shell_c.l + shell_d.l),
+        .ab = .{
+            shell_a.center.x - shell_b.center.x,
+            shell_a.center.y - shell_b.center.y,
+            shell_a.center.z - shell_b.center.z,
+        },
+        .cd = .{
+            shell_c.center.x - shell_d.center.x,
+            shell_c.center.y - shell_d.center.y,
+            shell_c.center.z - shell_d.center.z,
+        },
+        .r2_ab = math.Vec3.dot(diff_ab, diff_ab),
+        .r2_cd = math.Vec3.dot(diff_cd, diff_cd),
+    };
+}
+
+fn initBatchNormTables(setup: ShellQuartetBatchSetup) BatchNormTables {
+    return .{
+        .a = initNormTable(setup.shell_a.primitives, setup.cart_a[0..], setup.na),
+        .b = initNormTable(setup.shell_b.primitives, setup.cart_b[0..], setup.nb),
+        .c = initNormTable(setup.shell_c.primitives, setup.cart_c[0..], setup.nc),
+        .d = initNormTable(setup.shell_d.primitives, setup.cart_d[0..], setup.nd),
+    };
+}
+
+fn fillContractedShellQuartetFallback(
+    setup: ShellQuartetBatchSetup,
+    output: []f64,
+) void {
+    for (0..setup.na) |ia| {
+        for (0..setup.nb) |ib| {
+            for (0..setup.nc) |ic| {
+                for (0..setup.nd) |id| {
+                    const idx =
+                        ia * setup.nb * setup.nc * setup.nd +
+                        ib * setup.nc * setup.nd +
+                        ic * setup.nd +
+                        id;
+                    output[idx] = contractedERI(
+                        setup.shell_a,
+                        setup.cart_a[ia],
+                        setup.shell_b,
+                        setup.cart_b[ib],
+                        setup.shell_c,
+                        setup.cart_c[ic],
+                        setup.shell_d,
+                        setup.cart_d[id],
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn initPrimitiveAbSetup(
+    setup: ShellQuartetBatchSetup,
+    prim_a: PrimitiveGaussian,
+    ipa: usize,
+    prim_b: PrimitiveGaussian,
+    ipb: usize,
+) PrimitiveAbSetup {
+    const p_val = prim_a.alpha + prim_b.alpha;
+    const p_center = math.Vec3{
+        .x = (prim_a.alpha * setup.shell_a.center.x +
+            prim_b.alpha * setup.shell_b.center.x) / p_val,
+        .y = (prim_a.alpha * setup.shell_a.center.y +
+            prim_b.alpha * setup.shell_b.center.y) / p_val,
+        .z = (prim_a.alpha * setup.shell_a.center.z +
+            prim_b.alpha * setup.shell_b.center.z) / p_val,
+    };
+    return .{
+        .ipa = ipa,
+        .ipb = ipb,
+        .coeff_ab = prim_a.coeff * prim_b.coeff,
+        .exp_ab = @exp(-(prim_a.alpha * prim_b.alpha / p_val) * setup.r2_ab),
+        .p_val = p_val,
+        .p_center = p_center,
+        .pa = .{
+            p_center.x - setup.shell_a.center.x,
+            p_center.y - setup.shell_a.center.y,
+            p_center.z - setup.shell_a.center.z,
+        },
+        .inv_2p = 0.5 / p_val,
+    };
+}
+
+fn maybeBuildPrimitiveQuartetTheta(
+    theta: []f64,
+    setup: ShellQuartetBatchSetup,
+    norms: BatchNormTables,
+    ab_setup: PrimitiveAbSetup,
+    prim_c: PrimitiveGaussian,
+    ipc: usize,
+    prim_d: PrimitiveGaussian,
+    ipd: usize,
+) ?f64 {
+    const q_val = prim_c.alpha + prim_d.alpha;
+    const mu_cd = prim_c.alpha * prim_d.alpha / q_val;
+    const coeff_abcd = ab_setup.coeff_ab * prim_c.coeff * prim_d.coeff;
+    const prefactor = 2.0 * std.math.pow(f64, std.math.pi, 2.5) /
+        (ab_setup.p_val * q_val * @sqrt(ab_setup.p_val + q_val)) *
+        ab_setup.exp_ab *
+        @exp(-mu_cd * setup.r2_cd);
+    const max_norm = norms.a.max[ab_setup.ipa] * norms.b.max[ab_setup.ipb] *
+        norms.c.max[ipc] * norms.d.max[ipd];
+    if (@abs(coeff_abcd) * max_norm * prefactor < PRIM_SCREEN_THRESHOLD) return null;
+
+    const rho = ab_setup.p_val * q_val / (ab_setup.p_val + q_val);
+    const q_center = math.Vec3{
+        .x = (prim_c.alpha * setup.shell_c.center.x +
+            prim_d.alpha * setup.shell_d.center.x) / q_val,
+        .y = (prim_c.alpha * setup.shell_c.center.y +
+            prim_d.alpha * setup.shell_d.center.y) / q_val,
+        .z = (prim_c.alpha * setup.shell_c.center.z +
+            prim_d.alpha * setup.shell_d.center.z) / q_val,
+    };
+    const w_center = math.Vec3{
+        .x = (ab_setup.p_val * ab_setup.p_center.x + q_val * q_center.x) / (ab_setup.p_val + q_val),
+        .y = (ab_setup.p_val * ab_setup.p_center.y + q_val * q_center.y) / (ab_setup.p_val + q_val),
+        .z = (ab_setup.p_val * ab_setup.p_center.z + q_val * q_center.z) / (ab_setup.p_val + q_val),
+    };
+    const diff_pq = math.Vec3.sub(ab_setup.p_center, q_center);
+    var boys: [ERI_MAX_M]f64 = undefined;
+    boys_mod.boysBatch(
+        @as(u32, @intCast(setup.layout.m_max)),
+        rho * math.Vec3.dot(diff_pq, diff_pq),
+        &boys,
+    );
+    buildThetaTable(theta, setup.layout, .{
+        .boys = &boys,
+        .pa = ab_setup.pa,
+        .qc = .{
+            q_center.x - setup.shell_c.center.x,
+            q_center.y - setup.shell_c.center.y,
+            q_center.z - setup.shell_c.center.z,
+        },
+        .wp = .{
+            w_center.x - ab_setup.p_center.x,
+            w_center.y - ab_setup.p_center.y,
+            w_center.z - ab_setup.p_center.z,
+        },
+        .wq = .{
+            w_center.x - q_center.x,
+            w_center.y - q_center.y,
+            w_center.z - q_center.z,
+        },
+        .inv_2p = ab_setup.inv_2p,
+        .inv_2q = 0.5 / q_val,
+        .inv_2pq = 0.5 / (ab_setup.p_val + q_val),
+        .rho_over_p = rho / ab_setup.p_val,
+        .rho_over_q = rho / q_val,
+    }, false);
+    return prefactor * coeff_abcd;
+}
+
+fn accumulatePrimitiveQuartetOutput(
+    theta: []const f64,
+    setup: ShellQuartetBatchSetup,
+    norms: BatchNormTables,
+    output: []f64,
+    ipa: usize,
+    ipb: usize,
+    ipc: usize,
+    ipd: usize,
+    prim_prefactor: f64,
+) void {
+    for (0..setup.na) |ia| {
+        const na_val = norms.a.values[ipa * setup.na + ia];
+        for (0..setup.nb) |ib| {
+            const nab = na_val * norms.b.values[ipb * setup.nb + ib];
+            for (0..setup.nc) |ic| {
+                const nabc = nab * norms.c.values[ipc * setup.nc + ic];
+                for (0..setup.nd) |id| {
+                    const idx =
+                        ia * setup.nb * setup.nc * setup.nd +
+                        ib * setup.nc * setup.nd +
+                        ic * setup.nd +
+                        id;
+                    output[idx] += prim_prefactor *
+                        nabc *
+                        norms.d.values[ipd * setup.nd + id] *
+                        eriHorizontalWithLayout(
+                            .{ setup.cart_a[ia].x, setup.cart_a[ia].y, setup.cart_a[ia].z },
+                            .{ setup.cart_b[ib].x, setup.cart_b[ib].y, setup.cart_b[ib].z },
+                            .{ setup.cart_c[ic].x, setup.cart_c[ic].y, setup.cart_c[ic].z },
+                            .{ setup.cart_d[id].x, setup.cart_d[id].y, setup.cart_d[id].z },
+                            theta,
+                            setup.layout,
+                            setup.ab,
+                            setup.cd,
+                        );
+                }
+            }
+        }
+    }
+}
+
+fn accumulateContractedShellQuartet(
+    theta: []f64,
+    setup: ShellQuartetBatchSetup,
+    norms: BatchNormTables,
+    output: []f64,
+) void {
+    for (setup.shell_a.primitives, 0..) |prim_a, ipa| {
+        for (setup.shell_b.primitives, 0..) |prim_b, ipb| {
+            const ab_setup = initPrimitiveAbSetup(setup, prim_a, ipa, prim_b, ipb);
+            for (setup.shell_c.primitives, 0..) |prim_c, ipc| {
+                for (setup.shell_d.primitives, 0..) |prim_d, ipd| {
+                    const prim_prefactor = maybeBuildPrimitiveQuartetTheta(
+                        theta,
+                        setup,
+                        norms,
+                        ab_setup,
+                        prim_c,
+                        ipc,
+                        prim_d,
+                        ipd,
+                    ) orelse continue;
+                    accumulatePrimitiveQuartetOutput(
+                        theta,
+                        setup,
+                        norms,
+                        output,
+                        ipa,
+                        ipb,
+                        ipc,
+                        ipd,
+                        prim_prefactor,
+                    );
+                }
+            }
+        }
+    }
+}
+
+const ShellIndexMap = struct {
+    offsets: [128]usize,
+    sizes: [128]usize,
+    n_shells: usize,
+};
+
+fn initShellIndexMap(shells: []const ContractedShell) ShellIndexMap {
+    var map: ShellIndexMap = undefined;
+    map.n_shells = shells.len;
+    var offset: usize = 0;
+    for (shells, 0..) |shell, si| {
+        map.offsets[si] = offset;
+        map.sizes[si] = shell.numCartesianFunctions();
+        offset += map.sizes[si];
+    }
+    return map;
+}
+
+fn buildSchwarzTable(shells: []const ContractedShell, map: ShellIndexMap) [128 * 128]f64 {
+    var schwarz_q: [128 * 128]f64 = undefined;
+    var schwarz_buf: [MAX_SHELL_BATCH]f64 = undefined;
+    for (0..map.n_shells) |si| {
+        for (si..map.n_shells) |sj| {
+            _ = rys_eri.contractedShellQuartetERI(
+                shells[si],
+                shells[sj],
+                shells[si],
+                shells[sj],
+                &schwarz_buf,
+            );
+            var max_val: f64 = 0.0;
+            for (0..map.sizes[si]) |ia| {
+                for (0..map.sizes[sj]) |ib| {
+                    const idx = ia * map.sizes[sj] * map.sizes[si] * map.sizes[sj] +
+                        ib * map.sizes[si] * map.sizes[sj] +
+                        ia * map.sizes[sj] +
+                        ib;
+                    max_val = @max(max_val, @abs(schwarz_buf[idx]));
+                }
+            }
+            const q_val = @sqrt(max_val);
+            schwarz_q[si * map.n_shells + sj] = q_val;
+            schwarz_q[sj * map.n_shells + si] = q_val;
+        }
+    }
+    return schwarz_q;
+}
+
+fn distributeShellQuartet(
+    values: []f64,
+    eri_buf: []const f64,
+    map: ShellIndexMap,
+    si: usize,
+    sj: usize,
+    sk: usize,
+    sl: usize,
+) void {
+    for (0..map.sizes[si]) |ia| {
+        const i = map.offsets[si] + ia;
+        for (0..map.sizes[sj]) |ib| {
+            const j = map.offsets[sj] + ib;
+            if (i < j) continue;
+            const ij = triangularIndex(i, j);
+            for (0..map.sizes[sk]) |ic| {
+                const k = map.offsets[sk] + ic;
+                for (0..map.sizes[sl]) |id| {
+                    const l = map.offsets[sl] + id;
+                    if (k < l) continue;
+                    const kl = triangularIndex(k, l);
+                    const idx = ia * map.sizes[sj] * map.sizes[sk] * map.sizes[sl] +
+                        ib * map.sizes[sk] * map.sizes[sl] +
+                        ic * map.sizes[sl] +
+                        id;
+                    values[triangularIndex(@max(ij, kl), @min(ij, kl))] = eri_buf[idx];
+                }
+            }
+        }
+    }
+}
+
+fn fillEriTableValues(
+    values: []f64,
+    shells: []const ContractedShell,
+    map: ShellIndexMap,
+    schwarz_q: [128 * 128]f64,
+) void {
+    var eri_buf: [MAX_SHELL_BATCH]f64 = undefined;
+    for (0..map.n_shells) |si| {
+        for (0..si + 1) |sj| {
+            const ab_pair = shellPairIndex(si, sj);
+            const q_ab = schwarz_q[si * map.n_shells + sj];
+            for (0..map.n_shells) |sk| {
+                for (0..sk + 1) |sl| {
+                    if (ab_pair < shellPairIndex(sk, sl)) continue;
+                    if (q_ab * schwarz_q[sk * map.n_shells + sl] < SCHWARZ_THRESHOLD) continue;
+                    _ = rys_eri.contractedShellQuartetERI(
+                        shells[si],
+                        shells[sj],
+                        shells[sk],
+                        shells[sl],
+                        &eri_buf,
+                    );
+                    distributeShellQuartet(values, &eri_buf, map, si, sj, sk, sl);
+                }
+            }
+        }
+    }
+}
 
 /// Compute ALL contracted ERIs for a shell quartet (A,B|C,D) at once.
 ///
@@ -1311,411 +1873,23 @@ pub fn contractedShellQuartetERI(
     shell_d: ContractedShell,
     output: []f64,
 ) usize {
-    const la = shell_a.l;
-    const lb = shell_b.l;
-    const lc = shell_c.l;
-    const ld = shell_d.l;
+    const setup = initShellQuartetBatchSetup(shell_a, shell_b, shell_c, shell_d);
+    std.debug.assert(output.len >= setup.total_out);
+    @memset(output[0..setup.total_out], 0.0);
 
-    const na = basis_mod.numCartesian(la);
-    const nb = basis_mod.numCartesian(lb);
-    const nc = basis_mod.numCartesian(lc);
-    const nd = basis_mod.numCartesian(ld);
-    const total_out = na * nb * nc * nd;
-
-    std.debug.assert(output.len >= total_out);
-
-    // Zero output buffer
-    @memset(output[0..total_out], 0.0);
-
-    const cart_a = basis_mod.cartesianExponents(la);
-    const cart_b = basis_mod.cartesianExponents(lb);
-    const cart_c = basis_mod.cartesianExponents(lc);
-    const cart_d = basis_mod.cartesianExponents(ld);
-
-    // Pre-compute normalization tables for all primitives × Cartesian components
-    // This avoids recomputing normalization inside the innermost loops.
-    var norm_a: [MAX_NORM_TABLE]f64 = undefined;
-    var norm_b: [MAX_NORM_TABLE]f64 = undefined;
-    var norm_c: [MAX_NORM_TABLE]f64 = undefined;
-    var norm_d: [MAX_NORM_TABLE]f64 = undefined;
-
-    // Track max normalization per primitive for screening
-    var max_norm_a: [MAX_PRIM]f64 = undefined;
-    var max_norm_b: [MAX_PRIM]f64 = undefined;
-    var max_norm_c: [MAX_PRIM]f64 = undefined;
-    var max_norm_d: [MAX_PRIM]f64 = undefined;
-
-    for (shell_a.primitives, 0..) |pa, ip| {
-        var mx: f64 = 0.0;
-        for (0..na) |ic| {
-            const n_val = basis_mod.normalization(pa.alpha, cart_a[ic].x, cart_a[ic].y, cart_a[ic].z);
-            norm_a[ip * na + ic] = n_val;
-            if (n_val > mx) mx = n_val;
-        }
-        max_norm_a[ip] = mx;
-    }
-    for (shell_b.primitives, 0..) |pb, ip| {
-        var mx: f64 = 0.0;
-        for (0..nb) |ic| {
-            const n_val = basis_mod.normalization(pb.alpha, cart_b[ic].x, cart_b[ic].y, cart_b[ic].z);
-            norm_b[ip * nb + ic] = n_val;
-            if (n_val > mx) mx = n_val;
-        }
-        max_norm_b[ip] = mx;
-    }
-    for (shell_c.primitives, 0..) |pc, ip| {
-        var mx: f64 = 0.0;
-        for (0..nc) |ic| {
-            const n_val = basis_mod.normalization(pc.alpha, cart_c[ic].x, cart_c[ic].y, cart_c[ic].z);
-            norm_c[ip * nc + ic] = n_val;
-            if (n_val > mx) mx = n_val;
-        }
-        max_norm_c[ip] = mx;
-    }
-    for (shell_d.primitives, 0..) |pd, ip| {
-        var mx: f64 = 0.0;
-        for (0..nd) |ic| {
-            const n_val = basis_mod.normalization(pd.alpha, cart_d[ic].x, cart_d[ic].y, cart_d[ic].z);
-            norm_d[ip * nd + ic] = n_val;
-            if (n_val > mx) mx = n_val;
-        }
-        max_norm_d[ip] = mx;
+    if (setup.layout.theta_size > MAX_STACK_THETA_TABLE) {
+        fillContractedShellQuartetFallback(setup, output[0..setup.total_out]);
+        return setup.total_out;
     }
 
-    // Maximum total angular momentum for this shell quartet
-    const La: usize = la + lb;
-    const Lc: usize = lc + ld;
-    const m_max: usize = La + Lc;
-
-    // Compute theta table strides (same as in primitiveERI)
-    const a_stride_z: usize = 1;
-    const a_stride_y: usize = (La + 1) * a_stride_z;
-    const a_stride_x: usize = (La + 1) * a_stride_y;
-    const a_size: usize = (La + 1) * a_stride_x;
-
-    const c_stride_z: usize = 1;
-    const c_stride_y: usize = (Lc + 1) * c_stride_z;
-    const c_stride_x: usize = (Lc + 1) * c_stride_y;
-    const c_size: usize = (Lc + 1) * c_stride_x;
-
-    const m_stride: usize = m_max + 1;
-    const theta_size = a_size * c_size * m_stride;
-
-    // Check stack size limit
-    const MAX_STACK_THETA_BATCH: usize = 256 * 1024;
-    if (theta_size > MAX_STACK_THETA_BATCH) {
-        // Fall back to per-integral computation for very large angular momentum
-        for (0..na) |ia| {
-            for (0..nb) |ib| {
-                for (0..nc) |ic| {
-                    for (0..nd) |id| {
-                        output[ia * nb * nc * nd + ib * nc * nd + ic * nd + id] = contractedERI(
-                            shell_a,
-                            cart_a[ia],
-                            shell_b,
-                            cart_b[ib],
-                            shell_c,
-                            cart_c[ic],
-                            shell_d,
-                            cart_d[id],
-                        );
-                    }
-                }
-            }
-        }
-        return total_out;
-    }
-
-    // AB and CD vectors for horizontal recurrence
-    const ab = [3]f64{
-        shell_a.center.x - shell_b.center.x,
-        shell_a.center.y - shell_b.center.y,
-        shell_a.center.z - shell_b.center.z,
-    };
-    const cd_vec = [3]f64{
-        shell_c.center.x - shell_d.center.x,
-        shell_c.center.y - shell_d.center.y,
-        shell_c.center.z - shell_d.center.z,
-    };
-
-    var theta: [MAX_STACK_THETA_BATCH]f64 = undefined;
-
-    // Pre-compute AB and CD distances (constant for all primitives in this shell quartet)
-    const diff_ab = math.Vec3.sub(shell_a.center, shell_b.center);
-    const r2_ab = math.Vec3.dot(diff_ab, diff_ab);
-    const diff_cd = math.Vec3.sub(shell_c.center, shell_d.center);
-    const r2_cd = math.Vec3.dot(diff_cd, diff_cd);
-
-    // Primitive screening threshold: skip quartets with negligible contribution.
-    // The contribution scales as prefactor * coeff * norm ~ exp(-mu_ab*r2_ab - mu_cd*r2_cd) * pi^2.5 / (p*q*sqrt(p+q))
-    // We use a conservative threshold on the exponential decay factor.
-    const prim_screen_threshold: f64 = 1e-15;
-
-    // Loop over all primitive quartets
-    for (shell_a.primitives, 0..) |prim_a, ipa| {
-        const alpha = prim_a.alpha;
-        for (shell_b.primitives, 0..) |prim_b, ipb| {
-            const beta = prim_b.alpha;
-            const p_val = alpha + beta;
-            const mu_ab = alpha * beta / p_val;
-
-            const exp_ab = @exp(-mu_ab * r2_ab);
-
-            const coeff_ab = prim_a.coeff * prim_b.coeff;
-
-            // Gaussian product center P
-            const p_center = math.Vec3{
-                .x = (alpha * shell_a.center.x + beta * shell_b.center.x) / p_val,
-                .y = (alpha * shell_a.center.y + beta * shell_b.center.y) / p_val,
-                .z = (alpha * shell_a.center.z + beta * shell_b.center.z) / p_val,
-            };
-
-            // PA vector
-            const pa_vec = [3]f64{
-                p_center.x - shell_a.center.x,
-                p_center.y - shell_a.center.y,
-                p_center.z - shell_a.center.z,
-            };
-
-            const inv_2p = 0.5 / p_val;
-
-            for (shell_c.primitives, 0..) |prim_c, ipc| {
-                const gamma_val = prim_c.alpha;
-                for (shell_d.primitives, 0..) |prim_d, ipd| {
-                    const delta_val = prim_d.alpha;
-                    const q_val = gamma_val + delta_val;
-                    const mu_cd = gamma_val * delta_val / q_val;
-
-                    // --- Primitive screening ---
-                    const exp_cd = @exp(-mu_cd * r2_cd);
-                    const exp_factor = exp_ab * exp_cd;
-                    const coeff_abcd = coeff_ab * prim_c.coeff * prim_d.coeff;
-
-                    // Upper bound: prefactor ~ 2 * pi^2.5 / (p*q*sqrt(p+q)) * exp_factor
-                    // Include max normalization constants for accurate screening
-                    const prefactor_bound = 2.0 * std.math.pow(f64, std.math.pi, 2.5) / (p_val * q_val * @sqrt(p_val + q_val)) * exp_factor;
-                    const max_norm_product = max_norm_a[ipa] * max_norm_b[ipb] * max_norm_c[ipc] * max_norm_d[ipd];
-                    if (@abs(coeff_abcd) * max_norm_product * prefactor_bound < prim_screen_threshold) continue;
-
-                    const rho = p_val * q_val / (p_val + q_val);
-                    const prefactor = prefactor_bound; // Same expression, already computed
-
-                    // Gaussian product center Q
-                    const q_center = math.Vec3{
-                        .x = (gamma_val * shell_c.center.x + delta_val * shell_d.center.x) / q_val,
-                        .y = (gamma_val * shell_c.center.y + delta_val * shell_d.center.y) / q_val,
-                        .z = (gamma_val * shell_c.center.z + delta_val * shell_d.center.z) / q_val,
-                    };
-                    const w_center = math.Vec3{
-                        .x = (p_val * p_center.x + q_val * q_center.x) / (p_val + q_val),
-                        .y = (p_val * p_center.y + q_val * q_center.y) / (p_val + q_val),
-                        .z = (p_val * p_center.z + q_val * q_center.z) / (p_val + q_val),
-                    };
-
-                    const diff_pq = math.Vec3.sub(p_center, q_center);
-                    const r2_pq = math.Vec3.dot(diff_pq, diff_pq);
-
-                    // Boys function argument
-                    const arg = rho * r2_pq;
-
-                    // Pre-compute Boys function values using batch computation
-                    var boys: [ERI_MAX_M]f64 = undefined;
-                    boys_mod.boysBatch(@as(u32, @intCast(m_max)), arg, &boys);
-
-                    // Intermediate vectors
-                    const qc = [3]f64{ q_center.x - shell_c.center.x, q_center.y - shell_c.center.y, q_center.z - shell_c.center.z };
-                    const wp = [3]f64{ w_center.x - p_center.x, w_center.y - p_center.y, w_center.z - p_center.z };
-                    const wq = [3]f64{ w_center.x - q_center.x, w_center.y - q_center.y, w_center.z - q_center.z };
-
-                    const inv_2q = 0.5 / q_val;
-                    const inv_2pq = 0.5 / (p_val + q_val);
-                    const rho_over_p = rho / p_val;
-                    const rho_over_q = rho / q_val;
-
-                    // ---- Build theta table (vertical recurrence) ----
-                    // Note: No @memset needed. The vertical recurrence writes all entries via
-                    // direct assignment (=), not accumulation (+=). Each theta entry is written
-                    // before it is read. This avoids a costly memset on large theta buffers.
-
-                    // Base case: [0,0,0 | 0,0,0]^(m) = boys[m]
-                    for (0..m_max + 1) |m| {
-                        theta[0 * c_size * m_stride + 0 * m_stride + m] = boys[m];
-                    }
-
-                    // Build c-direction (increment c while a=0)
-                    for (1..Lc + 1) |lc_total| {
-                        var cx: usize = lc_total;
-                        while (true) {
-                            var cy: usize = lc_total - cx;
-                            while (true) {
-                                const cz: usize = lc_total - cx - cy;
-                                const c_idx = cx * c_stride_x + cy * c_stride_y + cz * c_stride_z;
-                                const a_idx: usize = 0;
-
-                                var axis: usize = undefined;
-                                if (cx > 0) {
-                                    axis = 0;
-                                } else if (cy > 0) {
-                                    axis = 1;
-                                } else {
-                                    axis = 2;
-                                }
-
-                                var cx_d = cx;
-                                var cy_d = cy;
-                                var cz_d = cz;
-                                if (axis == 0) cx_d -= 1 else if (axis == 1) cy_d -= 1 else cz_d -= 1;
-                                const c_dec_idx = cx_d * c_stride_x + cy_d * c_stride_y + cz_d * c_stride_z;
-                                const ci_after: f64 = @floatFromInt(if (axis == 0) cx_d else if (axis == 1) cy_d else cz_d);
-
-                                for (0..m_max + 1 - lc_total) |m| {
-                                    var val = qc[axis] * theta[a_idx * c_size * m_stride + c_dec_idx * m_stride + m] +
-                                        wq[axis] * theta[a_idx * c_size * m_stride + c_dec_idx * m_stride + m + 1];
-
-                                    if (ci_after >= 1.0) {
-                                        var cx_d2 = cx_d;
-                                        var cy_d2 = cy_d;
-                                        var cz_d2 = cz_d;
-                                        if (axis == 0) cx_d2 -= 1 else if (axis == 1) cy_d2 -= 1 else cz_d2 -= 1;
-                                        const c_dec2_idx = cx_d2 * c_stride_x + cy_d2 * c_stride_y + cz_d2 * c_stride_z;
-
-                                        val += ci_after * inv_2q * (theta[a_idx * c_size * m_stride + c_dec2_idx * m_stride + m] -
-                                            rho_over_q * theta[a_idx * c_size * m_stride + c_dec2_idx * m_stride + m + 1]);
-                                    }
-
-                                    theta[a_idx * c_size * m_stride + c_idx * m_stride + m] = val;
-                                }
-
-                                if (cy == 0) break;
-                                cy -= 1;
-                            }
-                            if (cx == 0) break;
-                            cx -= 1;
-                        }
-                    }
-
-                    // Build a-direction (increment a for all c values)
-                    for (1..La + 1) |la_total| {
-                        var ax: usize = la_total;
-                        while (true) {
-                            var ay: usize = la_total - ax;
-                            while (true) {
-                                const az: usize = la_total - ax - ay;
-                                const a_idx = ax * a_stride_x + ay * a_stride_y + az * a_stride_z;
-
-                                var axis: usize = undefined;
-                                if (ax > 0) {
-                                    axis = 0;
-                                } else if (ay > 0) {
-                                    axis = 1;
-                                } else {
-                                    axis = 2;
-                                }
-
-                                var ax_d = ax;
-                                var ay_d = ay;
-                                var az_d = az;
-                                if (axis == 0) ax_d -= 1 else if (axis == 1) ay_d -= 1 else az_d -= 1;
-                                const a_dec_idx = ax_d * a_stride_x + ay_d * a_stride_y + az_d * a_stride_z;
-                                const ai_after: f64 = @floatFromInt(if (axis == 0) ax_d else if (axis == 1) ay_d else az_d);
-
-                                for (0..Lc + 1) |lc_total| {
-                                    var cx2: usize = lc_total;
-                                    while (true) {
-                                        var cy2: usize = lc_total - cx2;
-                                        while (true) {
-                                            const cz2: usize = lc_total - cx2 - cy2;
-                                            const c_idx = cx2 * c_stride_x + cy2 * c_stride_y + cz2 * c_stride_z;
-
-                                            const m_limit = m_max + 1 - la_total - lc_total;
-                                            for (0..m_limit) |m| {
-                                                var val = pa_vec[axis] * theta[a_dec_idx * c_size * m_stride + c_idx * m_stride + m] +
-                                                    wp[axis] * theta[a_dec_idx * c_size * m_stride + c_idx * m_stride + m + 1];
-
-                                                if (ai_after >= 1.0) {
-                                                    var ax_d2 = ax_d;
-                                                    var ay_d2 = ay_d;
-                                                    var az_d2 = az_d;
-                                                    if (axis == 0) ax_d2 -= 1 else if (axis == 1) ay_d2 -= 1 else az_d2 -= 1;
-                                                    const a_dec2_idx = ax_d2 * a_stride_x + ay_d2 * a_stride_y + az_d2 * a_stride_z;
-
-                                                    val += ai_after * inv_2p * (theta[a_dec2_idx * c_size * m_stride + c_idx * m_stride + m] -
-                                                        rho_over_p * theta[a_dec2_idx * c_size * m_stride + c_idx * m_stride + m + 1]);
-                                                }
-
-                                                const ci_val: f64 = @floatFromInt(if (axis == 0) cx2 else if (axis == 1) cy2 else cz2);
-                                                if (ci_val >= 1.0) {
-                                                    var cx2_d = cx2;
-                                                    var cy2_d = cy2;
-                                                    var cz2_d = cz2;
-                                                    if (axis == 0) cx2_d -= 1 else if (axis == 1) cy2_d -= 1 else cz2_d -= 1;
-                                                    const c_dec_idx = cx2_d * c_stride_x + cy2_d * c_stride_y + cz2_d * c_stride_z;
-
-                                                    val += ci_val * inv_2pq * theta[a_dec_idx * c_size * m_stride + c_dec_idx * m_stride + m + 1];
-                                                }
-
-                                                theta[a_idx * c_size * m_stride + c_idx * m_stride + m] = val;
-                                            }
-
-                                            if (cy2 == 0) break;
-                                            cy2 -= 1;
-                                        }
-                                        if (cx2 == 0) break;
-                                        cx2 -= 1;
-                                    }
-                                }
-
-                                if (ay == 0) break;
-                                ay -= 1;
-                            }
-                            if (ax == 0) break;
-                            ax -= 1;
-                        }
-                    }
-
-                    // ---- Horizontal recurrence for ALL Cartesian component combinations ----
-                    // The theta table is built; now extract (ia,ib|ic,id) for all combinations.
-                    const prim_prefactor = prefactor * coeff_abcd;
-
-                    for (0..na) |ia| {
-                        const na_val = norm_a[ipa * na + ia];
-                        for (0..nb) |ib| {
-                            const nb_val = norm_b[ipb * nb + ib];
-                            const nab = na_val * nb_val;
-                            for (0..nc) |ic| {
-                                const nc_val = norm_c[ipc * nc + ic];
-                                const nabc = nab * nc_val;
-                                for (0..nd) |id| {
-                                    const nd_val = norm_d[ipd * nd + id];
-
-                                    const eri_val = eriHorizontal(
-                                        .{ cart_a[ia].x, cart_a[ia].y, cart_a[ia].z },
-                                        .{ cart_b[ib].x, cart_b[ib].y, cart_b[ib].z },
-                                        .{ cart_c[ic].x, cart_c[ic].y, cart_c[ic].z },
-                                        .{ cart_d[id].x, cart_d[id].y, cart_d[id].z },
-                                        &theta,
-                                        a_stride_x,
-                                        a_stride_y,
-                                        c_size,
-                                        c_stride_x,
-                                        c_stride_y,
-                                        m_stride,
-                                        ab,
-                                        cd_vec,
-                                    );
-
-                                    output[ia * nb * nc * nd + ib * nc * nd + ic * nd + id] +=
-                                        prim_prefactor * nabc * nd_val * eri_val;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    return total_out;
+    var theta: [MAX_STACK_THETA_TABLE]f64 = undefined;
+    accumulateContractedShellQuartet(
+        theta[0..setup.layout.theta_size],
+        setup,
+        initBatchNormTables(setup),
+        output[0..setup.total_out],
+    );
+    return setup.total_out;
 }
 
 // ============================================================================
@@ -1846,136 +2020,8 @@ pub fn buildEriTable(
     const size = nn * (nn + 1) / 2;
     const values = try alloc.alloc(f64, size);
     @memset(values, 0.0);
-
-    const n_shells = shells.len;
-
-    // Build shell → basis function index mapping
-    var shell_offsets: [128]usize = undefined;
-    var shell_sizes: [128]usize = undefined;
-    var offset: usize = 0;
-    for (shells, 0..) |shell, si| {
-        shell_offsets[si] = offset;
-        shell_sizes[si] = shell.numCartesianFunctions();
-        offset += shell_sizes[si];
-    }
-
-    // --- Step 1: Build Schwarz screening table ---
-    // Q_AB = max_{a in A, b in B} sqrt(|(ab|ab)|)
-    // Stored as a flat n_shells × n_shells matrix (symmetric).
-    // Uses Rys quadrature shell-quartet ERI for efficiency.
-    const MAX_SCHWARZ_BATCH: usize = 15 * 15 * 15 * 15;
-    var schwarz_buf: [MAX_SCHWARZ_BATCH]f64 = undefined;
-    var schwarz_q: [128 * 128]f64 = undefined;
-    for (0..n_shells) |si| {
-        const na = shell_sizes[si];
-        for (si..n_shells) |sj| {
-            const nb = shell_sizes[sj];
-
-            // Compute (AB|AB) shell quartet using Rys ERI
-            _ = rys_eri.contractedShellQuartetERI(
-                shells[si],
-                shells[sj],
-                shells[si],
-                shells[sj],
-                &schwarz_buf,
-            );
-
-            // Find max |ERI| over all Cartesian components
-            var max_val: f64 = 0.0;
-            for (0..na) |ia| {
-                for (0..nb) |ib| {
-                    const val = schwarz_buf[ia * nb * na * nb + ib * na * nb + ia * nb + ib];
-                    const abs_val = @abs(val);
-                    if (abs_val > max_val) max_val = abs_val;
-                }
-            }
-            const q_val = @sqrt(max_val);
-            schwarz_q[si * n_shells + sj] = q_val;
-            schwarz_q[sj * n_shells + si] = q_val;
-        }
-    }
-
-    // --- Step 2: Iterate shell quartets with Schwarz screening + batch ERI ---
-    const schwarz_threshold: f64 = 1e-12;
-
-    // Stack buffer for batch ERI output.
-    // Maximum size: MAX_CART^4 = 15^4 = 50625 (f|f|f|f case).
-    const MAX_BATCH: usize = 15 * 15 * 15 * 15;
-    var eri_buf: [MAX_BATCH]f64 = undefined;
-
-    // Shell-quartet loop with 8-fold shell-level symmetry:
-    //   si >= sj, sk >= sl, shellPairIndex(si,sj) >= shellPairIndex(sk,sl)
-    // Since ERI(ab|cd) = ERI(cd|ab), when distributing to the basis-function
-    // level table we must handle both ij>=kl and ij<kl cases (swap if needed).
-    for (0..n_shells) |si| {
-        const na = shell_sizes[si];
-        const off_a = shell_offsets[si];
-
-        for (0..si + 1) |sj| {
-            const nb = shell_sizes[sj];
-            const off_b = shell_offsets[sj];
-            const q_ab = schwarz_q[si * n_shells + sj];
-
-            const ab_pair = shellPairIndex(si, sj);
-
-            for (0..n_shells) |sk| {
-                const nc = shell_sizes[sk];
-                const off_c = shell_offsets[sk];
-
-                for (0..sk + 1) |sl| {
-                    const cd_pair = shellPairIndex(sk, sl);
-                    if (ab_pair < cd_pair) continue; // bra-ket symmetry at shell level
-
-                    const q_cd = schwarz_q[sk * n_shells + sl];
-                    if (q_ab * q_cd < schwarz_threshold) {
-                        continue; // Schwarz screening
-                    }
-
-                    const nd = shell_sizes[sl];
-                    const off_d = shell_offsets[sl];
-
-                    // Compute ALL ERIs for this shell quartet at once using Rys quadrature.
-                    // This computes roots/weights once per primitive quartet and extracts
-                    // all Cartesian component ERIs via 2D recurrence + horizontal recurrence.
-                    _ = rys_eri.contractedShellQuartetERI(
-                        shells[si],
-                        shells[sj],
-                        shells[sk],
-                        shells[sl],
-                        &eri_buf,
-                    );
-
-                    // Distribute batch ERIs to the triangular ERI table
-                    for (0..na) |ia| {
-                        const i = off_a + ia;
-                        for (0..nb) |ib| {
-                            const j = off_b + ib;
-                            if (i < j) continue; // enforce i >= j
-
-                            const ij = triangularIndex(i, j);
-
-                            for (0..nc) |ic| {
-                                const k = off_c + ic;
-                                for (0..nd) |id| {
-                                    const l = off_d + id;
-                                    if (k < l) continue; // enforce k >= l
-
-                                    const kl = triangularIndex(k, l);
-
-                                    const val = eri_buf[ia * nb * nc * nd + ib * nc * nd + ic * nd + id];
-                                    // Use max/min to store at the canonical index (ij>=kl)
-                                    const big = @max(ij, kl);
-                                    const small = @min(ij, kl);
-                                    values[triangularIndex(big, small)] = val;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
+    const map = initShellIndexMap(shells);
+    fillEriTableValues(values, shells, map, buildSchwarzTable(shells, map));
     return GeneralEriTable{ .values = values, .n = n };
 }
 
@@ -2176,13 +2222,31 @@ test "OS ERI ssss matches old implementation" {
     const s_cart = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
     // (aa|aa)
-    const eri_os = contractedERI(shell_a, s_cart, shell_a, s_cart, shell_a, s_cart, shell_a, s_cart);
+    const eri_os = contractedERI(
+        shell_a,
+        s_cart,
+        shell_a,
+        s_cart,
+        shell_a,
+        s_cart,
+        shell_a,
+        s_cart,
+    );
     const eri_old_mod = @import("eri.zig");
     const eri_old = eri_old_mod.eriSSSS(shell_a, shell_a, shell_a, shell_a);
     try testing.expectApproxEqAbs(eri_old, eri_os, 1e-10);
 
     // (ab|ab)
-    const eri_os2 = contractedERI(shell_a, s_cart, shell_b, s_cart, shell_a, s_cart, shell_b, s_cart);
+    const eri_os2 = contractedERI(
+        shell_a,
+        s_cart,
+        shell_b,
+        s_cart,
+        shell_a,
+        s_cart,
+        shell_b,
+        s_cart,
+    );
     const eri_old2 = eri_old_mod.eriSSSS(shell_a, shell_b, shell_a, shell_b);
     try testing.expectApproxEqAbs(eri_old2, eri_os2, 1e-10);
 }

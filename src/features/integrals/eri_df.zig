@@ -12,7 +12,9 @@ const math = @import("../math/math.zig");
 const basis_mod = @import("../basis/basis.zig");
 const rys_roots_mod = @import("rys_roots.zig");
 
+const AngularMomentum = basis_mod.AngularMomentum;
 const ContractedShell = basis_mod.ContractedShell;
+const PrimitiveGaussian = basis_mod.PrimitiveGaussian;
 
 const MAX_L: usize = 4;
 const MAX_IJ: usize = 2 * MAX_L;
@@ -25,6 +27,94 @@ const MAX_PRIM: usize = 16;
 const MAX_NORM_TABLE: usize = MAX_PRIM * MAX_CART;
 const MAX_G_SIZE: usize = MAX_NROOTS * MAX_DIM_IJ * MAX_DIM_KL;
 const PRIM_SCREEN_THRESHOLD: f64 = 1e-15;
+
+const TwoCenterSetup = struct {
+    np: usize,
+    nq: usize,
+    total_out: usize,
+    cart_p: [MAX_CART]AngularMomentum,
+    cart_q: [MAX_CART]AngularMomentum,
+    dim_ij: usize,
+    dim_kl: usize,
+    nroots: usize,
+    p_center: math.Vec3,
+    q_center: math.Vec3,
+    r2_pq: f64,
+};
+
+const TwoCenterWorkspace = struct {
+    gx: [MAX_G_SIZE]f64 = undefined,
+    gy: [MAX_G_SIZE]f64 = undefined,
+    gz: [MAX_G_SIZE]f64 = undefined,
+    rys_r: [MAX_NROOTS]f64 = undefined,
+    rys_w: [MAX_NROOTS]f64 = undefined,
+    c00x: [MAX_NROOTS]f64 = undefined,
+    c00y: [MAX_NROOTS]f64 = undefined,
+    c00z: [MAX_NROOTS]f64 = undefined,
+    c0px: [MAX_NROOTS]f64 = undefined,
+    c0py: [MAX_NROOTS]f64 = undefined,
+    c0pz: [MAX_NROOTS]f64 = undefined,
+    b10_arr: [MAX_NROOTS]f64 = undefined,
+    b01_arr: [MAX_NROOTS]f64 = undefined,
+    b00_arr: [MAX_NROOTS]f64 = undefined,
+    w_pref: [MAX_NROOTS]f64 = undefined,
+};
+
+const ThreeCenterSetup = struct {
+    na: usize,
+    nb: usize,
+    np: usize,
+    total_out: usize,
+    cart_a: [MAX_CART]AngularMomentum,
+    cart_b: [MAX_CART]AngularMomentum,
+    cart_p: [MAX_CART]AngularMomentum,
+    dim_ij: usize,
+    dim_kl: usize,
+    nroots: usize,
+    ab: [3]f64,
+    r2_ab: f64,
+    la_1: usize,
+    lb_1: usize,
+    lp_1: usize,
+    hr3d_b_stride: usize,
+    hr3d_a_stride: usize,
+    hr3d_size: usize,
+};
+
+const ThreeCenterWorkspace = struct {
+    gx: [MAX_G_SIZE]f64 = undefined,
+    gy: [MAX_G_SIZE]f64 = undefined,
+    gz: [MAX_G_SIZE]f64 = undefined,
+    rys_r: [MAX_NROOTS]f64 = undefined,
+    rys_w: [MAX_NROOTS]f64 = undefined,
+    c00x: [MAX_NROOTS]f64 = undefined,
+    c00y: [MAX_NROOTS]f64 = undefined,
+    c00z: [MAX_NROOTS]f64 = undefined,
+    c0px: [MAX_NROOTS]f64 = undefined,
+    c0py: [MAX_NROOTS]f64 = undefined,
+    c0pz: [MAX_NROOTS]f64 = undefined,
+    b10_arr: [MAX_NROOTS]f64 = undefined,
+    b01_arr: [MAX_NROOTS]f64 = undefined,
+    b00_arr: [MAX_NROOTS]f64 = undefined,
+    w_pref: [MAX_NROOTS]f64 = undefined,
+    hr3d_x: [MAX_HR3D]f64 = undefined,
+    hr3d_y: [MAX_HR3D]f64 = undefined,
+    hr3d_z: [MAX_HR3D]f64 = undefined,
+    prim_eri: [MAX_CART * MAX_CART * MAX_CART]f64 = undefined,
+};
+
+const ThreeCenterBraPair = struct {
+    p_val: f64,
+    exp_ab: f64,
+    coeff_ab: f64,
+    center: math.Vec3,
+    pa: math.Vec3,
+    max_norm_product: f64,
+    ipa: usize,
+    ipb: usize,
+};
+
+const MAX_HR3D: usize = (MAX_L + 1) * (MAX_L + 1) * (MAX_L + 1);
 
 // ============================================================================
 // 2D Recurrence helpers (same as rys_eri.zig)
@@ -64,7 +154,8 @@ fn buildG2d(
             while (k < dim_kl) : (k += 1) {
                 var val = c0p[r] * g[base + (k - 1) * stride_k + 0];
                 if (k >= 2) {
-                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + 0];
+                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] *
+                        g[base + (k - 2) * stride_k + 0];
                 }
                 g[base + k * stride_k + 0] = val;
 
@@ -72,9 +163,11 @@ fn buildG2d(
                     var i: usize = 1;
                     while (i < dim_ij) : (i += 1) {
                         val = c0p[r] * g[base + (k - 1) * stride_k + i] +
-                            @as(f64, @floatFromInt(i)) * b00[r] * g[base + (k - 1) * stride_k + i - 1];
+                            @as(f64, @floatFromInt(i)) * b00[r] *
+                                g[base + (k - 1) * stride_k + i - 1];
                         if (k >= 2) {
-                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + i];
+                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] *
+                                g[base + (k - 2) * stride_k + i];
                         }
                         g[base + k * stride_k + i] = val;
                     }
@@ -119,7 +212,8 @@ fn buildG2dWeighted(
             while (k < dim_kl) : (k += 1) {
                 var val = c0p[r] * g[base + (k - 1) * stride_k + 0];
                 if (k >= 2) {
-                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + 0];
+                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] *
+                        g[base + (k - 2) * stride_k + 0];
                 }
                 g[base + k * stride_k + 0] = val;
 
@@ -127,9 +221,11 @@ fn buildG2dWeighted(
                     var i: usize = 1;
                     while (i < dim_ij) : (i += 1) {
                         val = c0p[r] * g[base + (k - 1) * stride_k + i] +
-                            @as(f64, @floatFromInt(i)) * b00[r] * g[base + (k - 1) * stride_k + i - 1];
+                            @as(f64, @floatFromInt(i)) * b00[r] *
+                                g[base + (k - 1) * stride_k + i - 1];
                         if (k >= 2) {
-                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + i];
+                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] *
+                                g[base + (k - 2) * stride_k + i];
                         }
                         g[base + k * stride_k + i] = val;
                     }
@@ -137,6 +233,481 @@ fn buildG2dWeighted(
             }
         }
     }
+}
+
+fn initTwoCenterSetup(
+    shell_p: ContractedShell,
+    shell_q: ContractedShell,
+    output: []f64,
+) TwoCenterSetup {
+    const lp: usize = @intCast(shell_p.l);
+    const lq: usize = @intCast(shell_q.l);
+    const np = basis_mod.numCartesian(shell_p.l);
+    const nq = basis_mod.numCartesian(shell_q.l);
+    const total_out = np * nq;
+    std.debug.assert(output.len >= total_out);
+    @memset(output[0..total_out], 0.0);
+
+    const dpq = math.Vec3.sub(shell_p.center, shell_q.center);
+    return .{
+        .np = np,
+        .nq = nq,
+        .total_out = total_out,
+        .cart_p = basis_mod.cartesianExponents(shell_p.l),
+        .cart_q = basis_mod.cartesianExponents(shell_q.l),
+        .dim_ij = lp + 1,
+        .dim_kl = lq + 1,
+        .nroots = (lp + lq) / 2 + 1,
+        .p_center = shell_p.center,
+        .q_center = shell_q.center,
+        .r2_pq = math.Vec3.dot(dpq, dpq),
+    };
+}
+
+fn initThreeCenterSetup(
+    shell_a: ContractedShell,
+    shell_b: ContractedShell,
+    shell_p: ContractedShell,
+    output: []f64,
+) ThreeCenterSetup {
+    const la: usize = @intCast(shell_a.l);
+    const lb: usize = @intCast(shell_b.l);
+    const lp: usize = @intCast(shell_p.l);
+    const na = basis_mod.numCartesian(shell_a.l);
+    const nb = basis_mod.numCartesian(shell_b.l);
+    const np = basis_mod.numCartesian(shell_p.l);
+    const total_out = na * nb * np;
+    std.debug.assert(output.len >= total_out);
+    @memset(output[0..total_out], 0.0);
+
+    const ab = [3]f64{
+        shell_a.center.x - shell_b.center.x,
+        shell_a.center.y - shell_b.center.y,
+        shell_a.center.z - shell_b.center.z,
+    };
+    const diff_ab = math.Vec3.sub(shell_a.center, shell_b.center);
+    const la_1 = la + 1;
+    const lb_1 = lb + 1;
+    const lp_1 = lp + 1;
+    const hr3d_b_stride = lp_1;
+    const hr3d_a_stride = lb_1 * lp_1;
+    return .{
+        .na = na,
+        .nb = nb,
+        .np = np,
+        .total_out = total_out,
+        .cart_a = basis_mod.cartesianExponents(shell_a.l),
+        .cart_b = basis_mod.cartesianExponents(shell_b.l),
+        .cart_p = basis_mod.cartesianExponents(shell_p.l),
+        .dim_ij = la + lb + 1,
+        .dim_kl = lp + 1,
+        .nroots = (la + lb + lp) / 2 + 1,
+        .ab = ab,
+        .r2_ab = math.Vec3.dot(diff_ab, diff_ab),
+        .la_1 = la_1,
+        .lb_1 = lb_1,
+        .lp_1 = lp_1,
+        .hr3d_b_stride = hr3d_b_stride,
+        .hr3d_a_stride = hr3d_a_stride,
+        .hr3d_size = la_1 * hr3d_a_stride,
+    };
+}
+
+fn fillNormalizationTable(
+    shell: ContractedShell,
+    n_cart: usize,
+    cart: *const [MAX_CART]AngularMomentum,
+    norm: []f64,
+) void {
+    for (shell.primitives, 0..) |prim, ip| {
+        for (0..n_cart) |ic| {
+            const c = cart[ic];
+            norm[ip * n_cart + ic] = basis_mod.normalization(prim.alpha, c.x, c.y, c.z);
+        }
+    }
+}
+
+fn fillNormalizationTableAndMax(
+    shell: ContractedShell,
+    n_cart: usize,
+    cart: *const [MAX_CART]AngularMomentum,
+    norm: []f64,
+    max_norm: []f64,
+) void {
+    for (shell.primitives, 0..) |prim, ip| {
+        var max_value: f64 = 0.0;
+        for (0..n_cart) |ic| {
+            const c = cart[ic];
+            const n_val = basis_mod.normalization(prim.alpha, c.x, c.y, c.z);
+            norm[ip * n_cart + ic] = n_val;
+            if (n_val > max_value) max_value = n_val;
+        }
+        max_norm[ip] = max_value;
+    }
+}
+
+fn prepareTwoCenterPrimitivePair(
+    workspace: *TwoCenterWorkspace,
+    setup: TwoCenterSetup,
+    prim_p: PrimitiveGaussian,
+    prim_q: PrimitiveGaussian,
+) f64 {
+    const pq_sum = prim_p.alpha + prim_q.alpha;
+    const prefactor =
+        2.0 * std.math.pow(f64, std.math.pi, 2.5) / (prim_p.alpha * prim_q.alpha * @sqrt(pq_sum));
+    const rho = prim_p.alpha * prim_q.alpha / pq_sum;
+    const weighted_center = math.Vec3{
+        .x = (prim_p.alpha * setup.p_center.x + prim_q.alpha * setup.q_center.x) / pq_sum,
+        .y = (prim_p.alpha * setup.p_center.y + prim_q.alpha * setup.q_center.y) / pq_sum,
+        .z = (prim_p.alpha * setup.p_center.z + prim_q.alpha * setup.q_center.z) / pq_sum,
+    };
+
+    rys_roots_mod.rysRoots(setup.nroots, rho * setup.r2_pq, &workspace.rys_r, &workspace.rys_w);
+    for (0..setup.nroots) |r| {
+        const t2 = workspace.rys_r[r];
+        workspace.b00_arr[r] = 0.5 / pq_sum * t2;
+        workspace.b10_arr[r] = 0.5 / prim_p.alpha * (1.0 - prim_q.alpha / pq_sum * t2);
+        workspace.b01_arr[r] = 0.5 / prim_q.alpha * (1.0 - prim_p.alpha / pq_sum * t2);
+        workspace.c00x[r] = (weighted_center.x - setup.p_center.x) * t2;
+        workspace.c00y[r] = (weighted_center.y - setup.p_center.y) * t2;
+        workspace.c00z[r] = (weighted_center.z - setup.p_center.z) * t2;
+        workspace.c0px[r] = (weighted_center.x - setup.q_center.x) * t2;
+        workspace.c0py[r] = (weighted_center.y - setup.q_center.y) * t2;
+        workspace.c0pz[r] = (weighted_center.z - setup.q_center.z) * t2;
+        workspace.w_pref[r] = workspace.rys_w[r] * prefactor;
+    }
+
+    buildG2d(
+        setup.nroots,
+        setup.dim_ij,
+        setup.dim_kl,
+        &workspace.c00x,
+        &workspace.c0px,
+        &workspace.b10_arr,
+        &workspace.b01_arr,
+        &workspace.b00_arr,
+        workspace.gx[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
+    );
+    buildG2d(
+        setup.nroots,
+        setup.dim_ij,
+        setup.dim_kl,
+        &workspace.c00y,
+        &workspace.c0py,
+        &workspace.b10_arr,
+        &workspace.b01_arr,
+        &workspace.b00_arr,
+        workspace.gy[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
+    );
+    buildG2dWeighted(
+        setup.nroots,
+        setup.dim_ij,
+        setup.dim_kl,
+        &workspace.c00z,
+        &workspace.c0pz,
+        &workspace.b10_arr,
+        &workspace.b01_arr,
+        &workspace.b00_arr,
+        &workspace.w_pref,
+        workspace.gz[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
+    );
+    return prim_p.coeff * prim_q.coeff;
+}
+
+fn accumulateTwoCenterPrimitivePair(
+    workspace: *TwoCenterWorkspace,
+    setup: TwoCenterSetup,
+    ipp: usize,
+    ipq: usize,
+    prim_p: PrimitiveGaussian,
+    prim_q: PrimitiveGaussian,
+    norm_p: []const f64,
+    norm_q: []const f64,
+    output: []f64,
+) void {
+    const coeff = prepareTwoCenterPrimitivePair(workspace, setup, prim_p, prim_q);
+    for (0..setup.np) |ip| {
+        const p_cart = setup.cart_p[ip];
+        const px: usize = @intCast(p_cart.x);
+        const py: usize = @intCast(p_cart.y);
+        const pz: usize = @intCast(p_cart.z);
+        for (0..setup.nq) |iq| {
+            const q_cart = setup.cart_q[iq];
+            const qx: usize = @intCast(q_cart.x);
+            const qy: usize = @intCast(q_cart.y);
+            const qz: usize = @intCast(q_cart.z);
+            var val: f64 = 0.0;
+            for (0..setup.nroots) |r| {
+                const base = r * setup.dim_ij * setup.dim_kl;
+                val += workspace.gx[base + qx * setup.dim_ij + px] *
+                    workspace.gy[base + qy * setup.dim_ij + py] *
+                    workspace.gz[base + qz * setup.dim_ij + pz];
+            }
+            output[ip * setup.nq + iq] += coeff *
+                norm_p[ipp * setup.np + ip] *
+                norm_q[ipq * setup.nq + iq] *
+                val;
+        }
+    }
+}
+
+fn initThreeCenterBraPair(
+    shell_a: ContractedShell,
+    shell_b: ContractedShell,
+    prim_a: PrimitiveGaussian,
+    prim_b: PrimitiveGaussian,
+    ipa: usize,
+    ipb: usize,
+    max_norm_a: []const f64,
+    max_norm_b: []const f64,
+    r2_ab: f64,
+) ThreeCenterBraPair {
+    const p_val = prim_a.alpha + prim_b.alpha;
+    const center = math.Vec3{
+        .x = (prim_a.alpha * shell_a.center.x + prim_b.alpha * shell_b.center.x) / p_val,
+        .y = (prim_a.alpha * shell_a.center.y + prim_b.alpha * shell_b.center.y) / p_val,
+        .z = (prim_a.alpha * shell_a.center.z + prim_b.alpha * shell_b.center.z) / p_val,
+    };
+    return .{
+        .p_val = p_val,
+        .exp_ab = @exp(-(prim_a.alpha * prim_b.alpha / p_val) * r2_ab),
+        .coeff_ab = prim_a.coeff * prim_b.coeff,
+        .center = center,
+        .pa = math.Vec3.sub(center, shell_a.center),
+        .max_norm_product = max_norm_a[ipa] * max_norm_b[ipb],
+        .ipa = ipa,
+        .ipb = ipb,
+    };
+}
+
+fn prepareThreeCenterPrimitivePair(
+    workspace: *ThreeCenterWorkspace,
+    setup: ThreeCenterSetup,
+    aux_center: math.Vec3,
+    bra: ThreeCenterBraPair,
+    prim_p: PrimitiveGaussian,
+) ?f64 {
+    const q_val = prim_p.alpha;
+    const pq_sum = bra.p_val + q_val;
+    const prefactor = 2.0 * std.math.pow(f64, std.math.pi, 2.5) /
+        (bra.p_val * q_val * @sqrt(pq_sum)) * bra.exp_ab;
+    const coeff_abp = bra.coeff_ab * prim_p.coeff;
+    if (@abs(coeff_abp) * bra.max_norm_product * prefactor < PRIM_SCREEN_THRESHOLD) return null;
+
+    const weighted_center = math.Vec3{
+        .x = (bra.p_val * bra.center.x + q_val * aux_center.x) / pq_sum,
+        .y = (bra.p_val * bra.center.y + q_val * aux_center.y) / pq_sum,
+        .z = (bra.p_val * bra.center.z + q_val * aux_center.z) / pq_sum,
+    };
+    const diff_pq = math.Vec3.sub(bra.center, aux_center);
+    const rho = bra.p_val * q_val / pq_sum;
+
+    rys_roots_mod.rysRoots(
+        setup.nroots,
+        rho * math.Vec3.dot(diff_pq, diff_pq),
+        &workspace.rys_r,
+        &workspace.rys_w,
+    );
+    for (0..setup.nroots) |r| {
+        const t2 = workspace.rys_r[r];
+        workspace.b00_arr[r] = 0.5 / pq_sum * t2;
+        workspace.b10_arr[r] = 0.5 / bra.p_val * (1.0 - q_val / pq_sum * t2);
+        workspace.b01_arr[r] = 0.5 / q_val * (1.0 - bra.p_val / pq_sum * t2);
+        workspace.c00x[r] = bra.pa.x + (weighted_center.x - bra.center.x) * t2;
+        workspace.c00y[r] = bra.pa.y + (weighted_center.y - bra.center.y) * t2;
+        workspace.c00z[r] = bra.pa.z + (weighted_center.z - bra.center.z) * t2;
+        workspace.c0px[r] = (weighted_center.x - aux_center.x) * t2;
+        workspace.c0py[r] = (weighted_center.y - aux_center.y) * t2;
+        workspace.c0pz[r] = (weighted_center.z - aux_center.z) * t2;
+        workspace.w_pref[r] = workspace.rys_w[r] * prefactor;
+    }
+
+    buildG2d(
+        setup.nroots,
+        setup.dim_ij,
+        setup.dim_kl,
+        &workspace.c00x,
+        &workspace.c0px,
+        &workspace.b10_arr,
+        &workspace.b01_arr,
+        &workspace.b00_arr,
+        workspace.gx[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
+    );
+    buildG2d(
+        setup.nroots,
+        setup.dim_ij,
+        setup.dim_kl,
+        &workspace.c00y,
+        &workspace.c0py,
+        &workspace.b10_arr,
+        &workspace.b01_arr,
+        &workspace.b00_arr,
+        workspace.gy[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
+    );
+    buildG2dWeighted(
+        setup.nroots,
+        setup.dim_ij,
+        setup.dim_kl,
+        &workspace.c00z,
+        &workspace.c0pz,
+        &workspace.b10_arr,
+        &workspace.b01_arr,
+        &workspace.b00_arr,
+        &workspace.w_pref,
+        workspace.gz[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
+    );
+    return coeff_abp;
+}
+
+fn buildThreeCenterBraHrAxis(
+    setup: ThreeCenterSetup,
+    g_axis: []const f64,
+    hr3d: []f64,
+    g2d_base: usize,
+    ab_val: f64,
+) void {
+    for (0..setup.lp_1) |p| {
+        var work: [MAX_DIM_IJ]f64 = undefined;
+        for (0..setup.dim_ij) |a| {
+            work[a] = g_axis[g2d_base + p * setup.dim_ij + a];
+        }
+        for (0..setup.la_1) |a| {
+            hr3d[a * setup.hr3d_a_stride + p] = work[a];
+        }
+        var b: usize = 1;
+        while (b < setup.lb_1) : (b += 1) {
+            const a_count = setup.dim_ij - b;
+            for (0..a_count) |a| {
+                work[a] = work[a + 1] + ab_val * work[a];
+            }
+            for (0..setup.la_1) |a| {
+                hr3d[a * setup.hr3d_a_stride + b * setup.hr3d_b_stride + p] = work[a];
+            }
+        }
+    }
+}
+
+fn accumulateThreeCenterRootContribution(
+    setup: ThreeCenterSetup,
+    prim_eri: []f64,
+    hr3d_x: []const f64,
+    hr3d_y: []const f64,
+    hr3d_z: []const f64,
+) void {
+    for (0..setup.na) |ia| {
+        const a_cart = setup.cart_a[ia];
+        const ax: usize = @intCast(a_cart.x);
+        const ay: usize = @intCast(a_cart.y);
+        const az: usize = @intCast(a_cart.z);
+        for (0..setup.nb) |ib| {
+            const b_cart = setup.cart_b[ib];
+            const bx: usize = @intCast(b_cart.x);
+            const by: usize = @intCast(b_cart.y);
+            const bz: usize = @intCast(b_cart.z);
+            for (0..setup.np) |ip| {
+                const p_cart = setup.cart_p[ip];
+                const px: usize = @intCast(p_cart.x);
+                const py: usize = @intCast(p_cart.y);
+                const pz: usize = @intCast(p_cart.z);
+                const vx = hr3d_x[ax * setup.hr3d_a_stride + bx * setup.hr3d_b_stride + px];
+                const vy = hr3d_y[ay * setup.hr3d_a_stride + by * setup.hr3d_b_stride + py];
+                const vz = hr3d_z[az * setup.hr3d_a_stride + bz * setup.hr3d_b_stride + pz];
+                prim_eri[ia * setup.nb * setup.np + ib * setup.np + ip] += vx * vy * vz;
+            }
+        }
+    }
+}
+
+fn contractThreeCenterPrimitiveOutput(
+    setup: ThreeCenterSetup,
+    coeff_abp: f64,
+    bra: ThreeCenterBraPair,
+    ipp: usize,
+    norm_a: []const f64,
+    norm_b: []const f64,
+    norm_p: []const f64,
+    prim_eri: []const f64,
+    output: []f64,
+) void {
+    for (0..setup.na) |ia| {
+        const na_val = norm_a[bra.ipa * setup.na + ia];
+        for (0..setup.nb) |ib| {
+            const nb_val = norm_b[bra.ipb * setup.nb + ib];
+            for (0..setup.np) |ip| {
+                const idx = ia * setup.nb * setup.np + ib * setup.np + ip;
+                output[idx] += coeff_abp *
+                    na_val *
+                    nb_val *
+                    norm_p[ipp * setup.np + ip] *
+                    prim_eri[idx];
+            }
+        }
+    }
+}
+
+fn accumulateThreeCenterPrimitivePair(
+    workspace: *ThreeCenterWorkspace,
+    setup: ThreeCenterSetup,
+    aux_center: math.Vec3,
+    bra: ThreeCenterBraPair,
+    prim_p: PrimitiveGaussian,
+    ipp: usize,
+    norm_a: []const f64,
+    norm_b: []const f64,
+    norm_p: []const f64,
+    output: []f64,
+) void {
+    const coeff_abp = prepareThreeCenterPrimitivePair(
+        workspace,
+        setup,
+        aux_center,
+        bra,
+        prim_p,
+    ) orelse return;
+
+    @memset(workspace.prim_eri[0..setup.total_out], 0.0);
+    for (0..setup.nroots) |r| {
+        const g2d_base = r * setup.dim_ij * setup.dim_kl;
+        buildThreeCenterBraHrAxis(
+            setup,
+            workspace.gx[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
+            workspace.hr3d_x[0..setup.hr3d_size],
+            g2d_base,
+            setup.ab[0],
+        );
+        buildThreeCenterBraHrAxis(
+            setup,
+            workspace.gy[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
+            workspace.hr3d_y[0..setup.hr3d_size],
+            g2d_base,
+            setup.ab[1],
+        );
+        buildThreeCenterBraHrAxis(
+            setup,
+            workspace.gz[0 .. setup.nroots * setup.dim_ij * setup.dim_kl],
+            workspace.hr3d_z[0..setup.hr3d_size],
+            g2d_base,
+            setup.ab[2],
+        );
+        accumulateThreeCenterRootContribution(
+            setup,
+            workspace.prim_eri[0..setup.total_out],
+            workspace.hr3d_x[0..setup.hr3d_size],
+            workspace.hr3d_y[0..setup.hr3d_size],
+            workspace.hr3d_z[0..setup.hr3d_size],
+        );
+    }
+    contractThreeCenterPrimitiveOutput(
+        setup,
+        coeff_abp,
+        bra,
+        ipp,
+        norm_a,
+        norm_b,
+        norm_p,
+        workspace.prim_eri[0..setup.total_out],
+        output,
+    );
 }
 
 // ============================================================================
@@ -156,147 +727,33 @@ pub fn contracted2CenterERI(
     shell_q: ContractedShell,
     output: []f64,
 ) usize {
-    const lp: usize = shell_p.l;
-    const lq: usize = shell_q.l;
+    const setup = initTwoCenterSetup(shell_p, shell_q, output);
+    std.debug.assert(setup.nroots <= MAX_NROOTS);
 
-    const np = basis_mod.numCartesian(@as(u32, @intCast(lp)));
-    const nq = basis_mod.numCartesian(@as(u32, @intCast(lq)));
-    const total_out = np * nq;
-
-    std.debug.assert(output.len >= total_out);
-    @memset(output[0..total_out], 0.0);
-
-    const cart_p = basis_mod.cartesianExponents(@as(u32, @intCast(lp)));
-    const cart_q = basis_mod.cartesianExponents(@as(u32, @intCast(lq)));
-
-    // Normalization tables
     var norm_p: [MAX_NORM_TABLE]f64 = undefined;
     var norm_q: [MAX_NORM_TABLE]f64 = undefined;
+    fillNormalizationTable(shell_p, setup.np, &setup.cart_p, norm_p[0..]);
+    fillNormalizationTable(shell_q, setup.nq, &setup.cart_q, norm_q[0..]);
 
-    for (shell_p.primitives, 0..) |pp, ip| {
-        for (0..np) |ic| {
-            norm_p[ip * np + ic] = basis_mod.normalization(pp.alpha, cart_p[ic].x, cart_p[ic].y, cart_p[ic].z);
-        }
-    }
-    for (shell_q.primitives, 0..) |pq, ip| {
-        for (0..nq) |ic| {
-            norm_q[ip * nq + ic] = basis_mod.normalization(pq.alpha, cart_q[ic].x, cart_q[ic].y, cart_q[ic].z);
-        }
-    }
+    var workspace: TwoCenterWorkspace = .{};
 
-    // 2D recurrence dimensions: lb=ld=0, so dim_ij = lp+1, dim_kl = lq+1
-    const dim_ij = lp + 1;
-    const dim_kl = lq + 1;
-    const nroots = (lp + lq) / 2 + 1;
-    std.debug.assert(nroots <= MAX_NROOTS);
-
-    const g_axis_size = nroots * dim_ij * dim_kl;
-    var gx: [MAX_G_SIZE]f64 = undefined;
-    var gy: [MAX_G_SIZE]f64 = undefined;
-    var gz: [MAX_G_SIZE]f64 = undefined;
-
-    var rys_r: [MAX_NROOTS]f64 = undefined;
-    var rys_w: [MAX_NROOTS]f64 = undefined;
-
-    var c00x: [MAX_NROOTS]f64 = undefined;
-    var c00y: [MAX_NROOTS]f64 = undefined;
-    var c00z: [MAX_NROOTS]f64 = undefined;
-    var c0px: [MAX_NROOTS]f64 = undefined;
-    var c0py: [MAX_NROOTS]f64 = undefined;
-    var c0pz: [MAX_NROOTS]f64 = undefined;
-    var b10_arr: [MAX_NROOTS]f64 = undefined;
-    var b01_arr: [MAX_NROOTS]f64 = undefined;
-    var b00_arr: [MAX_NROOTS]f64 = undefined;
-    var w_pref: [MAX_NROOTS]f64 = undefined;
-
-    // PQ distance
-    const dpq = math.Vec3.sub(shell_p.center, shell_q.center);
-    const r2_pq = math.Vec3.dot(dpq, dpq);
-
-    // Loop over primitive pairs (one per shell since lb=ld=0)
     for (shell_p.primitives, 0..) |prim_p, ipp| {
-        const alpha_p = prim_p.alpha;
-
         for (shell_q.primitives, 0..) |prim_q, ipq| {
-            const alpha_q = prim_q.alpha;
-            const pq_sum = alpha_p + alpha_q;
-
-            // Prefactor: 2π^(5/2) / (p * q * sqrt(p+q))
-            const prefactor = 2.0 * std.math.pow(f64, std.math.pi, 2.5) / (alpha_p * alpha_q * @sqrt(pq_sum));
-
-            const coeff = prim_p.coeff * prim_q.coeff;
-
-            // Gaussian product center P (for bra), Q (for ket)
-            // Since lb=0, B=A: P = A, PA = (0,0,0)
-            // Since ld=0, D=C: Q = C, QC = (0,0,0)
-            const px = shell_p.center.x;
-            const py = shell_p.center.y;
-            const pz = shell_p.center.z;
-            const qx = shell_q.center.x;
-            const qy = shell_q.center.y;
-            const qz = shell_q.center.z;
-
-            // W = (p*P + q*Q) / (p+q)
-            const wx = (alpha_p * px + alpha_q * qx) / pq_sum;
-            const wy = (alpha_p * py + alpha_q * qy) / pq_sum;
-            const wz = (alpha_p * pz + alpha_q * qz) / pq_sum;
-
-            // Boys function argument
-            const rho = alpha_p * alpha_q / pq_sum;
-            const arg = rho * r2_pq;
-
-            rys_roots_mod.rysRoots(nroots, arg, &rys_r, &rys_w);
-
-            for (0..nroots) |r| {
-                const t2 = rys_r[r];
-
-                b00_arr[r] = 0.5 / pq_sum * t2;
-                b10_arr[r] = 0.5 / alpha_p * (1.0 - alpha_q / pq_sum * t2);
-                b01_arr[r] = 0.5 / alpha_q * (1.0 - alpha_p / pq_sum * t2);
-
-                // PA = (0,0,0), WP = W - P
-                c00x[r] = (wx - px) * t2;
-                c00y[r] = (wy - py) * t2;
-                c00z[r] = (wz - pz) * t2;
-                // QC = (0,0,0), WQ = W - Q
-                c0px[r] = (wx - qx) * t2;
-                c0py[r] = (wy - qy) * t2;
-                c0pz[r] = (wz - qz) * t2;
-
-                w_pref[r] = rys_w[r] * prefactor;
-            }
-
-            buildG2d(nroots, dim_ij, dim_kl, &c00x, &c0px, &b10_arr, &b01_arr, &b00_arr, gx[0..g_axis_size]);
-            buildG2d(nroots, dim_ij, dim_kl, &c00y, &c0py, &b10_arr, &b01_arr, &b00_arr, gy[0..g_axis_size]);
-            buildG2dWeighted(nroots, dim_ij, dim_kl, &c00z, &c0pz, &b10_arr, &b01_arr, &b00_arr, &w_pref, gz[0..g_axis_size]);
-
-            // No HR needed (lb=ld=0): directly extract from g2d tables
-            // g2d[r, k, i] is at g[r * dim_ij * dim_kl + k * dim_ij + i]
-            for (0..np) |ip| {
-                const ax = cart_p[ip].x;
-                const ay = cart_p[ip].y;
-                const az = cart_p[ip].z;
-                for (0..nq) |iq| {
-                    const cx = cart_q[iq].x;
-                    const cy = cart_q[iq].y;
-                    const cz = cart_q[iq].z;
-
-                    var val: f64 = 0.0;
-                    for (0..nroots) |r| {
-                        const base = r * dim_ij * dim_kl;
-                        val += gx[base + cx * dim_ij + ax] *
-                            gy[base + cy * dim_ij + ay] *
-                            gz[base + cz * dim_ij + az];
-                    }
-
-                    output[ip * nq + iq] += coeff *
-                        norm_p[ipp * np + ip] * norm_q[ipq * nq + iq] * val;
-                }
-            }
+            accumulateTwoCenterPrimitivePair(
+                &workspace,
+                setup,
+                ipp,
+                ipq,
+                prim_p,
+                prim_q,
+                norm_p[0..],
+                norm_q[0..],
+                output,
+            );
         }
     }
 
-    return total_out;
+    return setup.total_out;
 }
 
 // ============================================================================
@@ -317,277 +774,50 @@ pub fn contracted3CenterERI(
     shell_p: ContractedShell,
     output: []f64,
 ) usize {
-    const la: usize = shell_a.l;
-    const lb: usize = shell_b.l;
-    const lp: usize = shell_p.l;
+    const setup = initThreeCenterSetup(shell_a, shell_b, shell_p, output);
+    std.debug.assert(setup.nroots <= MAX_NROOTS);
 
-    const na = basis_mod.numCartesian(@as(u32, @intCast(la)));
-    const nb = basis_mod.numCartesian(@as(u32, @intCast(lb)));
-    const np = basis_mod.numCartesian(@as(u32, @intCast(lp)));
-    const total_out = na * nb * np;
-
-    std.debug.assert(output.len >= total_out);
-    @memset(output[0..total_out], 0.0);
-
-    const cart_a = basis_mod.cartesianExponents(@as(u32, @intCast(la)));
-    const cart_b = basis_mod.cartesianExponents(@as(u32, @intCast(lb)));
-    const cart_p = basis_mod.cartesianExponents(@as(u32, @intCast(lp)));
-
-    // Normalization tables
     var norm_a: [MAX_NORM_TABLE]f64 = undefined;
     var norm_b: [MAX_NORM_TABLE]f64 = undefined;
     var norm_p: [MAX_NORM_TABLE]f64 = undefined;
-
     var max_norm_a: [MAX_PRIM]f64 = undefined;
     var max_norm_b: [MAX_PRIM]f64 = undefined;
+    fillNormalizationTableAndMax(shell_a, setup.na, &setup.cart_a, norm_a[0..], max_norm_a[0..]);
+    fillNormalizationTableAndMax(shell_b, setup.nb, &setup.cart_b, norm_b[0..], max_norm_b[0..]);
+    fillNormalizationTable(shell_p, setup.np, &setup.cart_p, norm_p[0..]);
 
-    for (shell_a.primitives, 0..) |pa, ip| {
-        var mx: f64 = 0.0;
-        for (0..na) |ic| {
-            const n_val = basis_mod.normalization(pa.alpha, cart_a[ic].x, cart_a[ic].y, cart_a[ic].z);
-            norm_a[ip * na + ic] = n_val;
-            if (n_val > mx) mx = n_val;
-        }
-        max_norm_a[ip] = mx;
-    }
-    for (shell_b.primitives, 0..) |pb, ip| {
-        var mx: f64 = 0.0;
-        for (0..nb) |ic| {
-            const n_val = basis_mod.normalization(pb.alpha, cart_b[ic].x, cart_b[ic].y, cart_b[ic].z);
-            norm_b[ip * nb + ic] = n_val;
-            if (n_val > mx) mx = n_val;
-        }
-        max_norm_b[ip] = mx;
-    }
-    for (shell_p.primitives, 0..) |pp, ip| {
-        for (0..np) |ic| {
-            norm_p[ip * np + ic] = basis_mod.normalization(pp.alpha, cart_p[ic].x, cart_p[ic].y, cart_p[ic].z);
-        }
-    }
-
-    // dim_ij = la + lb + 1 (needs full bra HR), dim_kl = lp + 1 (ld=0, no ket HR)
-    const dim_ij = la + lb + 1;
-    const dim_kl = lp + 1;
-    const nroots = (la + lb + lp) / 2 + 1;
-    std.debug.assert(nroots <= MAX_NROOTS);
-
-    const g_axis_size = nroots * dim_ij * dim_kl;
-    var gx: [MAX_G_SIZE]f64 = undefined;
-    var gy: [MAX_G_SIZE]f64 = undefined;
-    var gz: [MAX_G_SIZE]f64 = undefined;
-
-    var rys_r: [MAX_NROOTS]f64 = undefined;
-    var rys_w: [MAX_NROOTS]f64 = undefined;
-
-    var c00x: [MAX_NROOTS]f64 = undefined;
-    var c00y: [MAX_NROOTS]f64 = undefined;
-    var c00z: [MAX_NROOTS]f64 = undefined;
-    var c0px: [MAX_NROOTS]f64 = undefined;
-    var c0py: [MAX_NROOTS]f64 = undefined;
-    var c0pz: [MAX_NROOTS]f64 = undefined;
-    var b10_arr: [MAX_NROOTS]f64 = undefined;
-    var b01_arr: [MAX_NROOTS]f64 = undefined;
-    var b00_arr: [MAX_NROOTS]f64 = undefined;
-    var w_pref: [MAX_NROOTS]f64 = undefined;
-
-    // AB distance for bra HR
-    const ab = [3]f64{
-        shell_a.center.x - shell_b.center.x,
-        shell_a.center.y - shell_b.center.y,
-        shell_a.center.z - shell_b.center.z,
-    };
-    const diff_ab = math.Vec3.sub(shell_a.center, shell_b.center);
-    const r2_ab = math.Vec3.dot(diff_ab, diff_ab);
-
-    // Bra HR buffers
-    const la_1 = la + 1;
-    const lb_1 = lb + 1;
-    const lp_1 = lp + 1;
-
-    // hr3d: [a][b][p] after bra HR. a=0..la, b=0..lb, p=0..lp per axis
-    const hr3d_p_stride: usize = 1;
-    _ = hr3d_p_stride;
-    const hr3d_b_stride = lp_1;
-    const hr3d_a_stride = lb_1 * lp_1;
-    const hr3d_size = la_1 * hr3d_a_stride;
-
-    const MAX_HR3D: usize = (MAX_L + 1) * (MAX_L + 1) * (MAX_L + 1);
-    var hr3d_x: [MAX_HR3D]f64 = undefined;
-    var hr3d_y: [MAX_HR3D]f64 = undefined;
-    var hr3d_z: [MAX_HR3D]f64 = undefined;
-
-    var prim_eri: [MAX_CART * MAX_CART * MAX_CART]f64 = undefined;
-
-    // Loop over bra primitive pairs
+    var workspace: ThreeCenterWorkspace = .{};
     for (shell_a.primitives, 0..) |prim_a, ipa| {
-        const alpha_a = prim_a.alpha;
         for (shell_b.primitives, 0..) |prim_b, ipb| {
-            const alpha_b = prim_b.alpha;
-            const p_val = alpha_a + alpha_b;
-            const mu_ab = alpha_a * alpha_b / p_val;
-            const exp_ab = @exp(-mu_ab * r2_ab);
-            const coeff_ab = prim_a.coeff * prim_b.coeff;
-
-            // Bra product center
-            const bra_px = (alpha_a * shell_a.center.x + alpha_b * shell_b.center.x) / p_val;
-            const bra_py = (alpha_a * shell_a.center.y + alpha_b * shell_b.center.y) / p_val;
-            const bra_pz = (alpha_a * shell_a.center.z + alpha_b * shell_b.center.z) / p_val;
-            const pax = bra_px - shell_a.center.x;
-            const pay = bra_py - shell_a.center.y;
-            const paz = bra_pz - shell_a.center.z;
-
-            // Ket primitives (single shell, ld=0, D=C)
+            const bra = initThreeCenterBraPair(
+                shell_a,
+                shell_b,
+                prim_a,
+                prim_b,
+                ipa,
+                ipb,
+                max_norm_a[0..],
+                max_norm_b[0..],
+                setup.r2_ab,
+            );
             for (shell_p.primitives, 0..) |prim_p, ipp| {
-                const alpha_p = prim_p.alpha;
-                const q_val = alpha_p; // ld=0: q = alpha_P
-                const pq_sum = p_val + q_val;
-
-                const prefactor = 2.0 * std.math.pow(f64, std.math.pi, 2.5) /
-                    (p_val * q_val * @sqrt(pq_sum)) * exp_ab;
-                const coeff_abp = coeff_ab * prim_p.coeff;
-
-                // Screen
-                const max_norm_product = max_norm_a[ipa] * max_norm_b[ipb];
-                if (@abs(coeff_abp) * max_norm_product * prefactor < PRIM_SCREEN_THRESHOLD)
-                    continue;
-
-                // Ket center Q = C (the auxiliary center)
-                const qx = shell_p.center.x;
-                const qy = shell_p.center.y;
-                const qz = shell_p.center.z;
-
-                // Weighted center W
-                const wx = (p_val * bra_px + q_val * qx) / pq_sum;
-                const wy = (p_val * bra_py + q_val * qy) / pq_sum;
-                const wz = (p_val * bra_pz + q_val * qz) / pq_sum;
-
-                // PQ distance
-                const dpqx = bra_px - qx;
-                const dpqy = bra_py - qy;
-                const dpqz = bra_pz - qz;
-                const r2_pq = dpqx * dpqx + dpqy * dpqy + dpqz * dpqz;
-
-                const rho = p_val * q_val / pq_sum;
-                const arg = rho * r2_pq;
-
-                rys_roots_mod.rysRoots(nroots, arg, &rys_r, &rys_w);
-
-                for (0..nroots) |r| {
-                    const t2 = rys_r[r];
-
-                    b00_arr[r] = 0.5 / pq_sum * t2;
-                    b10_arr[r] = 0.5 / p_val * (1.0 - q_val / pq_sum * t2);
-                    b01_arr[r] = 0.5 / q_val * (1.0 - p_val / pq_sum * t2);
-
-                    c00x[r] = pax + (wx - bra_px) * t2;
-                    c00y[r] = pay + (wy - bra_py) * t2;
-                    c00z[r] = paz + (wz - bra_pz) * t2;
-                    // QC = (0,0,0) since D=C
-                    c0px[r] = (wx - qx) * t2;
-                    c0py[r] = (wy - qy) * t2;
-                    c0pz[r] = (wz - qz) * t2;
-
-                    w_pref[r] = rys_w[r] * prefactor;
-                }
-
-                buildG2d(nroots, dim_ij, dim_kl, &c00x, &c0px, &b10_arr, &b01_arr, &b00_arr, gx[0..g_axis_size]);
-                buildG2d(nroots, dim_ij, dim_kl, &c00y, &c0py, &b10_arr, &b01_arr, &b00_arr, gy[0..g_axis_size]);
-                buildG2dWeighted(nroots, dim_ij, dim_kl, &c00z, &c0pz, &b10_arr, &b01_arr, &b00_arr, &w_pref, gz[0..g_axis_size]);
-
-                // Bra HR (ld=0, no ket HR needed)
-                // For each Rys root, for each ket index p, apply bra HR
-                @memset(prim_eri[0..total_out], 0.0);
-
-                for (0..nroots) |r| {
-                    const g2d_base = r * dim_ij * dim_kl;
-
-                    inline for (0..3) |axis| {
-                        const g_axis = switch (axis) {
-                            0 => gx[0..g_axis_size],
-                            1 => gy[0..g_axis_size],
-                            2 => gz[0..g_axis_size],
-                            else => unreachable,
-                        };
-                        const ab_val: f64 = ab[axis];
-                        const hr3d = switch (axis) {
-                            0 => hr3d_x[0..hr3d_size],
-                            1 => hr3d_y[0..hr3d_size],
-                            2 => hr3d_z[0..hr3d_size],
-                            else => unreachable,
-                        };
-
-                        // For each ket index p (0..lp), apply bra HR
-                        for (0..lp_1) |p| {
-                            // Work array: work[a] for current b-step
-                            var work: [MAX_DIM_IJ]f64 = undefined;
-
-                            // Base: b=0, work[a] = g2d[p][a]
-                            for (0..dim_ij) |a| {
-                                work[a] = g_axis[g2d_base + p * dim_ij + a];
-                            }
-
-                            // Store b=0 values
-                            for (0..la_1) |a| {
-                                hr3d[a * hr3d_a_stride + 0 * hr3d_b_stride + p] = work[a];
-                            }
-
-                            // Recurrence: b = 1..lb
-                            {
-                                var b: usize = 1;
-                                while (b < lb_1) : (b += 1) {
-                                    const a_count = dim_ij - b;
-                                    for (0..a_count) |a| {
-                                        work[a] = work[a + 1] + ab_val * work[a];
-                                    }
-                                    for (0..la_1) |a| {
-                                        hr3d[a * hr3d_a_stride + b * hr3d_b_stride + p] = work[a];
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Extract integrals from hr3d tables
-                    for (0..na) |ia| {
-                        const ax = cart_a[ia].x;
-                        const ay = cart_a[ia].y;
-                        const az = cart_a[ia].z;
-                        for (0..nb) |ib| {
-                            const bx = cart_b[ib].x;
-                            const by = cart_b[ib].y;
-                            const bz = cart_b[ib].z;
-                            for (0..np) |ip| {
-                                const px = cart_p[ip].x;
-                                const py = cart_p[ip].y;
-                                const pz = cart_p[ip].z;
-
-                                const vx = hr3d_x[ax * hr3d_a_stride + bx * hr3d_b_stride + px];
-                                const vy = hr3d_y[ay * hr3d_a_stride + by * hr3d_b_stride + py];
-                                const vz = hr3d_z[az * hr3d_a_stride + bz * hr3d_b_stride + pz];
-
-                                prim_eri[ia * nb * np + ib * np + ip] += vx * vy * vz;
-                            }
-                        }
-                    }
-                }
-
-                // Contract with coefficients and normalization
-                for (0..na) |ia| {
-                    const na_val = norm_a[ipa * na + ia];
-                    for (0..nb) |ib| {
-                        const nb_val = norm_b[ipb * nb + ib];
-                        for (0..np) |ip| {
-                            const np_val = norm_p[ipp * np + ip];
-                            const idx = ia * nb * np + ib * np + ip;
-                            output[idx] += coeff_abp * na_val * nb_val * np_val * prim_eri[idx];
-                        }
-                    }
-                }
+                accumulateThreeCenterPrimitivePair(
+                    &workspace,
+                    setup,
+                    shell_p.center,
+                    bra,
+                    prim_p,
+                    ipp,
+                    norm_a[0..],
+                    norm_b[0..],
+                    norm_p[0..],
+                    output,
+                );
             }
         }
     }
 
-    return total_out;
+    return setup.total_out;
 }
 
 // ============================================================================

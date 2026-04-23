@@ -203,10 +203,34 @@ fn dft5(input: *const [5]Complex, output: *[5]Complex, inv: bool) void {
 
     // X[k] = sum_{n=0}^{4} x[n] * W5^(nk)
     output[0] = storeVec2(x0 + x1 + x2 + x3 + x4);
-    output[1] = storeVec2(x0 + complexMulVec2(x1, w5_1) + complexMulVec2(x2, w5_2) + complexMulVec2(x3, w5_3) + complexMulVec2(x4, w5_4));
-    output[2] = storeVec2(x0 + complexMulVec2(x1, w5_2) + complexMulVec2(x2, w5_4) + complexMulVec2(x3, w5_1) + complexMulVec2(x4, w5_3));
-    output[3] = storeVec2(x0 + complexMulVec2(x1, w5_3) + complexMulVec2(x2, w5_1) + complexMulVec2(x3, w5_4) + complexMulVec2(x4, w5_2));
-    output[4] = storeVec2(x0 + complexMulVec2(x1, w5_4) + complexMulVec2(x2, w5_3) + complexMulVec2(x3, w5_2) + complexMulVec2(x4, w5_1));
+    {
+        const t1 = complexMulVec2(x1, w5_1);
+        const t2 = complexMulVec2(x2, w5_2);
+        const t3 = complexMulVec2(x3, w5_3);
+        const t4 = complexMulVec2(x4, w5_4);
+        output[1] = storeVec2(x0 + t1 + t2 + t3 + t4);
+    }
+    {
+        const t1 = complexMulVec2(x1, w5_2);
+        const t2 = complexMulVec2(x2, w5_4);
+        const t3 = complexMulVec2(x3, w5_1);
+        const t4 = complexMulVec2(x4, w5_3);
+        output[2] = storeVec2(x0 + t1 + t2 + t3 + t4);
+    }
+    {
+        const t1 = complexMulVec2(x1, w5_3);
+        const t2 = complexMulVec2(x2, w5_1);
+        const t3 = complexMulVec2(x3, w5_4);
+        const t4 = complexMulVec2(x4, w5_2);
+        output[3] = storeVec2(x0 + t1 + t2 + t3 + t4);
+    }
+    {
+        const t1 = complexMulVec2(x1, w5_4);
+        const t2 = complexMulVec2(x2, w5_3);
+        const t3 = complexMulVec2(x3, w5_2);
+        const t4 = complexMulVec2(x4, w5_1);
+        output[4] = storeVec2(x0 + t1 + t2 + t3 + t4);
+    }
 }
 
 /// DFT of size 5 (in-place version).
@@ -452,6 +476,75 @@ fn dft4InPlace(data: []Complex, inv: bool) void {
     data[3] = storeVec2(b2 - b3_tw); // X[3]
 }
 
+/// Pick the smallest factor in {2,3,5} dividing n, or 0 if n is not smooth.
+fn pickSmoothFactor(n: usize) usize {
+    for ([_]usize{ 2, 3, 5 }) |f| {
+        if (n % f == 0) return f;
+    }
+    return 0;
+}
+
+/// Apply Cooley-Tukey twiddle factors W_N^(n1*k2) on the (N1 x N2) matrix.
+fn applyCtTwiddles(data: []Complex, N1: usize, N2: usize, n: usize, inv: bool) void {
+    const sign: f64 = if (inv) 1.0 else -1.0;
+    const angle_base = sign * 2.0 * std.math.pi / @as(f64, @floatFromInt(n));
+
+    for (0..N1) |n1| {
+        for (0..N2) |k2| {
+            if (n1 * k2 != 0) {
+                const tw = Complex.expi(angle_base * @as(f64, @floatFromInt(n1 * k2)));
+                const idx = n1 + N1 * k2;
+                data[idx] = Complex.mul(data[idx], tw);
+            }
+        }
+    }
+}
+
+/// Recursive Cooley-Tukey factorization fallback for `mixedRadixFft`.
+/// N = N1 × N2 with N1 = factor. DIF ordering: n = n1 + N1*n2, k = N2*k1 + k2.
+/// Normalization is handled at the top-level public API, not here.
+fn mixedRadixFftSplit(
+    data: []Complex,
+    scratch: []Complex,
+    factor: usize,
+    inv: bool,
+) void {
+    const n = data.len;
+    const N1 = factor;
+    const N2 = n / factor;
+
+    // Step 1: Copy to scratch in matrix form and DFT rows (size N2)
+    for (0..N1) |n1| {
+        // Copy row n1 to scratch
+        for (0..N2) |n2| {
+            scratch[n2] = data[n1 + N1 * n2];
+        }
+        // Recursive DFT of size N2
+        mixedRadixFft(scratch[0..N2], scratch[N2..], inv);
+        // Copy back
+        for (0..N2) |n2| {
+            data[n1 + N1 * n2] = scratch[n2];
+        }
+    }
+
+    // Step 2: Apply twiddle factors W_N^(n1*k2)
+    applyCtTwiddles(data, N1, N2, n, inv);
+
+    // Step 3: DFT each column (size N1)
+    for (0..N2) |k2| {
+        // Copy column to scratch
+        for (0..N1) |n1| {
+            scratch[n1] = data[n1 + N1 * k2];
+        }
+        // Recursive DFT of size N1
+        mixedRadixFft(scratch[0..N1], scratch[N1..], inv);
+        // Copy back to output positions: k = N2*k1 + k2
+        for (0..N1) |k1| {
+            data[N2 * k1 + k2] = scratch[k1];
+        }
+    }
+}
+
 /// General mixed-radix FFT for smooth numbers (2^a × 3^b × 5^c).
 /// This is a recursive implementation that factorizes N and applies Cooley-Tukey.
 pub fn mixedRadixFft(data: []Complex, scratch: []Complex, inv: bool) void {
@@ -469,15 +562,7 @@ pub fn mixedRadixFft(data: []Complex, scratch: []Complex, inv: bool) void {
         10 => fft10(data, inv),
         12 => fft12(data, inv),
         else => {
-            // Find a factor
-            var factor: usize = 0;
-            for ([_]usize{ 2, 3, 5 }) |f| {
-                if (n % f == 0) {
-                    factor = f;
-                    break;
-                }
-            }
-
+            const factor = pickSmoothFactor(n);
             if (factor == 0) {
                 // Not a smooth number, fall back to direct DFT
                 dftDirect(data, scratch[0..n], inv);
@@ -487,53 +572,7 @@ pub fn mixedRadixFft(data: []Complex, scratch: []Complex, inv: bool) void {
                 return;
             }
 
-            // N = N1 × N2 where N1 = factor
-            const N1 = factor;
-            const N2 = n / factor;
-
-            // DIF: n = n1 + N1*n2, k = N2*k1 + k2
-            // Step 1: Copy to scratch in matrix form and DFT rows (size N2)
-            for (0..N1) |n1| {
-                // Copy row n1 to scratch
-                for (0..N2) |n2| {
-                    scratch[n2] = data[n1 + N1 * n2];
-                }
-                // Recursive DFT of size N2
-                mixedRadixFft(scratch[0..N2], scratch[N2..], inv);
-                // Copy back
-                for (0..N2) |n2| {
-                    data[n1 + N1 * n2] = scratch[n2];
-                }
-            }
-
-            // Step 2: Apply twiddle factors W_N^(n1*k2)
-            const sign: f64 = if (inv) 1.0 else -1.0;
-            const angle_base = sign * 2.0 * std.math.pi / @as(f64, @floatFromInt(n));
-
-            for (0..N1) |n1| {
-                for (0..N2) |k2| {
-                    if (n1 * k2 != 0) {
-                        const tw = Complex.expi(angle_base * @as(f64, @floatFromInt(n1 * k2)));
-                        const idx = n1 + N1 * k2;
-                        data[idx] = Complex.mul(data[idx], tw);
-                    }
-                }
-            }
-
-            // Step 3: DFT each column (size N1)
-            for (0..N2) |k2| {
-                // Copy column to scratch
-                for (0..N1) |n1| {
-                    scratch[n1] = data[n1 + N1 * k2];
-                }
-                // Recursive DFT of size N1
-                mixedRadixFft(scratch[0..N1], scratch[N1..], inv);
-                // Copy back to output positions: k = N2*k1 + k2
-                for (0..N1) |k1| {
-                    data[N2 * k1 + k2] = scratch[k1];
-                }
-            }
-
+            mixedRadixFftSplit(data, scratch, factor, inv);
             // Normalize for inverse at top level only
             // Note: This is tricky for recursive calls. We'll handle normalization
             // at the top level in the public API.
@@ -564,6 +603,55 @@ pub fn mixedRadixFftAlloc(alloc: std.mem.Allocator, data: []Complex, inv: bool) 
     }
 }
 
+/// Recursive Cooley-Tukey factorization for `mixedRadixFftNoNorm` — uses a
+/// disjoint `scratch[n..2n]` output buffer so column-DFT writes don't
+/// collide with the input matrix, which matters when `n` is smooth but
+/// larger than the specialized base cases.
+fn mixedRadixFftNoNormSplit(
+    data: []Complex,
+    scratch: []Complex,
+    factor: usize,
+    inv: bool,
+) void {
+    const n = data.len;
+    const N1 = factor;
+    const N2 = n / factor;
+
+    // Step 1: DFT each row
+    for (0..N1) |n1| {
+        for (0..N2) |n2| {
+            scratch[n2] = data[n1 + N1 * n2];
+        }
+        mixedRadixFftNoNorm(scratch[0..N2], scratch[N2..], inv);
+        for (0..N2) |n2| {
+            data[n1 + N1 * n2] = scratch[n2];
+        }
+    }
+
+    // Step 2: Apply twiddle factors
+    applyCtTwiddles(data, N1, N2, n, inv);
+
+    // Step 3: DFT each column.
+    // Use scratch[n..2n] as temporary output to avoid overwriting input.
+    const output = scratch[n .. 2 * n];
+
+    for (0..N2) |k2| {
+        for (0..N1) |n1| {
+            scratch[n1] = data[n1 + N1 * k2];
+        }
+        mixedRadixFftNoNorm(scratch[0..N1], scratch[N1..n], inv);
+        // Store to temporary output at correct positions
+        for (0..N1) |k1| {
+            output[N2 * k1 + k2] = scratch[k1];
+        }
+    }
+
+    // Copy output back to data
+    for (0..n) |i| {
+        data[i] = output[i];
+    }
+}
+
 /// Mixed-radix FFT without normalization.
 /// Used internally and by fft.zig Plan1d wrapper.
 pub fn mixedRadixFftNoNorm(data: []Complex, scratch: []Complex, inv: bool) void {
@@ -577,15 +665,7 @@ pub fn mixedRadixFftNoNorm(data: []Complex, scratch: []Complex, inv: bool) void 
         4 => dft4InPlace(data, inv),
         5 => dft5InPlace(data, inv),
         else => {
-            // Find a factor
-            var factor: usize = 0;
-            for ([_]usize{ 2, 3, 5 }) |f| {
-                if (n % f == 0) {
-                    factor = f;
-                    break;
-                }
-            }
-
+            const factor = pickSmoothFactor(n);
             if (factor == 0) {
                 // Not a smooth number, fall back to direct DFT (no normalization)
                 dftDirect(data, scratch[0..n], inv);
@@ -594,54 +674,7 @@ pub fn mixedRadixFftNoNorm(data: []Complex, scratch: []Complex, inv: bool) void 
                 }
                 return;
             }
-
-            const N1 = factor;
-            const N2 = n / factor;
-
-            // Step 1: DFT each row
-            for (0..N1) |n1| {
-                for (0..N2) |n2| {
-                    scratch[n2] = data[n1 + N1 * n2];
-                }
-                mixedRadixFftNoNorm(scratch[0..N2], scratch[N2..], inv);
-                for (0..N2) |n2| {
-                    data[n1 + N1 * n2] = scratch[n2];
-                }
-            }
-
-            // Step 2: Apply twiddle factors
-            const sign: f64 = if (inv) 1.0 else -1.0;
-            const angle_base = sign * 2.0 * std.math.pi / @as(f64, @floatFromInt(n));
-
-            for (0..N1) |n1| {
-                for (0..N2) |k2| {
-                    if (n1 * k2 != 0) {
-                        const tw = Complex.expi(angle_base * @as(f64, @floatFromInt(n1 * k2)));
-                        const idx = n1 + N1 * k2;
-                        data[idx] = Complex.mul(data[idx], tw);
-                    }
-                }
-            }
-
-            // Step 3: DFT each column
-            // Use scratch[n..2n] as temporary output to avoid overwriting input
-            const output = scratch[n .. 2 * n];
-
-            for (0..N2) |k2| {
-                for (0..N1) |n1| {
-                    scratch[n1] = data[n1 + N1 * k2];
-                }
-                mixedRadixFftNoNorm(scratch[0..N1], scratch[N1..n], inv);
-                // Store to temporary output at correct positions
-                for (0..N1) |k1| {
-                    output[N2 * k1 + k2] = scratch[k1];
-                }
-            }
-
-            // Copy output back to data
-            for (0..n) |i| {
-                data[i] = output[i];
-            }
+            mixedRadixFftNoNormSplit(data, scratch, factor, inv);
         },
     }
 }
@@ -722,10 +755,34 @@ fn dft5InPlaceScalar(data: []Complex, inv: bool) void {
     const x4 = data[4];
 
     data[0] = Complex.add(Complex.add(Complex.add(Complex.add(x0, x1), x2), x3), x4);
-    data[1] = Complex.add(Complex.add(Complex.add(Complex.add(x0, Complex.mul(x1, w5_1)), Complex.mul(x2, w5_2)), Complex.mul(x3, w5_3)), Complex.mul(x4, w5_4));
-    data[2] = Complex.add(Complex.add(Complex.add(Complex.add(x0, Complex.mul(x1, w5_2)), Complex.mul(x2, w5_4)), Complex.mul(x3, w5_1)), Complex.mul(x4, w5_3));
-    data[3] = Complex.add(Complex.add(Complex.add(Complex.add(x0, Complex.mul(x1, w5_3)), Complex.mul(x2, w5_1)), Complex.mul(x3, w5_4)), Complex.mul(x4, w5_2));
-    data[4] = Complex.add(Complex.add(Complex.add(Complex.add(x0, Complex.mul(x1, w5_4)), Complex.mul(x2, w5_3)), Complex.mul(x3, w5_2)), Complex.mul(x4, w5_1));
+    {
+        const t1 = Complex.mul(x1, w5_1);
+        const t2 = Complex.mul(x2, w5_2);
+        const t3 = Complex.mul(x3, w5_3);
+        const t4 = Complex.mul(x4, w5_4);
+        data[1] = Complex.add(Complex.add(Complex.add(Complex.add(x0, t1), t2), t3), t4);
+    }
+    {
+        const t1 = Complex.mul(x1, w5_2);
+        const t2 = Complex.mul(x2, w5_4);
+        const t3 = Complex.mul(x3, w5_1);
+        const t4 = Complex.mul(x4, w5_3);
+        data[2] = Complex.add(Complex.add(Complex.add(Complex.add(x0, t1), t2), t3), t4);
+    }
+    {
+        const t1 = Complex.mul(x1, w5_3);
+        const t2 = Complex.mul(x2, w5_1);
+        const t3 = Complex.mul(x3, w5_4);
+        const t4 = Complex.mul(x4, w5_2);
+        data[3] = Complex.add(Complex.add(Complex.add(Complex.add(x0, t1), t2), t3), t4);
+    }
+    {
+        const t1 = Complex.mul(x1, w5_4);
+        const t2 = Complex.mul(x2, w5_3);
+        const t3 = Complex.mul(x3, w5_2);
+        const t4 = Complex.mul(x4, w5_1);
+        data[4] = Complex.add(Complex.add(Complex.add(Complex.add(x0, t1), t2), t3), t4);
+    }
 }
 
 /// Mixed-radix FFT without normalization (scalar version for benchmarking).

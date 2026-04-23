@@ -118,20 +118,48 @@ pub fn deinitSpeciesEntries(alloc: std.mem.Allocator, entries: []SpeciesEntry) v
 /// Map atoms to species indices and convert to bohr.
 pub fn buildAtomData(
     alloc: std.mem.Allocator,
-    atoms: []xyz.Atom,
+    atoms: []const xyz.Atom,
     unit_scale_bohr: f64,
     species: []const SpeciesEntry,
 ) ![]AtomData {
     const data = try alloc.alloc(AtomData, atoms.len);
     errdefer alloc.free(data);
     for (atoms, 0..) |atom, i| {
-        const idx = findSpeciesIndex(species, atom.symbol) orelse return error.MissingPseudopotential;
+        const idx = findSpeciesIndex(species, atom.symbol) orelse
+            return error.MissingPseudopotential;
         data[i] = .{
             .position = math.Vec3.scale(atom.position, unit_scale_bohr),
             .species_index = idx,
         };
     }
     return data;
+}
+
+test "buildAtomData accepts const atom slices" {
+    const alloc = std.testing.allocator;
+    const atoms = [_]xyz.Atom{
+        .{
+            .symbol = @constCast("Si"),
+            .position = .{ .x = 0.25, .y = 0.5, .z = 0.75 },
+        },
+    };
+    const species = [_]SpeciesEntry{
+        .{
+            .symbol = "Si",
+            .upf = undefined,
+            .z_valence = 4.0,
+            .epsatm_ry = 0.0,
+        },
+    };
+
+    const atom_data = try buildAtomData(alloc, atoms[0..], 2.0, species[0..]);
+    defer alloc.free(atom_data);
+
+    try std.testing.expectEqual(@as(usize, 1), atom_data.len);
+    try std.testing.expectEqual(@as(usize, 0), atom_data[0].species_index);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.5), atom_data[0].position.x, 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), atom_data[0].position.y, 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.5), atom_data[0].position.z, 1e-12);
 }
 
 /// Locate species entry by symbol.
@@ -145,7 +173,7 @@ pub fn findSpeciesIndex(species: []const SpeciesEntry, symbol: []const u8) ?usiz
 /// Build Hamiltonian with local and nonlocal terms.
 pub fn buildHamiltonian(
     alloc: std.mem.Allocator,
-    gvecs: []plane_wave.GVector,
+    gvecs: []const plane_wave.GVector,
     species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
@@ -162,7 +190,16 @@ pub fn buildHamiltonian(
         var i: usize = 0;
         while (i < n) : (i += 1) {
             const q = math.Vec3.sub(gvecs[i].cart, gvecs[j].cart);
-            var value = try localPotential(q, gvecs[i], gvecs[j], species, atoms, inv_volume, local_cfg, extra);
+            var value = try localPotential(
+                q,
+                gvecs[i],
+                gvecs[j],
+                species,
+                atoms,
+                inv_volume,
+                local_cfg,
+                extra,
+            );
             if (i == j) {
                 value.r += gvecs[i].kinetic;
             }
@@ -177,7 +214,7 @@ pub fn buildHamiltonian(
 /// Build nonlocal matrix for projector terms only.
 pub fn buildNonlocalMatrix(
     alloc: std.mem.Allocator,
-    gvecs: []plane_wave.GVector,
+    gvecs: []const plane_wave.GVector,
     species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
@@ -193,7 +230,7 @@ pub fn buildNonlocalMatrix(
 /// Build overlap matrix for generalized eigenproblem.
 pub fn buildOverlapMatrix(
     alloc: std.mem.Allocator,
-    gvecs: []plane_wave.GVector,
+    gvecs: []const plane_wave.GVector,
     species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
@@ -222,7 +259,7 @@ pub fn initIdentity(m: []math.Complex, n: usize) void {
 fn addNonlocalContribution(
     alloc: std.mem.Allocator,
     h: []math.Complex,
-    gvecs: []plane_wave.GVector,
+    gvecs: []const plane_wave.GVector,
     species: []const SpeciesEntry,
     atoms: []const AtomData,
     inv_volume: f64,
@@ -289,7 +326,7 @@ fn addNonlocalContribution(
 fn buildProjectors(
     alloc: std.mem.Allocator,
     upf: pseudo.UpfData,
-    gvecs: []plane_wave.GVector,
+    gvecs: []const plane_wave.GVector,
 ) !SpeciesProjectors {
     const beta_count = upf.beta.len;
     const g_count = gvecs.len;

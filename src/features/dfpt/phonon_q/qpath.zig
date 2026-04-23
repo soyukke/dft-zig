@@ -7,18 +7,20 @@ const std = @import("std");
 const math = @import("../../math/math.zig");
 const config_mod = @import("../../config/config.zig");
 
-/// Generate FCC q-path: Γ-X-W-K-Γ-L
-pub fn generateFccQPath(
-    alloc: std.mem.Allocator,
-    recip: math.Mat3,
-    npoints_per_seg: usize,
-) !struct {
+pub const GeneratedQPath = struct {
     q_points_frac: []math.Vec3,
     q_points_cart: []math.Vec3,
     distances: []f64,
     labels: [][]const u8,
     label_positions: []usize,
-} {
+};
+
+/// Generate FCC q-path: Γ-X-W-K-Γ-L
+pub fn generateFccQPath(
+    alloc: std.mem.Allocator,
+    recip: math.Mat3,
+    npoints_per_seg: usize,
+) !GeneratedQPath {
     // FCC high-symmetry points in fractional (reduced) coordinates
     // Path: Γ-X-W-K-Γ-L (same as ABINIT anaddb)
     const points = [_]math.Vec3{
@@ -111,13 +113,7 @@ pub fn generateQPathFromConfig(
     qpath_points: []const config_mod.BandPathPoint,
     npoints_per_seg: usize,
     recip: math.Mat3,
-) !struct {
-    q_points_frac: []math.Vec3,
-    q_points_cart: []math.Vec3,
-    distances: []f64,
-    labels: [][]const u8,
-    label_positions: []usize,
-} {
+) !GeneratedQPath {
     const n_pts = qpath_points.len;
     if (n_pts < 2) return error.InvalidQPath;
 

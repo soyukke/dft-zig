@@ -33,6 +33,276 @@ pub const NonlocalOptions = struct {
     basis: local_orbital.BasisType = .s_only,
 };
 
+const OrbitalSet = struct {
+    s_orbitals: []local_orbital.Orbital,
+    sp_orbitals: ?[]local_orbital.Orbital,
+
+    fn deinit(self: OrbitalSet, alloc: std.mem.Allocator) void {
+        alloc.free(self.s_orbitals);
+        if (self.sp_orbitals) |sp_orbitals| alloc.free(sp_orbitals);
+    }
+};
+
+const IonOverlapData = struct {
+    n_beta: usize,
+    s_overlaps: []f64,
+    p_overlaps: ?[]f64,
+
+    fn deinit(self: IonOverlapData, alloc: std.mem.Allocator) void {
+        alloc.free(self.s_overlaps);
+        if (self.p_overlaps) |p_overlaps| alloc.free(p_overlaps);
+    }
+};
+
+const SpWeights = struct {
+    s: f64,
+    p: f64,
+};
+
+fn initOrbitalSet(
+    alloc: std.mem.Allocator,
+    centers: []const math.Vec3,
+    alpha: f64,
+    cutoff: f64,
+    basis: local_orbital.BasisType,
+) !OrbitalSet {
+    return .{
+        .s_orbitals = try local_orbital.buildOrbitalsS(alloc, centers, alpha, cutoff),
+        .sp_orbitals = if (basis == .sp)
+            try local_orbital.buildOrbitalsSP(alloc, centers, alpha, cutoff)
+        else
+            null,
+    };
+}
+
+fn initProjectorReferenceValues(
+    alloc: std.mem.Allocator,
+    ion: IonSite,
+) ![]f64 {
+    const upf = ion.upf;
+    var pw_projectors = try alloc.alloc(f64, upf.beta.len);
+    for (upf.beta, 0..) |beta, b| {
+        const l = beta.l orelse 0;
+        pw_projectors[b] = pw_nonlocal.radialProjector(
+            beta.values,
+            upf.r,
+            upf.rab,
+            l,
+            0.0,
+        );
+    }
+    return pw_projectors;
+}
+
+fn computeOrbitalProjectorOverlaps(
+    alloc: std.mem.Allocator,
+    orbitals: []const local_orbital.Orbital,
+    ion: IonSite,
+    cell: math.Mat3,
+    inv_cell: math.Mat3,
+    pbc: neighbor_list.Pbc,
+    opts: NonlocalOptions,
+    pw_projectors: []const f64,
+) ![]f64 {
+    const upf = ion.upf;
+    var overlaps = try alloc.alloc(f64, orbitals.len * upf.beta.len);
+    @memset(overlaps, 0.0);
+
+    for (orbitals, 0..) |orb, i| {
+        for (upf.beta, 0..) |beta, b| {
+            const l = beta.l orelse 0;
+            overlaps[i * upf.beta.len + b] = computeProjectorOverlap(
+                orb,
+                ion.position,
+                upf.r,
+                upf.rab,
+                beta.values,
+                l,
+                cell,
+                inv_cell,
+                pbc,
+                opts.n_radial,
+                opts.r_max,
+                pw_projectors[b],
+            );
+        }
+    }
+    return overlaps;
+}
+
+fn computePProjectorOverlaps(
+    alloc: std.mem.Allocator,
+    sp_orbitals: ?[]const local_orbital.Orbital,
+    n_orb: usize,
+    ion: IonSite,
+    cell: math.Mat3,
+    inv_cell: math.Mat3,
+    pbc: neighbor_list.Pbc,
+    opts: NonlocalOptions,
+    pw_projectors: []const f64,
+) !?[]f64 {
+    const orbitals = sp_orbitals orelse return null;
+    const upf = ion.upf;
+    var overlaps = try alloc.alloc(f64, n_orb * upf.beta.len);
+    @memset(overlaps, 0.0);
+
+    for (0..n_orb) |center_idx| {
+        for (upf.beta, 0..) |beta, b| {
+            const l = beta.l orelse 0;
+            var p_sum: f64 = 0.0;
+            for (1..4) |p_idx| {
+                const orb_idx = center_idx * 4 + p_idx;
+                const overlap_val = computeProjectorOverlap(
+                    orbitals[orb_idx],
+                    ion.position,
+                    upf.r,
+                    upf.rab,
+                    beta.values,
+                    l,
+                    cell,
+                    inv_cell,
+                    pbc,
+                    opts.n_radial,
+                    opts.r_max,
+                    pw_projectors[b],
+                );
+                p_sum += overlap_val * overlap_val;
+            }
+            overlaps[center_idx * upf.beta.len + b] = @sqrt(p_sum / 3.0);
+        }
+    }
+    return overlaps;
+}
+
+fn initIonOverlapData(
+    alloc: std.mem.Allocator,
+    orbitals: OrbitalSet,
+    ion: IonSite,
+    cell: math.Mat3,
+    inv_cell: math.Mat3,
+    pbc: neighbor_list.Pbc,
+    opts: NonlocalOptions,
+) !?IonOverlapData {
+    const upf = ion.upf;
+    const n_beta = upf.beta.len;
+    if (n_beta == 0 or upf.dij.len != n_beta * n_beta) return null;
+
+    const pw_projectors = try initProjectorReferenceValues(alloc, ion);
+    defer alloc.free(pw_projectors);
+
+    const s_overlaps = try computeOrbitalProjectorOverlaps(
+        alloc,
+        orbitals.s_orbitals,
+        ion,
+        cell,
+        inv_cell,
+        pbc,
+        opts,
+        pw_projectors,
+    );
+    errdefer alloc.free(s_overlaps);
+
+    return .{
+        .n_beta = n_beta,
+        .s_overlaps = s_overlaps,
+        .p_overlaps = try computePProjectorOverlaps(
+            alloc,
+            if (orbitals.sp_orbitals) |sp_orbitals| sp_orbitals else null,
+            orbitals.s_orbitals.len,
+            ion,
+            cell,
+            inv_cell,
+            pbc,
+            opts,
+            pw_projectors,
+        ),
+    };
+}
+
+fn basisOverlapWeights(basis: local_orbital.BasisType) SpWeights {
+    return if (basis == .sp)
+        .{ .s = 0.25, .p = 0.75 }
+    else
+        .{ .s = 1.0, .p = 0.0 };
+}
+
+fn pOverlapAt(
+    p_overlaps: ?[]const f64,
+    n_beta: usize,
+    center_idx: usize,
+    beta_idx: usize,
+) ?f64 {
+    const overlaps = p_overlaps orelse return null;
+    return overlaps[center_idx * n_beta + beta_idx];
+}
+
+fn projectorPairContribution(
+    d_val: f64,
+    s_proj_i: f64,
+    s_proj_j: f64,
+    p_proj_i: ?f64,
+    p_proj_j: ?f64,
+    weights: SpWeights,
+) f64 {
+    var value = weights.s * s_proj_i * d_val * s_proj_j;
+    if (p_proj_i) |p_i| {
+        value += weights.p * p_i * d_val * p_proj_j.?;
+    }
+    return value;
+}
+
+fn appendIonNonlocalTriplets(
+    alloc: std.mem.Allocator,
+    triplets: *std.ArrayList(sparse.Triplet),
+    n_orb: usize,
+    ion: IonSite,
+    overlap_data: IonOverlapData,
+    basis: local_orbital.BasisType,
+    threshold: f64,
+) !void {
+    const upf = ion.upf;
+    const weights = basisOverlapWeights(basis);
+
+    for (0..n_orb) |i| {
+        for (0..n_orb) |j| {
+            var value: f64 = 0.0;
+            for (0..overlap_data.n_beta) |b| {
+                for (0..overlap_data.n_beta) |bp| {
+                    const d_val = upf.dij[b * overlap_data.n_beta + bp];
+                    const s_proj_i = overlap_data.s_overlaps[i * overlap_data.n_beta + b];
+                    const s_proj_j = overlap_data.s_overlaps[j * overlap_data.n_beta + bp];
+                    value += projectorPairContribution(
+                        d_val,
+                        s_proj_i,
+                        s_proj_j,
+                        pOverlapAt(overlap_data.p_overlaps, overlap_data.n_beta, i, b),
+                        pOverlapAt(overlap_data.p_overlaps, overlap_data.n_beta, j, bp),
+                        weights,
+                    );
+                }
+            }
+            if (@abs(value) > threshold) {
+                try triplets.append(alloc, .{ .row = i, .col = j, .value = value });
+            }
+        }
+    }
+}
+
+fn emptyNonlocalCsr(
+    alloc: std.mem.Allocator,
+    n_orb: usize,
+) !sparse.CsrMatrix {
+    const row_ptr = try alloc.alloc(usize, n_orb + 1);
+    @memset(row_ptr, 0);
+    return .{
+        .nrows = n_orb,
+        .ncols = n_orb,
+        .row_ptr = row_ptr,
+        .col_idx = &[_]usize{},
+        .values = &[_]f64{},
+    };
+}
+
 /// Build nonlocal potential matrix in local orbital basis
 /// V_nl(i,j) = Σ_I Σ_lm D_l <φ_i|β_lm^I> <β_lm^I|φ_j>
 ///
@@ -49,153 +319,41 @@ pub fn buildNonlocalCsr(
 ) !sparse.CsrMatrix {
     if (centers.len == 0) return error.InvalidShape;
 
-    const n_centers = centers.len;
+    const n_orb = centers.len;
     const alpha = 1.0 / (opts.sigma * opts.sigma);
+    var orbitals = try initOrbitalSet(alloc, centers, alpha, opts.cutoff, opts.basis);
+    defer orbitals.deinit(alloc);
 
-    // Build s-type orbitals (always needed)
-    const s_orbitals = try local_orbital.buildOrbitalsS(alloc, centers, alpha, opts.cutoff);
-    defer alloc.free(s_orbitals);
-
-    // Optionally build p-type orbitals for sp mode
-    const sp_orbitals: ?[]local_orbital.Orbital = if (opts.basis == .sp)
-        try local_orbital.buildOrbitalsSP(alloc, centers, alpha, opts.cutoff)
-    else
-        null;
-    defer if (sp_orbitals) |orbs| alloc.free(orbs);
-
-    // Matrix size is always N (one orbital per center)
-    const n_orb = n_centers;
-
-    // Compute projector overlaps for each ion and each orbital
-    // <φ_i|β_b^I> where I is ion index, b is beta index
     var triplets: std.ArrayList(sparse.Triplet) = .empty;
     defer triplets.deinit(alloc);
 
     const inv_cell = try invertCell(cell);
 
     for (ions) |ion| {
-        const upf = ion.upf;
-        if (upf.beta.len == 0) continue;
+        const overlap_data = try initIonOverlapData(
+            alloc,
+            orbitals,
+            ion,
+            cell,
+            inv_cell,
+            pbc,
+            opts,
+        ) orelse continue;
+        defer overlap_data.deinit(alloc);
 
-        // Get D_ij matrix size
-        const n_beta = upf.beta.len;
-        if (upf.dij.len != n_beta * n_beta) continue;
-
-        // Precompute plane-wave projector values at G=0 for reference
-        const pw_projectors = try alloc.alloc(f64, n_beta);
-        defer alloc.free(pw_projectors);
-        for (upf.beta, 0..) |beta, b| {
-            const l = beta.l orelse 0;
-            pw_projectors[b] = pw_nonlocal.radialProjector(beta.values, upf.r, upf.rab, l, 0.0);
-        }
-
-        // Compute overlaps for s-orbitals
-        const s_overlaps = try alloc.alloc(f64, n_orb * n_beta);
-        defer alloc.free(s_overlaps);
-        @memset(s_overlaps, 0.0);
-
-        for (s_orbitals, 0..) |orb, i| {
-            for (upf.beta, 0..) |beta, b| {
-                const l = beta.l orelse 0;
-                s_overlaps[i * n_beta + b] = computeProjectorOverlap(
-                    orb,
-                    ion.position,
-                    upf.r,
-                    upf.rab,
-                    beta.values,
-                    l,
-                    cell,
-                    inv_cell,
-                    pbc,
-                    opts.n_radial,
-                    opts.r_max,
-                    pw_projectors[b],
-                );
-            }
-        }
-
-        // For sp mode, also compute p-orbital overlaps and combine with sp³ weighting
-        // sp³ hybridization: 25% s-character, 75% p-character
-        const s_weight: f64 = if (opts.basis == .sp) 0.25 else 1.0;
-        const p_weight: f64 = if (opts.basis == .sp) 0.75 else 0.0;
-
-        var p_overlaps: ?[]f64 = null;
-        if (sp_orbitals) |sp_orbs| {
-            p_overlaps = try alloc.alloc(f64, n_orb * n_beta);
-            @memset(p_overlaps.?, 0.0);
-
-            // For each center, average over px, py, pz overlaps
-            for (0..n_orb) |center_idx| {
-                for (upf.beta, 0..) |beta, b| {
-                    const l = beta.l orelse 0;
-                    var p_sum: f64 = 0.0;
-
-                    // Compute overlaps for px, py, pz at this center
-                    for (1..4) |p_idx| { // indices 1,2,3 are px,py,pz in sp basis
-                        const orb_idx = center_idx * 4 + p_idx;
-                        const overlap_val = computeProjectorOverlap(
-                            sp_orbs[orb_idx],
-                            ion.position,
-                            upf.r,
-                            upf.rab,
-                            beta.values,
-                            l,
-                            cell,
-                            inv_cell,
-                            pbc,
-                            opts.n_radial,
-                            opts.r_max,
-                            pw_projectors[b],
-                        );
-                        p_sum += overlap_val * overlap_val; // sum of squares
-                    }
-                    // RMS average over 3 p-orbitals
-                    p_overlaps.?[center_idx * n_beta + b] = @sqrt(p_sum / 3.0);
-                }
-            }
-        }
-        defer if (p_overlaps) |p| alloc.free(p);
-
-        // Build V_nl(i,j) = Σ_b,b' <φ_i|β_b> D_{bb'} <β_b'|φ_j>
-        // For sp mode: weight = s_weight * s_overlap + p_weight * p_overlap
-        for (0..n_orb) |i| {
-            for (0..n_orb) |j| {
-                var value: f64 = 0.0;
-                for (0..n_beta) |b| {
-                    for (0..n_beta) |bp| {
-                        const d_val = upf.dij[b * n_beta + bp];
-
-                        // s-contribution
-                        const s_proj_i = s_overlaps[i * n_beta + b];
-                        const s_proj_j = s_overlaps[j * n_beta + bp];
-                        value += s_weight * s_proj_i * d_val * s_proj_j;
-
-                        // p-contribution (if sp mode)
-                        if (p_overlaps) |p| {
-                            const p_proj_i = p[i * n_beta + b];
-                            const p_proj_j = p[j * n_beta + bp];
-                            value += p_weight * p_proj_i * d_val * p_proj_j;
-                        }
-                    }
-                }
-                if (@abs(value) > opts.threshold) {
-                    try triplets.append(alloc, .{ .row = i, .col = j, .value = value });
-                }
-            }
-        }
+        try appendIonNonlocalTriplets(
+            alloc,
+            &triplets,
+            n_orb,
+            ion,
+            overlap_data,
+            opts.basis,
+            opts.threshold,
+        );
     }
 
     if (triplets.items.len == 0) {
-        // Return empty matrix with correct dimensions
-        const row_ptr = try alloc.alloc(usize, n_orb + 1);
-        @memset(row_ptr, 0);
-        return .{
-            .nrows = n_orb,
-            .ncols = n_orb,
-            .row_ptr = row_ptr,
-            .col_idx = &[_]usize{},
-            .values = &[_]f64{},
-        };
+        return emptyNonlocalCsr(alloc, n_orb);
     }
 
     return sparse.CsrMatrix.initFromTriplets(alloc, n_orb, n_orb, triplets.items);
@@ -233,27 +391,29 @@ fn computeProjectorOverlap(
         return 0.0;
     }
 
-    // Get orbital angular momentum
+    // Match orbital angular momentum with projector angular momentum.
+    // Selection rules determine which combinations give significant overlap.
     const l_orb = orb.angular.l();
+    const overlap_fn = selectOverlapFn(l_orb, l_proj) orelse return 0.0;
+    return overlap_fn(orb, dist, delta, r_grid, rab_grid, beta_data, pw_projector);
+}
 
-    // Match orbital angular momentum with projector angular momentum
-    // Selection rules determine which combinations give significant overlap
-    if (l_orb == 0 and l_proj == 0) {
-        // s-orbital with s-projector: standard overlap
-        return computeProjectorOverlapSS(orb, dist, delta, r_grid, rab_grid, beta_data, pw_projector);
-    } else if (l_orb == 0 and l_proj == 1) {
-        // s-orbital with p-projector: small overlap (angular mismatch)
-        return computeProjectorOverlapSP(orb, dist, delta, r_grid, rab_grid, beta_data, pw_projector);
-    } else if (l_orb == 1 and l_proj == 0) {
-        // p-orbital with s-projector: small overlap (angular mismatch)
-        return computeProjectorOverlapPS(orb, dist, delta, r_grid, rab_grid, beta_data, pw_projector);
-    } else if (l_orb == 1 and l_proj == 1) {
-        // p-orbital with p-projector: good overlap when directions match
-        return computeProjectorOverlapPP(orb, dist, delta, r_grid, rab_grid, beta_data, pw_projector);
-    } else {
-        // Higher angular momentum not yet supported
-        return 0.0;
-    }
+const ProjectorOverlapFn = *const fn (
+    orb: local_orbital.Orbital,
+    dist: f64,
+    delta: math.Vec3,
+    r_grid: []const f64,
+    rab_grid: []const f64,
+    beta_data: []const f64,
+    pw_projector: f64,
+) f64;
+
+fn selectOverlapFn(l_orb: i32, l_proj: i32) ?ProjectorOverlapFn {
+    if (l_orb == 0 and l_proj == 0) return computeProjectorOverlapSS;
+    if (l_orb == 0 and l_proj == 1) return computeProjectorOverlapSP;
+    if (l_orb == 1 and l_proj == 0) return computeProjectorOverlapPS;
+    if (l_orb == 1 and l_proj == 1) return computeProjectorOverlapPP;
+    return null;
 }
 
 /// s-orbital with s-projector overlap
@@ -329,7 +489,8 @@ fn computeProjectorOverlapSP(
 
     // Angular factor: depends on direction of displacement
     // For s-p overlap, proportional to cos(theta) where theta is angle to p-orbital axis
-    const angular_factor = if (dist < 1e-10) 0.0 else @sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z) / dist * 0.5;
+    const delta_norm = @sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+    const angular_factor = if (dist < 1e-10) 0.0 else delta_norm / dist * 0.5;
 
     if (@abs(pw_sum) < 1e-15) return 0.0;
     return sum * angular_factor;
@@ -455,7 +616,12 @@ fn invertCell(cell: math.Mat3) !math.Mat3 {
     return local_orbital_potential.invertCell(cell);
 }
 
-fn minimumImageDelta(cell: math.Mat3, inv_cell: math.Mat3, pbc: neighbor_list.Pbc, delta: math.Vec3) math.Vec3 {
+fn minimumImageDelta(
+    cell: math.Mat3,
+    inv_cell: math.Mat3,
+    pbc: neighbor_list.Pbc,
+    delta: math.Vec3,
+) math.Vec3 {
     var frac = inv_cell.mulVec(delta);
     if (pbc.x) frac.x -= @round(frac.x);
     if (pbc.y) frac.y -= @round(frac.y);

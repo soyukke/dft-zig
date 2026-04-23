@@ -91,7 +91,12 @@ pub fn buildNuclearMatrix(
     for (0..n) |i| {
         for (0..n) |j| {
             if (j >= i) {
-                mat[i * n + j] = totalNuclearAttraction(shells[i], shells[j], nuc_positions, nuc_charges);
+                mat[i * n + j] = totalNuclearAttraction(
+                    shells[i],
+                    shells[j],
+                    nuc_positions,
+                    nuc_charges,
+                );
                 mat[j * n + i] = mat[i * n + j];
             }
         }

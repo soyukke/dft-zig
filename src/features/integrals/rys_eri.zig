@@ -23,6 +23,7 @@ const rys_roots_mod = @import("rys_roots.zig");
 
 const ContractedShell = basis_mod.ContractedShell;
 const AngularMomentum = basis_mod.AngularMomentum;
+const PrimitiveGaussian = basis_mod.PrimitiveGaussian;
 
 // ============================================================================
 // Constants
@@ -43,6 +44,9 @@ const MAX_NROOTS: usize = rys_roots_mod.MAX_NROOTS;
 /// Maximum dimension in the 2D recurrence for ij direction.
 const MAX_DIM_IJ: usize = MAX_IJ + 1;
 
+/// Maximum dimension in the 2D recurrence for the derivative ij direction.
+const MAX_DIM_IJ_DERIV: usize = MAX_IJ + 2;
+
 /// Maximum dimension in the 2D recurrence for kl direction.
 const MAX_DIM_KL: usize = MAX_KL + 1;
 
@@ -55,15 +59,20 @@ const MAX_PRIM: usize = 16;
 /// Maximum entries in norm table (prim * cart).
 const MAX_NORM_TABLE: usize = MAX_PRIM * MAX_CART;
 
-/// Size of the 2D g-table per axis: nroots * dim_ij * dim_kl.
-/// For worst case (ff|ff): 7 * 7 * 7 = 343 per axis.
-const MAX_G_SIZE: usize = MAX_NROOTS * MAX_DIM_IJ * MAX_DIM_KL;
+/// Size of the 2D g-table per axis, including the derivative case.
+const MAX_G_SIZE: usize = MAX_NROOTS * MAX_DIM_IJ_DERIV * MAX_DIM_KL;
 
 /// Primitive screening threshold.
 const PRIM_SCREEN_THRESHOLD: f64 = 1e-15;
 
 /// Maximum number of primitive pairs per bra or ket side.
 const MAX_PRIM_PAIRS: usize = MAX_PRIM * MAX_PRIM;
+
+/// Maximum ket HR table size.
+const MAX_KET_HR: usize = MAX_DIM_IJ_DERIV * MAX_DIM_KL * (MAX_L + 1);
+
+/// Maximum 4D HR table size, including the derivative case.
+const MAX_HR4D: usize = (MAX_L + 2) * (MAX_L + 1) * (MAX_L + 1) * (MAX_L + 1);
 
 // ============================================================================
 // Primitive pair precomputation
@@ -82,6 +91,7 @@ const BraPair = struct {
     coeff_ab: f64, // c_a * c_b
     exp_ab: f64, // exp(-mu_ab * r2_ab)
     max_norm_ab: f64, // max_norm_a * max_norm_b
+    alpha_a: f64, // alpha for the differentiated center
     ipa: usize, // primitive index in shell_a
     ipb: usize, // primitive index in shell_b
 };
@@ -101,6 +111,85 @@ const KetPair = struct {
     max_norm_cd: f64, // max_norm_c * max_norm_d
     ipc: usize, // primitive index in shell_c
     ipd: usize, // primitive index in shell_d
+};
+
+const QuartetSetup = struct {
+    na: usize,
+    nb: usize,
+    nc: usize,
+    nd: usize,
+    total_out: usize,
+    cart_a: [MAX_CART]AngularMomentum,
+    cart_b: [MAX_CART]AngularMomentum,
+    cart_c: [MAX_CART]AngularMomentum,
+    cart_d: [MAX_CART]AngularMomentum,
+    dim_ij: usize,
+    dim_kl: usize,
+    nroots: usize,
+    ab: [3]f64,
+    cd: [3]f64,
+    r2_ab: f64,
+    r2_cd: f64,
+    a_hr_count: usize,
+    lb_1: usize,
+    lc_1: usize,
+    ld_1: usize,
+    ket_stride_c: usize,
+    ket_stride_i: usize,
+    ket_size: usize,
+    hr4d_c_stride: usize,
+    hr4d_b_stride: usize,
+    hr4d_a_stride: usize,
+    hr4d_size: usize,
+};
+
+const RecurrenceWorkspace = struct {
+    gx: [MAX_G_SIZE]f64 = undefined,
+    gy: [MAX_G_SIZE]f64 = undefined,
+    gz: [MAX_G_SIZE]f64 = undefined,
+    rys_roots: [MAX_NROOTS]f64 = undefined,
+    rys_weights: [MAX_NROOTS]f64 = undefined,
+    c00x: [MAX_NROOTS]f64 = undefined,
+    c00y: [MAX_NROOTS]f64 = undefined,
+    c00z: [MAX_NROOTS]f64 = undefined,
+    c0px: [MAX_NROOTS]f64 = undefined,
+    c0py: [MAX_NROOTS]f64 = undefined,
+    c0pz: [MAX_NROOTS]f64 = undefined,
+    b10_arr: [MAX_NROOTS]f64 = undefined,
+    b01_arr: [MAX_NROOTS]f64 = undefined,
+    b00_arr: [MAX_NROOTS]f64 = undefined,
+    w_pref: [MAX_NROOTS]f64 = undefined,
+};
+
+const EnergyWorkspace = struct {
+    recurrence: RecurrenceWorkspace = undefined,
+    ket_hr_x: [MAX_KET_HR]f64 = undefined,
+    ket_hr_y: [MAX_KET_HR]f64 = undefined,
+    ket_hr_z: [MAX_KET_HR]f64 = undefined,
+    hr4d_x: [MAX_HR4D]f64 = undefined,
+    hr4d_y: [MAX_HR4D]f64 = undefined,
+    hr4d_z: [MAX_HR4D]f64 = undefined,
+    prim_eri: [MAX_CART * MAX_CART * MAX_CART * MAX_CART]f64 = undefined,
+};
+
+const DerivativeWorkspace = struct {
+    recurrence: RecurrenceWorkspace = undefined,
+    ket_hr_x: [MAX_KET_HR]f64 = undefined,
+    ket_hr_y: [MAX_KET_HR]f64 = undefined,
+    ket_hr_z: [MAX_KET_HR]f64 = undefined,
+    hr4d_x: [MAX_HR4D]f64 = undefined,
+    hr4d_y: [MAX_HR4D]f64 = undefined,
+    hr4d_z: [MAX_HR4D]f64 = undefined,
+    prim_deriv_x: [MAX_CART * MAX_CART * MAX_CART * MAX_CART]f64 = undefined,
+    prim_deriv_y: [MAX_CART * MAX_CART * MAX_CART * MAX_CART]f64 = undefined,
+    prim_deriv_z: [MAX_CART * MAX_CART * MAX_CART * MAX_CART]f64 = undefined,
+};
+
+const QuartetNormTables = struct {
+    norm_a: []const f64,
+    norm_b: []const f64,
+    norm_c: []const f64,
+    norm_d: []const f64,
 };
 
 // ============================================================================
@@ -173,7 +262,8 @@ fn buildG2d(
                 // g(0, k) = c0p * g(0, k-1) + (k-1) * b01 * g(0, k-2)
                 var val = c0p[r] * g[base + (k - 1) * stride_k + 0];
                 if (k >= 2) {
-                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + 0];
+                    const g_km2_0 = g[base + (k - 2) * stride_k + 0];
+                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g_km2_0;
                 }
                 g[base + k * stride_k + 0] = val;
 
@@ -181,10 +271,12 @@ fn buildG2d(
                 {
                     var i: usize = 1;
                     while (i < dim_ij) : (i += 1) {
+                        const g_km1_im1 = g[base + (k - 1) * stride_k + i - 1];
                         val = c0p[r] * g[base + (k - 1) * stride_k + i] +
-                            @as(f64, @floatFromInt(i)) * b00[r] * g[base + (k - 1) * stride_k + i - 1];
+                            @as(f64, @floatFromInt(i)) * b00[r] * g_km1_im1;
                         if (k >= 2) {
-                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + i];
+                            const g_km2_i = g[base + (k - 2) * stride_k + i];
+                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g_km2_i;
                         }
                         g[base + k * stride_k + i] = val;
                     }
@@ -232,17 +324,20 @@ fn buildG2dWeighted(
             while (k < dim_kl) : (k += 1) {
                 var val = c0p[r] * g[base + (k - 1) * stride_k + 0];
                 if (k >= 2) {
-                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + 0];
+                    const g_km2_0 = g[base + (k - 2) * stride_k + 0];
+                    val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g_km2_0;
                 }
                 g[base + k * stride_k + 0] = val;
 
                 {
                     var i: usize = 1;
                     while (i < dim_ij) : (i += 1) {
+                        const g_km1_im1 = g[base + (k - 1) * stride_k + i - 1];
                         val = c0p[r] * g[base + (k - 1) * stride_k + i] +
-                            @as(f64, @floatFromInt(i)) * b00[r] * g[base + (k - 1) * stride_k + i - 1];
+                            @as(f64, @floatFromInt(i)) * b00[r] * g_km1_im1;
                         if (k >= 2) {
-                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g[base + (k - 2) * stride_k + i];
+                            const g_km2_i = g[base + (k - 2) * stride_k + i];
+                            val += @as(f64, @floatFromInt(k - 1)) * b01[r] * g_km2_i;
                         }
                         g[base + k * stride_k + i] = val;
                     }
@@ -250,6 +345,686 @@ fn buildG2dWeighted(
             }
         }
     }
+}
+
+fn initQuartetSetup(
+    shell_a: ContractedShell,
+    shell_b: ContractedShell,
+    shell_c: ContractedShell,
+    shell_d: ContractedShell,
+    output: []f64,
+    a_order_extra: usize,
+) QuartetSetup {
+    const la: usize = @intCast(shell_a.l);
+    const lb: usize = @intCast(shell_b.l);
+    const lc: usize = @intCast(shell_c.l);
+    const ld: usize = @intCast(shell_d.l);
+
+    const na = basis_mod.numCartesian(shell_a.l);
+    const nb = basis_mod.numCartesian(shell_b.l);
+    const nc = basis_mod.numCartesian(shell_c.l);
+    const nd = basis_mod.numCartesian(shell_d.l);
+    const total_out = na * nb * nc * nd;
+    std.debug.assert(output.len >= total_out);
+    @memset(output[0..total_out], 0.0);
+
+    const diff_ab = math.Vec3.sub(shell_a.center, shell_b.center);
+    const diff_cd = math.Vec3.sub(shell_c.center, shell_d.center);
+    const dim_ij = la + lb + 1 + a_order_extra;
+    const dim_kl = lc + ld + 1;
+    const nroots = (la + lb + lc + ld + a_order_extra) / 2 + 1;
+    const lb_1 = lb + 1;
+    const lc_1 = lc + 1;
+    const ld_1 = ld + 1;
+    const ket_stride_c = ld_1;
+    const ket_stride_i = dim_kl * ld_1;
+    const hr4d_c_stride = ld_1;
+    const hr4d_b_stride = lc_1 * ld_1;
+    const hr4d_a_stride = lb_1 * lc_1 * ld_1;
+    return .{
+        .na = na,
+        .nb = nb,
+        .nc = nc,
+        .nd = nd,
+        .total_out = total_out,
+        .cart_a = basis_mod.cartesianExponents(shell_a.l),
+        .cart_b = basis_mod.cartesianExponents(shell_b.l),
+        .cart_c = basis_mod.cartesianExponents(shell_c.l),
+        .cart_d = basis_mod.cartesianExponents(shell_d.l),
+        .dim_ij = dim_ij,
+        .dim_kl = dim_kl,
+        .nroots = nroots,
+        .ab = .{
+            shell_a.center.x - shell_b.center.x,
+            shell_a.center.y - shell_b.center.y,
+            shell_a.center.z - shell_b.center.z,
+        },
+        .cd = .{
+            shell_c.center.x - shell_d.center.x,
+            shell_c.center.y - shell_d.center.y,
+            shell_c.center.z - shell_d.center.z,
+        },
+        .r2_ab = math.Vec3.dot(diff_ab, diff_ab),
+        .r2_cd = math.Vec3.dot(diff_cd, diff_cd),
+        .a_hr_count = la + 1 + a_order_extra,
+        .lb_1 = lb_1,
+        .lc_1 = lc_1,
+        .ld_1 = ld_1,
+        .ket_stride_c = ket_stride_c,
+        .ket_stride_i = ket_stride_i,
+        .ket_size = dim_ij * ket_stride_i,
+        .hr4d_c_stride = hr4d_c_stride,
+        .hr4d_b_stride = hr4d_b_stride,
+        .hr4d_a_stride = hr4d_a_stride,
+        .hr4d_size = (la + 1 + a_order_extra) * hr4d_a_stride,
+    };
+}
+
+fn fillNormalizationTable(
+    shell: ContractedShell,
+    n_cart: usize,
+    cart: *const [MAX_CART]AngularMomentum,
+    norm: []f64,
+) void {
+    for (shell.primitives, 0..) |prim, ip| {
+        for (0..n_cart) |ic| {
+            const c = cart[ic];
+            norm[ip * n_cart + ic] = basis_mod.normalization(prim.alpha, c.x, c.y, c.z);
+        }
+    }
+}
+
+fn fillNormalizationTableAndMax(
+    shell: ContractedShell,
+    n_cart: usize,
+    cart: *const [MAX_CART]AngularMomentum,
+    norm: []f64,
+    max_norm: []f64,
+) void {
+    for (shell.primitives, 0..) |prim, ip| {
+        var max_value: f64 = 0.0;
+        for (0..n_cart) |ic| {
+            const c = cart[ic];
+            const n_val = basis_mod.normalization(prim.alpha, c.x, c.y, c.z);
+            norm[ip * n_cart + ic] = n_val;
+            if (n_val > max_value) max_value = n_val;
+        }
+        max_norm[ip] = max_value;
+    }
+}
+
+fn prepareBraPairs(
+    shell_a: ContractedShell,
+    shell_b: ContractedShell,
+    max_norm_a: []const f64,
+    max_norm_b: []const f64,
+    r2_ab: f64,
+    bra_pairs: []BraPair,
+) usize {
+    var n_bra: usize = 0;
+    for (shell_a.primitives, 0..) |prim_a, ipa| {
+        const alpha = prim_a.alpha;
+        for (shell_b.primitives, 0..) |prim_b, ipb| {
+            const beta = prim_b.alpha;
+            const p_val = alpha + beta;
+            const mu_ab = alpha * beta / p_val;
+            const px = (alpha * shell_a.center.x + beta * shell_b.center.x) / p_val;
+            const py = (alpha * shell_a.center.y + beta * shell_b.center.y) / p_val;
+            const pz = (alpha * shell_a.center.z + beta * shell_b.center.z) / p_val;
+            bra_pairs[n_bra] = .{
+                .p = p_val,
+                .inv_2p = 0.5 / p_val,
+                .px = px,
+                .py = py,
+                .pz = pz,
+                .pax = px - shell_a.center.x,
+                .pay = py - shell_a.center.y,
+                .paz = pz - shell_a.center.z,
+                .coeff_ab = prim_a.coeff * prim_b.coeff,
+                .exp_ab = @exp(-mu_ab * r2_ab),
+                .max_norm_ab = max_norm_a[ipa] * max_norm_b[ipb],
+                .alpha_a = alpha,
+                .ipa = ipa,
+                .ipb = ipb,
+            };
+            n_bra += 1;
+        }
+    }
+    return n_bra;
+}
+
+fn prepareKetPairs(
+    shell_c: ContractedShell,
+    shell_d: ContractedShell,
+    max_norm_c: []const f64,
+    max_norm_d: []const f64,
+    r2_cd: f64,
+    ket_pairs: []KetPair,
+) usize {
+    var n_ket: usize = 0;
+    for (shell_c.primitives, 0..) |prim_c, ipc| {
+        const gamma_val = prim_c.alpha;
+        for (shell_d.primitives, 0..) |prim_d, ipd| {
+            const delta_val = prim_d.alpha;
+            const q_val = gamma_val + delta_val;
+            const mu_cd = gamma_val * delta_val / q_val;
+            const qx = (gamma_val * shell_c.center.x + delta_val * shell_d.center.x) / q_val;
+            const qy = (gamma_val * shell_c.center.y + delta_val * shell_d.center.y) / q_val;
+            const qz = (gamma_val * shell_c.center.z + delta_val * shell_d.center.z) / q_val;
+            ket_pairs[n_ket] = .{
+                .q = q_val,
+                .inv_2q = 0.5 / q_val,
+                .qx = qx,
+                .qy = qy,
+                .qz = qz,
+                .qcx = qx - shell_c.center.x,
+                .qcy = qy - shell_c.center.y,
+                .qcz = qz - shell_c.center.z,
+                .coeff_cd = prim_c.coeff * prim_d.coeff,
+                .exp_cd = @exp(-mu_cd * r2_cd),
+                .max_norm_cd = max_norm_c[ipc] * max_norm_d[ipd],
+                .ipc = ipc,
+                .ipd = ipd,
+            };
+            n_ket += 1;
+        }
+    }
+    return n_ket;
+}
+
+fn preparePrimitiveQuartet(
+    workspace: *RecurrenceWorkspace,
+    setup: QuartetSetup,
+    bra: BraPair,
+    ket: KetPair,
+) ?f64 {
+    const exp_factor = bra.exp_ab * ket.exp_cd;
+    const coeff_abcd = bra.coeff_ab * ket.coeff_cd;
+    const prefactor = 2.0 * std.math.pow(f64, std.math.pi, 2.5) /
+        (bra.p * ket.q * @sqrt(bra.p + ket.q)) * exp_factor;
+    if (@abs(coeff_abcd) * bra.max_norm_ab * ket.max_norm_cd * prefactor <
+        PRIM_SCREEN_THRESHOLD) return null;
+
+    const pq = bra.p + ket.q;
+    const wx = (bra.p * bra.px + ket.q * ket.qx) / pq;
+    const wy = (bra.p * bra.py + ket.q * ket.qy) / pq;
+    const wz = (bra.p * bra.pz + ket.q * ket.qz) / pq;
+    const dpqx = bra.px - ket.qx;
+    const dpqy = bra.py - ket.qy;
+    const dpqz = bra.pz - ket.qz;
+    const rho = bra.p * ket.q / pq;
+
+    rys_roots_mod.rysRoots(
+        setup.nroots,
+        rho * (dpqx * dpqx + dpqy * dpqy + dpqz * dpqz),
+        &workspace.rys_roots,
+        &workspace.rys_weights,
+    );
+    for (0..setup.nroots) |r| {
+        const t2 = workspace.rys_roots[r];
+        workspace.b00_arr[r] = 0.5 / pq * t2;
+        workspace.b10_arr[r] = bra.inv_2p * (1.0 - ket.q / pq * t2);
+        workspace.b01_arr[r] = ket.inv_2q * (1.0 - bra.p / pq * t2);
+        workspace.c00x[r] = bra.pax + (wx - bra.px) * t2;
+        workspace.c00y[r] = bra.pay + (wy - bra.py) * t2;
+        workspace.c00z[r] = bra.paz + (wz - bra.pz) * t2;
+        workspace.c0px[r] = ket.qcx + (wx - ket.qx) * t2;
+        workspace.c0py[r] = ket.qcy + (wy - ket.qy) * t2;
+        workspace.c0pz[r] = ket.qcz + (wz - ket.qz) * t2;
+        workspace.w_pref[r] = workspace.rys_weights[r] * prefactor;
+    }
+
+    const g_axis_size = setup.nroots * setup.dim_ij * setup.dim_kl;
+    buildG2d(
+        setup.nroots,
+        setup.dim_ij,
+        setup.dim_kl,
+        &workspace.c00x,
+        &workspace.c0px,
+        &workspace.b10_arr,
+        &workspace.b01_arr,
+        &workspace.b00_arr,
+        workspace.gx[0..g_axis_size],
+    );
+    buildG2d(
+        setup.nroots,
+        setup.dim_ij,
+        setup.dim_kl,
+        &workspace.c00y,
+        &workspace.c0py,
+        &workspace.b10_arr,
+        &workspace.b01_arr,
+        &workspace.b00_arr,
+        workspace.gy[0..g_axis_size],
+    );
+    buildG2dWeighted(
+        setup.nroots,
+        setup.dim_ij,
+        setup.dim_kl,
+        &workspace.c00z,
+        &workspace.c0pz,
+        &workspace.b10_arr,
+        &workspace.b01_arr,
+        &workspace.b00_arr,
+        &workspace.w_pref,
+        workspace.gz[0..g_axis_size],
+    );
+    return coeff_abcd;
+}
+
+fn buildHrAxis(
+    setup: QuartetSetup,
+    g_axis: []const f64,
+    ket_hr: []f64,
+    hr4d: []f64,
+    g2d_base: usize,
+    ab_val: f64,
+    cd_val: f64,
+) void {
+    for (0..setup.dim_ij) |i| {
+        for (0..setup.dim_kl) |c| {
+            ket_hr[i * setup.ket_stride_i + c * setup.ket_stride_c] =
+                g_axis[g2d_base + c * setup.dim_ij + i];
+        }
+    }
+    var d: usize = 1;
+    while (d < setup.ld_1) : (d += 1) {
+        const c_max = setup.dim_kl - d;
+        for (0..setup.dim_ij) |i| {
+            const i_base = i * setup.ket_stride_i;
+            for (0..c_max) |c| {
+                const up = ket_hr[i_base + (c + 1) * setup.ket_stride_c + (d - 1)];
+                const same = ket_hr[i_base + c * setup.ket_stride_c + (d - 1)];
+                ket_hr[i_base + c * setup.ket_stride_c + d] = up + cd_val * same;
+            }
+        }
+    }
+
+    for (0..setup.lc_1) |c| {
+        for (0..setup.ld_1) |d_idx| {
+            var work: [MAX_DIM_IJ_DERIV]f64 = undefined;
+            for (0..setup.dim_ij) |a| {
+                work[a] = ket_hr[a * setup.ket_stride_i + c * setup.ket_stride_c + d_idx];
+            }
+            for (0..setup.a_hr_count) |a| {
+                hr4d[a * setup.hr4d_a_stride + c * setup.hr4d_c_stride + d_idx] = work[a];
+            }
+            var b: usize = 1;
+            while (b < setup.lb_1) : (b += 1) {
+                const a_count = setup.dim_ij - b;
+                for (0..a_count) |a| {
+                    work[a] = work[a + 1] + ab_val * work[a];
+                }
+                for (0..setup.a_hr_count) |a| {
+                    hr4d[
+                        a * setup.hr4d_a_stride +
+                            b * setup.hr4d_b_stride +
+                            c * setup.hr4d_c_stride + d_idx
+                    ] = work[a];
+                }
+            }
+        }
+    }
+}
+
+fn buildQuartetHrTables(
+    setup: QuartetSetup,
+    workspace: *RecurrenceWorkspace,
+    ket_hr_x: []f64,
+    ket_hr_y: []f64,
+    ket_hr_z: []f64,
+    hr4d_x: []f64,
+    hr4d_y: []f64,
+    hr4d_z: []f64,
+    root: usize,
+) void {
+    const g_axis_size = setup.nroots * setup.dim_ij * setup.dim_kl;
+    const g2d_base = root * setup.dim_ij * setup.dim_kl;
+    buildHrAxis(
+        setup,
+        workspace.gx[0..g_axis_size],
+        ket_hr_x,
+        hr4d_x,
+        g2d_base,
+        setup.ab[0],
+        setup.cd[0],
+    );
+    buildHrAxis(
+        setup,
+        workspace.gy[0..g_axis_size],
+        ket_hr_y,
+        hr4d_y,
+        g2d_base,
+        setup.ab[1],
+        setup.cd[1],
+    );
+    buildHrAxis(
+        setup,
+        workspace.gz[0..g_axis_size],
+        ket_hr_z,
+        hr4d_z,
+        g2d_base,
+        setup.ab[2],
+        setup.cd[2],
+    );
+}
+
+fn accumulateEnergyRootContribution(
+    setup: QuartetSetup,
+    prim_eri: []f64,
+    hr4d_x: []const f64,
+    hr4d_y: []const f64,
+    hr4d_z: []const f64,
+) void {
+    for (0..setup.na) |ia| {
+        const a_cart = setup.cart_a[ia];
+        const ax: usize = @intCast(a_cart.x);
+        const ay: usize = @intCast(a_cart.y);
+        const az: usize = @intCast(a_cart.z);
+        for (0..setup.nb) |ib| {
+            const b_cart = setup.cart_b[ib];
+            const bx: usize = @intCast(b_cart.x);
+            const by: usize = @intCast(b_cart.y);
+            const bz: usize = @intCast(b_cart.z);
+            for (0..setup.nc) |ic| {
+                const c_cart = setup.cart_c[ic];
+                const cx: usize = @intCast(c_cart.x);
+                const cy: usize = @intCast(c_cart.y);
+                const cz: usize = @intCast(c_cart.z);
+                for (0..setup.nd) |id| {
+                    const d_cart = setup.cart_d[id];
+                    const dx: usize = @intCast(d_cart.x);
+                    const dy: usize = @intCast(d_cart.y);
+                    const dz: usize = @intCast(d_cart.z);
+                    const vx = hr4d_x[
+                        ax * setup.hr4d_a_stride +
+                            bx * setup.hr4d_b_stride +
+                            cx * setup.hr4d_c_stride + dx
+                    ];
+                    const vy = hr4d_y[
+                        ay * setup.hr4d_a_stride +
+                            by * setup.hr4d_b_stride +
+                            cy * setup.hr4d_c_stride + dy
+                    ];
+                    const vz = hr4d_z[
+                        az * setup.hr4d_a_stride +
+                            bz * setup.hr4d_b_stride +
+                            cz * setup.hr4d_c_stride + dz
+                    ];
+                    prim_eri[
+                        ia * setup.nb * setup.nc * setup.nd +
+                            ib * setup.nc * setup.nd +
+                            ic * setup.nd + id
+                    ] += vx * vy * vz;
+                }
+            }
+        }
+    }
+}
+
+fn accumulateDerivativeRootContribution(
+    setup: QuartetSetup,
+    alpha_a: f64,
+    prim_deriv_x: []f64,
+    prim_deriv_y: []f64,
+    prim_deriv_z: []f64,
+    hr4d_x: []const f64,
+    hr4d_y: []const f64,
+    hr4d_z: []const f64,
+) void {
+    for (0..setup.na) |ia| {
+        const a_cart = setup.cart_a[ia];
+        const ax: usize = @intCast(a_cart.x);
+        const ay: usize = @intCast(a_cart.y);
+        const az: usize = @intCast(a_cart.z);
+        for (0..setup.nb) |ib| {
+            const b_cart = setup.cart_b[ib];
+            const bx: usize = @intCast(b_cart.x);
+            const by: usize = @intCast(b_cart.y);
+            const bz: usize = @intCast(b_cart.z);
+            for (0..setup.nc) |ic| {
+                const c_cart = setup.cart_c[ic];
+                const cx: usize = @intCast(c_cart.x);
+                const cy: usize = @intCast(c_cart.y);
+                const cz: usize = @intCast(c_cart.z);
+                for (0..setup.nd) |id| {
+                    const d_cart = setup.cart_d[id];
+                    const dx: usize = @intCast(d_cart.x);
+                    const dy: usize = @intCast(d_cart.y);
+                    const dz: usize = @intCast(d_cart.z);
+                    const idx = ia * setup.nb * setup.nc * setup.nd +
+                        ib * setup.nc * setup.nd +
+                        ic * setup.nd + id;
+                    const gx_idx = ax * setup.hr4d_a_stride +
+                        bx * setup.hr4d_b_stride +
+                        cx * setup.hr4d_c_stride + dx;
+                    const gy_idx = ay * setup.hr4d_a_stride +
+                        by * setup.hr4d_b_stride +
+                        cy * setup.hr4d_c_stride + dy;
+                    const gz_idx = az * setup.hr4d_a_stride +
+                        bz * setup.hr4d_b_stride +
+                        cz * setup.hr4d_c_stride + dz;
+                    const gx_val = hr4d_x[gx_idx];
+                    const gy_val = hr4d_y[gy_idx];
+                    const gz_val = hr4d_z[gz_idx];
+                    prim_deriv_x[idx] += derivativeAxisContribution(
+                        alpha_a,
+                        ax,
+                        bx,
+                        cx,
+                        dx,
+                        gy_val,
+                        gz_val,
+                        hr4d_x,
+                        setup,
+                    );
+                    prim_deriv_y[idx] += derivativeAxisContribution(
+                        alpha_a,
+                        ay,
+                        by,
+                        cy,
+                        dy,
+                        gx_val,
+                        gz_val,
+                        hr4d_y,
+                        setup,
+                    );
+                    prim_deriv_z[idx] += derivativeAxisContribution(
+                        alpha_a,
+                        az,
+                        bz,
+                        cz,
+                        dz,
+                        gx_val,
+                        gy_val,
+                        hr4d_z,
+                        setup,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn derivativeAxisContribution(
+    alpha_a: f64,
+    a_exp: usize,
+    b_exp: usize,
+    c_exp: usize,
+    d_exp: usize,
+    other_axis_1: f64,
+    other_axis_2: f64,
+    hr4d: []const f64,
+    setup: QuartetSetup,
+) f64 {
+    const plus_idx = (a_exp + 1) * setup.hr4d_a_stride +
+        b_exp * setup.hr4d_b_stride +
+        c_exp * setup.hr4d_c_stride + d_exp;
+    var value = 2.0 * alpha_a * hr4d[plus_idx] * other_axis_1 * other_axis_2;
+    if (a_exp > 0) {
+        const minus_idx = (a_exp - 1) * setup.hr4d_a_stride +
+            b_exp * setup.hr4d_b_stride +
+            c_exp * setup.hr4d_c_stride + d_exp;
+        value -= @as(f64, @floatFromInt(a_exp)) *
+            hr4d[minus_idx] * other_axis_1 * other_axis_2;
+    }
+    return value;
+}
+
+fn contractEnergyPrimitive(
+    setup: QuartetSetup,
+    coeff_abcd: f64,
+    bra: BraPair,
+    ket: KetPair,
+    norms: QuartetNormTables,
+    prim_eri: []const f64,
+    output: []f64,
+) void {
+    for (0..setup.na) |ia| {
+        const na_val = norms.norm_a[bra.ipa * setup.na + ia];
+        for (0..setup.nb) |ib| {
+            const nb_val = norms.norm_b[bra.ipb * setup.nb + ib];
+            for (0..setup.nc) |ic| {
+                const nc_val = norms.norm_c[ket.ipc * setup.nc + ic];
+                for (0..setup.nd) |id| {
+                    const nd_val = norms.norm_d[ket.ipd * setup.nd + id];
+                    const idx = ia * setup.nb * setup.nc * setup.nd +
+                        ib * setup.nc * setup.nd +
+                        ic * setup.nd + id;
+                    output[idx] += coeff_abcd * na_val * nb_val * nc_val * nd_val * prim_eri[idx];
+                }
+            }
+        }
+    }
+}
+
+fn contractDerivativePrimitive(
+    setup: QuartetSetup,
+    coeff_abcd: f64,
+    bra: BraPair,
+    ket: KetPair,
+    norms: QuartetNormTables,
+    prim_deriv_x: []const f64,
+    prim_deriv_y: []const f64,
+    prim_deriv_z: []const f64,
+    deriv_x: []f64,
+    deriv_y: []f64,
+    deriv_z: []f64,
+) void {
+    for (0..setup.na) |ia| {
+        const na_val = norms.norm_a[bra.ipa * setup.na + ia];
+        for (0..setup.nb) |ib| {
+            const nb_val = norms.norm_b[bra.ipb * setup.nb + ib];
+            for (0..setup.nc) |ic| {
+                const nc_val = norms.norm_c[ket.ipc * setup.nc + ic];
+                for (0..setup.nd) |id| {
+                    const nd_val = norms.norm_d[ket.ipd * setup.nd + id];
+                    const idx = ia * setup.nb * setup.nc * setup.nd +
+                        ib * setup.nc * setup.nd +
+                        ic * setup.nd + id;
+                    const norm = coeff_abcd * na_val * nb_val * nc_val * nd_val;
+                    deriv_x[idx] += norm * prim_deriv_x[idx];
+                    deriv_y[idx] += norm * prim_deriv_y[idx];
+                    deriv_z[idx] += norm * prim_deriv_z[idx];
+                }
+            }
+        }
+    }
+}
+
+fn accumulateEnergyPrimitivePair(
+    workspace: *EnergyWorkspace,
+    setup: QuartetSetup,
+    bra: BraPair,
+    ket: KetPair,
+    norms: QuartetNormTables,
+    output: []f64,
+) void {
+    const coeff_abcd =
+        preparePrimitiveQuartet(&workspace.recurrence, setup, bra, ket) orelse return;
+    @memset(workspace.prim_eri[0..setup.total_out], 0.0);
+    for (0..setup.nroots) |root| {
+        buildQuartetHrTables(
+            setup,
+            &workspace.recurrence,
+            workspace.ket_hr_x[0..setup.ket_size],
+            workspace.ket_hr_y[0..setup.ket_size],
+            workspace.ket_hr_z[0..setup.ket_size],
+            workspace.hr4d_x[0..setup.hr4d_size],
+            workspace.hr4d_y[0..setup.hr4d_size],
+            workspace.hr4d_z[0..setup.hr4d_size],
+            root,
+        );
+        accumulateEnergyRootContribution(
+            setup,
+            workspace.prim_eri[0..setup.total_out],
+            workspace.hr4d_x[0..setup.hr4d_size],
+            workspace.hr4d_y[0..setup.hr4d_size],
+            workspace.hr4d_z[0..setup.hr4d_size],
+        );
+    }
+    contractEnergyPrimitive(
+        setup,
+        coeff_abcd,
+        bra,
+        ket,
+        norms,
+        workspace.prim_eri[0..setup.total_out],
+        output,
+    );
+}
+
+fn accumulateDerivativePrimitivePair(
+    workspace: *DerivativeWorkspace,
+    setup: QuartetSetup,
+    bra: BraPair,
+    ket: KetPair,
+    norms: QuartetNormTables,
+    deriv_x: []f64,
+    deriv_y: []f64,
+    deriv_z: []f64,
+) void {
+    const coeff_abcd =
+        preparePrimitiveQuartet(&workspace.recurrence, setup, bra, ket) orelse return;
+    @memset(workspace.prim_deriv_x[0..setup.total_out], 0.0);
+    @memset(workspace.prim_deriv_y[0..setup.total_out], 0.0);
+    @memset(workspace.prim_deriv_z[0..setup.total_out], 0.0);
+    for (0..setup.nroots) |root| {
+        buildQuartetHrTables(
+            setup,
+            &workspace.recurrence,
+            workspace.ket_hr_x[0..setup.ket_size],
+            workspace.ket_hr_y[0..setup.ket_size],
+            workspace.ket_hr_z[0..setup.ket_size],
+            workspace.hr4d_x[0..setup.hr4d_size],
+            workspace.hr4d_y[0..setup.hr4d_size],
+            workspace.hr4d_z[0..setup.hr4d_size],
+            root,
+        );
+        accumulateDerivativeRootContribution(
+            setup,
+            bra.alpha_a,
+            workspace.prim_deriv_x[0..setup.total_out],
+            workspace.prim_deriv_y[0..setup.total_out],
+            workspace.prim_deriv_z[0..setup.total_out],
+            workspace.hr4d_x[0..setup.hr4d_size],
+            workspace.hr4d_y[0..setup.hr4d_size],
+            workspace.hr4d_z[0..setup.hr4d_size],
+        );
+    }
+    contractDerivativePrimitive(
+        setup,
+        coeff_abcd,
+        bra,
+        ket,
+        norms,
+        workspace.prim_deriv_x[0..setup.total_out],
+        workspace.prim_deriv_y[0..setup.total_out],
+        workspace.prim_deriv_z[0..setup.total_out],
+        deriv_x,
+        deriv_y,
+        deriv_z,
+    );
 }
 
 // ============================================================================
@@ -280,462 +1055,52 @@ pub fn contractedShellQuartetERI(
     shell_d: ContractedShell,
     output: []f64,
 ) usize {
-    const la: usize = shell_a.l;
-    const lb: usize = shell_b.l;
-    const lc: usize = shell_c.l;
-    const ld: usize = shell_d.l;
-
-    const na = basis_mod.numCartesian(@as(u32, @intCast(la)));
-    const nb = basis_mod.numCartesian(@as(u32, @intCast(lb)));
-    const nc = basis_mod.numCartesian(@as(u32, @intCast(lc)));
-    const nd = basis_mod.numCartesian(@as(u32, @intCast(ld)));
-    const total_out = na * nb * nc * nd;
-
-    std.debug.assert(output.len >= total_out);
-
-    // Zero output
-    @memset(output[0..total_out], 0.0);
-
-    const cart_a = basis_mod.cartesianExponents(@as(u32, @intCast(la)));
-    const cart_b = basis_mod.cartesianExponents(@as(u32, @intCast(lb)));
-    const cart_c = basis_mod.cartesianExponents(@as(u32, @intCast(lc)));
-    const cart_d = basis_mod.cartesianExponents(@as(u32, @intCast(ld)));
-
-    // Pre-compute normalization tables
+    const setup = initQuartetSetup(shell_a, shell_b, shell_c, shell_d, output, 0);
     var norm_a: [MAX_NORM_TABLE]f64 = undefined;
     var norm_b: [MAX_NORM_TABLE]f64 = undefined;
     var norm_c: [MAX_NORM_TABLE]f64 = undefined;
     var norm_d: [MAX_NORM_TABLE]f64 = undefined;
-
     var max_norm_a: [MAX_PRIM]f64 = undefined;
     var max_norm_b: [MAX_PRIM]f64 = undefined;
     var max_norm_c: [MAX_PRIM]f64 = undefined;
     var max_norm_d: [MAX_PRIM]f64 = undefined;
-
-    for (shell_a.primitives, 0..) |pa, ip| {
-        var mx: f64 = 0.0;
-        for (0..na) |ic| {
-            const n_val = basis_mod.normalization(pa.alpha, cart_a[ic].x, cart_a[ic].y, cart_a[ic].z);
-            norm_a[ip * na + ic] = n_val;
-            if (n_val > mx) mx = n_val;
-        }
-        max_norm_a[ip] = mx;
-    }
-    for (shell_b.primitives, 0..) |pb, ip| {
-        var mx: f64 = 0.0;
-        for (0..nb) |ic| {
-            const n_val = basis_mod.normalization(pb.alpha, cart_b[ic].x, cart_b[ic].y, cart_b[ic].z);
-            norm_b[ip * nb + ic] = n_val;
-            if (n_val > mx) mx = n_val;
-        }
-        max_norm_b[ip] = mx;
-    }
-    for (shell_c.primitives, 0..) |pc, ip| {
-        var mx: f64 = 0.0;
-        for (0..nc) |ic| {
-            const n_val = basis_mod.normalization(pc.alpha, cart_c[ic].x, cart_c[ic].y, cart_c[ic].z);
-            norm_c[ip * nc + ic] = n_val;
-            if (n_val > mx) mx = n_val;
-        }
-        max_norm_c[ip] = mx;
-    }
-    for (shell_d.primitives, 0..) |pd, ip| {
-        var mx: f64 = 0.0;
-        for (0..nd) |ic| {
-            const n_val = basis_mod.normalization(pd.alpha, cart_d[ic].x, cart_d[ic].y, cart_d[ic].z);
-            norm_d[ip * nd + ic] = n_val;
-            if (n_val > mx) mx = n_val;
-        }
-        max_norm_d[ip] = mx;
-    }
-
-    // Dimensions for the 2D recurrence tables
-    // In the 2D recurrence, we need indices 0..la+lb for ij and 0..lc+ld for kl.
-    const dim_ij = la + lb + 1;
-    const dim_kl = lc + ld + 1;
-
-    // Number of Rys roots
-    const l_total = la + lb + lc + ld;
-    const nroots = l_total / 2 + 1;
-    std.debug.assert(nroots <= MAX_NROOTS);
-
-    // AB and CD vectors (for horizontal recurrence)
-    const ab = [3]f64{
-        shell_a.center.x - shell_b.center.x,
-        shell_a.center.y - shell_b.center.y,
-        shell_a.center.z - shell_b.center.z,
-    };
-    const cd = [3]f64{
-        shell_c.center.x - shell_d.center.x,
-        shell_c.center.y - shell_d.center.y,
-        shell_c.center.z - shell_d.center.z,
-    };
-
-    // Pre-compute distance-dependent quantities
-    const diff_ab = math.Vec3.sub(shell_a.center, shell_b.center);
-    const r2_ab = math.Vec3.dot(diff_ab, diff_ab);
-    const diff_cd = math.Vec3.sub(shell_c.center, shell_d.center);
-    const r2_cd = math.Vec3.dot(diff_cd, diff_cd);
-
-    // g-tables for x, y, z axes: each nroots * dim_ij * dim_kl
-    const g_axis_size = nroots * dim_ij * dim_kl;
-    var gx: [MAX_G_SIZE]f64 = undefined;
-    var gy: [MAX_G_SIZE]f64 = undefined;
-    var gz: [MAX_G_SIZE]f64 = undefined;
-
-    // Temporary buffer for primitive ERIs (before contraction)
-    var prim_eri: [MAX_CART * MAX_CART * MAX_CART * MAX_CART]f64 = undefined;
-
-    // Rys roots and weights
-    var rys_roots: [MAX_NROOTS]f64 = undefined;
-    var rys_weights: [MAX_NROOTS]f64 = undefined;
-
-    // Recurrence coefficients (per Rys root)
-    var c00x: [MAX_NROOTS]f64 = undefined;
-    var c00y: [MAX_NROOTS]f64 = undefined;
-    var c00z: [MAX_NROOTS]f64 = undefined;
-    var c0px: [MAX_NROOTS]f64 = undefined;
-    var c0py: [MAX_NROOTS]f64 = undefined;
-    var c0pz: [MAX_NROOTS]f64 = undefined;
-    var b10_arr: [MAX_NROOTS]f64 = undefined;
-    var b01_arr: [MAX_NROOTS]f64 = undefined;
-    var b00_arr: [MAX_NROOTS]f64 = undefined;
-    var w_pref: [MAX_NROOTS]f64 = undefined;
-
-    // =========================================================
-    // Pre-compute bra and ket primitive pairs
-    // =========================================================
     var bra_pairs: [MAX_PRIM_PAIRS]BraPair = undefined;
-    var n_bra: usize = 0;
-
-    for (shell_a.primitives, 0..) |prim_a, ipa| {
-        const alpha = prim_a.alpha;
-        for (shell_b.primitives, 0..) |prim_b, ipb| {
-            const beta = prim_b.alpha;
-            const p_val = alpha + beta;
-            const mu_ab = alpha * beta / p_val;
-            bra_pairs[n_bra] = .{
-                .p = p_val,
-                .inv_2p = 0.5 / p_val,
-                .px = (alpha * shell_a.center.x + beta * shell_b.center.x) / p_val,
-                .py = (alpha * shell_a.center.y + beta * shell_b.center.y) / p_val,
-                .pz = (alpha * shell_a.center.z + beta * shell_b.center.z) / p_val,
-                .pax = (alpha * shell_a.center.x + beta * shell_b.center.x) / p_val - shell_a.center.x,
-                .pay = (alpha * shell_a.center.y + beta * shell_b.center.y) / p_val - shell_a.center.y,
-                .paz = (alpha * shell_a.center.z + beta * shell_b.center.z) / p_val - shell_a.center.z,
-                .coeff_ab = prim_a.coeff * prim_b.coeff,
-                .exp_ab = @exp(-mu_ab * r2_ab),
-                .max_norm_ab = max_norm_a[ipa] * max_norm_b[ipb],
-                .ipa = ipa,
-                .ipb = ipb,
-            };
-            n_bra += 1;
-        }
-    }
-
     var ket_pairs: [MAX_PRIM_PAIRS]KetPair = undefined;
-    var n_ket: usize = 0;
+    var workspace: EnergyWorkspace = undefined;
 
-    for (shell_c.primitives, 0..) |prim_c, ipc| {
-        const gamma_val = prim_c.alpha;
-        for (shell_d.primitives, 0..) |prim_d, ipd| {
-            const delta_val = prim_d.alpha;
-            const q_val = gamma_val + delta_val;
-            const mu_cd = gamma_val * delta_val / q_val;
-            ket_pairs[n_ket] = .{
-                .q = q_val,
-                .inv_2q = 0.5 / q_val,
-                .qx = (gamma_val * shell_c.center.x + delta_val * shell_d.center.x) / q_val,
-                .qy = (gamma_val * shell_c.center.y + delta_val * shell_d.center.y) / q_val,
-                .qz = (gamma_val * shell_c.center.z + delta_val * shell_d.center.z) / q_val,
-                .qcx = (gamma_val * shell_c.center.x + delta_val * shell_d.center.x) / q_val - shell_c.center.x,
-                .qcy = (gamma_val * shell_c.center.y + delta_val * shell_d.center.y) / q_val - shell_c.center.y,
-                .qcz = (gamma_val * shell_c.center.z + delta_val * shell_d.center.z) / q_val - shell_c.center.z,
-                .coeff_cd = prim_c.coeff * prim_d.coeff,
-                .exp_cd = @exp(-mu_cd * r2_cd),
-                .max_norm_cd = max_norm_c[ipc] * max_norm_d[ipd],
-                .ipc = ipc,
-                .ipd = ipd,
-            };
-            n_ket += 1;
-        }
-    }
+    fillNormalizationTableAndMax(shell_a, setup.na, &setup.cart_a, norm_a[0..], max_norm_a[0..]);
+    fillNormalizationTableAndMax(shell_b, setup.nb, &setup.cart_b, norm_b[0..], max_norm_b[0..]);
+    fillNormalizationTableAndMax(shell_c, setup.nc, &setup.cart_c, norm_c[0..], max_norm_c[0..]);
+    fillNormalizationTableAndMax(shell_d, setup.nd, &setup.cart_d, norm_d[0..], max_norm_d[0..]);
 
-    // Loop over pre-computed primitive pairs
+    const n_bra = prepareBraPairs(
+        shell_a,
+        shell_b,
+        max_norm_a[0..shell_a.primitives.len],
+        max_norm_b[0..shell_b.primitives.len],
+        setup.r2_ab,
+        bra_pairs[0..],
+    );
+    const n_ket = prepareKetPairs(
+        shell_c,
+        shell_d,
+        max_norm_c[0..shell_c.primitives.len],
+        max_norm_d[0..shell_d.primitives.len],
+        setup.r2_cd,
+        ket_pairs[0..],
+    );
+    const norms = QuartetNormTables{
+        .norm_a = norm_a[0..],
+        .norm_b = norm_b[0..],
+        .norm_c = norm_c[0..],
+        .norm_d = norm_d[0..],
+    };
     for (bra_pairs[0..n_bra]) |bra| {
         for (ket_pairs[0..n_ket]) |ket| {
-            const p_val = bra.p;
-            const q_val = ket.q;
-            const exp_factor = bra.exp_ab * ket.exp_cd;
-            const coeff_abcd = bra.coeff_ab * ket.coeff_cd;
-
-            // Primitive screening
-            const prefactor_bound = 2.0 * std.math.pow(f64, std.math.pi, 2.5) /
-                (p_val * q_val * @sqrt(p_val + q_val)) * exp_factor;
-            const max_norm_product = bra.max_norm_ab * ket.max_norm_cd;
-            if (@abs(coeff_abcd) * max_norm_product * prefactor_bound < PRIM_SCREEN_THRESHOLD)
-                continue;
-
-            // Weighted center W = (p*P + q*Q) / (p+q)
-            const pq = p_val + q_val;
-            const wx = (p_val * bra.px + q_val * ket.qx) / pq;
-            const wy = (p_val * bra.py + q_val * ket.qy) / pq;
-            const wz = (p_val * bra.pz + q_val * ket.qz) / pq;
-
-            // PQ distance squared
-            const dpqx = bra.px - ket.qx;
-            const dpqy = bra.py - ket.qy;
-            const dpqz = bra.pz - ket.qz;
-            const r2_pq = dpqx * dpqx + dpqy * dpqy + dpqz * dpqz;
-
-            // Boys function argument
-            const rho = p_val * q_val / pq;
-            const arg = rho * r2_pq;
-
-            // Compute Rys roots and weights
-            rys_roots_mod.rysRoots(nroots, arg, &rys_roots, &rys_weights);
-
-            // Prefactor
-            const prefactor = prefactor_bound;
-
-            // WP and WQ vectors
-            const wpx = wx - bra.px;
-            const wpy = wy - bra.py;
-            const wpz = wz - bra.pz;
-            const wqx = wx - ket.qx;
-            const wqy = wy - ket.qy;
-            const wqz = wz - ket.qz;
-
-            for (0..nroots) |r| {
-                const t2 = rys_roots[r]; // t² value, in [0, 1]
-
-                b00_arr[r] = 0.5 / pq * t2;
-                b10_arr[r] = bra.inv_2p * (1.0 - q_val / pq * t2);
-                b01_arr[r] = ket.inv_2q * (1.0 - p_val / pq * t2);
-
-                c00x[r] = bra.pax + wpx * t2;
-                c00y[r] = bra.pay + wpy * t2;
-                c00z[r] = bra.paz + wpz * t2;
-                c0px[r] = ket.qcx + wqx * t2;
-                c0py[r] = ket.qcy + wqy * t2;
-                c0pz[r] = ket.qcz + wqz * t2;
-
-                // Weight * prefactor goes into z-component base case
-                w_pref[r] = rys_weights[r] * prefactor;
-            }
-
-            // Build 2D recurrence tables for x, y, z
-            buildG2d(nroots, dim_ij, dim_kl, &c00x, &c0px, &b10_arr, &b01_arr, &b00_arr, gx[0..g_axis_size]);
-            buildG2d(nroots, dim_ij, dim_kl, &c00y, &c0py, &b10_arr, &b01_arr, &b00_arr, gy[0..g_axis_size]);
-            buildG2dWeighted(nroots, dim_ij, dim_kl, &c00z, &c0pz, &b10_arr, &b01_arr, &b00_arr, &w_pref, gz[0..g_axis_size]);
-
-            // Extract ERIs using horizontal recurrence and component mapping
-            // For each Cartesian component combination (ia, ib, ic, id),
-            // the ERI is:
-            //   (ab|cd) = Σ_r gx[r, ix, kx] * gy[r, iy, ky] * gz[r, iz, kz]
-            //
-            // Where the horizontal recurrence gives:
-            //   g(a, b, c, d) uses indices:
-            //     ix = combined index for ax+bx in the ij direction
-            //     kx = combined index for cx+dx in the kl direction
-            //
-            // Horizontal recurrence (transfer from j to i, and from l to k):
-            //   g(a,b) = g(a+1, b-1) + AB * g(a, b-1)
-            //   g(c,d) = g(c+1, d-1) + CD * g(c, d-1)
-
-            @memset(prim_eri[0..total_out], 0.0);
-
-            // =========================================================
-            // Iterative Horizontal Recurrence (HR)
-            // =========================================================
-            //
-            // For each Rys root and each axis, build a 4-index table
-            // from the 2D recurrence table g2d[i][k].
-            //
-            // Step 1 (Ket HR): For each i in 0..la+lb, build ket_hr[i][c][d]:
-            //   Base: ket_hr[i][c][0] = g2d[i][c]  for c = 0..lc+ld
-            //   Recurrence: ket_hr[i][c][d] = ket_hr[i][c+1][d-1] + CD * ket_hr[i][c][d-1]
-            //   At step d, c ranges over 0..lc+ld-d (shrinks by 1 each step).
-            //   We only need the final values at c=0..lc, d=0..ld.
-            //
-            // Step 2 (Bra HR): For each c=0..lc, d=0..ld, build bra_hr[a][b]:
-            //   Base: bra_hr[a][0] = ket_hr[a][c][d]  for a = 0..la+lb
-            //   Recurrence: bra_hr[a][b] = bra_hr[a+1][b-1] + AB * bra_hr[a][b-1]
-            //   At step b, a ranges over 0..la+lb-b (shrinks by 1 each step).
-            //   We only need the final value at a=0..la, b=0..lb.
-            //
-            // Ket HR table: dim_ij * dim_kl * (ld+1) entries
-            //   Max (ff|ff): 7 * 7 * 4 = 196
-            // Bra HR table: dim_ij * (lb+1) entries
-            //   Max (ff|ff): 7 * 4 = 28
-
-            const ld_1 = ld + 1;
-            const lb_1 = lb + 1;
-            const la_1 = la + 1;
-            const lc_1 = lc + 1;
-
-            // Ket HR table: ket[i * dim_kl * ld_1 + c * ld_1 + d]
-            // At step d, valid c range is 0..dim_kl-1-d
-            const ket_stride_c = ld_1;
-            const ket_stride_i = dim_kl * ld_1;
-            const ket_size = dim_ij * ket_stride_i;
-
-            // Full 4D HR table per axis: hr4d[a * lb_1*lc_1*ld_1 + b*lc_1*ld_1 + c*ld_1 + d]
-            const hr4d_d_stride: usize = 1;
-            _ = hr4d_d_stride;
-            const hr4d_c_stride = ld_1;
-            const hr4d_b_stride = lc_1 * ld_1;
-            const hr4d_a_stride = lb_1 * lc_1 * ld_1;
-            const hr4d_size = la_1 * hr4d_a_stride;
-
-            const MAX_KET_HR: usize = MAX_DIM_IJ * MAX_DIM_KL * (MAX_L + 1);
-            const MAX_HR4D: usize = (MAX_L + 1) * (MAX_L + 1) * (MAX_L + 1) * (MAX_L + 1);
-
-            var ket_hr_x: [MAX_KET_HR]f64 = undefined;
-            var ket_hr_y: [MAX_KET_HR]f64 = undefined;
-            var ket_hr_z: [MAX_KET_HR]f64 = undefined;
-            var hr4d_x: [MAX_HR4D]f64 = undefined;
-            var hr4d_y: [MAX_HR4D]f64 = undefined;
-            var hr4d_z: [MAX_HR4D]f64 = undefined;
-
-            for (0..nroots) |r| {
-                const g2d_base = r * dim_ij * dim_kl;
-
-                // Process each axis: build ket HR then bra HR into hr4d table
-                inline for (0..3) |axis| {
-                    const g_axis = switch (axis) {
-                        0 => gx[0..g_axis_size],
-                        1 => gy[0..g_axis_size],
-                        2 => gz[0..g_axis_size],
-                        else => unreachable,
-                    };
-                    const ab_val: f64 = ab[axis];
-                    const cd_val: f64 = cd[axis];
-                    const ket_hr = switch (axis) {
-                        0 => ket_hr_x[0..ket_size],
-                        1 => ket_hr_y[0..ket_size],
-                        2 => ket_hr_z[0..ket_size],
-                        else => unreachable,
-                    };
-                    const hr4d = switch (axis) {
-                        0 => hr4d_x[0..hr4d_size],
-                        1 => hr4d_y[0..hr4d_size],
-                        2 => hr4d_z[0..hr4d_size],
-                        else => unreachable,
-                    };
-
-                    // === Step 1: Ket HR ===
-                    // Base case: d=0, ket[i][c][0] = g2d[i][c]
-                    for (0..dim_ij) |i| {
-                        for (0..dim_kl) |c| {
-                            ket_hr[i * ket_stride_i + c * ket_stride_c + 0] = g_axis[g2d_base + c * dim_ij + i];
-                        }
-                    }
-                    // Recurrence: d = 1..ld
-                    {
-                        var d: usize = 1;
-                        while (d < ld_1) : (d += 1) {
-                            const c_max = dim_kl - d;
-                            for (0..dim_ij) |i| {
-                                for (0..c_max) |c| {
-                                    ket_hr[i * ket_stride_i + c * ket_stride_c + d] =
-                                        ket_hr[i * ket_stride_i + (c + 1) * ket_stride_c + (d - 1)] +
-                                        cd_val * ket_hr[i * ket_stride_i + c * ket_stride_c + (d - 1)];
-                                }
-                            }
-                        }
-                    }
-
-                    // === Step 2: Bra HR → full 4D table ===
-                    // For each (c, d) pair we need (c=0..lc, d=0..ld):
-                    //   Base: hr4d[a][0][c][d] = ket_hr[a][c][d]  for a = 0..la+lb
-                    //   Recurrence: hr4d[a][b][c][d] = hr4d[a+1][b-1][c][d] + AB * hr4d[a][b-1][c][d]
-                    //
-                    // We use a small work array per (c,d) pair to avoid storing
-                    // the full intermediate dim_ij × lb_1 table.
-                    for (0..lc_1) |c| {
-                        for (0..ld_1) |d| {
-                            // Work array: work[a] for the current b-step
-                            // We iterate b from 0 upward, updating in-place
-                            var work: [MAX_DIM_IJ]f64 = undefined;
-
-                            // Base: b=0, work[a] = ket_hr[a][c][d]
-                            for (0..dim_ij) |a| {
-                                work[a] = ket_hr[a * ket_stride_i + c * ket_stride_c + d];
-                            }
-
-                            // Store b=0 values
-                            for (0..la_1) |a| {
-                                hr4d[a * hr4d_a_stride + 0 * hr4d_b_stride + c * hr4d_c_stride + d] = work[a];
-                            }
-
-                            // Recurrence: b = 1..lb
-                            {
-                                var b: usize = 1;
-                                while (b < lb_1) : (b += 1) {
-                                    // At step b, we need work[a] for a = 0..dim_ij-1-b
-                                    const a_count = dim_ij - b;
-                                    for (0..a_count) |a| {
-                                        work[a] = work[a + 1] + ab_val * work[a];
-                                    }
-                                    // Store needed (a = 0..la) values
-                                    for (0..la_1) |a| {
-                                        hr4d[a * hr4d_a_stride + b * hr4d_b_stride + c * hr4d_c_stride + d] = work[a];
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Extract ERIs: simple table lookups, no computation
-                for (0..na) |ia| {
-                    const ax = cart_a[ia].x;
-                    const ay = cart_a[ia].y;
-                    const az = cart_a[ia].z;
-                    for (0..nb) |ib| {
-                        const bx = cart_b[ib].x;
-                        const by = cart_b[ib].y;
-                        const bz = cart_b[ib].z;
-                        for (0..nc) |ic| {
-                            const cx = cart_c[ic].x;
-                            const cy = cart_c[ic].y;
-                            const cz = cart_c[ic].z;
-                            for (0..nd) |id| {
-                                const dx = cart_d[id].x;
-                                const dy = cart_d[id].y;
-                                const dz = cart_d[id].z;
-
-                                const gx_val = hr4d_x[ax * hr4d_a_stride + bx * hr4d_b_stride + cx * hr4d_c_stride + dx];
-                                const gy_val = hr4d_y[ay * hr4d_a_stride + by * hr4d_b_stride + cy * hr4d_c_stride + dy];
-                                const gz_val = hr4d_z[az * hr4d_a_stride + bz * hr4d_b_stride + cz * hr4d_c_stride + dz];
-
-                                prim_eri[ia * nb * nc * nd + ib * nc * nd + ic * nd + id] += gx_val * gy_val * gz_val;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Accumulate into output with contraction coefficients and normalization
-            for (0..na) |ia| {
-                const na_val = norm_a[bra.ipa * na + ia];
-                for (0..nb) |ib| {
-                    const nb_val = norm_b[bra.ipb * nb + ib];
-                    for (0..nc) |ic| {
-                        const nc_val = norm_c[ket.ipc * nc + ic];
-                        for (0..nd) |id| {
-                            const nd_val = norm_d[ket.ipd * nd + id];
-                            const idx = ia * nb * nc * nd + ib * nc * nd + ic * nd + id;
-                            output[idx] += coeff_abcd * na_val * nb_val * nc_val * nd_val * prim_eri[idx];
-                        }
-                    }
-                }
-            }
+            accumulateEnergyPrimitivePair(&workspace, setup, bra, ket, norms, output);
         }
     }
-
-    return total_out;
+    return setup.total_out;
 }
 
 // ============================================================================
@@ -767,477 +1132,66 @@ pub fn contractedShellQuartetEriDeriv(
     deriv_y: []f64,
     deriv_z: []f64,
 ) usize {
-    const la: usize = shell_a.l;
-    const lb: usize = shell_b.l;
-    const lc: usize = shell_c.l;
-    const ld: usize = shell_d.l;
+    const setup = initQuartetSetup(shell_a, shell_b, shell_c, shell_d, deriv_x, 1);
+    std.debug.assert(deriv_y.len >= setup.total_out);
+    std.debug.assert(deriv_z.len >= setup.total_out);
+    @memset(deriv_y[0..setup.total_out], 0.0);
+    @memset(deriv_z[0..setup.total_out], 0.0);
 
-    const na = basis_mod.numCartesian(@as(u32, @intCast(la)));
-    const nb = basis_mod.numCartesian(@as(u32, @intCast(lb)));
-    const nc = basis_mod.numCartesian(@as(u32, @intCast(lc)));
-    const nd = basis_mod.numCartesian(@as(u32, @intCast(ld)));
-    const total_out = na * nb * nc * nd;
-
-    std.debug.assert(deriv_x.len >= total_out);
-    std.debug.assert(deriv_y.len >= total_out);
-    std.debug.assert(deriv_z.len >= total_out);
-
-    // Zero output
-    @memset(deriv_x[0..total_out], 0.0);
-    @memset(deriv_y[0..total_out], 0.0);
-    @memset(deriv_z[0..total_out], 0.0);
-
-    const cart_a = basis_mod.cartesianExponents(@as(u32, @intCast(la)));
-    const cart_b = basis_mod.cartesianExponents(@as(u32, @intCast(lb)));
-    const cart_c = basis_mod.cartesianExponents(@as(u32, @intCast(lc)));
-    const cart_d = basis_mod.cartesianExponents(@as(u32, @intCast(ld)));
-
-    // Pre-compute normalization tables
     var norm_a: [MAX_NORM_TABLE]f64 = undefined;
     var norm_b: [MAX_NORM_TABLE]f64 = undefined;
     var norm_c: [MAX_NORM_TABLE]f64 = undefined;
     var norm_d: [MAX_NORM_TABLE]f64 = undefined;
-
     var max_norm_a: [MAX_PRIM]f64 = undefined;
     var max_norm_b: [MAX_PRIM]f64 = undefined;
     var max_norm_c: [MAX_PRIM]f64 = undefined;
     var max_norm_d: [MAX_PRIM]f64 = undefined;
-
-    for (shell_a.primitives, 0..) |pa, ip| {
-        var mx: f64 = 0.0;
-        for (0..na) |ic| {
-            const n_val = basis_mod.normalization(pa.alpha, cart_a[ic].x, cart_a[ic].y, cart_a[ic].z);
-            norm_a[ip * na + ic] = n_val;
-            if (n_val > mx) mx = n_val;
-        }
-        max_norm_a[ip] = mx;
-    }
-    for (shell_b.primitives, 0..) |pb, ip| {
-        var mx: f64 = 0.0;
-        for (0..nb) |ic| {
-            const n_val = basis_mod.normalization(pb.alpha, cart_b[ic].x, cart_b[ic].y, cart_b[ic].z);
-            norm_b[ip * nb + ic] = n_val;
-            if (n_val > mx) mx = n_val;
-        }
-        max_norm_b[ip] = mx;
-    }
-    for (shell_c.primitives, 0..) |pc, ip| {
-        var mx: f64 = 0.0;
-        for (0..nc) |ic| {
-            const n_val = basis_mod.normalization(pc.alpha, cart_c[ic].x, cart_c[ic].y, cart_c[ic].z);
-            norm_c[ip * nc + ic] = n_val;
-            if (n_val > mx) mx = n_val;
-        }
-        max_norm_c[ip] = mx;
-    }
-    for (shell_d.primitives, 0..) |pd, ip| {
-        var mx: f64 = 0.0;
-        for (0..nd) |ic| {
-            const n_val = basis_mod.normalization(pd.alpha, cart_d[ic].x, cart_d[ic].y, cart_d[ic].z);
-            norm_d[ip * nd + ic] = n_val;
-            if (n_val > mx) mx = n_val;
-        }
-        max_norm_d[ip] = mx;
-    }
-
-    // Dimensions for the 2D recurrence tables
-    // For derivatives, we need la+1 index in the ij direction, so:
-    //   dim_ij = (la+1) + lb + 1 = la + lb + 2
-    const dim_ij = la + lb + 2;
-    const dim_kl = lc + ld + 1;
-
-    // Number of Rys roots: must accommodate the augmented l_total
-    //   (la+1) + lb + lc + ld = l_total + 1
-    const l_total = la + lb + lc + ld;
-    const nroots = (l_total + 1) / 2 + 1;
-    std.debug.assert(nroots <= MAX_NROOTS);
-
-    // AB and CD vectors (for horizontal recurrence)
-    const ab = [3]f64{
-        shell_a.center.x - shell_b.center.x,
-        shell_a.center.y - shell_b.center.y,
-        shell_a.center.z - shell_b.center.z,
-    };
-    const cd = [3]f64{
-        shell_c.center.x - shell_d.center.x,
-        shell_c.center.y - shell_d.center.y,
-        shell_c.center.z - shell_d.center.z,
-    };
-
-    // Pre-compute distance-dependent quantities
-    const diff_ab = math.Vec3.sub(shell_a.center, shell_b.center);
-    const r2_ab = math.Vec3.dot(diff_ab, diff_ab);
-    const diff_cd = math.Vec3.sub(shell_c.center, shell_d.center);
-    const r2_cd = math.Vec3.dot(diff_cd, diff_cd);
-
-    // g-tables for x, y, z axes: each nroots * dim_ij * dim_kl
-    const g_axis_size = nroots * dim_ij * dim_kl;
-    var gx: [MAX_NROOTS * (2 * MAX_L + 2) * (2 * MAX_L + 1)]f64 = undefined;
-    var gy: [MAX_NROOTS * (2 * MAX_L + 2) * (2 * MAX_L + 1)]f64 = undefined;
-    var gz: [MAX_NROOTS * (2 * MAX_L + 2) * (2 * MAX_L + 1)]f64 = undefined;
-
-    // Temporary buffer for primitive derivative ERIs (before contraction)
-    var prim_deriv_x: [MAX_CART * MAX_CART * MAX_CART * MAX_CART]f64 = undefined;
-    var prim_deriv_y: [MAX_CART * MAX_CART * MAX_CART * MAX_CART]f64 = undefined;
-    var prim_deriv_z: [MAX_CART * MAX_CART * MAX_CART * MAX_CART]f64 = undefined;
-
-    // Rys roots and weights
-    var rys_roots: [MAX_NROOTS]f64 = undefined;
-    var rys_weights: [MAX_NROOTS]f64 = undefined;
-
-    // Recurrence coefficients (per Rys root)
-    var c00x: [MAX_NROOTS]f64 = undefined;
-    var c00y: [MAX_NROOTS]f64 = undefined;
-    var c00z: [MAX_NROOTS]f64 = undefined;
-    var c0px: [MAX_NROOTS]f64 = undefined;
-    var c0py: [MAX_NROOTS]f64 = undefined;
-    var c0pz: [MAX_NROOTS]f64 = undefined;
-    var b10_arr: [MAX_NROOTS]f64 = undefined;
-    var b01_arr: [MAX_NROOTS]f64 = undefined;
-    var b00_arr: [MAX_NROOTS]f64 = undefined;
-    var w_pref: [MAX_NROOTS]f64 = undefined;
-
-    // =========================================================
-    // Pre-compute bra and ket primitive pairs
-    // BraPair now also stores alpha_a for differentiation
-    // =========================================================
     var bra_pairs: [MAX_PRIM_PAIRS]BraPair = undefined;
-    var bra_alpha_a: [MAX_PRIM_PAIRS]f64 = undefined;
-    var n_bra: usize = 0;
-
-    for (shell_a.primitives, 0..) |prim_a, ipa| {
-        const alpha = prim_a.alpha;
-        for (shell_b.primitives, 0..) |prim_b, ipb| {
-            const beta = prim_b.alpha;
-            const p_val = alpha + beta;
-            const mu_ab = alpha * beta / p_val;
-            bra_alpha_a[n_bra] = alpha;
-            bra_pairs[n_bra] = .{
-                .p = p_val,
-                .inv_2p = 0.5 / p_val,
-                .px = (alpha * shell_a.center.x + beta * shell_b.center.x) / p_val,
-                .py = (alpha * shell_a.center.y + beta * shell_b.center.y) / p_val,
-                .pz = (alpha * shell_a.center.z + beta * shell_b.center.z) / p_val,
-                .pax = (alpha * shell_a.center.x + beta * shell_b.center.x) / p_val - shell_a.center.x,
-                .pay = (alpha * shell_a.center.y + beta * shell_b.center.y) / p_val - shell_a.center.y,
-                .paz = (alpha * shell_a.center.z + beta * shell_b.center.z) / p_val - shell_a.center.z,
-                .coeff_ab = prim_a.coeff * prim_b.coeff,
-                .exp_ab = @exp(-mu_ab * r2_ab),
-                .max_norm_ab = max_norm_a[ipa] * max_norm_b[ipb],
-                .ipa = ipa,
-                .ipb = ipb,
-            };
-            n_bra += 1;
-        }
-    }
-
     var ket_pairs: [MAX_PRIM_PAIRS]KetPair = undefined;
-    var n_ket: usize = 0;
+    var workspace: DerivativeWorkspace = undefined;
 
-    for (shell_c.primitives, 0..) |prim_c, ipc| {
-        const gamma_val = prim_c.alpha;
-        for (shell_d.primitives, 0..) |prim_d, ipd| {
-            const delta_val = prim_d.alpha;
-            const q_val = gamma_val + delta_val;
-            const mu_cd = gamma_val * delta_val / q_val;
-            ket_pairs[n_ket] = .{
-                .q = q_val,
-                .inv_2q = 0.5 / q_val,
-                .qx = (gamma_val * shell_c.center.x + delta_val * shell_d.center.x) / q_val,
-                .qy = (gamma_val * shell_c.center.y + delta_val * shell_d.center.y) / q_val,
-                .qz = (gamma_val * shell_c.center.z + delta_val * shell_d.center.z) / q_val,
-                .qcx = (gamma_val * shell_c.center.x + delta_val * shell_d.center.x) / q_val - shell_c.center.x,
-                .qcy = (gamma_val * shell_c.center.y + delta_val * shell_d.center.y) / q_val - shell_c.center.y,
-                .qcz = (gamma_val * shell_c.center.z + delta_val * shell_d.center.z) / q_val - shell_c.center.z,
-                .coeff_cd = prim_c.coeff * prim_d.coeff,
-                .exp_cd = @exp(-mu_cd * r2_cd),
-                .max_norm_cd = max_norm_c[ipc] * max_norm_d[ipd],
-                .ipc = ipc,
-                .ipd = ipd,
-            };
-            n_ket += 1;
-        }
-    }
+    fillNormalizationTableAndMax(shell_a, setup.na, &setup.cart_a, norm_a[0..], max_norm_a[0..]);
+    fillNormalizationTableAndMax(shell_b, setup.nb, &setup.cart_b, norm_b[0..], max_norm_b[0..]);
+    fillNormalizationTableAndMax(shell_c, setup.nc, &setup.cart_c, norm_c[0..], max_norm_c[0..]);
+    fillNormalizationTableAndMax(shell_d, setup.nd, &setup.cart_d, norm_d[0..], max_norm_d[0..]);
 
-    // HR table constants for the derivative case
-    // la_1 for derivative: need la+1 indices (0..la+1), so la_1 = la + 2
-    const ld_1 = ld + 1;
-    const lb_1 = lb + 1;
-    const la_1_deriv = la + 2; // Extra +1 for the derivative
-    const lc_1 = lc + 1;
-
-    // Ket HR table
-    const ket_stride_c = ld_1;
-    const ket_stride_i = dim_kl * ld_1;
-    const ket_size = dim_ij * ket_stride_i;
-
-    // Full 4D HR table per axis: hr4d[a * lb_1*lc_1*ld_1 + b*lc_1*ld_1 + c*ld_1 + d]
-    const hr4d_c_stride = ld_1;
-    const hr4d_b_stride = lc_1 * ld_1;
-    const hr4d_a_stride = lb_1 * lc_1 * ld_1;
-    const hr4d_size = la_1_deriv * hr4d_a_stride;
-
-    const MAX_KET_HR_DERIV: usize = (2 * MAX_L + 2) * (2 * MAX_L + 1) * (MAX_L + 1);
-    const MAX_HR4D_DERIV: usize = (MAX_L + 2) * (MAX_L + 1) * (MAX_L + 1) * (MAX_L + 1);
-
-    var ket_hr_x: [MAX_KET_HR_DERIV]f64 = undefined;
-    var ket_hr_y: [MAX_KET_HR_DERIV]f64 = undefined;
-    var ket_hr_z: [MAX_KET_HR_DERIV]f64 = undefined;
-    var hr4d_x: [MAX_HR4D_DERIV]f64 = undefined;
-    var hr4d_y: [MAX_HR4D_DERIV]f64 = undefined;
-    var hr4d_z: [MAX_HR4D_DERIV]f64 = undefined;
-
-    // Loop over pre-computed primitive pairs
-    for (bra_pairs[0..n_bra], 0..) |bra, ibra| {
-        const alpha_a_val = bra_alpha_a[ibra];
-
+    const n_bra = prepareBraPairs(
+        shell_a,
+        shell_b,
+        max_norm_a[0..shell_a.primitives.len],
+        max_norm_b[0..shell_b.primitives.len],
+        setup.r2_ab,
+        bra_pairs[0..],
+    );
+    const n_ket = prepareKetPairs(
+        shell_c,
+        shell_d,
+        max_norm_c[0..shell_c.primitives.len],
+        max_norm_d[0..shell_d.primitives.len],
+        setup.r2_cd,
+        ket_pairs[0..],
+    );
+    const norms = QuartetNormTables{
+        .norm_a = norm_a[0..],
+        .norm_b = norm_b[0..],
+        .norm_c = norm_c[0..],
+        .norm_d = norm_d[0..],
+    };
+    for (bra_pairs[0..n_bra]) |bra| {
         for (ket_pairs[0..n_ket]) |ket| {
-            const p_val = bra.p;
-            const q_val = ket.q;
-            const exp_factor = bra.exp_ab * ket.exp_cd;
-            const coeff_abcd = bra.coeff_ab * ket.coeff_cd;
-
-            // Primitive screening
-            const prefactor_bound = 2.0 * std.math.pow(f64, std.math.pi, 2.5) /
-                (p_val * q_val * @sqrt(p_val + q_val)) * exp_factor;
-            const max_norm_product = bra.max_norm_ab * ket.max_norm_cd;
-            if (@abs(coeff_abcd) * max_norm_product * prefactor_bound < PRIM_SCREEN_THRESHOLD)
-                continue;
-
-            // Weighted center W = (p*P + q*Q) / (p+q)
-            const pq = p_val + q_val;
-            const wx = (p_val * bra.px + q_val * ket.qx) / pq;
-            const wy = (p_val * bra.py + q_val * ket.qy) / pq;
-            const wz = (p_val * bra.pz + q_val * ket.qz) / pq;
-
-            // PQ distance squared
-            const dpqx = bra.px - ket.qx;
-            const dpqy = bra.py - ket.qy;
-            const dpqz = bra.pz - ket.qz;
-            const r2_pq = dpqx * dpqx + dpqy * dpqy + dpqz * dpqz;
-
-            // Boys function argument
-            const rho = p_val * q_val / pq;
-            const arg = rho * r2_pq;
-
-            // Compute Rys roots and weights
-            rys_roots_mod.rysRoots(nroots, arg, &rys_roots, &rys_weights);
-
-            // Prefactor
-            const prefactor = prefactor_bound;
-
-            // WP and WQ vectors
-            const wpx = wx - bra.px;
-            const wpy = wy - bra.py;
-            const wpz = wz - bra.pz;
-            const wqx = wx - ket.qx;
-            const wqy = wy - ket.qy;
-            const wqz = wz - ket.qz;
-
-            for (0..nroots) |r| {
-                const t2 = rys_roots[r];
-
-                b00_arr[r] = 0.5 / pq * t2;
-                b10_arr[r] = bra.inv_2p * (1.0 - q_val / pq * t2);
-                b01_arr[r] = ket.inv_2q * (1.0 - p_val / pq * t2);
-
-                c00x[r] = bra.pax + wpx * t2;
-                c00y[r] = bra.pay + wpy * t2;
-                c00z[r] = bra.paz + wpz * t2;
-                c0px[r] = ket.qcx + wqx * t2;
-                c0py[r] = ket.qcy + wqy * t2;
-                c0pz[r] = ket.qcz + wqz * t2;
-
-                w_pref[r] = rys_weights[r] * prefactor;
-            }
-
-            // Build 2D recurrence tables with expanded dim_ij for derivative
-            buildG2d(nroots, dim_ij, dim_kl, &c00x, &c0px, &b10_arr, &b01_arr, &b00_arr, gx[0..g_axis_size]);
-            buildG2d(nroots, dim_ij, dim_kl, &c00y, &c0py, &b10_arr, &b01_arr, &b00_arr, gy[0..g_axis_size]);
-            buildG2dWeighted(nroots, dim_ij, dim_kl, &c00z, &c0pz, &b10_arr, &b01_arr, &b00_arr, &w_pref, gz[0..g_axis_size]);
-
-            // Zero primitive derivative buffers
-            @memset(prim_deriv_x[0..total_out], 0.0);
-            @memset(prim_deriv_y[0..total_out], 0.0);
-            @memset(prim_deriv_z[0..total_out], 0.0);
-
-            // =========================================================
-            // Iterative Horizontal Recurrence (HR) — same as energy but
-            // with expanded la range (0..la+1 instead of 0..la)
-            // =========================================================
-
-            for (0..nroots) |r| {
-                const g2d_base = r * dim_ij * dim_kl;
-
-                // Process each axis
-                inline for (0..3) |axis| {
-                    const g_axis = switch (axis) {
-                        0 => gx[0..g_axis_size],
-                        1 => gy[0..g_axis_size],
-                        2 => gz[0..g_axis_size],
-                        else => unreachable,
-                    };
-                    const ab_val: f64 = ab[axis];
-                    const cd_val: f64 = cd[axis];
-                    const ket_hr = switch (axis) {
-                        0 => ket_hr_x[0..ket_size],
-                        1 => ket_hr_y[0..ket_size],
-                        2 => ket_hr_z[0..ket_size],
-                        else => unreachable,
-                    };
-                    const hr4d = switch (axis) {
-                        0 => hr4d_x[0..hr4d_size],
-                        1 => hr4d_y[0..hr4d_size],
-                        2 => hr4d_z[0..hr4d_size],
-                        else => unreachable,
-                    };
-
-                    // === Step 1: Ket HR ===
-                    for (0..dim_ij) |i| {
-                        for (0..dim_kl) |c| {
-                            ket_hr[i * ket_stride_i + c * ket_stride_c + 0] = g_axis[g2d_base + c * dim_ij + i];
-                        }
-                    }
-                    {
-                        var d: usize = 1;
-                        while (d < ld_1) : (d += 1) {
-                            const c_max = dim_kl - d;
-                            for (0..dim_ij) |i| {
-                                for (0..c_max) |c| {
-                                    ket_hr[i * ket_stride_i + c * ket_stride_c + d] =
-                                        ket_hr[i * ket_stride_i + (c + 1) * ket_stride_c + (d - 1)] +
-                                        cd_val * ket_hr[i * ket_stride_i + c * ket_stride_c + (d - 1)];
-                                }
-                            }
-                        }
-                    }
-
-                    // === Step 2: Bra HR → full 4D table with la_1_deriv ===
-                    for (0..lc_1) |c| {
-                        for (0..ld_1) |d| {
-                            var work: [2 * MAX_L + 2]f64 = undefined;
-
-                            for (0..dim_ij) |a| {
-                                work[a] = ket_hr[a * ket_stride_i + c * ket_stride_c + d];
-                            }
-
-                            // Store b=0 values (need 0..la+1 for derivative)
-                            for (0..la_1_deriv) |a| {
-                                hr4d[a * hr4d_a_stride + 0 * hr4d_b_stride + c * hr4d_c_stride + d] = work[a];
-                            }
-
-                            // Recurrence: b = 1..lb
-                            {
-                                var b: usize = 1;
-                                while (b < lb_1) : (b += 1) {
-                                    const a_count = dim_ij - b;
-                                    for (0..a_count) |a| {
-                                        work[a] = work[a + 1] + ab_val * work[a];
-                                    }
-                                    for (0..la_1_deriv) |a| {
-                                        hr4d[a * hr4d_a_stride + b * hr4d_b_stride + c * hr4d_c_stride + d] = work[a];
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // =========================================================
-                // Extract derivative ERIs using the differentiation formula:
-                //   d(ab|cd)/dA_x = 2*alpha_a * hr4d[ax+1][bx][cx][dx] * ...
-                //                 - ax * hr4d[ax-1][bx][cx][dx] * ...
-                // (product over y and z uses undifferentiated hr4d values)
-                // =========================================================
-
-                for (0..na) |ia| {
-                    const ax = cart_a[ia].x;
-                    const ay = cart_a[ia].y;
-                    const az = cart_a[ia].z;
-                    for (0..nb) |ib| {
-                        const bx = cart_b[ib].x;
-                        const by = cart_b[ib].y;
-                        const bz = cart_b[ib].z;
-                        for (0..nc) |ic| {
-                            const cx = cart_c[ic].x;
-                            const cy = cart_c[ic].y;
-                            const cz = cart_c[ic].z;
-                            for (0..nd) |id| {
-                                const dx = cart_d[id].x;
-                                const dy = cart_d[id].y;
-                                const dz = cart_d[id].z;
-
-                                const idx = ia * nb * nc * nd + ib * nc * nd + ic * nd + id;
-
-                                // Undifferentiated y,z products
-                                const gy_val = hr4d_y[ay * hr4d_a_stride + by * hr4d_b_stride + cy * hr4d_c_stride + dy];
-                                const gz_val = hr4d_z[az * hr4d_a_stride + bz * hr4d_b_stride + cz * hr4d_c_stride + dz];
-
-                                // x-derivative: d/dAx
-                                {
-                                    // 2*alpha * (a+1_x, b, c, d)
-                                    const gx_plus = hr4d_x[(ax + 1) * hr4d_a_stride + bx * hr4d_b_stride + cx * hr4d_c_stride + dx];
-                                    var dval = 2.0 * alpha_a_val * gx_plus * gy_val * gz_val;
-                                    // -ax * (a-1_x, b, c, d)
-                                    if (ax > 0) {
-                                        const gx_minus = hr4d_x[(ax - 1) * hr4d_a_stride + bx * hr4d_b_stride + cx * hr4d_c_stride + dx];
-                                        dval -= @as(f64, @floatFromInt(ax)) * gx_minus * gy_val * gz_val;
-                                    }
-                                    prim_deriv_x[idx] += dval;
-                                }
-
-                                // Undifferentiated x,z products
-                                const gx_val = hr4d_x[ax * hr4d_a_stride + bx * hr4d_b_stride + cx * hr4d_c_stride + dx];
-
-                                // y-derivative: d/dAy
-                                {
-                                    const gy_plus = hr4d_y[(ay + 1) * hr4d_a_stride + by * hr4d_b_stride + cy * hr4d_c_stride + dy];
-                                    var dval = 2.0 * alpha_a_val * gy_plus * gx_val * gz_val;
-                                    if (ay > 0) {
-                                        const gy_minus = hr4d_y[(ay - 1) * hr4d_a_stride + by * hr4d_b_stride + cy * hr4d_c_stride + dy];
-                                        dval -= @as(f64, @floatFromInt(ay)) * gy_minus * gx_val * gz_val;
-                                    }
-                                    prim_deriv_y[idx] += dval;
-                                }
-
-                                // z-derivative: d/dAz
-                                {
-                                    const gz_plus = hr4d_z[(az + 1) * hr4d_a_stride + bz * hr4d_b_stride + cz * hr4d_c_stride + dz];
-                                    var dval = 2.0 * alpha_a_val * gz_plus * gx_val * gy_val;
-                                    if (az > 0) {
-                                        const gz_minus = hr4d_z[(az - 1) * hr4d_a_stride + bz * hr4d_b_stride + cz * hr4d_c_stride + dz];
-                                        dval -= @as(f64, @floatFromInt(az)) * gz_minus * gx_val * gy_val;
-                                    }
-                                    prim_deriv_z[idx] += dval;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Accumulate into output with contraction coefficients and normalization
-            for (0..na) |ia| {
-                const na_val = norm_a[bra.ipa * na + ia];
-                for (0..nb) |ib| {
-                    const nb_val = norm_b[bra.ipb * nb + ib];
-                    for (0..nc) |ic| {
-                        const nc_val = norm_c[ket.ipc * nc + ic];
-                        for (0..nd) |id| {
-                            const nd_val = norm_d[ket.ipd * nd + id];
-                            const idx = ia * nb * nc * nd + ib * nc * nd + ic * nd + id;
-                            const c_norm = coeff_abcd * na_val * nb_val * nc_val * nd_val;
-                            deriv_x[idx] += c_norm * prim_deriv_x[idx];
-                            deriv_y[idx] += c_norm * prim_deriv_y[idx];
-                            deriv_z[idx] += c_norm * prim_deriv_z[idx];
-                        }
-                    }
-                }
-            }
+            accumulateDerivativePrimitivePair(
+                &workspace,
+                setup,
+                bra,
+                ket,
+                norms,
+                deriv_x,
+                deriv_y,
+                deriv_z,
+            );
         }
     }
-
-    return total_out;
+    return setup.total_out;
 }
 
 // ============================================================================
@@ -1440,7 +1394,15 @@ test "rys ERI deriv vs FD: (ss|ss) case" {
     var dx_buf: [1]f64 = undefined;
     var dy_buf: [1]f64 = undefined;
     var dz_buf: [1]f64 = undefined;
-    _ = contractedShellQuartetEriDeriv(shell_a, shell_b, shell_a, shell_b, &dx_buf, &dy_buf, &dz_buf);
+    _ = contractedShellQuartetEriDeriv(
+        shell_a,
+        shell_b,
+        shell_a,
+        shell_b,
+        &dx_buf,
+        &dy_buf,
+        &dz_buf,
+    );
 
     // Finite difference for each direction
     const dirs = [3][3]f64{
@@ -1499,7 +1461,15 @@ test "rys ERI deriv vs FD: (sp|sp) case" {
     var dx_arr: [9]f64 = undefined;
     var dy_arr: [9]f64 = undefined;
     var dz_arr: [9]f64 = undefined;
-    _ = contractedShellQuartetEriDeriv(shell_s, shell_p, shell_s, shell_p, &dx_arr, &dy_arr, &dz_arr);
+    _ = contractedShellQuartetEriDeriv(
+        shell_s,
+        shell_p,
+        shell_s,
+        shell_p,
+        &dx_arr,
+        &dy_arr,
+        &dz_arr,
+    );
 
     // FD in z-direction for center A (shell_s center)
     const shell_s_p = ContractedShell{
@@ -1552,7 +1522,15 @@ test "rys ERI deriv vs FD: (pp|pp) case" {
     var dx_arr: [81]f64 = undefined;
     var dy_arr: [81]f64 = undefined;
     var dz_arr: [81]f64 = undefined;
-    _ = contractedShellQuartetEriDeriv(shell_p1, shell_p2, shell_p1, shell_p2, &dx_arr, &dy_arr, &dz_arr);
+    _ = contractedShellQuartetEriDeriv(
+        shell_p1,
+        shell_p2,
+        shell_p1,
+        shell_p2,
+        &dx_arr,
+        &dy_arr,
+        &dz_arr,
+    );
 
     // FD in y-direction for center A (shell_p1 center)
     const shell_p1_p = ContractedShell{
@@ -1612,7 +1590,15 @@ test "rys ERI deriv vs FD: (sd|ps) mixed case" {
     var dx_arr: [18]f64 = undefined;
     var dy_arr: [18]f64 = undefined;
     var dz_arr: [18]f64 = undefined;
-    _ = contractedShellQuartetEriDeriv(shell_s, shell_d, shell_p, shell_s, &dx_arr, &dy_arr, &dz_arr);
+    _ = contractedShellQuartetEriDeriv(
+        shell_s,
+        shell_d,
+        shell_p,
+        shell_s,
+        &dx_arr,
+        &dy_arr,
+        &dz_arr,
+    );
 
     // FD in x-direction for center A (shell_s center)
     const shell_s_p = ContractedShell{

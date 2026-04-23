@@ -239,11 +239,49 @@ plot-graphene:
 
 # Format all Zig source files
 fmt:
-    zig fmt src
+    zig fmt src ppgen/src scripts
+
+# Path to the repo-local style checker. Override with ZIG_STYLE_CHECKER if needed.
+style_checker := env("ZIG_STYLE_CHECKER", "scripts/check_style.zig")
+
+# Check formatting without rewriting (reports diffs; not part of `lint`).
+fmt-check:
+    zig fmt --check src ppgen/src scripts
+
+# Run the style checker against the ratcheting baseline.
+# Fails only when a file has *more* violations than scripts/style_baseline.txt.
+lint:
+    ZIG_GLOBAL_CACHE_DIR=.zig-global-cache ZIG_LOCAL_CACHE_DIR=.zig-cache zig run {{style_checker}} -- --root src --root ppgen/src
+
+# Report every violation, ignoring the baseline (fails on any).
+lint-strict:
+    ZIG_GLOBAL_CACHE_DIR=.zig-global-cache ZIG_LOCAL_CACHE_DIR=.zig-cache zig run {{style_checker}} -- --root src --root ppgen/src --strict
+
+# Regenerate the style baseline from current violations (run after cleanup).
+lint-update-baseline:
+    ZIG_GLOBAL_CACHE_DIR=.zig-global-cache ZIG_LOCAL_CACHE_DIR=.zig-cache zig run {{style_checker}} -- --root src --root ppgen/src --update-baseline
+
+# Install project git hooks (symlinks scripts/hooks/* into .git/hooks/).
+# Run once per clone. Currently installs: pre-commit (zig fmt --check).
+install-hooks:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    src_dir="$(pwd)/scripts/hooks"
+    dst_dir="$(git rev-parse --git-dir)/hooks"
+    if [ ! -d "$src_dir" ]; then
+        echo "no hooks to install (missing $src_dir)" >&2
+        exit 1
+    fi
+    for hook in "$src_dir"/*; do
+        [ -f "$hook" ] || continue
+        name=$(basename "$hook")
+        ln -sf "$hook" "$dst_dir/$name"
+        echo "installed: $dst_dir/$name -> $hook"
+    done
 
 # Clean build artifacts and caches
 clean:
-    rm -rf zig-out zig-cache .zig-cache
+    rm -rf zig-out zig-cache .zig-cache .zig-global-cache
     rm -f stderr.log stderr_paw.log stdout.log
 
 # Run DFT-Zig with a config file

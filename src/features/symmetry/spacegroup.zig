@@ -31,6 +31,7 @@ pub fn detectSpaceGroup(
 ) !?SpaceGroupInfo {
     const ops = try symmetry.getSymmetryOps(alloc, cell, atoms, symprec);
     defer alloc.free(ops);
+
     const hall_number = try matchHallNumber(alloc, ops, symprec);
     if (hall_number == 0) return null;
 
@@ -59,6 +60,7 @@ pub fn detectSpaceGroupFromAtoms(
 fn matchHallNumber(alloc: std.mem.Allocator, ops_in: []const symmetry.SymOp, tol: f64) !i32 {
     const bases = try orthogonalBasisTransforms(alloc);
     defer alloc.free(bases);
+
     const transformed = try alloc.alloc(symmetry.SymOp, ops_in.len);
     defer alloc.free(transformed);
 
@@ -66,6 +68,7 @@ fn matchHallNumber(alloc: std.mem.Allocator, ops_in: []const symmetry.SymOp, tol
     while (hall < data.spacegroup_types.len) : (hall += 1) {
         const db_ops = try getDatabaseOps(alloc, hall);
         defer alloc.free(db_ops);
+
         if (db_ops.len != ops_in.len) continue;
         var matched = false;
         for (bases) |basis| {
@@ -96,6 +99,7 @@ fn matchOperations(
     const grid: i32 = 24;
     var set = std.AutoHashMap(u64, void).init(alloc);
     defer set.deinit();
+
     for (ops_in) |op| {
         const key = encodeOp(op.rot, op.trans, grid);
         set.put(key, {}) catch return false;
@@ -167,7 +171,11 @@ fn orthogonalBasisTransforms(alloc: std.mem.Allocator) ![]symmetry.Mat3i {
     return try list.toOwnedSlice(alloc);
 }
 
-fn transformOps(out_ops: []symmetry.SymOp, ops: []const symmetry.SymOp, basis: symmetry.Mat3i) void {
+fn transformOps(
+    out_ops: []symmetry.SymOp,
+    ops: []const symmetry.SymOp,
+    basis: symmetry.Mat3i,
+) void {
     const inv = basis.inverse() orelse basis;
     var i: usize = 0;
     while (i < ops.len) : (i += 1) {
@@ -234,7 +242,10 @@ fn encodeTranslation(trans: math.Vec3, grid: i32) u32 {
     const qy = quantizeCoord(t.y, grid);
     const qz = quantizeCoord(t.z, grid);
     const grid_u = @as(u32, @intCast(grid));
-    return @as(u32, @intCast(qx)) + grid_u * (@as(u32, @intCast(qy)) + grid_u * @as(u32, @intCast(qz)));
+    const qx_u = @as(u32, @intCast(qx));
+    const qy_u = @as(u32, @intCast(qy));
+    const qz_u = @as(u32, @intCast(qz));
+    return qx_u + grid_u * (qy_u + grid_u * qz_u);
 }
 
 fn quantizeCoord(x: f64, grid: i32) i32 {

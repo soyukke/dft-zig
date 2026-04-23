@@ -15,13 +15,29 @@ pub const Operator = struct {
     apply: *const fn (ctx: *anyopaque, x: []const math.Complex, y: []math.Complex) anyerror!void,
     /// Optional batched apply: y_batch = A * x_batch for ncols vectors at once.
     /// x_batch and y_batch are column-major [n × ncols].
-    apply_batch: ?*const fn (ctx: *anyopaque, x_batch: []const math.Complex, y_batch: []math.Complex, n: usize, ncols: usize) anyerror!void = null,
+    apply_batch: ?*const fn (
+        ctx: *anyopaque,
+        x_batch: []const math.Complex,
+        y_batch: []math.Complex,
+        n: usize,
+        ncols: usize,
+    ) anyerror!void = null,
     /// Optional overlap operator S for generalized eigenvalue problem H·x = λ·S·x.
     /// When null, S = I (standard eigenvalue problem, NC pseudopotentials).
     /// When set, LOBPCG uses S-inner products and solves the generalized problem.
-    apply_s: ?*const fn (ctx: *anyopaque, x: []const math.Complex, y: []math.Complex) anyerror!void = null,
+    apply_s: ?*const fn (
+        ctx: *anyopaque,
+        x: []const math.Complex,
+        y: []math.Complex,
+    ) anyerror!void = null,
     /// Optional batched overlap operator.
-    apply_s_batch: ?*const fn (ctx: *anyopaque, x_batch: []const math.Complex, y_batch: []math.Complex, n: usize, ncols: usize) anyerror!void = null,
+    apply_s_batch: ?*const fn (
+        ctx: *anyopaque,
+        x_batch: []const math.Complex,
+        y_batch: []math.Complex,
+        n: usize,
+        ncols: usize,
+    ) anyerror!void = null,
 };
 
 /// LOBPCG options
@@ -74,7 +90,13 @@ pub fn axpy(n: usize, y: []math.Complex, x: []const math.Complex, alpha: f64) vo
 
 /// Combine columns: out = V * coeffs using BLAS zgemv
 /// V is n x m column-major matrix, coeffs is m-vector, out is n-vector
-pub fn combineColumns(n: usize, v: []const math.Complex, m: usize, coeffs: []const math.Complex, out: []math.Complex) void {
+pub fn combineColumns(
+    n: usize,
+    v: []const math.Complex,
+    m: usize,
+    coeffs: []const math.Complex,
+    out: []math.Complex,
+) void {
     if (m == 0 or n == 0) {
         @memset(out[0..n], math.complex.init(0.0, 0.0));
         return;
@@ -88,7 +110,14 @@ pub fn combineColumns(n: usize, v: []const math.Complex, m: usize, coeffs: []con
 
 /// Batch combine columns: out = V * C using BLAS zgemm
 /// V is n x m column-major, C is m x ncols column-major, out is n x ncols column-major
-pub fn combineColumnsMatrix(n: usize, v: []const math.Complex, m: usize, coeffs: []const math.Complex, ncols: usize, out: []math.Complex) void {
+pub fn combineColumnsMatrix(
+    n: usize,
+    v: []const math.Complex,
+    m: usize,
+    coeffs: []const math.Complex,
+    ncols: usize,
+    out: []math.Complex,
+) void {
     if (m == 0 or n == 0 or ncols == 0) {
         @memset(out[0 .. n * ncols], math.complex.init(0.0, 0.0));
         return;
@@ -115,7 +144,14 @@ pub fn combineColumnsMatrix(n: usize, v: []const math.Complex, m: usize, coeffs:
 
 /// Precondition residual for generalized problem: out[i] = r[i] / (diag_H[i] - lambda * diag_S[i])
 /// When diag_s is null, uses standard preconditioner (S=I).
-pub fn preconditionGeneralized(n: usize, diag: []const f64, diag_s: ?[]const f64, lambda: f64, r: []const math.Complex, out: []math.Complex) void {
+pub fn preconditionGeneralized(
+    n: usize,
+    diag: []const f64,
+    diag_s: ?[]const f64,
+    lambda: f64,
+    r: []const math.Complex,
+    out: []math.Complex,
+) void {
     for (0..n) |i| {
         const s_ii = if (diag_s) |ds| ds[i] else 1.0;
         var denom = diag[i] - lambda * s_ii;
@@ -126,7 +162,12 @@ pub fn preconditionGeneralized(n: usize, diag: []const f64, diag_s: ?[]const f64
 
 /// S-inner product: <a|S|b> using pre-computed S·b column.
 /// When sv_col is null (S=I), falls back to standard inner product.
-pub fn innerProductS(n: usize, a: []const math.Complex, b: []const math.Complex, sv_col: ?[]const math.Complex) math.Complex {
+pub fn innerProductS(
+    n: usize,
+    a: []const math.Complex,
+    b: []const math.Complex,
+    sv_col: ?[]const math.Complex,
+) math.Complex {
     if (sv_col) |sb| {
         return innerProduct(n, a, sb);
     }
@@ -136,7 +177,14 @@ pub fn innerProductS(n: usize, a: []const math.Complex, b: []const math.Complex,
 /// Modified Gram-Schmidt orthonormalization with S-inner product.
 /// sv is the S·v matrix (column-major), updated in place for new column.
 /// When sv is null, uses standard inner product (S=I).
-pub fn orthonormalizeVectorS(n: usize, v: []math.Complex, basis: []const math.Complex, sv: ?[]math.Complex, sv_basis: ?[]const math.Complex, m: usize) f64 {
+pub fn orthonormalizeVectorS(
+    n: usize,
+    v: []math.Complex,
+    basis: []const math.Complex,
+    sv: ?[]math.Complex,
+    sv_basis: ?[]const math.Complex,
+    m: usize,
+) f64 {
     const blas_v: []blas.Complex = @ptrCast(v);
     for (0..m) |j| {
         const bj = columnConst(basis, n, j);
@@ -163,7 +211,13 @@ pub fn orthonormalizeVectorS(n: usize, v: []math.Complex, basis: []const math.Co
 }
 
 /// Precondition residual: out[i] = r[i] / (diag[i] - lambda)
-pub fn precondition(n: usize, diag: []const f64, lambda: f64, r: []const math.Complex, out: []math.Complex) void {
+pub fn precondition(
+    n: usize,
+    diag: []const f64,
+    lambda: f64,
+    r: []const math.Complex,
+    out: []math.Complex,
+) void {
     for (0..n) |i| {
         var denom = diag[i] - lambda;
         if (@abs(denom) < 1e-8) denom = if (denom >= 0.0) 1e-8 else -1e-8;
@@ -174,7 +228,13 @@ pub fn precondition(n: usize, diag: []const f64, lambda: f64, r: []const math.Co
 /// Build projected matrix: T = V† * W using BLAS zgemm
 /// V is n x m, W is n x m, T is m x m (Hermitian)
 /// For numerical stability, enforces Hermitian symmetry after computation.
-pub fn buildProjected(n: usize, v: []const math.Complex, w: []const math.Complex, out: []math.Complex, m: usize) void {
+pub fn buildProjected(
+    n: usize,
+    v: []const math.Complex,
+    w: []const math.Complex,
+    out: []math.Complex,
+    m: usize,
+) void {
     if (m == 0 or n == 0) return;
 
     // Use BLAS zgemm: T = V† * W
@@ -200,7 +260,12 @@ pub fn buildProjected(n: usize, v: []const math.Complex, w: []const math.Complex
 
 /// Orthonormalize vector against basis using modified Gram-Schmidt
 /// Uses BLAS zaxpy for vector updates.
-pub fn orthonormalizeVector(n: usize, v: []math.Complex, basis: []const math.Complex, m: usize) f64 {
+pub fn orthonormalizeVector(
+    n: usize,
+    v: []math.Complex,
+    basis: []const math.Complex,
+    m: usize,
+) f64 {
     const blas_v: []blas.Complex = @ptrCast(v);
     for (0..m) |j| {
         const bj = columnConst(basis, n, j);
@@ -255,7 +320,11 @@ pub fn nextRand01(seed: *u64) f64 {
 
 /// Small matrix eigendecomposition using LAPACK zheev
 /// Optimized for small matrices: bypasses global mutex and uses stack workspace.
-pub fn hermitianEigenDecompSmall(alloc: std.mem.Allocator, n: usize, a: []math.Complex) !linalg.EigenDecomp {
+pub fn hermitianEigenDecompSmall(
+    alloc: std.mem.Allocator,
+    n: usize,
+    a: []math.Complex,
+) !linalg.EigenDecomp {
     // For small matrices, call LAPACK directly without mutex and with stack workspace
     if (n <= 64 and n > 0) {
         const vectors = try alloc.alloc(math.Complex, n * n);
@@ -359,7 +428,12 @@ extern fn zhegv_(
 
 /// Solve generalized Hermitian eigenvalue problem A·x = λ·B·x for small matrices.
 /// B must be positive definite. Returns eigenvalues and eigenvectors.
-pub fn hermitianGeneralizedEigenDecompSmall(alloc: std.mem.Allocator, n: usize, a: []math.Complex, b: []math.Complex) !linalg.EigenDecomp {
+pub fn hermitianGeneralizedEigenDecompSmall(
+    alloc: std.mem.Allocator,
+    n: usize,
+    a: []math.Complex,
+    b: []math.Complex,
+) !linalg.EigenDecomp {
     if (n == 0) {
         return linalg.EigenDecomp{
             .values = try alloc.alloc(f64, 0),
@@ -374,6 +448,7 @@ pub fn hermitianGeneralizedEigenDecompSmall(alloc: std.mem.Allocator, n: usize, 
 
     const b_copy = try alloc.alloc(math.Complex, n * n);
     defer alloc.free(b_copy);
+
     @memcpy(b_copy, b[0 .. n * n]);
 
     const values = try alloc.alloc(f64, n);
@@ -414,8 +489,7 @@ pub fn hermitianGeneralizedEigenDecompSmall(alloc: std.mem.Allocator, n: usize, 
     );
     if (info != 0) return error.LapackFailure;
 
-    lwork = @intFromFloat(work_query.r);
-    if (lwork < 1) lwork = 1;
+    lwork = @max(@as(c_int, 1), @as(c_int, @intFromFloat(work_query.r)));
 
     var work_stack: [2 * 128 * 128]math.Complex = undefined;
     var work_heap: ?[]math.Complex = null;

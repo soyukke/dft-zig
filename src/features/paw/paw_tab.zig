@@ -52,99 +52,27 @@ pub const PawTab = struct {
         const lmn2 = nbeta * nbeta;
         const n_mesh = r.len;
 
-        // Compute S_ij = delta_ij + q_ij
-        // q_ij = integral[ (phi_i*phi_j - tphi_i*tphi_j) * dr ]
-        // Note: UPF stores r*phi(r), so the integrand is phi_i*phi_j*rab (without extra r² factor)
-        const sij = try alloc.alloc(f64, lmn2);
+        const sij = try buildSijTable(alloc, paw, rab, n_mesh, nbeta, lmn2);
         errdefer alloc.free(sij);
-        for (0..nbeta) |i| {
-            for (0..nbeta) |j| {
-                const ae_i = paw.ae_wfc[i].values;
-                const ae_j = paw.ae_wfc[j].values;
-                const ps_i = paw.ps_wfc[i].values;
-                const ps_j = paw.ps_wfc[j].values;
-                const n = @min(n_mesh, @min(ae_i.len, @min(ae_j.len, @min(ps_i.len, ps_j.len))));
 
-                var sum: f64 = 0.0;
-                for (0..n) |k| {
-                    // UPF stores r*phi(r), so product is (r*phi_i)(r*phi_j) = r²*phi_i*phi_j
-                    // integral = sum[ r²*phi_i*phi_j * rab ] = sum[ (r*phi_i)*(r*phi_j) * rab ]
-                    // No extra r² needed since the values already contain the r factor
-                    sum += (ae_i[k] * ae_j[k] - ps_i[k] * ps_j[k]) * rab[k] * ctrapWeight(k, n);
-                }
-                const delta = if (i == j) @as(f64, 1.0) else @as(f64, 0.0);
-                sij[i * nbeta + j] = delta + sum;
-            }
-        }
-
-        // Compute K_ij (kinetic energy correction)
-        // k_ij = <phi_i|-d²/dr²+l(l+1)/r²|phi_j> - (same for tphi)
-        // Using integration by parts: T = -1/(2r) d²/dr²(r·) + l(l+1)/(2r²)
-        // For radial functions u(r) = r·phi(r), the kinetic energy term is:
-        // <u_i|T|u_j> = integral[ u_i'*u_j' + l(l+1)*u_i*u_j/r² ] * dr / 2
-        // where prime denotes d/dr
-        const kij = try alloc.alloc(f64, lmn2);
+        const kij = try buildKijTable(alloc, paw, r, rab, nbeta, lmn2);
         errdefer alloc.free(kij);
-        for (0..nbeta) |i| {
-            for (0..nbeta) |j| {
-                kij[i * nbeta + j] = computeKij(
-                    paw.ae_wfc[i].values,
-                    paw.ae_wfc[j].values,
-                    paw.ps_wfc[i].values,
-                    paw.ps_wfc[j].values,
-                    paw.ae_wfc[i].l,
-                    paw.ae_wfc[j].l,
-                    r,
-                    rab,
-                );
-            }
-        }
 
-        // Copy l_list
         const l_list = try alloc.alloc(i32, nbeta);
         errdefer alloc.free(l_list);
-        for (0..nbeta) |i| {
-            l_list[i] = paw.ae_wfc[i].l;
-        }
 
-        // Build Q_ij^L(G) form factor tables
+        for (0..nbeta) |i| l_list[i] = paw.ae_wfc[i].l;
+
         const n_entries = paw.qijl.len;
         const n_qpoints = N_QPOINTS;
         const dq = q_max / @as(f64, @floatFromInt(n_qpoints - 1));
-
         const qijl_form = try alloc.alloc(f64, n_entries * n_qpoints);
         errdefer alloc.free(qijl_form);
 
         const qijl_indices = try alloc.alloc(QijlIndex, n_entries);
         errdefer alloc.free(qijl_indices);
 
-        for (0..n_entries) |e| {
-            const entry = paw.qijl[e];
-            qijl_indices[e] = .{
-                .first = entry.first_index,
-                .second = entry.second_index,
-                .l = entry.angular_momentum,
-            };
-
-            const qdata = entry.values;
-            const n_r = @min(qdata.len, @min(r.len, rab.len));
-            const l_val: i32 = @intCast(entry.angular_momentum);
-
-            for (0..n_qpoints) |qi| {
-                const g = @as(f64, @floatFromInt(qi)) * dq;
-                var sum: f64 = 0.0;
-                for (0..n_r) |k| {
-                    const x = g * r[k];
-                    const jl = nonlocal.sphericalBessel(l_val, x);
-                    // UPF stores qfuncl = ae_i*ae_j - ps_i*ps_j = r²(φ_iφ_j - φ̃_iφ̃_j)
-                    // The Bessel transform of q_L(r) = qfuncl/r² is:
-                    // F(G) = 4π ∫ q_L(r) j_L(Gr) r² dr = 4π ∫ qfuncl(r) j_L(Gr) dr
-                    // No extra r² factor needed since qfuncl already contains r².
-                    sum += qdata[k] * jl * rab[k] * ctrapWeight(k, n_r);
-                }
-                qijl_form[e * n_qpoints + qi] = 4.0 * std.math.pi * sum;
-            }
-        }
+        buildQijlFormFactors(paw, r, rab, n_entries, n_qpoints, dq, qijl_form, qijl_indices);
 
         return .{
             .sij = sij,
@@ -200,6 +128,92 @@ pub const PawTab = struct {
     }
 };
 
+fn buildSijTable(
+    alloc: std.mem.Allocator,
+    paw: PawData,
+    rab: []const f64,
+    n_mesh: usize,
+    nbeta: usize,
+    lmn2: usize,
+) ![]f64 {
+    const sij = try alloc.alloc(f64, lmn2);
+    for (0..nbeta) |i| {
+        for (0..nbeta) |j| {
+            const ae_i = paw.ae_wfc[i].values;
+            const ae_j = paw.ae_wfc[j].values;
+            const ps_i = paw.ps_wfc[i].values;
+            const ps_j = paw.ps_wfc[j].values;
+            const n = @min(n_mesh, @min(ae_i.len, @min(ae_j.len, @min(ps_i.len, ps_j.len))));
+            var sum: f64 = 0.0;
+            for (0..n) |k| {
+                sum += (ae_i[k] * ae_j[k] - ps_i[k] * ps_j[k]) * rab[k] * ctrapWeight(k, n);
+            }
+            const delta = if (i == j) @as(f64, 1.0) else @as(f64, 0.0);
+            sij[i * nbeta + j] = delta + sum;
+        }
+    }
+    return sij;
+}
+
+fn buildKijTable(
+    alloc: std.mem.Allocator,
+    paw: PawData,
+    r: []const f64,
+    rab: []const f64,
+    nbeta: usize,
+    lmn2: usize,
+) ![]f64 {
+    const kij = try alloc.alloc(f64, lmn2);
+    for (0..nbeta) |i| {
+        for (0..nbeta) |j| {
+            kij[i * nbeta + j] = computeKij(
+                paw.ae_wfc[i].values,
+                paw.ae_wfc[j].values,
+                paw.ps_wfc[i].values,
+                paw.ps_wfc[j].values,
+                paw.ae_wfc[i].l,
+                paw.ae_wfc[j].l,
+                r,
+                rab,
+            );
+        }
+    }
+    return kij;
+}
+
+fn buildQijlFormFactors(
+    paw: PawData,
+    r: []const f64,
+    rab: []const f64,
+    n_entries: usize,
+    n_qpoints: usize,
+    dq: f64,
+    qijl_form: []f64,
+    qijl_indices: []PawTab.QijlIndex,
+) void {
+    for (0..n_entries) |e| {
+        const entry = paw.qijl[e];
+        qijl_indices[e] = .{
+            .first = entry.first_index,
+            .second = entry.second_index,
+            .l = entry.angular_momentum,
+        };
+        const qdata = entry.values;
+        const n_r = @min(qdata.len, @min(r.len, rab.len));
+        const l_val: i32 = @intCast(entry.angular_momentum);
+        for (0..n_qpoints) |qi| {
+            const g = @as(f64, @floatFromInt(qi)) * dq;
+            var sum: f64 = 0.0;
+            for (0..n_r) |k| {
+                const x = g * r[k];
+                const jl = nonlocal.sphericalBessel(l_val, x);
+                sum += qdata[k] * jl * rab[k] * ctrapWeight(k, n_r);
+            }
+            qijl_form[e * n_qpoints + qi] = 4.0 * std.math.pi * sum;
+        }
+    }
+}
+
 /// Compute kinetic energy matrix element K_ij.
 /// K_ij = <phi_i|T|phi_j> - <tphi_i|T|tphi_j>
 /// where T is the kinetic energy operator in Rydberg units (T = -d²/dr² + l(l+1)/r²).
@@ -247,7 +261,8 @@ fn computeKij(
         const centrifugal_ae = if (r[k] > 1e-10) ll1 * ae_i[k] * ae_j[k] / (r[k] * r[k]) else 0.0;
         const centrifugal_ps = if (r[k] > 1e-10) ll1 * ps_i[k] * ps_j[k] / (r[k] * r[k]) else 0.0;
 
-        sum += ((deriv_ae + centrifugal_ae) - (deriv_ps + centrifugal_ps)) * rab[k] * ctrapWeight(k, n);
+        const delta = (deriv_ae + centrifugal_ae) - (deriv_ps + centrifugal_ps);
+        sum += delta * rab[k] * ctrapWeight(k, n);
     }
 
     return sum;

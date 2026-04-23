@@ -25,7 +25,15 @@ const c = if (enable_fftw) @cImport({
     const FFTW_ESTIMATE: c_uint = 64;
     const FFTW_UNALIGNED: c_uint = 2;
 
-    fn fftw_plan_dft_3d(_: c_int, _: c_int, _: c_int, _: [*c]fftw_complex, _: [*c]fftw_complex, _: c_int, _: c_uint) fftw_plan {
+    fn fftw_plan_dft_3d(
+        _: c_int,
+        _: c_int,
+        _: c_int,
+        _: [*c]fftw_complex,
+        _: [*c]fftw_complex,
+        _: c_int,
+        _: c_uint,
+    ) fftw_plan {
         return null;
     }
     fn fftw_execute_dft(_: fftw_plan, _: [*c]fftw_complex, _: [*c]fftw_complex) void {}
@@ -123,6 +131,7 @@ pub const FftwPlan3d = struct {
             // Lock mutex for thread-safe plan destruction
             planner_mutex.lock();
             defer planner_mutex.unlock();
+
             c.fftw_destroy_plan(self.forward_plan);
             c.fftw_destroy_plan(self.inverse_plan);
         }
@@ -199,6 +208,7 @@ test "FftwPlan3d 24x24x24" {
     const size = 24 * 24 * 24;
     var data = try allocator.alloc(Complex, size);
     defer allocator.free(data);
+
     var original = try allocator.alloc(Complex, size);
     defer allocator.free(original);
 

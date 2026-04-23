@@ -122,7 +122,13 @@ fn atomicLocalEnergy(term: TermAtomicLocal, input: EvalInput) !f64 {
             if (g.g2 >= ecut) continue;
         }
         const rho_val = rho_g[g.idx];
-        const vloc = try hamiltonian.ionicLocalPotential(g.gvec, input.model.species, input.model.atoms, inv_volume, local_cfg);
+        const vloc = try hamiltonian.ionicLocalPotential(
+            g.gvec,
+            input.model.species,
+            input.model.atoms,
+            inv_volume,
+            local_cfg,
+        );
         e_local += rho_val.r * vloc.r + rho_val.i * vloc.i;
     }
     e_local *= grid.volume;
@@ -142,18 +148,34 @@ fn xcEnergy(term: TermXc, input: EvalInput) !f64 {
 
     if (input.rho_down) |rho_down| {
         if (rho_down.len != grid.count()) return error.DensitySizeMismatch;
-        const fields = try xc_fields.computeXcFieldsSpin(input.alloc, grid.*, rho, rho_down, input.rho_core, input.use_rfft, term.functional);
+        const fields = try xc_fields.computeXcFieldsSpin(
+            input.alloc,
+            grid.*,
+            rho,
+            rho_down,
+            input.rho_core,
+            input.use_rfft,
+            term.functional,
+        );
         defer {
             input.alloc.free(fields.vxc_up);
             input.alloc.free(fields.vxc_down);
             input.alloc.free(fields.exc);
         }
+
         var sum: f64 = 0.0;
         for (fields.exc) |e| sum += e * dv;
         return sum;
     }
 
-    const fields = try xc_fields.computeXcFields(input.alloc, grid.*, rho, input.rho_core, input.use_rfft, term.functional);
+    const fields = try xc_fields.computeXcFields(
+        input.alloc,
+        grid.*,
+        rho,
+        input.rho_core,
+        input.use_rfft,
+        term.functional,
+    );
     defer {
         input.alloc.free(fields.vxc);
         input.alloc.free(fields.exc);
@@ -202,8 +224,10 @@ fn ewaldEnergy(term: TermEwald, input: EvalInput) !f64 {
     if (count == 0) return 0.0;
     const charges = try input.alloc.alloc(f64, count);
     defer input.alloc.free(charges);
+
     const positions = try input.alloc.alloc(math.Vec3, count);
     defer input.alloc.free(positions);
+
     for (atoms, 0..) |atom, i| {
         charges[i] = input.model.species[atom.species_index].z_valence;
         positions[i] = atom.position;
@@ -215,7 +239,14 @@ fn ewaldEnergy(term: TermEwald, input: EvalInput) !f64 {
         .tol = term.tol,
         .quiet = term.quiet,
     };
-    return try ewald_mod.ionIonEnergy(input.io, input.model.cell_bohr, input.model.recip, charges, positions, params);
+    return try ewald_mod.ionIonEnergy(
+        input.io,
+        input.model.cell_bohr,
+        input.model.recip,
+        charges,
+        positions,
+        params,
+    );
 }
 
 test "termEnergy(.hartree) returns zero for uniform periodic density" {
@@ -248,6 +279,7 @@ test "termEnergy(.hartree) returns zero for uniform periodic density" {
     const n_points = grid.count();
     const rho = try alloc.alloc(f64, n_points);
     defer alloc.free(rho);
+
     @memset(rho, 1.0 / volume);
 
     const model = Model{
@@ -301,6 +333,7 @@ test "termEnergy(.hartree) is positive and deterministic for cosine density" {
     const n_points = grid.count();
     const rho = try alloc.alloc(f64, n_points);
     defer alloc.free(rho);
+
     const twopi_L = 2.0 * std.math.pi / L;
     const rho0 = 1.0 / volume;
     const amp = 0.3 * rho0;
@@ -365,6 +398,7 @@ test "termEnergy(.atomic_local) is zero with no atoms" {
 
     const rho = try alloc.alloc(f64, grid.count());
     defer alloc.free(rho);
+
     @memset(rho, 1.0 / volume);
 
     const model = Model{
@@ -416,6 +450,7 @@ test "termEnergy(.xc) matches computeXcFields integral (LDA)" {
     const n_points = grid.count();
     const rho = try alloc.alloc(f64, n_points);
     defer alloc.free(rho);
+
     @memset(rho, 0.5 / volume);
 
     const model = Model{
@@ -438,6 +473,7 @@ test "termEnergy(.xc) matches computeXcFields integral (LDA)" {
         alloc.free(fields.vxc);
         alloc.free(fields.exc);
     }
+
     const dv = volume / @as(f64, @floatFromInt(n_points));
     var expected: f64 = 0.0;
     for (fields.exc) |e| expected += e * dv;
@@ -472,8 +508,21 @@ test "termEnergy(.ewald) matches direct ionIonEnergy" {
 
     const charges = [_]f64{ 4.0, 4.0 };
     const positions = [_]math.Vec3{ atoms[0].position, atoms[1].position };
-    const direct_params = ewald_mod.Params{ .alpha = 0.0, .rcut = 0.0, .gcut = 0.0, .tol = 0.0, .quiet = true };
-    const e_direct = try ewald_mod.ionIonEnergy(io, cell, recip, &charges, &positions, direct_params);
+    const direct_params = ewald_mod.Params{
+        .alpha = 0.0,
+        .rcut = 0.0,
+        .gcut = 0.0,
+        .tol = 0.0,
+        .quiet = true,
+    };
+    const e_direct = try ewald_mod.ionIonEnergy(
+        io,
+        cell,
+        recip,
+        &charges,
+        &positions,
+        direct_params,
+    );
 
     const model = Model{
         .species = &species_arr,

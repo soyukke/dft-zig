@@ -3,25 +3,13 @@ const math = @import("../math/math.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const d3_params = @import("../vdw/d3_params.zig");
 
-/// Write electron density in Gaussian cube format.
-/// Density is in electrons/Bohr³ (converted from Ry units).
-/// Grid ordering: x-outer, y-middle, z-inner (Fortran convention).
-pub fn writeCubeFile(
-    io: std.Io,
-    dir: std.Io.Dir,
-    filename: []const u8,
-    density: []const f64,
+/// Emit the cube-format header: title, atom count/origin, and voxel vectors.
+fn emitCubeHeader(
+    out: *std.Io.Writer,
+    n_atoms: usize,
     grid: [3]usize,
     cell_bohr: math.Mat3,
-    atoms: []const hamiltonian.AtomData,
-    species: []const hamiltonian.SpeciesEntry,
 ) !void {
-    const file = try dir.createFile(io, filename, .{});
-    defer file.close(io);
-    var buf: [512]u8 = undefined;
-    var writer = file.writer(io, &buf);
-    const out = &writer.interface;
-
     const nx = grid[0];
     const ny = grid[1];
     const nz = grid[2];
@@ -32,7 +20,7 @@ pub fn writeCubeFile(
 
     // Number of atoms and origin
     try out.print("{d:>5} {d:>12.6} {d:>12.6} {d:>12.6}\n", .{
-        atoms.len,
+        n_atoms,
         @as(f64, 0.0),
         @as(f64, 0.0),
         @as(f64, 0.0),
@@ -42,18 +30,27 @@ pub fn writeCubeFile(
     const a1 = cell_bohr.row(0);
     const a2 = cell_bohr.row(1);
     const a3 = cell_bohr.row(2);
+    const inv_nx: f64 = 1.0 / @as(f64, @floatFromInt(nx));
+    const inv_ny: f64 = 1.0 / @as(f64, @floatFromInt(ny));
+    const inv_nz: f64 = 1.0 / @as(f64, @floatFromInt(nz));
 
     try out.print("{d:>5} {d:>12.6} {d:>12.6} {d:>12.6}\n", .{
-        nx, a1.x / @as(f64, @floatFromInt(nx)), a1.y / @as(f64, @floatFromInt(nx)), a1.z / @as(f64, @floatFromInt(nx)),
+        nx, a1.x * inv_nx, a1.y * inv_nx, a1.z * inv_nx,
     });
     try out.print("{d:>5} {d:>12.6} {d:>12.6} {d:>12.6}\n", .{
-        ny, a2.x / @as(f64, @floatFromInt(ny)), a2.y / @as(f64, @floatFromInt(ny)), a2.z / @as(f64, @floatFromInt(ny)),
+        ny, a2.x * inv_ny, a2.y * inv_ny, a2.z * inv_ny,
     });
     try out.print("{d:>5} {d:>12.6} {d:>12.6} {d:>12.6}\n", .{
-        nz, a3.x / @as(f64, @floatFromInt(nz)), a3.y / @as(f64, @floatFromInt(nz)), a3.z / @as(f64, @floatFromInt(nz)),
+        nz, a3.x * inv_nz, a3.y * inv_nz, a3.z * inv_nz,
     });
+}
 
-    // Atom positions (in Bohr)
+/// Emit the atom block (atomic number, valence Z, Cartesian position in Bohr).
+fn emitCubeAtoms(
+    out: *std.Io.Writer,
+    atoms: []const hamiltonian.AtomData,
+    species: []const hamiltonian.SpeciesEntry,
+) !void {
     for (atoms) |atom| {
         const sym = species[atom.species_index].symbol;
         const z_num = d3_params.atomicNumber(sym) orelse 0;
@@ -66,12 +63,20 @@ pub fn writeCubeFile(
             atom.position.z,
         });
     }
+}
 
-    // Density values: x-outer, y-middle, z-inner (cube convention)
-    // DFT-Zig stores density as density[ix + nx*(iy + ny*iz)] where x is fastest in memory.
-    // For cube format we loop ix (outer), iy, iz (inner) and read density[ix + nx*(iy + ny*iz)].
-    // This means iz increments cause stride nx*ny jumps — acceptable for typical grid sizes
-    // (32³ = 32K elements fits in L1 cache).
+/// Emit the volumetric density block in cube x-outer, y-middle, z-inner order.
+/// DFT-Zig stores density as density[ix + nx*(iy + ny*iz)] where x is fastest in memory.
+/// This means iz increments cause stride nx*ny jumps — acceptable for typical grid sizes
+/// (32³ = 32K elements fits in L1 cache).
+fn emitCubeDensity(
+    out: *std.Io.Writer,
+    density: []const f64,
+    grid: [3]usize,
+) !void {
+    const nx = grid[0];
+    const ny = grid[1];
+    const nz = grid[2];
     for (0..nx) |ix| {
         for (0..ny) |iy| {
             var count: usize = 0;
@@ -89,5 +94,30 @@ pub fn writeCubeFile(
             }
         }
     }
+}
+
+/// Write electron density in Gaussian cube format.
+/// Density is in electrons/Bohr³ (converted from Ry units).
+/// Grid ordering: x-outer, y-middle, z-inner (Fortran convention).
+pub fn writeCubeFile(
+    io: std.Io,
+    dir: std.Io.Dir,
+    filename: []const u8,
+    density: []const f64,
+    grid: [3]usize,
+    cell_bohr: math.Mat3,
+    atoms: []const hamiltonian.AtomData,
+    species: []const hamiltonian.SpeciesEntry,
+) !void {
+    const file = try dir.createFile(io, filename, .{});
+    defer file.close(io);
+
+    var buf: [512]u8 = undefined;
+    var writer = file.writer(io, &buf);
+    const out = &writer.interface;
+
+    try emitCubeHeader(out, atoms.len, grid, cell_bohr);
+    try emitCubeAtoms(out, atoms, species);
+    try emitCubeDensity(out, density, grid);
     try out.flush();
 }

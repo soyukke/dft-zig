@@ -253,7 +253,15 @@ pub const RadialTable = struct {
 
     /// Build a lookup table for radialProjector(beta, r, rab, l, g)
     /// over g in [0, g_max] with n_points uniformly spaced points.
-    pub fn init(alloc: std.mem.Allocator, beta: []const f64, r: []const f64, rab: []const f64, l: i32, g_max_val: f64, n_points: usize) !RadialTable {
+    pub fn init(
+        alloc: std.mem.Allocator,
+        beta: []const f64,
+        r: []const f64,
+        rab: []const f64,
+        l: i32,
+        g_max_val: f64,
+        n_points: usize,
+    ) !RadialTable {
         const n = @max(n_points, 2);
         const values = try alloc.alloc(f64, n);
         const dg = g_max_val / @as(f64, @floatFromInt(n - 1));
@@ -293,7 +301,13 @@ pub const RadialTable = struct {
 pub const RadialTableSet = struct {
     tables: []RadialTable,
 
-    pub fn init(alloc: std.mem.Allocator, upf_beta: []const @import("pseudopotential.zig").Beta, r: []const f64, rab: []const f64, g_max: f64) !RadialTableSet {
+    pub fn init(
+        alloc: std.mem.Allocator,
+        upf_beta: []const @import("pseudopotential.zig").Beta,
+        r: []const f64,
+        rab: []const f64,
+        g_max: f64,
+    ) !RadialTableSet {
         const n_table: usize = 2048;
         const tables = try alloc.alloc(RadialTable, upf_beta.len);
         errdefer {
@@ -301,7 +315,15 @@ pub const RadialTableSet = struct {
             alloc.free(tables);
         }
         for (upf_beta, 0..) |beta, i| {
-            tables[i] = try RadialTable.init(alloc, beta.values, r, rab, beta.l orelse 0, g_max, n_table);
+            tables[i] = try RadialTable.init(
+                alloc,
+                beta.values,
+                r,
+                rab,
+                beta.l orelse 0,
+                g_max,
+                n_table,
+            );
         }
         return .{ .tables = tables };
     }

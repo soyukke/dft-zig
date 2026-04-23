@@ -13,13 +13,21 @@ pub const integration_test = @import("integration_test.zig");
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
+    var stdout_buffer: [256]u8 = undefined;
+    var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
+    const stdout = &stdout_writer.interface;
+    var stderr_buffer: [256]u8 = undefined;
+    var stderr_writer = std.Io.File.stderr().writer(io, &stderr_buffer);
+    const stderr = &stderr_writer.interface;
 
     var args_iter = try init.minimal.args.iterateAllocator(allocator);
     defer args_iter.deinit();
+
     _ = args_iter.next();
     const output_path = args_iter.next() orelse {
-        std.debug.print("Usage: ppgen <output.upf>\n", .{});
-        std.debug.print("  Generates Si LDA norm-conserving pseudopotential.\n", .{});
+        try stderr.writeAll("Usage: ppgen <output.upf>\n");
+        try stderr.writeAll("  Generates Si LDA norm-conserving pseudopotential.\n");
+        try stderr.flush();
         return;
     };
 
@@ -54,9 +62,11 @@ pub fn main(init: std.process.Init) !void {
     const cwd = std.Io.Dir.cwd();
     const file = try cwd.createFile(io, output_path, .{});
     defer file.close(io);
+
     try file.writeStreamingAll(io, output);
 
-    std.debug.print("Written: {s}\n", .{output_path});
+    try stdout.print("Written: {s}\n", .{output_path});
+    try stdout.flush();
 }
 
 test {

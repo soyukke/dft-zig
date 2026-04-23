@@ -17,7 +17,10 @@ pub const ScfToleranceResult = struct {
     all: bool,
 };
 
-pub fn withinScfTolerance(report: scf_harness.ScfComparisonReport, tol: ScfTolerance) ScfToleranceResult {
+pub fn withinScfTolerance(
+    report: scf_harness.ScfComparisonReport,
+    tol: ScfTolerance,
+) ScfToleranceResult {
     const energy_ok = compare.withinScalarTolerance(report.total.energy, tol.energy);
     const density_ok = compare.withinTolerance(report.total.density, tol.density);
     const terms_ok = energy_compare.withinEnergyTolerance(report.energy_terms, tol.energy_terms);
@@ -34,7 +37,13 @@ test "withinScfTolerance aggregates results" {
     const report = scf_harness.ScfComparisonReport{
         .total = .{
             .energy = .{ .abs = 0.01, .rel = 0.001 },
-            .density = .{ .max_abs = 0.05, .mean_abs = 0.02, .rms = 0.03, .rel_max = 0.01, .rel_rms = 0.02 },
+            .density = .{
+                .max_abs = 0.05,
+                .mean_abs = 0.02,
+                .rms = 0.03,
+                .rel_max = 0.01,
+                .rel_rms = 0.02,
+            },
         },
         .energy_terms = .{
             .total = .{ .abs = 0.01, .rel = 0.001 },
@@ -73,7 +82,13 @@ test "withinScfTolerance detects failed terms" {
     const report = scf_harness.ScfComparisonReport{
         .total = .{
             .energy = .{ .abs = 0.2, .rel = 0.2 },
-            .density = .{ .max_abs = 0.2, .mean_abs = 0.2, .rms = 0.2, .rel_max = 0.2, .rel_rms = 0.2 },
+            .density = .{
+                .max_abs = 0.2,
+                .mean_abs = 0.2,
+                .rms = 0.2,
+                .rel_max = 0.2,
+                .rel_rms = 0.2,
+            },
         },
         .energy_terms = .{
             .total = .{ .abs = 0.2, .rel = 0.2 },

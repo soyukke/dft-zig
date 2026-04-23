@@ -65,117 +65,139 @@ pub const Fft3dPlan = struct {
     }
 
     /// Initialize with specified backend
-    pub fn initWithBackend(alloc: std.mem.Allocator, io: std.Io, nx: usize, ny: usize, nz: usize, backend: FftBackend) !Fft3dPlan {
-        switch (backend) {
-            .zig => {
-                const plan = try fft_lib.Plan3d.init(alloc, nx, ny, nz);
-                return .{
-                    .nx = nx,
-                    .ny = ny,
-                    .nz = nz,
-                    .backend = .zig,
-                    .plan = .{ .zig = plan },
-                    .allocator = alloc,
-                };
-            },
-            .zig_parallel => {
-                const plan = try parallel_fft.ParallelPlan3d.init(alloc, io, nx, ny, nz);
-                return .{
-                    .nx = nx,
-                    .ny = ny,
-                    .nz = nz,
-                    .backend = .zig_parallel,
-                    .plan = .{ .zig_parallel = plan },
-                    .allocator = alloc,
-                };
-            },
-            .zig_transpose => {
-                const plan = try parallel_fft_transpose.TransposePlan3d.init(alloc, io, nx, ny, nz);
-                return .{
-                    .nx = nx,
-                    .ny = ny,
-                    .nz = nz,
-                    .backend = .zig_transpose,
-                    .plan = .{ .zig_transpose = plan },
-                    .allocator = alloc,
-                };
-            },
-            .zig_comptime24 => {
-                // Only supports 24×24×24, fall back to zig_parallel for other sizes
-                if (nx != 24 or ny != 24 or nz != 24) {
-                    const plan = try parallel_fft.ParallelPlan3d.init(alloc, io, nx, ny, nz);
-                    return .{
-                        .nx = nx,
-                        .ny = ny,
-                        .nz = nz,
-                        .backend = .zig_parallel,
-                        .plan = .{ .zig_parallel = plan },
-                        .allocator = alloc,
-                    };
-                }
-                const plan = try parallel_fft24.ParallelPlan3d24.init(alloc, io, nx, ny, nz);
-                return .{
-                    .nx = nx,
-                    .ny = ny,
-                    .nz = nz,
-                    .backend = .zig_comptime24,
-                    .plan = .{ .zig_comptime24 = plan },
-                    .allocator = alloc,
-                };
-            },
-            .fftw => {
-                const plan = try fftw_fft.FftwPlan3d.init(alloc, nx, ny, nz);
-                return .{
-                    .nx = nx,
-                    .ny = ny,
-                    .nz = nz,
-                    .backend = .fftw,
-                    .plan = .{ .fftw = plan },
-                    .allocator = alloc,
-                };
-            },
-            .vdsp => {
-                if (comptime builtin.os.tag != .macos) {
-                    return error.VdspNotAvailable;
-                }
-                // vDSP only supports power-of-2 sizes
-                if (!isPowerOfTwo(nx) or !isPowerOfTwo(ny) or !isPowerOfTwo(nz)) {
-                    // Fall back to Zig FFT for non-power-of-2
-                    const plan = try fft_lib.Plan3d.init(alloc, nx, ny, nz);
-                    return .{
-                        .nx = nx,
-                        .ny = ny,
-                        .nz = nz,
-                        .backend = .zig,
-                        .plan = .{ .zig = plan },
-                        .allocator = alloc,
-                    };
-                }
-                const plan = try vdsp_fft.VdspPlan3d.init(alloc, nx, ny, nz);
-                return .{
-                    .nx = nx,
-                    .ny = ny,
-                    .nz = nz,
-                    .backend = .vdsp,
-                    .plan = .{ .vdsp = plan },
-                    .allocator = alloc,
-                };
-            },
-            .metal => {
-                if (comptime builtin.os.tag != .macos) {
-                    return error.MetalNotAvailable;
-                }
-                const plan = try metal_fft_lib.MetalPlan3d.init(alloc, nx, ny, nz);
-                return .{
-                    .nx = nx,
-                    .ny = ny,
-                    .nz = nz,
-                    .backend = .metal,
-                    .plan = .{ .metal = plan },
-                    .allocator = alloc,
-                };
-            },
+    pub fn initWithBackend(
+        alloc: std.mem.Allocator,
+        io: std.Io,
+        nx: usize,
+        ny: usize,
+        nz: usize,
+        backend: FftBackend,
+    ) !Fft3dPlan {
+        return switch (backend) {
+            .zig => initZigPlan(alloc, nx, ny, nz),
+            .zig_parallel => initZigParallelPlan(alloc, io, nx, ny, nz),
+            .zig_transpose => initZigTransposePlan(alloc, io, nx, ny, nz),
+            .zig_comptime24 => initZigComptime24Plan(alloc, io, nx, ny, nz),
+            .fftw => initFftwPlan(alloc, nx, ny, nz),
+            .vdsp => initVdspPlan(alloc, nx, ny, nz),
+            .metal => initMetalPlan(alloc, nx, ny, nz),
+        };
+    }
+
+    fn initZigPlan(alloc: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
+        const plan = try fft_lib.Plan3d.init(alloc, nx, ny, nz);
+        return .{
+            .nx = nx,
+            .ny = ny,
+            .nz = nz,
+            .backend = .zig,
+            .plan = .{ .zig = plan },
+            .allocator = alloc,
+        };
+    }
+
+    fn initZigParallelPlan(
+        alloc: std.mem.Allocator,
+        io: std.Io,
+        nx: usize,
+        ny: usize,
+        nz: usize,
+    ) !Fft3dPlan {
+        const plan = try parallel_fft.ParallelPlan3d.init(alloc, io, nx, ny, nz);
+        return .{
+            .nx = nx,
+            .ny = ny,
+            .nz = nz,
+            .backend = .zig_parallel,
+            .plan = .{ .zig_parallel = plan },
+            .allocator = alloc,
+        };
+    }
+
+    fn initZigTransposePlan(
+        alloc: std.mem.Allocator,
+        io: std.Io,
+        nx: usize,
+        ny: usize,
+        nz: usize,
+    ) !Fft3dPlan {
+        const plan = try parallel_fft_transpose.TransposePlan3d.init(alloc, io, nx, ny, nz);
+        return .{
+            .nx = nx,
+            .ny = ny,
+            .nz = nz,
+            .backend = .zig_transpose,
+            .plan = .{ .zig_transpose = plan },
+            .allocator = alloc,
+        };
+    }
+
+    fn initZigComptime24Plan(
+        alloc: std.mem.Allocator,
+        io: std.Io,
+        nx: usize,
+        ny: usize,
+        nz: usize,
+    ) !Fft3dPlan {
+        // Only supports 24×24×24, fall back to zig_parallel for other sizes
+        if (nx != 24 or ny != 24 or nz != 24) {
+            return initZigParallelPlan(alloc, io, nx, ny, nz);
         }
+        const plan = try parallel_fft24.ParallelPlan3d24.init(alloc, io, nx, ny, nz);
+        return .{
+            .nx = nx,
+            .ny = ny,
+            .nz = nz,
+            .backend = .zig_comptime24,
+            .plan = .{ .zig_comptime24 = plan },
+            .allocator = alloc,
+        };
+    }
+
+    fn initFftwPlan(alloc: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
+        const plan = try fftw_fft.FftwPlan3d.init(alloc, nx, ny, nz);
+        return .{
+            .nx = nx,
+            .ny = ny,
+            .nz = nz,
+            .backend = .fftw,
+            .plan = .{ .fftw = plan },
+            .allocator = alloc,
+        };
+    }
+
+    fn initVdspPlan(alloc: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
+        if (comptime builtin.os.tag != .macos) {
+            return error.VdspNotAvailable;
+        }
+        // vDSP only supports power-of-2 sizes — fall back to the pure-Zig FFT.
+        if (!isPowerOfTwo(nx) or !isPowerOfTwo(ny) or !isPowerOfTwo(nz)) {
+            return initZigPlan(alloc, nx, ny, nz);
+        }
+        const plan = try vdsp_fft.VdspPlan3d.init(alloc, nx, ny, nz);
+        return .{
+            .nx = nx,
+            .ny = ny,
+            .nz = nz,
+            .backend = .vdsp,
+            .plan = .{ .vdsp = plan },
+            .allocator = alloc,
+        };
+    }
+
+    fn initMetalPlan(alloc: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !Fft3dPlan {
+        if (comptime builtin.os.tag != .macos) {
+            return error.MetalNotAvailable;
+        }
+        const plan = try metal_fft_lib.MetalPlan3d.init(alloc, nx, ny, nz);
+        return .{
+            .nx = nx,
+            .ny = ny,
+            .nz = nz,
+            .backend = .metal,
+            .plan = .{ .metal = plan },
+            .allocator = alloc,
+        };
     }
 
     pub fn deinit(self: *Fft3dPlan, alloc: std.mem.Allocator) void {
@@ -313,7 +335,11 @@ pub const RealFft3dPlan = struct {
     }
 
     /// Forward RFFT: real[nx*ny*nz] -> complex[(nx/2+1)*ny*nz]
-    pub fn forward(self: *RealFft3dPlan, real_input: []const f64, complex_output: []LibComplex) void {
+    pub fn forward(
+        self: *RealFft3dPlan,
+        real_input: []const f64,
+        complex_output: []LibComplex,
+    ) void {
         self.plan.forward(real_input, complex_output);
     }
 
@@ -455,6 +481,7 @@ test "RealFft3dPlan roundtrip" {
     const complex_size = plan.complexSize();
     const spectrum = try allocator.alloc(LibComplex, complex_size);
     defer allocator.free(spectrum);
+
     plan.forward(&original, spectrum);
 
     // Inverse
@@ -493,6 +520,7 @@ test "RealFft3dPlan vs complex Fft3dPlan" {
     const complex_size = rfft_plan.complexSize();
     const rfft_output = try allocator.alloc(LibComplex, complex_size);
     defer allocator.free(rfft_output);
+
     rfft_plan.forward(&real_input, rfft_output);
 
     // Complex FFT

@@ -65,8 +65,10 @@ pub fn readReferenceJson(
 ) !ScfReferenceOwned {
     const content = try dir.readFileAlloc(io, path, alloc, .limited(64 * 1024 * 1024));
     defer alloc.free(content);
+
     var parsed = try std.json.parseFromSlice(ScfReferenceData, alloc, content, .{});
     defer parsed.deinit();
+
     if (parsed.value.schema_version != 1) return error.UnsupportedSchemaVersion;
 
     const density = try alloc.alloc(f64, parsed.value.density_diagonal.len);

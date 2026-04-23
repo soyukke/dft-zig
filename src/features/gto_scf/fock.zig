@@ -238,6 +238,181 @@ pub fn buildFockDirect(
 ///
 /// Uses batch ERI computation (contractedShellQuartetERI) to build the theta table
 /// once per primitive quartet and extract all Cartesian component ERIs at once.
+const QuartetDims = struct {
+    na: usize,
+    nb: usize,
+    nc: usize,
+    nd: usize,
+    off_a: usize,
+    off_b: usize,
+    off_c: usize,
+    off_d: usize,
+};
+
+const QuartetSym = struct {
+    ab_same: bool,
+    cd_same: bool,
+    abcd_same: bool,
+};
+
+fn accumulateEriSymmetries(
+    n: usize,
+    p: []const f64,
+    j_mat: []f64,
+    k_mat: []f64,
+    sym: QuartetSym,
+    mu: usize,
+    nu: usize,
+    lam: usize,
+    sig: usize,
+    eri: f64,
+) void {
+    // Distribute ERI to J and K using all 8 permutational symmetries
+
+    // 1. (mu,nu | lam,sig) — original
+    j_mat[mu * n + nu] += p[lam * n + sig] * eri;
+    k_mat[mu * n + lam] += p[nu * n + sig] * eri;
+
+    // 2. (nu,mu | lam,sig) — swap bra: only if sa != sb
+    if (!sym.ab_same) {
+        j_mat[nu * n + mu] += p[lam * n + sig] * eri;
+        k_mat[nu * n + lam] += p[mu * n + sig] * eri;
+    }
+
+    // 3. (mu,nu | sig,lam) — swap ket: only if sc != sd
+    if (!sym.cd_same) {
+        j_mat[mu * n + nu] += p[sig * n + lam] * eri;
+        k_mat[mu * n + sig] += p[nu * n + lam] * eri;
+    }
+
+    // 4. (nu,mu | sig,lam) — swap both bra and ket
+    if (!sym.ab_same and !sym.cd_same) {
+        j_mat[nu * n + mu] += p[sig * n + lam] * eri;
+        k_mat[nu * n + sig] += p[mu * n + lam] * eri;
+    }
+
+    // 5. (lam,sig | mu,nu) — bra-ket exchange: only if ab != cd
+    if (!sym.abcd_same) {
+        j_mat[lam * n + sig] += p[mu * n + nu] * eri;
+        k_mat[lam * n + mu] += p[sig * n + nu] * eri;
+
+        // 6. (sig,lam | mu,nu) — bra-ket + swap bra'
+        if (!sym.cd_same) {
+            j_mat[sig * n + lam] += p[mu * n + nu] * eri;
+            k_mat[sig * n + mu] += p[lam * n + nu] * eri;
+        }
+
+        // 7. (lam,sig | nu,mu) — bra-ket + swap ket'
+        if (!sym.ab_same) {
+            j_mat[lam * n + sig] += p[nu * n + mu] * eri;
+            k_mat[lam * n + nu] += p[sig * n + mu] * eri;
+        }
+
+        // 8. (sig,lam | nu,mu) — all three swaps
+        if (!sym.ab_same and !sym.cd_same) {
+            j_mat[sig * n + lam] += p[nu * n + mu] * eri;
+            k_mat[sig * n + nu] += p[lam * n + mu] * eri;
+        }
+    }
+}
+
+fn distributeQuartetToJK(
+    n: usize,
+    p: []const f64,
+    eri_buf: []const f64,
+    dims: QuartetDims,
+    sym: QuartetSym,
+    j_mat: []f64,
+    k_mat: []f64,
+) void {
+    for (0..dims.na) |ia| {
+        const mu = dims.off_a + ia;
+        for (0..dims.nb) |ib| {
+            const nu = dims.off_b + ib;
+            for (0..dims.nc) |ic| {
+                const lam = dims.off_c + ic;
+                for (0..dims.nd) |id_d| {
+                    const sig = dims.off_d + id_d;
+
+                    const idx_eri = ia * dims.nb * dims.nc * dims.nd +
+                        ib * dims.nc * dims.nd + ic * dims.nd + id_d;
+                    const eri = eri_buf[idx_eri];
+
+                    accumulateEriSymmetries(n, p, j_mat, k_mat, sym, mu, nu, lam, sig, eri);
+                }
+            }
+        }
+    }
+}
+
+const AbContext = struct {
+    sa: usize,
+    sb: usize,
+    na: usize,
+    nb: usize,
+    off_a: usize,
+    off_b: usize,
+    q_ab: f64,
+    ab_pair: usize,
+};
+
+fn processKetShells(
+    n: usize,
+    p: []const f64,
+    shells: []const ContractedShell,
+    schwarz: *const SchwarzTable,
+    threshold: f64,
+    ab: AbContext,
+    eri_buf: []f64,
+    j_mat: []f64,
+    k_mat: []f64,
+) void {
+    const n_shells = schwarz.n_shells;
+    for (0..n_shells) |sc| {
+        const nc = schwarz.shell_sizes[sc];
+        const off_c = schwarz.shell_offsets[sc];
+
+        for (0..sc + 1) |sd| {
+            const cd_pair = pairIndex(sc, sd);
+            if (cd_pair > ab.ab_pair) continue;
+
+            const q_cd = schwarz.get(sc, sd);
+            if (ab.q_ab * q_cd < threshold) continue;
+
+            const nd = schwarz.shell_sizes[sd];
+            const off_d = schwarz.shell_offsets[sd];
+
+            // Compute ALL ERIs for this shell quartet at once using Rys quadrature
+            _ = rys_eri.contractedShellQuartetERI(
+                shells[ab.sa],
+                shells[ab.sb],
+                shells[sc],
+                shells[sd],
+                eri_buf[0 .. 15 * 15 * 15 * 15],
+            );
+
+            const dims = QuartetDims{
+                .na = ab.na,
+                .nb = ab.nb,
+                .nc = nc,
+                .nd = nd,
+                .off_a = ab.off_a,
+                .off_b = ab.off_b,
+                .off_c = off_c,
+                .off_d = off_d,
+            };
+            const sym = QuartetSym{
+                .ab_same = (ab.sa == ab.sb),
+                .cd_same = (sc == sd),
+                .abcd_same = (ab.ab_pair == cd_pair),
+            };
+
+            // Distribute batch ERIs to J and K matrices
+            distributeQuartetToJK(n, p, eri_buf, dims, sym, j_mat, k_mat);
+        }
+    }
+}
+
 pub fn buildJKDirect(
     n: usize,
     p: []const f64,
@@ -272,100 +447,17 @@ pub fn buildJKDirect(
             const q_ab = schwarz.get(sa, sb);
 
             const ab_pair = pairIndex(sa, sb);
-
-            for (0..n_shells) |sc| {
-                const nc = schwarz.shell_sizes[sc];
-                const off_c = schwarz.shell_offsets[sc];
-
-                for (0..sc + 1) |sd| {
-                    const cd_pair = pairIndex(sc, sd);
-                    if (cd_pair > ab_pair) continue;
-
-                    const q_cd = schwarz.get(sc, sd);
-                    if (q_ab * q_cd < threshold) continue;
-
-                    const nd = schwarz.shell_sizes[sd];
-                    const off_d = schwarz.shell_offsets[sd];
-
-                    // Compute ALL ERIs for this shell quartet at once using Rys quadrature
-                    _ = rys_eri.contractedShellQuartetERI(
-                        shells[sa],
-                        shells[sb],
-                        shells[sc],
-                        shells[sd],
-                        &eri_buf,
-                    );
-
-                    // Determine symmetry flags for this shell quartet
-                    const ab_same = (sa == sb);
-                    const cd_same = (sc == sd);
-                    const abcd_same = (ab_pair == cd_pair);
-
-                    // Distribute batch ERIs to J and K matrices
-                    for (0..na) |ia| {
-                        const mu = off_a + ia;
-                        for (0..nb) |ib| {
-                            const nu = off_b + ib;
-                            for (0..nc) |ic| {
-                                const lam = off_c + ic;
-                                for (0..nd) |id_d| {
-                                    const sig = off_d + id_d;
-
-                                    const eri = eri_buf[ia * nb * nc * nd + ib * nc * nd + ic * nd + id_d];
-
-                                    // Distribute ERI to J and K using all 8 permutational symmetries
-
-                                    // 1. (mu,nu | lam,sig) — original
-                                    j_mat[mu * n + nu] += p[lam * n + sig] * eri;
-                                    k_mat[mu * n + lam] += p[nu * n + sig] * eri;
-
-                                    // 2. (nu,mu | lam,sig) — swap bra: only if sa != sb
-                                    if (!ab_same) {
-                                        j_mat[nu * n + mu] += p[lam * n + sig] * eri;
-                                        k_mat[nu * n + lam] += p[mu * n + sig] * eri;
-                                    }
-
-                                    // 3. (mu,nu | sig,lam) — swap ket: only if sc != sd
-                                    if (!cd_same) {
-                                        j_mat[mu * n + nu] += p[sig * n + lam] * eri;
-                                        k_mat[mu * n + sig] += p[nu * n + lam] * eri;
-                                    }
-
-                                    // 4. (nu,mu | sig,lam) — swap both bra and ket
-                                    if (!ab_same and !cd_same) {
-                                        j_mat[nu * n + mu] += p[sig * n + lam] * eri;
-                                        k_mat[nu * n + sig] += p[mu * n + lam] * eri;
-                                    }
-
-                                    // 5. (lam,sig | mu,nu) — bra-ket exchange: only if ab != cd
-                                    if (!abcd_same) {
-                                        j_mat[lam * n + sig] += p[mu * n + nu] * eri;
-                                        k_mat[lam * n + mu] += p[sig * n + nu] * eri;
-
-                                        // 6. (sig,lam | mu,nu) — bra-ket + swap bra'
-                                        if (!cd_same) {
-                                            j_mat[sig * n + lam] += p[mu * n + nu] * eri;
-                                            k_mat[sig * n + mu] += p[lam * n + nu] * eri;
-                                        }
-
-                                        // 7. (lam,sig | nu,mu) — bra-ket + swap ket'
-                                        if (!ab_same) {
-                                            j_mat[lam * n + sig] += p[nu * n + mu] * eri;
-                                            k_mat[lam * n + nu] += p[sig * n + mu] * eri;
-                                        }
-
-                                        // 8. (sig,lam | nu,mu) — all three swaps
-                                        if (!ab_same and !cd_same) {
-                                            j_mat[sig * n + lam] += p[nu * n + mu] * eri;
-                                            k_mat[sig * n + nu] += p[lam * n + mu] * eri;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            const ab = AbContext{
+                .sa = sa,
+                .sb = sb,
+                .na = na,
+                .nb = nb,
+                .off_a = off_a,
+                .off_b = off_b,
+                .q_ab = q_ab,
+                .ab_pair = ab_pair,
+            };
+            processKetShells(n, p, shells, schwarz, threshold, ab, &eri_buf, j_mat, k_mat);
         }
     }
 }
@@ -390,6 +482,7 @@ fn buildGDirect(
     const alloc = std.heap.page_allocator;
     const j_mat = alloc.alloc(f64, n * n) catch return;
     defer alloc.free(j_mat);
+
     const k_mat = alloc.alloc(f64, n * n) catch return;
     defer alloc.free(k_mat);
 
@@ -447,14 +540,6 @@ test "Direct SCF J/K matches ERI table (H2 STO-3G)" {
     var k_direct: [4]f64 = undefined;
 
     buildJKDirect(n, &p_mat, &shells, &schwarz, 1e-14, &j_direct, &k_direct);
-
-    std.debug.print("\nDirect SCF vs ERI table (H2 STO-3G):\n", .{});
-    for (0..n * n) |i| {
-        std.debug.print("  J[{d}]: ref={d:14.10} direct={d:14.10} diff={e:10.3}\n", .{ i, j_ref[i], j_direct[i], j_ref[i] - j_direct[i] });
-    }
-    for (0..n * n) |i| {
-        std.debug.print("  K[{d}]: ref={d:14.10} direct={d:14.10} diff={e:10.3}\n", .{ i, k_ref[i], k_direct[i], k_ref[i] - k_direct[i] });
-    }
 
     for (0..n * n) |i| {
         try testing.expectApproxEqAbs(j_ref[i], j_direct[i], 1e-10);

@@ -19,6 +19,42 @@ pub const Grid = struct {
     recip: math.Mat3,
 };
 
+/// Accumulate the force contribution from a single G-vector across all atoms.
+fn accumulateLocalForceG(
+    g: anytype,
+    g_norm: f64,
+    rho: math.Complex,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    local_cfg: local_potential.LocalPotentialConfig,
+    ff_tables: ?[]const form_factor.LocalFormFactorTable,
+    forces: []math.Vec3,
+) void {
+    for (atoms, 0..) |atom, atom_idx| {
+        // Get local pseudopotential form factor for this species
+        // Use the same form factor mode as SCF for consistency
+        const v_loc = if (ff_tables) |tables|
+            tables[atom.species_index].eval(g_norm)
+        else
+            hamiltonian.localFormFactor(&species[atom.species_index], g_norm, local_cfg);
+
+        // Phase: G·R
+        const phase = math.Vec3.dot(g.gvec, atom.position);
+        const cos_phase = std.math.cos(phase);
+        const sin_phase = std.math.sin(phase);
+
+        // Energy uses Re[ρ(G) × V_loc(G)*], so the force uses
+        // Re[i × ρ(G) × exp(+iG·R)] = ρ_r sin(G·R) + ρ_i cos(G·R)
+        const phase_factor = rho.r * sin_phase + rho.i * cos_phase;
+
+        // Force contribution: G × V_loc × phase_factor
+        const force_factor = v_loc * phase_factor;
+        const force_contrib = math.Vec3.scale(g.gvec, force_factor);
+
+        forces[atom_idx] = math.Vec3.add(forces[atom_idx], force_contrib);
+    }
+}
+
 /// Compute local pseudopotential forces in reciprocal space.
 /// F_loc(R_I) = Σ_G G × V_form(|G|) × [ρ_r sin(G·R) - ρ_i cos(G·R)]
 ///
@@ -41,7 +77,7 @@ pub fn localPseudoForces(
     if (n_atoms == 0) return &[_]math.Vec3{};
 
     // Allocate force array
-    var forces = try alloc.alloc(math.Vec3, n_atoms);
+    const forces = try alloc.alloc(math.Vec3, n_atoms);
     for (forces) |*f| {
         f.* = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
     }
@@ -71,30 +107,7 @@ pub fn localPseudoForces(
         // Get electron density at G
         const rho = rho_g[g.idx];
 
-        // Loop over atoms
-        for (atoms, 0..) |atom, atom_idx| {
-            // Get local pseudopotential form factor for this species
-            // Use the same form factor mode as SCF for consistency
-            const v_loc = if (ff_tables) |tables|
-                tables[atom.species_index].eval(g_norm)
-            else
-                hamiltonian.localFormFactor(&species[atom.species_index], g_norm, local_cfg);
-
-            // Phase: G·R
-            const phase = math.Vec3.dot(g.gvec, atom.position);
-            const cos_phase = std.math.cos(phase);
-            const sin_phase = std.math.sin(phase);
-
-            // Energy uses Re[ρ(G) × V_loc(G)*], so the force uses
-            // Re[i × ρ(G) × exp(+iG·R)] = ρ_r sin(G·R) + ρ_i cos(G·R)
-            const phase_factor = rho.r * sin_phase + rho.i * cos_phase;
-
-            // Force contribution: G × V_loc × phase_factor
-            const force_factor = v_loc * phase_factor;
-            const force_contrib = math.Vec3.scale(g.gvec, force_factor);
-
-            forces[atom_idx] = math.Vec3.add(forces[atom_idx], force_contrib);
-        }
+        accumulateLocalForceG(g, g_norm, rho, species, atoms, local_cfg, ff_tables, forces);
     }
 
     return forces;
@@ -159,6 +172,7 @@ test "local force finite difference" {
     // Create a simple reciprocal-space density with Hermitian symmetry
     var rho_g = try alloc.alloc(math.Complex, 64);
     defer alloc.free(rho_g);
+
     for (rho_g) |*r| {
         r.* = math.complex.init(0.0, 0.0);
     }
@@ -180,7 +194,16 @@ test "local force finite difference" {
     rho_g[idx.of(grid, 0, -1, 0)] = math.complex.conj(rho_y);
 
     const local_cfg = local_potential.LocalPotentialConfig.init(.short_range, 0.0);
-    const forces = try localPseudoForces(alloc, grid, rho_g, species, atoms[0..], volume, local_cfg, null);
+    const forces = try localPseudoForces(
+        alloc,
+        grid,
+        rho_g,
+        species,
+        atoms[0..],
+        volume,
+        local_cfg,
+        null,
+    );
     defer alloc.free(forces);
 
     const energyForPos = struct {

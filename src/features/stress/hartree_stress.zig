@@ -7,7 +7,13 @@ const Stress3x3 = stress_util.Stress3x3;
 const Grid = stress_util.Grid;
 
 /// Hartree stress: σ_αβ = -(E_H/Ω) δ_αβ + 8π Σ_{G≠0} |ρ(G)|² G_α G_β / |G|⁴
-pub fn hartreeStress(grid: Grid, rho_g: []const math.Complex, e_hartree: f64, inv_volume: f64, ecutrho: f64) Stress3x3 {
+pub fn hartreeStress(
+    grid: Grid,
+    rho_g: []const math.Complex,
+    e_hartree: f64,
+    inv_volume: f64,
+    ecutrho: f64,
+) Stress3x3 {
     var sigma = stress_util.zeroStress();
 
     var it = scf.GVecIterator.init(grid);

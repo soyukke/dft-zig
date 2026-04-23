@@ -8,7 +8,9 @@ const lebedev = @import("../grid/lebedev.zig");
 ///   G(l1,m1, l2,m2, L,M) = integral Y_{l1,m1}(Omega) Y_{l2,m2}(Omega) Y_{L,M}(Omega) dOmega
 ///
 /// These appear in the PAW compensation charge formula:
-///   n_hat(G) = sum_a sum_ij rho_ij sum_{L,M} G(l_i,m_i, l_j,m_j, L,M) * Q^L_ij(|G|) * Y_{L,M}(G_hat) * exp(-iGR) / Omega
+///   n_hat(G) = sum_a sum_ij rho_ij sum_{L,M}
+///              G(l_i,m_i, l_j,m_j, L,M) * Q^L_ij(|G|)
+///              * Y_{L,M}(G_hat) * exp(-iGR) / Omega
 ///
 /// and similarly in D^hat and on-site quantities.
 ///
@@ -35,7 +37,15 @@ pub const GauntTable = struct {
 
     /// Get Gaunt coefficient G(l1, m1, l2, m2, L, M).
     /// Returns 0.0 if any index is out of range.
-    pub fn get(self: *const GauntTable, l1: usize, m1: i32, l2: usize, m2: i32, big_l: usize, big_m: i32) f64 {
+    pub fn get(
+        self: *const GauntTable,
+        l1: usize,
+        m1: i32,
+        l2: usize,
+        m2: i32,
+        big_l: usize,
+        big_m: i32,
+    ) f64 {
         const lm1 = lmIndex(l1, m1);
         const lm2 = lmIndex(l2, m2);
         const lm3 = lmIndex(big_l, big_m);
@@ -65,7 +75,9 @@ pub const GauntTable = struct {
                 // Recover (L, M) from flat index lm3
                 // lm3 = L*L + L + M => L = floor(sqrt(lm3)), M = lm3 - L*L - L
                 const big_l = lFromLmIndex(lm3);
-                const big_m: i32 = @intCast(@as(i64, @intCast(lm3)) - @as(i64, @intCast(big_l * big_l + big_l)));
+                const big_m: i32 = @intCast(
+                    @as(i64, @intCast(lm3)) - @as(i64, @intCast(big_l * big_l + big_l)),
+                );
                 callback(context, big_l, big_m, val);
             }
         }
@@ -88,7 +100,6 @@ pub const GauntTable = struct {
     /// The Lebedev grid is chosen to exactly integrate the product of three
     /// spherical harmonics of combined degree lmax_proj + lmax_proj + lmax_aug.
     pub fn init(alloc: std.mem.Allocator, lmax_proj: usize, lmax_aug: usize) !GauntTable {
-        // realSphericalHarmonic supports up to l=4
         if (lmax_proj > 4) return error.LmaxTooLarge;
         if (lmax_aug > 4) return error.LmaxTooLarge;
 
@@ -98,65 +109,10 @@ pub const GauntTable = struct {
 
         const values = try alloc.alloc(f64, n_total);
         @memset(values, 0.0);
-
-        // Choose Lebedev grid large enough to integrate products of degree
-        // lmax_proj + lmax_proj + lmax_aug exactly.
-        // Max degree = 2*4 + 4 = 12. lebedev_194 integrates exactly up to degree 17.
-        // Use lebedev_302 for extra safety (exact to degree 23).
-        const grid = lebedev.getLebedevGrid(302);
-
-        // Pre-allocate Y_lm evaluation arrays.
-        // Max lm size: (4+1)^2 = 25
-        const max_lm = 25;
-
-        for (grid) |pt| {
-            const x = pt.x;
-            const y = pt.y;
-            const z = pt.z;
-            // Weights are normalized to sum=1 (surface average).
-            // Full sphere integral = 4*pi * surface_average.
-            const w = pt.w * 4.0 * std.math.pi;
-
-            // Evaluate all Y_lm at this quadrature point
-            var ylm_proj: [max_lm]f64 = undefined;
-            for (0..lmax_proj + 1) |l| {
-                const l_i32: i32 = @intCast(l);
-                var m: i32 = -l_i32;
-                while (m <= l_i32) : (m += 1) {
-                    ylm_proj[lmIndex(l, m)] = nonlocal.realSphericalHarmonic(l_i32, m, x, y, z);
-                }
-            }
-
-            var ylm_aug: [max_lm]f64 = undefined;
-            for (0..lmax_aug + 1) |l| {
-                const l_i32: i32 = @intCast(l);
-                var m: i32 = -l_i32;
-                while (m <= l_i32) : (m += 1) {
-                    ylm_aug[lmIndex(l, m)] = nonlocal.realSphericalHarmonic(l_i32, m, x, y, z);
-                }
-            }
-
-            // Accumulate G(lm1, lm2, LM) = sum_Omega w * Y_{l1,m1} * Y_{l2,m2} * Y_{L,M}
-            for (0..n_lm_proj) |lm1| {
-                const y1 = ylm_proj[lm1];
-                if (@abs(y1) < 1e-30) continue;
-                for (0..n_lm_proj) |lm2| {
-                    const y2 = ylm_proj[lm2];
-                    if (@abs(y2) < 1e-30) continue;
-                    const y12 = y1 * y2 * w;
-                    const base = (lm1 * n_lm_proj + lm2) * n_lm_aug;
-                    for (0..n_lm_aug) |lm3| {
-                        values[base + lm3] += y12 * ylm_aug[lm3];
-                    }
-                }
-            }
-        }
-
-        // Zero out tiny values (numerical noise from quadrature)
+        accumulateGauntOverSphere(values, lmax_proj, lmax_aug, n_lm_proj, n_lm_aug);
         for (values) |*v| {
             if (@abs(v.*) < 1e-14) v.* = 0.0;
         }
-
         return .{
             .values = values,
             .lmax_proj = lmax_proj,
@@ -170,6 +126,47 @@ pub const GauntTable = struct {
         if (self.values.len > 0) alloc.free(self.values);
     }
 };
+
+fn accumulateGauntOverSphere(
+    values: []f64,
+    lmax_proj: usize,
+    lmax_aug: usize,
+    n_lm_proj: usize,
+    n_lm_aug: usize,
+) void {
+    const max_lm = 25;
+    const grid = lebedev.getLebedevGrid(302);
+    for (grid) |pt| {
+        const w = pt.w * 4.0 * std.math.pi;
+        var ylm_proj: [max_lm]f64 = undefined;
+        evalAllRealYlm(lmax_proj, pt.x, pt.y, pt.z, &ylm_proj);
+        var ylm_aug: [max_lm]f64 = undefined;
+        evalAllRealYlm(lmax_aug, pt.x, pt.y, pt.z, &ylm_aug);
+        for (0..n_lm_proj) |lm1| {
+            const y1 = ylm_proj[lm1];
+            if (@abs(y1) < 1e-30) continue;
+            for (0..n_lm_proj) |lm2| {
+                const y2 = ylm_proj[lm2];
+                if (@abs(y2) < 1e-30) continue;
+                const y12 = y1 * y2 * w;
+                const base = (lm1 * n_lm_proj + lm2) * n_lm_aug;
+                for (0..n_lm_aug) |lm3| {
+                    values[base + lm3] += y12 * ylm_aug[lm3];
+                }
+            }
+        }
+    }
+}
+
+fn evalAllRealYlm(lmax: usize, x: f64, y: f64, z: f64, out: []f64) void {
+    for (0..lmax + 1) |l| {
+        const l_i32: i32 = @intCast(l);
+        var m: i32 = -l_i32;
+        while (m <= l_i32) : (m += 1) {
+            out[GauntTable.lmIndex(l, m)] = nonlocal.realSphericalHarmonic(l_i32, m, x, y, z);
+        }
+    }
+}
 
 // ============================================================================
 // Tests
@@ -246,7 +243,11 @@ test "Gaunt selection rule: l1+l2+L must be even" {
         while (m2 <= 1) : (m2 += 1) {
             var big_m: i32 = -1;
             while (big_m <= 1) : (big_m += 1) {
-                try std.testing.expectApproxEqAbs(@as(f64, 0.0), table.get(1, m1, 1, m2, 1, big_m), 1e-14);
+                try std.testing.expectApproxEqAbs(
+                    @as(f64, 0.0),
+                    table.get(1, m1, 1, m2, 1, big_m),
+                    1e-14,
+                );
             }
         }
     }
@@ -268,11 +269,15 @@ test "Gaunt known value: G(1,0, 1,0, 2,0)" {
 
     const val = table.get(1, 0, 1, 0, 2, 0);
 
-    // Numerical integration gives: sqrt(5)/(4*pi*sqrt(pi)) * 2*pi * integral_0^pi (3cos^4-cos^2) sin d theta
-    // = sqrt(5)/(2*sqrt(pi)) * [3*2/5 - 2/3] = sqrt(5)/(2*sqrt(pi)) * (6/5 - 2/3) = sqrt(5)/(2*sqrt(pi)) * 8/15
+    // Numerical integration gives:
+    //   sqrt(5)/(4*pi*sqrt(pi)) * 2*pi * integral_0^pi (3cos^4-cos^2) sin d theta
+    // = sqrt(5)/(2*sqrt(pi)) * [3*2/5 - 2/3]
+    // = sqrt(5)/(2*sqrt(pi)) * (6/5 - 2/3)
+    // = sqrt(5)/(2*sqrt(pi)) * 8/15
     // But let's use the standard formula: G(1,0,1,0,2,0) = (1/sqrt(4pi)) * sqrt(5/pi) * (1/5)
     // Actually, more directly:
-    // integral Y_10^2 Y_20 = (3/(4pi)) * sqrt(5/(16pi)) * 2pi * integral_0^pi cos^2(t) (3cos^2(t)-1) sin(t) dt
+    // integral Y_10^2 Y_20 = (3/(4pi)) * sqrt(5/(16pi)) * 2pi
+    //                      * integral_0^pi cos^2(t) (3cos^2(t)-1) sin(t) dt
     // = (3/(4pi)) * sqrt(5/(16pi)) * 2pi * [3*2/5 - 2/3]
     // = (3/2) * sqrt(5/(16pi)) * 8/15
     // = (3/2) * (8/15) * sqrt(5/(16pi))

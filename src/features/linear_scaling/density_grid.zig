@@ -23,6 +23,7 @@ pub fn buildDensityGridFromCenters(
 
     var orbitals = try alloc.alloc(local_orbital.Orbital, centers.len);
     defer alloc.free(orbitals);
+
     const alpha = 1.0 / (sigma * sigma);
     for (centers, 0..) |center, idx| {
         orbitals[idx] = .{ .center = center, .alpha = alpha, .cutoff = cutoff };
@@ -37,6 +38,7 @@ pub fn buildDensityGridFromCenters(
 
     var candidates: std.ArrayList(usize) = .empty;
     defer candidates.deinit(alloc);
+
     var phi_map = std.AutoHashMap(usize, f64).init(alloc);
     defer phi_map.deinit();
 
@@ -152,7 +154,12 @@ const OrbitalCellList = struct {
         self.* = undefined;
     }
 
-    pub fn collectCandidates(self: *OrbitalCellList, gpa: std.mem.Allocator, point: math.Vec3, list: *std.ArrayList(usize)) !void {
+    pub fn collectCandidates(
+        self: *OrbitalCellList,
+        gpa: std.mem.Allocator,
+        point: math.Vec3,
+        list: *std.ArrayList(usize),
+    ) !void {
         list.clearRetainingCapacity();
         const frac = self.inv_cell.mulVec(point);
         const ix = clampCellIndex(frac.x, self.nx);
@@ -216,7 +223,11 @@ test "density grid integrates to one for normalized orbital" {
         .{ .x = 0.0, .y = 0.0, .z = 6.0 },
     );
     const dims = [3]usize{ 20, 20, 20 };
-    const grid = local_orbital_potential.PotentialGrid{ .cell = cell, .dims = dims, .values = &[_]f64{} };
+    const grid = local_orbital_potential.PotentialGrid{
+        .cell = cell,
+        .dims = dims,
+        .values = &[_]f64{},
+    };
     const centers = [_]math.Vec3{.{ .x = 3.0, .y = 3.0, .z = 3.0 }};
     const sigma = 0.8;
     const cutoff = 4.0;
@@ -225,8 +236,17 @@ test "density grid integrates to one for normalized orbital" {
     var density_matrix = try sparse.CsrMatrix.initFromTriplets(alloc, 1, 1, triplets[0..]);
     defer density_matrix.deinit(alloc);
 
-    const rho = try buildDensityGridFromCenters(alloc, centers[0..], density_matrix, sigma, cutoff, pbc, grid);
+    const rho = try buildDensityGridFromCenters(
+        alloc,
+        centers[0..],
+        density_matrix,
+        sigma,
+        cutoff,
+        pbc,
+        grid,
+    );
     defer alloc.free(rho);
+
     const dv = try grid.weight();
     var sum: f64 = 0.0;
     for (rho) |value| {

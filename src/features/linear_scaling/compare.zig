@@ -53,10 +53,19 @@ pub fn compareSlices(reference: []const f64, candidate: []const f64) !Comparison
     const mean_abs = sum_abs / count;
     const rel_max = if (max_ref_abs > 0.0) max_abs / max_ref_abs else max_abs;
     const rel_rms = if (sum_ref_sq > 0.0) rms / std.math.sqrt(sum_ref_sq / count) else rms;
-    return .{ .max_abs = max_abs, .mean_abs = mean_abs, .rms = rms, .rel_max = rel_max, .rel_rms = rel_rms };
+    return .{
+        .max_abs = max_abs,
+        .mean_abs = mean_abs,
+        .rms = rms,
+        .rel_max = rel_max,
+        .rel_rms = rel_rms,
+    };
 }
 
-pub fn compareVec3Slices(reference: []const math.Vec3, candidate: []const math.Vec3) !ComparisonResult {
+pub fn compareVec3Slices(
+    reference: []const math.Vec3,
+    candidate: []const math.Vec3,
+) !ComparisonResult {
     if (reference.len != candidate.len) return error.MismatchedLength;
     if (reference.len == 0) {
         return .{ .max_abs = 0.0, .mean_abs = 0.0, .rms = 0.0, .rel_max = 0.0, .rel_rms = 0.0 };
@@ -83,7 +92,13 @@ pub fn compareVec3Slices(reference: []const math.Vec3, candidate: []const math.V
     const mean_abs = sum_abs / count;
     const rel_max = if (max_ref_abs > 0.0) max_abs / max_ref_abs else max_abs;
     const rel_rms = if (sum_ref_sq > 0.0) rms / std.math.sqrt(sum_ref_sq / count) else rms;
-    return .{ .max_abs = max_abs, .mean_abs = mean_abs, .rms = rms, .rel_max = rel_max, .rel_rms = rel_rms };
+    return .{
+        .max_abs = max_abs,
+        .mean_abs = mean_abs,
+        .rms = rms,
+        .rel_max = rel_max,
+        .rel_rms = rel_rms,
+    };
 }
 
 pub fn withinTolerance(result: ComparisonResult, tol: ComparisonTolerance) bool {
@@ -117,8 +132,14 @@ test "compareSlices simple diff" {
 }
 
 test "compareVec3Slices norms" {
-    const ref = [_]math.Vec3{ .{ .x = 0.0, .y = 0.0, .z = 0.0 }, .{ .x = 1.0, .y = 0.0, .z = 0.0 } };
-    const cand = [_]math.Vec3{ .{ .x = 0.0, .y = 0.0, .z = 0.0 }, .{ .x = 1.5, .y = 0.0, .z = 0.0 } };
+    const ref = [_]math.Vec3{
+        .{ .x = 0.0, .y = 0.0, .z = 0.0 },
+        .{ .x = 1.0, .y = 0.0, .z = 0.0 },
+    };
+    const cand = [_]math.Vec3{
+        .{ .x = 0.0, .y = 0.0, .z = 0.0 },
+        .{ .x = 1.5, .y = 0.0, .z = 0.0 },
+    };
     const result = try compareVec3Slices(ref[0..], cand[0..]);
     try std.testing.expectApproxEqAbs(@as(f64, 0.5), result.max_abs, 1e-12);
 }

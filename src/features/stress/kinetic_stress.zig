@@ -8,13 +8,20 @@ const Stress3x3 = stress_util.Stress3x3;
 const Grid = stress_util.Grid;
 
 /// Kinetic stress: σ_αβ = -(2 × spin / Ω) Σ_nk f w Σ_G (k+G)_α (k+G)_β |c(G)|²
-pub fn kineticStress(alloc: std.mem.Allocator, wavefunctions: ?scf.WavefunctionData, recip: math.Mat3, inv_volume: f64, spin_factor: f64) !Stress3x3 {
+pub fn kineticStress(
+    alloc: std.mem.Allocator,
+    wavefunctions: ?scf.WavefunctionData,
+    recip: math.Mat3,
+    inv_volume: f64,
+    spin_factor: f64,
+) !Stress3x3 {
     var sigma = stress_util.zeroStress();
     const wf = wavefunctions orelse return sigma;
 
     for (wf.kpoints) |kp| {
         var basis = try plane_wave.generate(alloc, recip, wf.ecut_ry, kp.k_cart);
         defer basis.deinit(alloc);
+
         const gvecs = basis.gvecs;
         const n = gvecs.len;
         if (n != kp.basis_len) continue;

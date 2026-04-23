@@ -53,7 +53,12 @@ pub const MetalPlan3d = struct {
         const ctx = metal.metal_create_context() orelse return error.MetalDeviceNotFound;
         errdefer metal.metal_destroy_context(ctx);
 
-        const plan = metal.metal_fft_create_plan(ctx, @intCast(nx), @intCast(ny), @intCast(nz)) orelse {
+        const plan = metal.metal_fft_create_plan(
+            ctx,
+            @intCast(nx),
+            @intCast(ny),
+            @intCast(nz),
+        ) orelse {
             return error.MetalFftPlanFailed;
         };
 

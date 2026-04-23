@@ -100,6 +100,262 @@ pub const ModelReference = struct {
     }
 };
 
+const ScfStepHamiltonian = struct {
+    hamiltonian: sparse.CsrMatrix,
+    energy_hartree: f64,
+    energy_xc: f64,
+    energy_vxc_rho: f64,
+};
+
+const ScfGridState = struct {
+    overlap: sparse.CsrMatrix,
+    density: sparse.CsrMatrix,
+    current_h: sparse.CsrMatrix,
+};
+
+fn validateScfGridInputs(
+    centers: []const math.Vec3,
+    opts: ScfGridOptions,
+) !void {
+    if (centers.len == 0) return error.InvalidShape;
+    const grid_count = opts.grid.count();
+    if (grid_count == 0) return error.InvalidGrid;
+    if (opts.ionic) |ionic| {
+        if (ionic.len != grid_count) return error.InvalidGrid;
+    }
+}
+
+fn buildScaledKineticMatrix(
+    alloc: std.mem.Allocator,
+    centers: []const math.Vec3,
+    sigma: f64,
+    cutoff: f64,
+    pbc: neighbor_list.Pbc,
+    cell: math.Mat3,
+    kinetic_scale: f64,
+) !sparse.CsrMatrix {
+    var kinetic = try local_orbital.buildKineticCsrFromCenters(
+        alloc,
+        centers,
+        sigma,
+        cutoff,
+        pbc,
+        cell,
+    );
+    if (kinetic_scale != 1.0) {
+        sparse.scaleInPlace(&kinetic, kinetic_scale);
+    }
+    return kinetic;
+}
+
+fn buildNonlocalMatrix(
+    alloc: std.mem.Allocator,
+    centers: []const math.Vec3,
+    cell: math.Mat3,
+    pbc: neighbor_list.Pbc,
+    opts: ScfGridOptions,
+) !?sparse.CsrMatrix {
+    const ions = opts.nonlocal_ions orelse return null;
+    const nl_opts = local_orbital_nonlocal.NonlocalOptions{
+        .sigma = opts.sigma,
+        .cutoff = opts.cutoff,
+        .n_radial = opts.nonlocal_n_radial,
+        .r_max = opts.nonlocal_r_max,
+        .threshold = opts.nonlocal_threshold,
+        .basis = opts.nonlocal_basis,
+    };
+    return try local_orbital_nonlocal.buildNonlocalCsr(
+        alloc,
+        centers,
+        ions,
+        cell,
+        pbc,
+        nl_opts,
+    );
+}
+
+fn buildScfStepHamiltonian(
+    alloc: std.mem.Allocator,
+    centers: []const math.Vec3,
+    pbc: neighbor_list.Pbc,
+    opts: ScfGridOptions,
+    density: sparse.CsrMatrix,
+    kinetic: sparse.CsrMatrix,
+    nonlocal: ?sparse.CsrMatrix,
+) !ScfStepHamiltonian {
+    const rho = try density_grid.buildDensityGridFromCenters(
+        alloc,
+        centers,
+        density,
+        opts.sigma,
+        opts.cutoff,
+        pbc,
+        opts.grid,
+    );
+    defer alloc.free(rho);
+
+    var local = try hartree_xc.buildLocalPotentialGrid(
+        alloc,
+        opts.grid,
+        rho,
+        opts.xc,
+        opts.ionic,
+    );
+    defer local.deinit(alloc);
+
+    const local_grid = local_orbital_potential.PotentialGrid{
+        .cell = opts.grid.cell,
+        .dims = opts.grid.dims,
+        .values = local.values,
+    };
+    var local_matrix = try local_orbital_potential.buildLocalPotentialCsrFromCenters(
+        alloc,
+        centers,
+        opts.sigma,
+        opts.cutoff,
+        pbc,
+        local_grid,
+    );
+    defer local_matrix.deinit(alloc);
+
+    var h_kinetic_local = try sparse.addScaled(
+        alloc,
+        kinetic,
+        1.0,
+        local_matrix,
+        1.0,
+        opts.matrix_threshold,
+    );
+    defer h_kinetic_local.deinit(alloc);
+
+    return .{
+        .hamiltonian = if (nonlocal) |nl|
+            try sparse.addScaled(
+                alloc,
+                h_kinetic_local,
+                1.0,
+                nl,
+                1.0,
+                opts.matrix_threshold,
+            )
+        else
+            try sparse.clone(alloc, h_kinetic_local),
+        .energy_hartree = local.energy_hartree,
+        .energy_xc = local.energy_xc,
+        .energy_vxc_rho = local.energy_vxc_rho,
+    };
+}
+
+fn densityMatrixConverged(
+    alloc: std.mem.Allocator,
+    density: sparse.CsrMatrix,
+    next_density: sparse.CsrMatrix,
+    density_tol: f64,
+) !bool {
+    const diag_old = try sparse.diagonalValues(alloc, density);
+    defer alloc.free(diag_old);
+
+    const diag_new = try sparse.diagonalValues(alloc, next_density);
+    defer alloc.free(diag_new);
+
+    var max_diff: f64 = 0.0;
+    for (diag_old, 0..) |value, idx| {
+        const diff = @abs(diag_new[idx] - value);
+        if (diff > max_diff) max_diff = diff;
+    }
+    return max_diff < density_tol;
+}
+
+fn buildScfGridResult(
+    overlap: sparse.CsrMatrix,
+    hamiltonian: sparse.CsrMatrix,
+    density: sparse.CsrMatrix,
+    energy: f64,
+    energy_hartree: f64,
+    energy_xc: f64,
+    energy_vxc_rho: f64,
+    energy_nonlocal: f64,
+    iterations: usize,
+    converged: bool,
+) ScfGridResult {
+    return .{
+        .overlap = overlap,
+        .hamiltonian = hamiltonian,
+        .density = density,
+        .energy = energy,
+        .energy_hartree = energy_hartree,
+        .energy_xc = energy_xc,
+        .energy_vxc_rho = energy_vxc_rho,
+        .energy_nonlocal = energy_nonlocal,
+        .iterations = iterations,
+        .converged = converged,
+    };
+}
+
+fn initScfGridState(
+    alloc: std.mem.Allocator,
+    centers: []const math.Vec3,
+    cell: math.Mat3,
+    pbc: neighbor_list.Pbc,
+    opts: ScfGridOptions,
+    kinetic: sparse.CsrMatrix,
+) !ScfGridState {
+    var overlap = try local_orbital.buildOverlapCsrFromCenters(
+        alloc,
+        centers,
+        opts.sigma,
+        opts.cutoff,
+        pbc,
+        cell,
+    );
+    errdefer overlap.deinit(alloc);
+
+    var density = try density_matrix.densityFromHamiltonian(
+        alloc,
+        kinetic,
+        overlap,
+        opts.electrons,
+        opts.purification_iters,
+        opts.purification_threshold,
+    );
+    errdefer density.deinit(alloc);
+
+    var current_h = try sparse.clone(alloc, kinetic);
+    errdefer current_h.deinit(alloc);
+
+    return .{
+        .overlap = overlap,
+        .density = density,
+        .current_h = current_h,
+    };
+}
+
+fn buildNextDensity(
+    alloc: std.mem.Allocator,
+    hamiltonian: sparse.CsrMatrix,
+    overlap: sparse.CsrMatrix,
+    opts: ScfGridOptions,
+) !sparse.CsrMatrix {
+    return try density_matrix.densityFromHamiltonian(
+        alloc,
+        hamiltonian,
+        overlap,
+        opts.electrons,
+        opts.purification_iters,
+        opts.purification_threshold,
+    );
+}
+
+fn nonlocalTraceProduct(
+    nonlocal: ?sparse.CsrMatrix,
+    density: sparse.CsrMatrix,
+) !f64 {
+    return if (nonlocal) |nl|
+        try sparse.traceProduct(nl, density)
+    else
+        0.0;
+}
+
 pub fn buildScfModelFromCenters(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
@@ -115,7 +371,13 @@ pub fn buildScfModelFromCenters(
         .kinetic_scale = opts.kinetic_scale,
         .threshold = opts.matrix_threshold,
     };
-    var hamiltonian = try local_orbital_hamiltonian.buildHamiltonianFromCenters(alloc, centers, cell, pbc, ham_opts);
+    var hamiltonian = try local_orbital_hamiltonian.buildHamiltonianFromCenters(
+        alloc,
+        centers,
+        cell,
+        pbc,
+        ham_opts,
+    );
     errdefer hamiltonian.deinit(alloc);
 
     var density = try density_matrix.mcWeenyNonOrthogonal(
@@ -146,63 +408,28 @@ pub fn runScfWithGrid(
     pbc: neighbor_list.Pbc,
     opts: ScfGridOptions,
 ) !ScfGridResult {
-    if (centers.len == 0) return error.InvalidShape;
-    const grid_count = opts.grid.count();
-    if (grid_count == 0) return error.InvalidGrid;
-    if (opts.ionic) |ionic| {
-        if (ionic.len != grid_count) return error.InvalidGrid;
-    }
+    try validateScfGridInputs(centers, opts);
 
-    var overlap = try local_orbital.buildOverlapCsrFromCenters(
+    var kinetic = try buildScaledKineticMatrix(
         alloc,
         centers,
         opts.sigma,
         opts.cutoff,
         pbc,
         cell,
-    );
-    errdefer overlap.deinit(alloc);
-
-    var kinetic = try local_orbital.buildKineticCsrFromCenters(
-        alloc,
-        centers,
-        opts.sigma,
-        opts.cutoff,
-        pbc,
-        cell,
+        opts.kinetic_scale,
     );
     defer kinetic.deinit(alloc);
-    if (opts.kinetic_scale != 1.0) {
-        sparse.scaleInPlace(&kinetic, opts.kinetic_scale);
-    }
 
-    // Build nonlocal potential matrix (constant during SCF)
-    var nonlocal: ?sparse.CsrMatrix = null;
-    if (opts.nonlocal_ions) |ions| {
-        const nl_opts = local_orbital_nonlocal.NonlocalOptions{
-            .sigma = opts.sigma,
-            .cutoff = opts.cutoff,
-            .n_radial = opts.nonlocal_n_radial,
-            .r_max = opts.nonlocal_r_max,
-            .threshold = opts.nonlocal_threshold,
-            .basis = opts.nonlocal_basis,
-        };
-        nonlocal = try local_orbital_nonlocal.buildNonlocalCsr(alloc, centers, ions, cell, pbc, nl_opts);
-    }
+    var nonlocal = try buildNonlocalMatrix(alloc, centers, cell, pbc, opts);
     defer if (nonlocal) |*nl| nl.deinit(alloc);
 
-    var density = try density_matrix.densityFromHamiltonian(
-        alloc,
-        kinetic,
-        overlap,
-        opts.electrons,
-        opts.purification_iters,
-        opts.purification_threshold,
-    );
-    errdefer density.deinit(alloc);
-
-    var current_h = try sparse.clone(alloc, kinetic);
-    errdefer current_h.deinit(alloc);
+    var state = try initScfGridState(alloc, centers, cell, pbc, opts, kinetic);
+    errdefer {
+        state.overlap.deinit(alloc);
+        state.density.deinit(alloc);
+        state.current_h.deinit(alloc);
+    }
 
     var energy_hartree: f64 = 0.0;
     var energy_xc: f64 = 0.0;
@@ -210,118 +437,53 @@ pub fn runScfWithGrid(
     var converged = false;
     var iter: usize = 0;
     while (iter < opts.max_iter) : (iter += 1) {
-        const rho = try density_grid.buildDensityGridFromCenters(
+        var step = try buildScfStepHamiltonian(
             alloc,
             centers,
-            density,
-            opts.sigma,
-            opts.cutoff,
             pbc,
-            opts.grid,
-        );
-        defer alloc.free(rho);
-
-        var local = try hartree_xc.buildLocalPotentialGrid(
-            alloc,
-            opts.grid,
-            rho,
-            opts.xc,
-            opts.ionic,
-        );
-        defer local.deinit(alloc);
-        energy_hartree = local.energy_hartree;
-        energy_xc = local.energy_xc;
-        energy_vxc_rho = local.energy_vxc_rho;
-
-        const local_grid = local_orbital_potential.PotentialGrid{
-            .cell = opts.grid.cell,
-            .dims = opts.grid.dims,
-            .values = local.values,
-        };
-        var local_matrix = try local_orbital_potential.buildLocalPotentialCsrFromCenters(
-            alloc,
-            centers,
-            opts.sigma,
-            opts.cutoff,
-            pbc,
-            local_grid,
-        );
-        defer local_matrix.deinit(alloc);
-
-        // H = T + V_local + V_nonlocal
-        var h_kinetic_local = try sparse.addScaled(
-            alloc,
+            opts,
+            state.density,
             kinetic,
-            1.0,
-            local_matrix,
-            1.0,
-            opts.matrix_threshold,
+            nonlocal,
         );
-        defer h_kinetic_local.deinit(alloc);
+        defer step.hamiltonian.deinit(alloc);
 
-        var hamiltonian: sparse.CsrMatrix = undefined;
-        if (nonlocal) |nl| {
-            hamiltonian = try sparse.addScaled(
-                alloc,
-                h_kinetic_local,
-                1.0,
-                nl,
-                1.0,
-                opts.matrix_threshold,
-            );
-        } else {
-            hamiltonian = try sparse.clone(alloc, h_kinetic_local);
-        }
-        defer hamiltonian.deinit(alloc);
+        energy_hartree = step.energy_hartree;
+        energy_xc = step.energy_xc;
+        energy_vxc_rho = step.energy_vxc_rho;
 
-        var next_density = try density_matrix.densityFromHamiltonian(
-            alloc,
-            hamiltonian,
-            overlap,
-            opts.electrons,
-            opts.purification_iters,
-            opts.purification_threshold,
-        );
+        var next_density = try buildNextDensity(alloc, step.hamiltonian, state.overlap, opts);
         errdefer next_density.deinit(alloc);
 
-        const diag_old = try sparse.diagonalValues(alloc, density);
-        defer alloc.free(diag_old);
-        const diag_new = try sparse.diagonalValues(alloc, next_density);
-        defer alloc.free(diag_new);
-        var max_diff: f64 = 0.0;
-        for (diag_old, 0..) |value, idx| {
-            const diff = @abs(diag_new[idx] - value);
-            if (diff > max_diff) max_diff = diff;
-        }
-        if (max_diff < opts.density_tol) {
-            converged = true;
-        }
+        converged = try densityMatrixConverged(
+            alloc,
+            state.density,
+            next_density,
+            opts.density_tol,
+        );
 
-        density.deinit(alloc);
-        density = next_density;
-        current_h.deinit(alloc);
-        current_h = try sparse.clone(alloc, hamiltonian);
+        state.density.deinit(alloc);
+        state.density = next_density;
+        state.current_h.deinit(alloc);
+        state.current_h = try sparse.clone(alloc, step.hamiltonian);
 
         if (converged) break;
     }
 
-    const energy = try sparse.traceProduct(current_h, density);
-    const energy_nonlocal = if (nonlocal) |nl|
-        try sparse.traceProduct(nl, density)
-    else
-        0.0;
-    return .{
-        .overlap = overlap,
-        .hamiltonian = current_h,
-        .density = density,
-        .energy = energy,
-        .energy_hartree = energy_hartree,
-        .energy_xc = energy_xc,
-        .energy_vxc_rho = energy_vxc_rho,
-        .energy_nonlocal = energy_nonlocal,
-        .iterations = iter,
-        .converged = converged,
-    };
+    const energy = try sparse.traceProduct(state.current_h, state.density);
+    const energy_nonlocal = try nonlocalTraceProduct(nonlocal, state.density);
+    return buildScfGridResult(
+        state.overlap,
+        state.current_h,
+        state.density,
+        energy,
+        energy_hartree,
+        energy_xc,
+        energy_vxc_rho,
+        energy_nonlocal,
+        iter,
+        converged,
+    );
 }
 
 pub fn runScfWithGridAndIons(
@@ -334,6 +496,7 @@ pub fn runScfWithGridAndIons(
 ) !ScfGridResult {
     const ionic = try ionic_potential.buildIonicPotentialGrid(alloc, opts.grid, ions, pbc);
     defer alloc.free(ionic);
+
     var updated = opts;
     updated.ionic = ionic;
     // Pass ions for nonlocal potential if not already specified
@@ -355,6 +518,7 @@ pub fn compareModelToReference(
 ) !reference.ComparisonReport {
     var model_ref = try buildModelReference(alloc, model);
     defer model_ref.deinit(alloc);
+
     return reference.compareReference(reference_data, model_ref.asReferenceData());
 }
 
@@ -383,6 +547,7 @@ test "scf model returns normalized density" {
     };
     var result = try buildScfModelFromCenters(alloc, centers[0..], cell, pbc, opts);
     defer result.deinit(alloc);
+
     const trace_val = try density_matrix.traceOverlap(result.density, result.overlap);
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), trace_val, 1e-8);
     try std.testing.expect(std.math.isFinite(result.energy));
@@ -412,9 +577,14 @@ test "model reference compares to itself" {
     };
     var result = try buildScfModelFromCenters(alloc, centers[0..], cell, pbc, opts);
     defer result.deinit(alloc);
+
     var model_ref = try buildModelReference(alloc, &result);
     defer model_ref.deinit(alloc);
-    const report = try reference.compareReference(model_ref.asReferenceData(), model_ref.asReferenceData());
+
+    const report = try reference.compareReference(
+        model_ref.asReferenceData(),
+        model_ref.asReferenceData(),
+    );
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), report.energy.abs, 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), report.density.max_abs, 1e-12);
 }
@@ -449,6 +619,7 @@ test "runScfWithGrid produces finite energy" {
     };
     var result = try runScfWithGrid(alloc, centers[0..], cell, pbc, opts);
     defer result.deinit(alloc);
+
     const trace_val = try density_matrix.traceOverlap(result.density, result.overlap);
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), trace_val, 1e-8);
     try std.testing.expect(std.math.isFinite(result.energy));
@@ -488,14 +659,17 @@ test "runScfWithGridAndIons shifts energy" {
 
     var r = try alloc.alloc(f64, 2);
     defer alloc.free(r);
+
     r[0] = 0.0;
     r[1] = 1.0;
     var rab = try alloc.alloc(f64, 2);
     defer alloc.free(rab);
+
     rab[0] = 0.0;
     rab[1] = 1.0;
     var v_local = try alloc.alloc(f64, 2);
     defer alloc.free(v_local);
+
     v_local[0] = 0.3;
     v_local[1] = 0.3;
     const upf = pseudo.UpfData{
@@ -510,6 +684,7 @@ test "runScfWithGridAndIons shifts energy" {
     const ions = [_]ionic_potential.IonSite{.{ .position = centers[0], .upf = &upf }};
     var with_ions = try runScfWithGridAndIons(alloc, centers[0..], cell, pbc, ions[0..], opts);
     defer with_ions.deinit(alloc);
+
     const diff = @abs(with_ions.energy - baseline.energy);
     try std.testing.expect(diff > 1e-4);
 }

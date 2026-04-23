@@ -278,6 +278,7 @@ test "IFC round-trip: D(q) -> C(R) -> D(q) recovers original" {
     // Create simple dynamical matrices
     var dyn0 = try alloc.alloc(Complex, dim2);
     defer alloc.free(dyn0);
+
     var dyn1 = try alloc.alloc(Complex, dim2);
     defer alloc.free(dyn1);
 
@@ -331,6 +332,7 @@ test "IFC ASR: acoustic modes have zero frequency at Gamma" {
     // Create D(q) with known structure
     var dyn0 = try alloc.alloc(Complex, dim2);
     defer alloc.free(dyn0);
+
     var dyn1 = try alloc.alloc(Complex, dim2);
     defer alloc.free(dyn1);
 

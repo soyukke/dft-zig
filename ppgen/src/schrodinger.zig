@@ -36,6 +36,11 @@ pub const Solution = struct {
     }
 };
 
+const EnergyBracket = struct {
+    lo: f64,
+    hi: f64,
+};
+
 /// Solve the radial Schrödinger equation for a single orbital.
 ///
 /// V_eff(r) should be the total effective potential in Rydberg:
@@ -53,141 +58,29 @@ pub fn solve(
 
     const required_nodes = qn.n - qn.l - 1;
 
-    // Build full effective potential: V + l(l+1)/r²
-    const v_full = try allocator.alloc(f64, n);
+    const v_full = try buildFullPotential(allocator, grid, v_eff, qn.l);
     defer allocator.free(v_full);
 
-    const ll: f64 = @floatFromInt(qn.l);
-    const centrifugal = ll * (ll + 1.0);
-
-    for (0..n) |i| {
-        const r = grid.r[i];
-        const r2 = if (r > 1e-30) r * r else 1e-30;
-        v_full[i] = v_eff[i] + centrifugal / r2;
-    }
-
-    // Numerov g-function workspace (reused across iterations)
     const g = try allocator.alloc(f64, n);
     defer allocator.free(g);
 
-    // Bisection to find eigenvalue with correct node count
-    var e_lo: f64 = energy_guess - 10.0;
-    var e_hi: f64 = energy_guess + 10.0;
+    var bracket = findEnergyBracket(grid, v_full, g, required_nodes, energy_guess);
+    bisectEnergyBracket(grid, v_full, g, required_nodes, &bracket);
 
-    // Bracket: find e_lo with too few nodes, e_hi with too many
-    for (0..100) |_| {
-        buildG(grid, v_full, e_lo, g);
-        const nodes_lo = countNodesOutward(g, n);
-        buildG(grid, v_full, e_hi, g);
-        const nodes_hi = countNodesOutward(g, n);
-        if (nodes_lo <= required_nodes and nodes_hi > required_nodes) break;
-        if (nodes_lo > required_nodes) e_lo -= 10.0;
-        if (nodes_hi <= required_nodes) e_hi += 10.0;
-    }
-
-    // Bisect on node count to narrow energy range
-    for (0..100) |_| {
-        const e_mid = 0.5 * (e_lo + e_hi);
-        buildG(grid, v_full, e_mid, g);
-        const nodes = countNodesOutward(g, n);
-        if (nodes > required_nodes) {
-            e_hi = e_mid;
-        } else {
-            e_lo = e_mid;
-        }
-        if (e_hi - e_lo < 1e-14) break;
-    }
-
-    // Refine with shooting method
-    var energy = 0.5 * (e_lo + e_hi);
     const phi_out = try allocator.alloc(f64, n);
     defer allocator.free(phi_out);
+
     const phi_in = try allocator.alloc(f64, n);
     defer allocator.free(phi_in);
+
     const u = try allocator.alloc(f64, n);
+    errdefer allocator.free(u);
 
-    for (0..300) |_| {
-        buildG(grid, v_full, energy, g);
+    const energy = runShootingRefinement(grid, v_full, g, qn.l, &bracket, phi_out, phi_in, u);
+    finalizeWavefunction(grid, v_full, g, qn.l, energy, phi_out, phi_in, u);
+    normalizeWavefunction(grid, u);
 
-        const i_match = findTurningPoint(v_full, energy, n);
-
-        // Outward: 0 -> i_match
-        numerovOutward(g, qn.l, grid, phi_out, n);
-
-        // Inward: n-1 -> i_match
-        numerovInward(g, energy, grid, phi_in, n);
-
-        // Scale inward to match outward at turning point
-        if (@abs(phi_in[i_match]) < 1e-30) break;
-        const scale = phi_out[i_match] / phi_in[i_match];
-        for (0..n) |i| {
-            phi_in[i] *= scale;
-        }
-
-        // Build full φ and convert to u
-        for (0..n) |i| {
-            const phi = if (i <= i_match) phi_out[i] else phi_in[i];
-            u[i] = phi * @exp(grid.b * @as(f64, @floatFromInt(i)) * 0.5);
-        }
-
-        // Log-derivative mismatch in φ-space (h=1)
-        const dphi_out = phi_out[i_match + 1] - phi_out[i_match - 1];
-        const dphi_in = phi_in[i_match + 1] - phi_in[i_match - 1];
-        const mismatch = dphi_out - dphi_in;
-
-        // Norm of u: ∫ u² dr = Σ u_i² rab_i (with ctrap weights)
-        var norm: f64 = 0;
-        for (0..n) |i| {
-            norm += ctrapWeight(i, n) * u[i] * u[i] * grid.rab[i];
-        }
-        if (norm < 1e-30) break;
-
-        // Energy correction
-        const de = -mismatch * phi_out[i_match] * @exp(grid.b * @as(f64, @floatFromInt(i_match))) / norm;
-
-        energy += de;
-        energy = @max(e_lo, @min(e_hi, energy));
-
-        if (@abs(de) < 1e-12) break;
-    }
-
-    // Final integration with converged energy
-    buildG(grid, v_full, energy, g);
-    const i_match = findTurningPoint(v_full, energy, n);
-    numerovOutward(g, qn.l, grid, phi_out, n);
-    numerovInward(g, energy, grid, phi_in, n);
-
-    if (@abs(phi_in[i_match]) > 1e-30) {
-        const scale = phi_out[i_match] / phi_in[i_match];
-        for (0..n) |i| {
-            phi_in[i] *= scale;
-        }
-    }
-
-    for (0..n) |i| {
-        const phi = if (i <= i_match) phi_out[i] else phi_in[i];
-        u[i] = phi * @exp(grid.b * @as(f64, @floatFromInt(i)) * 0.5);
-    }
-
-    // Normalize: ∫ u² dr = 1
-    var norm: f64 = 0;
-    for (0..n) |i| {
-        norm += ctrapWeight(i, n) * u[i] * u[i] * grid.rab[i];
-    }
-    const inv_sqrt_norm = 1.0 / @sqrt(norm);
-    for (0..n) |i| {
-        u[i] *= inv_sqrt_norm;
-    }
-
-    // Compute R(r) = u(r)/r
-    const R = try allocator.alloc(f64, n);
-    for (0..n) |i| {
-        if (grid.r[i] > 1e-30) {
-            R[i] = u[i] / grid.r[i];
-        } else {
-            R[i] = if (n > 1) u[1] / grid.r[1] else 0;
-        }
-    }
+    const R = try buildRadialWavefunction(allocator, grid, u);
 
     return .{
         .energy = energy,
@@ -196,6 +89,181 @@ pub fn solve(
         .qn = qn,
         .allocator = allocator,
     };
+}
+
+fn buildFullPotential(
+    allocator: std.mem.Allocator,
+    grid: *const RadialGrid,
+    v_eff: []const f64,
+    l: u32,
+) ![]f64 {
+    const v_full = try allocator.alloc(f64, grid.n);
+    const ll: f64 = @floatFromInt(l);
+    const centrifugal = ll * (ll + 1.0);
+    for (0..grid.n) |i| {
+        const r = grid.r[i];
+        const r2 = if (r > 1e-30) r * r else 1e-30;
+        v_full[i] = v_eff[i] + centrifugal / r2;
+    }
+    return v_full;
+}
+
+fn findEnergyBracket(
+    grid: *const RadialGrid,
+    v_full: []const f64,
+    g: []f64,
+    required_nodes: u32,
+    energy_guess: f64,
+) EnergyBracket {
+    var bracket = EnergyBracket{
+        .lo = energy_guess - 10.0,
+        .hi = energy_guess + 10.0,
+    };
+    for (0..100) |_| {
+        buildG(grid, v_full, bracket.lo, g);
+        const nodes_lo = countNodesOutward(g, grid.n);
+        buildG(grid, v_full, bracket.hi, g);
+        const nodes_hi = countNodesOutward(g, grid.n);
+        if (nodes_lo <= required_nodes and nodes_hi > required_nodes) break;
+        if (nodes_lo > required_nodes) bracket.lo -= 10.0;
+        if (nodes_hi <= required_nodes) bracket.hi += 10.0;
+    }
+    return bracket;
+}
+
+fn bisectEnergyBracket(
+    grid: *const RadialGrid,
+    v_full: []const f64,
+    g: []f64,
+    required_nodes: u32,
+    bracket: *EnergyBracket,
+) void {
+    for (0..100) |_| {
+        const e_mid = 0.5 * (bracket.lo + bracket.hi);
+        buildG(grid, v_full, e_mid, g);
+        const nodes = countNodesOutward(g, grid.n);
+        if (nodes > required_nodes) {
+            bracket.hi = e_mid;
+        } else {
+            bracket.lo = e_mid;
+        }
+        if (bracket.hi - bracket.lo < 1e-14) break;
+    }
+}
+
+fn runShootingRefinement(
+    grid: *const RadialGrid,
+    v_full: []const f64,
+    g: []f64,
+    l: u32,
+    bracket: *const EnergyBracket,
+    phi_out: []f64,
+    phi_in: []f64,
+    u: []f64,
+) f64 {
+    var energy = 0.5 * (bracket.lo + bracket.hi);
+    for (0..300) |_| {
+        buildG(grid, v_full, energy, g);
+        const i_match = findTurningPoint(v_full, energy, grid.n);
+        numerovOutward(g, l, grid, phi_out, grid.n);
+        numerovInward(g, energy, grid, phi_in, grid.n);
+        if (!matchWavefunctions(phi_out, phi_in, i_match)) break;
+
+        buildReducedWavefunction(grid, phi_out, phi_in, i_match, u);
+        const norm = computeWavefunctionNorm(grid, u);
+        if (norm < 1e-30) break;
+
+        const de = energyCorrection(grid, phi_out, phi_in, i_match, norm);
+        energy = @max(bracket.lo, @min(bracket.hi, energy + de));
+        if (@abs(de) < 1e-12) break;
+    }
+    return energy;
+}
+
+fn finalizeWavefunction(
+    grid: *const RadialGrid,
+    v_full: []const f64,
+    g: []f64,
+    l: u32,
+    energy: f64,
+    phi_out: []f64,
+    phi_in: []f64,
+    u: []f64,
+) void {
+    buildG(grid, v_full, energy, g);
+    const i_match = findTurningPoint(v_full, energy, grid.n);
+    numerovOutward(g, l, grid, phi_out, grid.n);
+    numerovInward(g, energy, grid, phi_in, grid.n);
+    _ = matchWavefunctions(phi_out, phi_in, i_match);
+    buildReducedWavefunction(grid, phi_out, phi_in, i_match, u);
+}
+
+fn matchWavefunctions(phi_out: []const f64, phi_in: []f64, i_match: usize) bool {
+    if (@abs(phi_in[i_match]) < 1e-30) return false;
+    const scale = phi_out[i_match] / phi_in[i_match];
+    for (phi_in) |*phi| {
+        phi.* *= scale;
+    }
+    return true;
+}
+
+fn buildReducedWavefunction(
+    grid: *const RadialGrid,
+    phi_out: []const f64,
+    phi_in: []const f64,
+    i_match: usize,
+    u: []f64,
+) void {
+    for (0..grid.n) |i| {
+        const phi = if (i <= i_match) phi_out[i] else phi_in[i];
+        u[i] = phi * @exp(grid.b * @as(f64, @floatFromInt(i)) * 0.5);
+    }
+}
+
+fn computeWavefunctionNorm(grid: *const RadialGrid, u: []const f64) f64 {
+    var norm: f64 = 0;
+    for (0..grid.n) |i| {
+        norm += ctrapWeight(i, grid.n) * u[i] * u[i] * grid.rab[i];
+    }
+    return norm;
+}
+
+fn energyCorrection(
+    grid: *const RadialGrid,
+    phi_out: []const f64,
+    phi_in: []const f64,
+    i_match: usize,
+    norm: f64,
+) f64 {
+    const dphi_out = phi_out[i_match + 1] - phi_out[i_match - 1];
+    const dphi_in = phi_in[i_match + 1] - phi_in[i_match - 1];
+    const mismatch = dphi_out - dphi_in;
+    const match_scale = @exp(grid.b * @as(f64, @floatFromInt(i_match)));
+    return -mismatch * phi_out[i_match] * match_scale / norm;
+}
+
+fn normalizeWavefunction(grid: *const RadialGrid, u: []f64) void {
+    const norm = computeWavefunctionNorm(grid, u);
+    const inv_sqrt_norm = 1.0 / @sqrt(norm);
+    for (u) |*u_i| {
+        u_i.* *= inv_sqrt_norm;
+    }
+}
+
+fn buildRadialWavefunction(
+    allocator: std.mem.Allocator,
+    grid: *const RadialGrid,
+    u: []const f64,
+) ![]f64 {
+    const R = try allocator.alloc(f64, grid.n);
+    for (0..grid.n) |i| {
+        if (grid.r[i] > 1e-30) {
+            R[i] = u[i] / grid.r[i];
+        } else {
+            R[i] = if (grid.n > 1) u[1] / grid.r[1] else 0;
+        }
+    }
+    return R;
 }
 
 /// Build Numerov g-function for the transformed equation φ'' = g(i)φ.
@@ -318,6 +386,7 @@ test "hydrogen 1s eigenvalue" {
 
     const v = try allocator.alloc(f64, grid.n);
     defer allocator.free(v);
+
     for (0..grid.n) |i| {
         const r = grid.r[i];
         v[i] = if (r > 1e-30) -2.0 / r else -2.0 / 1e-30;
@@ -337,6 +406,7 @@ test "hydrogen 2s eigenvalue" {
 
     const v = try allocator.alloc(f64, grid.n);
     defer allocator.free(v);
+
     for (0..grid.n) |i| {
         const r = grid.r[i];
         v[i] = if (r > 1e-30) -2.0 / r else -2.0 / 1e-30;
@@ -356,6 +426,7 @@ test "hydrogen 2p eigenvalue" {
 
     const v = try allocator.alloc(f64, grid.n);
     defer allocator.free(v);
+
     for (0..grid.n) |i| {
         const r = grid.r[i];
         v[i] = if (r > 1e-30) -2.0 / r else -2.0 / 1e-30;

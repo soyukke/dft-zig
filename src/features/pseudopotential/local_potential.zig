@@ -31,7 +31,11 @@ pub fn defaultEwaldAlpha(cell_bohr: math.Mat3) f64 {
     return 5.0 / lmin;
 }
 
-pub fn resolve(mode: LocalPotentialMode, explicit_alpha: f64, cell_bohr: math.Mat3) LocalPotentialConfig {
+pub fn resolve(
+    mode: LocalPotentialMode,
+    explicit_alpha: f64,
+    cell_bohr: math.Mat3,
+) LocalPotentialConfig {
     return .{
         .mode = mode,
         .alpha = if (mode == .ewald)

@@ -52,8 +52,8 @@ pub fn reduceKmesh(
 
     const used = try alloc.alloc(bool, total);
     defer alloc.free(used);
-    @memset(used, false);
 
+    @memset(used, false);
     var reduced: std.ArrayList(symmetry.KPoint) = .empty;
     errdefer reduced.deinit(alloc);
 
@@ -63,6 +63,7 @@ pub fn reduceKmesh(
         const seed = indexFromFlat(kmesh, i);
         const group = try alloc.alloc(bool, total);
         defer alloc.free(group);
+
         @memset(group, false);
 
         markIndex(group, kmesh, seed);
@@ -122,6 +123,126 @@ pub const KmeshMapping = struct {
     }
 };
 
+/// Find the identity symmetry-op index (rot = I) that maps `seed` to itself.
+/// The IBZ representative must use identity to preserve LOBPCG eigenvectors.
+fn findIdentityOpIndex(
+    ops: []const KmeshOp,
+    seed: Index3,
+    seed_flat: usize,
+    kmesh: [3]usize,
+) ?usize {
+    for (ops, 0..) |op, op_idx| {
+        const mapped = mapIndex(op, seed, kmesh);
+        const mapped_flat = flatIndex(kmesh, mapped);
+        if (mapped_flat == seed_flat) {
+            if (isIdentityOp(op.op)) return op_idx;
+        }
+    }
+    return null;
+}
+
+/// Mark every k-point in the star of `seed` (optionally including time-reversed
+/// partners) as belonging to `ibz_idx`.
+fn markStarFromSeed(
+    seed: Index3,
+    kmesh: [3]usize,
+    ops: []const KmeshOp,
+    can_time_reverse: bool,
+    shift2_int: Index3,
+    ibz_idx: usize,
+    used: []bool,
+    full_to_ibz: []usize,
+    full_symop: []usize,
+    full_time_reversed: []bool,
+) void {
+    for (ops, 0..) |op, op_idx| {
+        const mapped = mapIndex(op, seed, kmesh);
+        const mapped_flat = flatIndex(kmesh, mapped);
+        if (!used[mapped_flat]) {
+            used[mapped_flat] = true;
+            full_to_ibz[mapped_flat] = ibz_idx;
+            full_symop[mapped_flat] = op_idx;
+            full_time_reversed[mapped_flat] = false;
+        }
+        if (can_time_reverse) {
+            const tr = timeReversalIndex(mapped, kmesh, shift2_int);
+            const tr_flat = flatIndex(kmesh, tr);
+            if (!used[tr_flat]) {
+                used[tr_flat] = true;
+                full_to_ibz[tr_flat] = ibz_idx;
+                full_symop[tr_flat] = op_idx;
+                full_time_reversed[tr_flat] = true;
+            }
+        }
+    }
+}
+
+/// Process one still-unvisited seed k-point: find identity op, expand its star,
+/// accumulate weight, and push the IBZ representative into `reduced`.
+fn processSeedKpoint(
+    alloc: std.mem.Allocator,
+    seed_flat_start: usize,
+    kmesh: [3]usize,
+    shift: math.Vec3,
+    ops: []const KmeshOp,
+    recip: math.Mat3,
+    can_time_reverse: bool,
+    shift2_int: Index3,
+    total: usize,
+    used: []bool,
+    full_to_ibz: []usize,
+    full_symop: []usize,
+    full_time_reversed: []bool,
+    reduced: *std.ArrayList(symmetry.KPoint),
+) !void {
+    const seed = indexFromFlat(kmesh, seed_flat_start);
+    const ibz_idx = reduced.items.len;
+    const seed_flat = flatIndex(kmesh, seed);
+
+    const identity_idx = findIdentityOpIndex(ops, seed, seed_flat, kmesh) orelse
+        return error.InvalidKmeshReduction;
+
+    // Mark seed with identity (must exist)
+    used[seed_flat] = true;
+    full_to_ibz[seed_flat] = ibz_idx;
+    full_symop[seed_flat] = identity_idx;
+    full_time_reversed[seed_flat] = false;
+
+    markStarFromSeed(
+        seed,
+        kmesh,
+        ops,
+        can_time_reverse,
+        shift2_int,
+        ibz_idx,
+        used,
+        full_to_ibz,
+        full_symop,
+        full_time_reversed,
+    );
+
+    // Count star size for weight
+    var count: usize = 0;
+    var j: usize = 0;
+    while (j < total) : (j += 1) {
+        if (full_to_ibz[j] == ibz_idx and used[j]) {
+            count += 1;
+        }
+    }
+
+    const weight = @as(f64, @floatFromInt(count)) / @as(f64, @floatFromInt(total));
+    const k_frac = math.Vec3{
+        .x = mesh.fracFromIndex(seed.x, kmesh[0], shift.x),
+        .y = mesh.fracFromIndex(seed.y, kmesh[1], shift.y),
+        .z = mesh.fracFromIndex(seed.z, kmesh[2], shift.z),
+    };
+    reduced.append(alloc, .{
+        .k_frac = k_frac,
+        .k_cart = math.fracToCart(k_frac, recip),
+        .weight = weight,
+    }) catch return error.OutOfMemory;
+}
+
 /// Like `reduceKmesh`, but also returns the mapping from each full-BZ k-point
 /// to its IBZ representative and the symmetry operation that connects them.
 pub fn reduceKmeshWithMapping(
@@ -143,15 +264,18 @@ pub fn reduceKmeshWithMapping(
 
     const used = try alloc.alloc(bool, total);
     defer alloc.free(used);
-    @memset(used, false);
 
+    @memset(used, false);
     // Per full-BZ k-point: which IBZ index and symop index
     const full_to_ibz = try alloc.alloc(usize, total);
     errdefer alloc.free(full_to_ibz);
+
     const full_symop = try alloc.alloc(usize, total);
     errdefer alloc.free(full_symop);
+
     const full_time_reversed = try alloc.alloc(bool, total);
     errdefer alloc.free(full_time_reversed);
+
     @memset(full_to_ibz, 0);
     @memset(full_symop, 0);
     @memset(full_time_reversed, false);
@@ -162,78 +286,22 @@ pub fn reduceKmeshWithMapping(
     var i: usize = 0;
     while (i < total) : (i += 1) {
         if (used[i]) continue;
-        const seed = indexFromFlat(kmesh, i);
-        const ibz_idx = reduced.items.len;
-
-        const seed_flat = flatIndex(kmesh, seed);
-
-        // Find identity operation index first.
-        // The IBZ representative must use identity to preserve LOBPCG eigenvectors.
-        var identity_idx: ?usize = null;
-        for (ops, 0..) |op, op_idx| {
-            const mapped = mapIndex(op, seed, kmesh);
-            const mapped_flat = flatIndex(kmesh, mapped);
-            if (mapped_flat == seed_flat) {
-                // Check if this is the identity (rot = I, no translation needed for grid)
-                if (isIdentityOp(op.op)) {
-                    identity_idx = op_idx;
-                    break;
-                }
-            }
-        }
-
-        // Mark seed with identity (must exist)
-        if (identity_idx) |id_idx| {
-            used[seed_flat] = true;
-            full_to_ibz[seed_flat] = ibz_idx;
-            full_symop[seed_flat] = id_idx;
-            full_time_reversed[seed_flat] = false;
-        } else {
-            return error.InvalidKmeshReduction;
-        }
-
-        // Mark other k-points in the star
-        for (ops, 0..) |op, op_idx| {
-            const mapped = mapIndex(op, seed, kmesh);
-            const mapped_flat = flatIndex(kmesh, mapped);
-            if (!used[mapped_flat]) {
-                used[mapped_flat] = true;
-                full_to_ibz[mapped_flat] = ibz_idx;
-                full_symop[mapped_flat] = op_idx;
-                full_time_reversed[mapped_flat] = false;
-            }
-            if (can_time_reverse) {
-                const tr = timeReversalIndex(mapped, kmesh, shift2_int);
-                const tr_flat = flatIndex(kmesh, tr);
-                if (!used[tr_flat]) {
-                    used[tr_flat] = true;
-                    full_to_ibz[tr_flat] = ibz_idx;
-                    full_symop[tr_flat] = op_idx;
-                    full_time_reversed[tr_flat] = true;
-                }
-            }
-        }
-
-        // Count star size for weight
-        var count: usize = 0;
-        var j: usize = 0;
-        while (j < total) : (j += 1) {
-            if (full_to_ibz[j] == ibz_idx and used[j]) {
-                count += 1;
-            }
-        }
-
-        const weight = @as(f64, @floatFromInt(count)) / @as(f64, @floatFromInt(total));
-        const k_frac = math.Vec3{
-            .x = mesh.fracFromIndex(seed.x, kmesh[0], shift.x),
-            .y = mesh.fracFromIndex(seed.y, kmesh[1], shift.y),
-            .z = mesh.fracFromIndex(seed.z, kmesh[2], shift.z),
-        };
-        reduced.append(alloc, .{
-            .k_frac = k_frac,
-            .k_cart = math.fracToCart(k_frac, recip),
-            .weight = weight,
-        }) catch return error.OutOfMemory;
+        try processSeedKpoint(
+            alloc,
+            i,
+            kmesh,
+            shift,
+            ops,
+            recip,
+            can_time_reverse,
+            shift2_int,
+            total,
+            used,
+            full_to_ibz,
+            full_symop,
+            full_time_reversed,
+            &reduced,
+        );
     }
 
     for (used) |ok| {
@@ -267,6 +335,7 @@ pub fn verifyKmeshReduction(
     const total = full.len;
     const covered = try alloc.alloc(bool, total);
     defer alloc.free(covered);
+
     @memset(covered, false);
 
     const shift_grid = shiftInGridUnits(kmesh, shift);
@@ -280,6 +349,7 @@ pub fn verifyKmeshReduction(
         const seed = indexFromKpoint(kp, kmesh, shift, tol) orelse return false;
         const group = try alloc.alloc(bool, total);
         defer alloc.free(group);
+
         @memset(group, false);
 
         markIndex(group, kmesh, seed);
@@ -383,7 +453,10 @@ fn markIndex(group: []bool, kmesh: [3]usize, index: Index3) void {
 }
 
 fn flatIndex(kmesh: [3]usize, index: Index3) usize {
-    return @as(usize, @intCast(index.x)) + kmesh[0] * (@as(usize, @intCast(index.y)) + kmesh[1] * @as(usize, @intCast(index.z)));
+    const ix = @as(usize, @intCast(index.x));
+    const iy = @as(usize, @intCast(index.y));
+    const iz = @as(usize, @intCast(index.z));
+    return ix + kmesh[0] * (iy + kmesh[1] * iz);
 }
 
 fn indexFromFlat(kmesh: [3]usize, flat: usize) Index3 {

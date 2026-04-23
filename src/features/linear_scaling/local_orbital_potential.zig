@@ -86,6 +86,7 @@ pub fn buildLocalPotentialCsrFromCenters(
 
     var orbitals = try alloc.alloc(local_orbital.Orbital, centers.len);
     defer alloc.free(orbitals);
+
     const alpha = 1.0 / (sigma * sigma);
     for (centers, 0..) |center, idx| {
         orbitals[idx] = .{ .center = center, .alpha = alpha, .cutoff = cutoff };
@@ -166,7 +167,12 @@ fn wrapFrac(value: f64) f64 {
     return value - std.math.floor(value + 0.5);
 }
 
-fn minimumImageDelta(cell: math.Mat3, inv_cell: math.Mat3, pbc: neighbor_list.Pbc, delta: math.Vec3) math.Vec3 {
+fn minimumImageDelta(
+    cell: math.Mat3,
+    inv_cell: math.Mat3,
+    pbc: neighbor_list.Pbc,
+    delta: math.Vec3,
+) math.Vec3 {
     var frac = inv_cell.mulVec(delta);
     if (pbc.x) frac.x = wrapFrac(frac.x);
     if (pbc.y) frac.y = wrapFrac(frac.y);
@@ -185,6 +191,7 @@ test "local potential constant matches overlap scaling" {
     const count = dims[0] * dims[1] * dims[2];
     const values = try alloc.alloc(f64, count);
     defer alloc.free(values);
+
     @memset(values, 0.7);
     const grid_full = PotentialGrid{ .cell = cell, .dims = dims, .values = values };
     const centers = [_]math.Vec3{
@@ -194,7 +201,14 @@ test "local potential constant matches overlap scaling" {
     const pbc = neighbor_list.Pbc{ .x = false, .y = false, .z = false };
     const sigma = 0.5;
     const cutoff = 3.0;
-    var local = try buildLocalPotentialCsrFromCenters(alloc, centers[0..], sigma, cutoff, pbc, grid_full);
+    var local = try buildLocalPotentialCsrFromCenters(
+        alloc,
+        centers[0..],
+        sigma,
+        cutoff,
+        pbc,
+        grid_full,
+    );
     defer local.deinit(alloc);
 
     const alpha = 1.0 / (sigma * sigma);

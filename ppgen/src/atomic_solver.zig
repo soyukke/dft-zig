@@ -32,6 +32,62 @@ pub const OrbitalConfig = struct {
     occupation: f64,
 };
 
+const OrbitalState = struct {
+    eigenvalues: []f64,
+    wavefunctions: [][]f64,
+    allocator: std.mem.Allocator,
+
+    fn init(
+        allocator: std.mem.Allocator,
+        grid: *const RadialGrid,
+        orbitals: []const OrbitalConfig,
+        z: f64,
+    ) !OrbitalState {
+        const n = grid.n;
+        const n_orb = orbitals.len;
+        const eigenvalues = try allocator.alloc(f64, n_orb);
+        errdefer allocator.free(eigenvalues);
+
+        const wavefunctions = try allocator.alloc([]f64, n_orb);
+        errdefer allocator.free(wavefunctions);
+
+        var initialized_wavefunctions: usize = 0;
+        errdefer {
+            for (wavefunctions[0..initialized_wavefunctions]) |wf| {
+                allocator.free(wf);
+            }
+        }
+
+        for (orbitals, 0..) |orb, iorb| {
+            wavefunctions[iorb] = try allocator.alloc(f64, n);
+            initialized_wavefunctions += 1;
+            @memset(wavefunctions[iorb], 0);
+
+            const n_f: f64 = @floatFromInt(orb.n);
+            eigenvalues[iorb] = -z * z / (n_f * n_f);
+        }
+
+        return .{
+            .eigenvalues = eigenvalues,
+            .wavefunctions = wavefunctions,
+            .allocator = allocator,
+        };
+    }
+
+    fn deinit(self: *OrbitalState) void {
+        self.allocator.free(self.eigenvalues);
+        for (self.wavefunctions) |wf| {
+            self.allocator.free(wf);
+        }
+        self.allocator.free(self.wavefunctions);
+    }
+};
+
+const ScfStep = struct {
+    total_energy: f64,
+    max_drho: f64,
+};
+
 pub const AtomResult = struct {
     /// Total energy (Ry)
     total_energy: f64,
@@ -67,51 +123,31 @@ pub fn solve(
     tol: f64,
 ) !AtomResult {
     const n = grid.n;
-    const n_orb = config.orbitals.len;
+    const rho = try allocator.alloc(f64, n);
+    errdefer allocator.free(rho);
 
-    // Allocate arrays
-    var rho = try allocator.alloc(f64, n);
-    var rho_new = try allocator.alloc(f64, n);
+    const rho_new = try allocator.alloc(f64, n);
     defer allocator.free(rho_new);
-    var v_eff = try allocator.alloc(f64, n);
+
+    const v_eff = try allocator.alloc(f64, n);
+    errdefer allocator.free(v_eff);
+
     const v_h = try allocator.alloc(f64, n);
     defer allocator.free(v_h);
-    var v_xc = try allocator.alloc(f64, n);
+
+    const v_xc = try allocator.alloc(f64, n);
     defer allocator.free(v_xc);
-    var v_coul = try allocator.alloc(f64, n);
+
+    const v_coul = try allocator.alloc(f64, n);
     defer allocator.free(v_coul);
 
-    // Nuclear potential: V_nuc(r) = -2Z/r (Rydberg)
-    for (0..n) |i| {
-        const r = grid.r[i];
-        v_coul[i] = if (r > 1e-30) -2.0 * config.z / r else -2.0 * config.z / 1e-30;
-    }
-
-    // Initial potential: bare nuclear
+    initCoulombPotential(grid, config.z, v_coul);
     @memcpy(v_eff, v_coul);
+    initDensityGuess(grid, config.z, rho);
 
-    // Initial density: Thomas-Fermi-like guess
-    for (0..n) |i| {
-        const r = grid.r[i];
-        if (r > 1e-30) {
-            rho[i] = config.z * @exp(-2.0 * config.z * r) * config.z * config.z / std.math.pi;
-        } else {
-            rho[i] = config.z * config.z * config.z / std.math.pi;
-        }
-    }
+    var orbitals = try OrbitalState.init(allocator, grid, config.orbitals, config.z);
+    errdefer orbitals.deinit();
 
-    // Eigenvalues and wavefunctions
-    var eigenvalues = try allocator.alloc(f64, n_orb);
-    var wavefunctions = try allocator.alloc([]f64, n_orb);
-    for (0..n_orb) |iorb| {
-        wavefunctions[iorb] = try allocator.alloc(f64, n);
-        @memset(wavefunctions[iorb], 0);
-        // Initial eigenvalue guess: hydrogenic
-        const n_f: f64 = @floatFromInt(config.orbitals[iorb].n);
-        eigenvalues[iorb] = -config.z * config.z / (n_f * n_f);
-    }
-
-    // Workspace for density gradient (GGA)
     const grad_rho = try allocator.alloc(f64, n);
     defer allocator.free(grad_rho);
 
@@ -119,84 +155,176 @@ pub fn solve(
     var converged = false;
 
     for (0..max_iter) |iter| {
-        // 1. Solve Schrödinger equation for each orbital
-        for (0..n_orb) |iorb| {
-            const orb = config.orbitals[iorb];
-            const sol = try schrodinger.solve(
-                allocator,
-                grid,
-                v_eff,
-                .{ .n = orb.n, .l = orb.l },
-                eigenvalues[iorb],
+        const step = try runScfStep(
+            allocator,
+            grid,
+            config,
+            mix_beta,
+            rho,
+            rho_new,
+            v_eff,
+            v_coul,
+            v_h,
+            v_xc,
+            grad_rho,
+            &orbitals,
+        );
+        total_energy = step.total_energy;
+
+        if (iter % 10 == 0 or step.max_drho < tol) {
+            std.log.info(
+                "SCF iter {d:4}: E_total = {d:16.8} Ry, max|d_rho| = {e:10.3}",
+                .{ iter, total_energy, step.max_drho },
             );
-            eigenvalues[iorb] = sol.energy;
-            allocator.free(wavefunctions[iorb]);
-            wavefunctions[iorb] = sol.u;
-            allocator.free(sol.R);
-            // sol.u ownership transferred to wavefunctions[iorb]
         }
 
-        // 2. Build new density: ρ(r) = Σ_nl f_nl |u_nl(r)|² / (4π r²)
-        @memset(rho_new, 0);
-        for (0..n_orb) |iorb| {
-            const occ = config.orbitals[iorb].occupation;
-            const u = wavefunctions[iorb];
-            for (0..n) |i| {
-                const r = grid.r[i];
-                const r2 = if (r > 1e-30) r * r else 1e-30;
-                rho_new[i] += occ * u[i] * u[i] / (4.0 * std.math.pi * r2);
-            }
-        }
-
-        // 3. Mix density
-        var max_drho: f64 = 0;
-        for (0..n) |i| {
-            const diff = rho_new[i] - rho[i];
-            max_drho = @max(max_drho, @abs(diff));
-            rho[i] = rho[i] + mix_beta * diff;
-        }
-
-        // 4. Compute Hartree potential from radial Poisson equation
-        radialPoisson(grid, rho, v_h);
-
-        // 5. Compute XC potential
-        computeRadialGradient(grid, rho, grad_rho);
-        for (0..n) |i| {
-            const g2 = grad_rho[i] * grad_rho[i];
-            const xc_point = xc_mod.evalPoint(config.xc, rho[i], g2);
-            v_xc[i] = xc_point.df_dn;
-        }
-
-        // 6. Update effective potential
-        for (0..n) |i| {
-            v_eff[i] = v_coul[i] + v_h[i] + v_xc[i];
-        }
-
-        // 7. Compute total energy
-        total_energy = computeTotalEnergy(grid, config, rho, v_h, v_xc, eigenvalues, grad_rho);
-
-        if (iter % 10 == 0 or max_drho < tol) {
-            std.debug.print("  SCF iter {d:4}: E_total = {d:16.8} Ry, max|Δρ| = {e:10.3}\n", .{ iter, total_energy, max_drho });
-        }
-
-        if (max_drho < tol) {
+        if (step.max_drho < tol) {
             converged = true;
             break;
         }
     }
 
     if (!converged) {
-        std.debug.print("WARNING: atomic SCF did not converge\n", .{});
+        std.log.warn("atomic SCF did not converge", .{});
     }
 
     return .{
         .total_energy = total_energy,
-        .eigenvalues = eigenvalues,
+        .eigenvalues = orbitals.eigenvalues,
         .rho = rho,
         .v_eff = v_eff,
-        .wavefunctions = wavefunctions,
+        .wavefunctions = orbitals.wavefunctions,
         .allocator = allocator,
     };
+}
+
+fn initCoulombPotential(grid: *const RadialGrid, z: f64, v_coul: []f64) void {
+    for (0..grid.n) |i| {
+        const r = grid.r[i];
+        v_coul[i] = if (r > 1e-30) -2.0 * z / r else -2.0 * z / 1e-30;
+    }
+}
+
+fn initDensityGuess(grid: *const RadialGrid, z: f64, rho: []f64) void {
+    for (0..grid.n) |i| {
+        const r = grid.r[i];
+        if (r > 1e-30) {
+            rho[i] = z * @exp(-2.0 * z * r) * z * z / std.math.pi;
+        } else {
+            rho[i] = z * z * z / std.math.pi;
+        }
+    }
+}
+
+fn runScfStep(
+    allocator: std.mem.Allocator,
+    grid: *const RadialGrid,
+    config: AtomConfig,
+    mix_beta: f64,
+    rho: []f64,
+    rho_new: []f64,
+    v_eff: []f64,
+    v_coul: []const f64,
+    v_h: []f64,
+    v_xc: []f64,
+    grad_rho: []f64,
+    orbitals: *OrbitalState,
+) !ScfStep {
+    try solveOrbitals(allocator, grid, config.orbitals, v_eff, orbitals);
+    buildDensity(grid, config.orbitals, orbitals.wavefunctions, rho_new);
+    const max_drho = mixDensity(rho, rho_new, mix_beta);
+
+    radialPoisson(grid, rho, v_h);
+    computeXcPotential(grid, config.xc, rho, grad_rho, v_xc);
+    updateEffectivePotential(v_eff, v_coul, v_h, v_xc);
+
+    return .{
+        .total_energy = computeTotalEnergy(
+            grid,
+            config,
+            rho,
+            v_h,
+            v_xc,
+            orbitals.eigenvalues,
+            grad_rho,
+        ),
+        .max_drho = max_drho,
+    };
+}
+
+fn solveOrbitals(
+    allocator: std.mem.Allocator,
+    grid: *const RadialGrid,
+    orbitals: []const OrbitalConfig,
+    v_eff: []const f64,
+    state: *OrbitalState,
+) !void {
+    for (orbitals, 0..) |orb, iorb| {
+        const sol = try schrodinger.solve(
+            allocator,
+            grid,
+            v_eff,
+            .{ .n = orb.n, .l = orb.l },
+            state.eigenvalues[iorb],
+        );
+        state.eigenvalues[iorb] = sol.energy;
+        state.allocator.free(state.wavefunctions[iorb]);
+        state.wavefunctions[iorb] = sol.u;
+        state.allocator.free(sol.R);
+    }
+}
+
+fn buildDensity(
+    grid: *const RadialGrid,
+    orbitals: []const OrbitalConfig,
+    wavefunctions: [][]f64,
+    rho_new: []f64,
+) void {
+    @memset(rho_new, 0);
+    for (orbitals, wavefunctions) |orb, u| {
+        const occ = orb.occupation;
+        for (0..grid.n) |i| {
+            const r = grid.r[i];
+            const r2 = if (r > 1e-30) r * r else 1e-30;
+            rho_new[i] += occ * u[i] * u[i] / (4.0 * std.math.pi * r2);
+        }
+    }
+}
+
+fn mixDensity(rho: []f64, rho_new: []const f64, mix_beta: f64) f64 {
+    var max_drho: f64 = 0;
+    for (rho, rho_new) |*current, next| {
+        const diff = next - current.*;
+        max_drho = @max(max_drho, @abs(diff));
+        current.* += mix_beta * diff;
+    }
+    return max_drho;
+}
+
+fn computeXcPotential(
+    grid: *const RadialGrid,
+    xc: xc_mod.Functional,
+    rho: []const f64,
+    grad_rho: []f64,
+    v_xc: []f64,
+) void {
+    computeRadialGradient(grid, rho, grad_rho);
+    for (rho, grad_rho, 0..) |rho_i, grad_i, i| {
+        const g2 = grad_i * grad_i;
+        const xc_point = xc_mod.evalPoint(xc, rho_i, g2);
+        v_xc[i] = xc_point.df_dn;
+    }
+}
+
+fn updateEffectivePotential(
+    v_eff: []f64,
+    v_coul: []const f64,
+    v_h: []const f64,
+    v_xc: []const f64,
+) void {
+    for (v_eff, v_coul, v_h, v_xc) |*v_eff_i, v_coul_i, v_h_i, v_xc_i| {
+        v_eff_i.* = v_coul_i + v_h_i + v_xc_i;
+    }
 }
 
 /// Solve radial Poisson equation to get V_H(r) from ρ(r).

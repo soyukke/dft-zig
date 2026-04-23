@@ -6,7 +6,12 @@ const grid_mod = @import("pw_grid.zig");
 pub const Grid = grid_mod.Grid;
 
 /// Convert real grid to reciprocal grid using direct DFT.
-pub fn realToReciprocal(alloc: std.mem.Allocator, grid: Grid, values: []const f64, use_rfft: bool) ![]math.Complex {
+pub fn realToReciprocal(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    values: []const f64,
+    use_rfft: bool,
+) ![]math.Complex {
     if (use_rfft and grid.nx % 2 == 0) {
         return try fftRealToReciprocalRfft(alloc, grid, values);
     }
@@ -20,7 +25,11 @@ pub fn reciprocalToReal(alloc: std.mem.Allocator, grid: Grid, values: []math.Com
 }
 
 /// Convert real grid to reciprocal grid using direct DFT.
-fn dftRealToReciprocalDirect(alloc: std.mem.Allocator, grid: Grid, values: []const f64) ![]math.Complex {
+fn dftRealToReciprocalDirect(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    values: []const f64,
+) ![]math.Complex {
     const total = grid.count();
     if (values.len != total) return error.InvalidGrid;
     const out = try alloc.alloc(math.Complex, total);
@@ -43,22 +52,28 @@ fn dftRealToReciprocalDirect(alloc: std.mem.Allocator, grid: Grid, values: []con
                 const gh = grid.min_h + @as(i32, @intCast(h));
                 const gk = grid.min_k + @as(i32, @intCast(k));
                 const gl = grid.min_l + @as(i32, @intCast(l));
+                const gh_f = @as(f64, @floatFromInt(gh));
+                const gk_f = @as(f64, @floatFromInt(gk));
+                const gl_f = @as(f64, @floatFromInt(gl));
                 const gvec = math.Vec3.add(
-                    math.Vec3.add(math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))), math.Vec3.scale(b2, @as(f64, @floatFromInt(gk)))),
-                    math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
+                    math.Vec3.add(math.Vec3.scale(b1, gh_f), math.Vec3.scale(b2, gk_f)),
+                    math.Vec3.scale(b3, gl_f),
                 );
 
                 var sum = math.complex.init(0.0, 0.0);
                 var iz: usize = 0;
                 var ridx: usize = 0;
+                const nx_f = @as(f64, @floatFromInt(grid.nx));
+                const ny_f = @as(f64, @floatFromInt(grid.ny));
+                const nz_f = @as(f64, @floatFromInt(grid.nz));
                 while (iz < grid.nz) : (iz += 1) {
-                    const fz = @as(f64, @floatFromInt(iz)) / @as(f64, @floatFromInt(grid.nz));
+                    const fz = @as(f64, @floatFromInt(iz)) / nz_f;
                     var iy: usize = 0;
                     while (iy < grid.ny) : (iy += 1) {
-                        const fy = @as(f64, @floatFromInt(iy)) / @as(f64, @floatFromInt(grid.ny));
+                        const fy = @as(f64, @floatFromInt(iy)) / ny_f;
                         var ix: usize = 0;
                         while (ix < grid.nx) : (ix += 1) {
-                            const fx = @as(f64, @floatFromInt(ix)) / @as(f64, @floatFromInt(grid.nx));
+                            const fx = @as(f64, @floatFromInt(ix)) / nx_f;
                             const rvec = math.Vec3.add(
                                 math.Vec3.add(math.Vec3.scale(a1, fx), math.Vec3.scale(a2, fy)),
                                 math.Vec3.scale(a3, fz),
@@ -79,7 +94,11 @@ fn dftRealToReciprocalDirect(alloc: std.mem.Allocator, grid: Grid, values: []con
 
 /// Convert real grid to reciprocal grid using RFFT (faster for real data).
 /// The output is expanded to full size using Hermitian symmetry: F[-k] = conj(F[k])
-fn fftRealToReciprocalRfft(alloc: std.mem.Allocator, grid: Grid, values: []const f64) ![]math.Complex {
+fn fftRealToReciprocalRfft(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    values: []const f64,
+) ![]math.Complex {
     const nx = grid.nx;
     const ny = grid.ny;
     const nz = grid.nz;
@@ -114,7 +133,8 @@ fn fftRealToReciprocalRfft(alloc: std.mem.Allocator, grid: Grid, values: []const
                 const fft_idx = x + nx * (y + ny * z);
                 data[fft_idx] = math.complex.init(rfft_out[rfft_idx].re, rfft_out[rfft_idx].im);
             }
-            // Second half (nx/2+1 to nx-1) from Hermitian symmetry: F[nx-x, ny-y, nz-z] = conj(F[x, y, z])
+            // Second half (nx/2+1 to nx-1) from Hermitian symmetry:
+            //   F[nx-x, ny-y, nz-z] = conj(F[x, y, z])
             x = nx_c;
             while (x < nx) : (x += 1) {
                 const sym_x = nx - x; // Maps to 1, 2, ..., nx/2-1
@@ -165,6 +185,7 @@ fn fftRealToReciprocal(alloc: std.mem.Allocator, grid: Grid, values: []const f64
 
     const data = try alloc.alloc(math.Complex, total);
     defer alloc.free(data);
+
     for (values, 0..) |v, i| {
         data[i] = math.complex.init(v, 0.0);
     }

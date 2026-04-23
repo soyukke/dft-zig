@@ -6,12 +6,31 @@ const gvec_iter = @import("gvec_iter.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const math = @import("../math/math.zig");
 const nonlocal_mod = @import("../pseudopotential/nonlocal.zig");
+const paw_data = @import("../pseudopotential/paw_data.zig");
 const paw_mod = @import("../paw/paw.zig");
 const xc = @import("../xc/xc.zig");
 
 const Grid = grid_mod.Grid;
 
 const reciprocalToReal = fft_grid.reciprocalToReal;
+const MAX_YLM_AUG: usize = 25;
+const MAX_PAW_BETA: usize = 32;
+
+const SpeciesPawSetup = struct {
+    si: usize,
+    tab: *const paw_mod.PawTab,
+    paw: paw_data.PawData,
+    dij0: []const f64,
+    r: []const f64,
+    rab: []const f64,
+    rho_core_ps: ?[]const f64,
+    nb: usize,
+    n_ij: usize,
+    mt: usize,
+    n_m: usize,
+    natom: usize,
+    sp_m_offsets: [MAX_PAW_BETA]usize,
+};
 
 /// Symmetrize PAW rhoij by averaging over equivalent atoms of the same species.
 /// In a bulk crystal, all atoms of the same species share the same Wyckoff position
@@ -37,6 +56,7 @@ pub fn symmetrizeRhoIJ(
         // Average rhoij over all atoms of this species
         const avg = try alloc.alloc(f64, n_ij);
         defer alloc.free(avg);
+
         @memset(avg, 0.0);
         for (atoms, 0..) |atom, ai| {
             if (atom.species_index != si) continue;
@@ -51,6 +71,498 @@ pub fn symmetrizeRhoIJ(
         for (atoms, 0..) |atom, ai| {
             if (atom.species_index != si) continue;
             @memcpy(rhoij.values[ai], avg);
+        }
+    }
+}
+
+fn initSpeciesPawSetup(
+    entry_s: hamiltonian.SpeciesEntry,
+    si: usize,
+    tab: *const paw_mod.PawTab,
+    atoms: []const hamiltonian.AtomData,
+) ?SpeciesPawSetup {
+    const paw = entry_s.upf.paw orelse return null;
+    var sp_m_offsets: [MAX_PAW_BETA]usize = undefined;
+    var mt: usize = 0;
+    var offset: usize = 0;
+    for (0..tab.nbeta) |b| {
+        sp_m_offsets[b] = offset;
+        const m_count = @as(usize, @intCast(2 * tab.l_list[b] + 1));
+        mt += m_count;
+        offset += m_count;
+    }
+
+    var natom: usize = 0;
+    for (atoms) |atom| {
+        if (atom.species_index == si) natom += 1;
+    }
+    if (natom == 0) return null;
+
+    return .{
+        .si = si,
+        .tab = tab,
+        .paw = paw,
+        .dij0 = entry_s.upf.dij,
+        .r = entry_s.upf.r,
+        .rab = entry_s.upf.rab,
+        .rho_core_ps = if (entry_s.upf.nlcc.len > 0) entry_s.upf.nlcc else null,
+        .nb = tab.nbeta,
+        .n_ij = tab.nbeta * tab.nbeta,
+        .mt = mt,
+        .n_m = mt * mt,
+        .natom = natom,
+        .sp_m_offsets = sp_m_offsets,
+    };
+}
+
+fn ensureSpeciesDijStorage(
+    apply_caches: []apply.KpointApplyCache,
+    setup: SpeciesPawSetup,
+) !void {
+    for (apply_caches) |*ac| {
+        if (ac.nonlocal_ctx) |*nl| {
+            try nl.ensureDijPerAtom(ac.cache_alloc, setup.si, setup.natom);
+            try nl.ensureDijMPerAtom(ac.cache_alloc, setup.si, setup.natom);
+        }
+    }
+}
+
+fn fillAugYlm(
+    gaunt_table: *const paw_mod.GauntTable,
+    gvec: math.Vec3,
+    g_abs: f64,
+    ylm_g: *[MAX_YLM_AUG]f64,
+) void {
+    if (g_abs <= 1e-10) {
+        @memset(ylm_g, 0.0);
+        ylm_g[0] = 1.0 / @sqrt(4.0 * std.math.pi);
+        return;
+    }
+
+    for (0..gaunt_table.lmax_aug + 1) |big_l| {
+        const bl_i32: i32 = @intCast(big_l);
+        var bm: i32 = -bl_i32;
+        while (bm <= bl_i32) : (bm += 1) {
+            ylm_g[paw_mod.GauntTable.lmIndex(big_l, bm)] =
+                nonlocal_mod.realSphericalHarmonic(bl_i32, bm, gvec.x, gvec.y, gvec.z);
+        }
+    }
+}
+
+fn accumulateGauntProjectedRhoij(
+    gaunt_table: *const paw_mod.GauntTable,
+    rij_m: []const f64,
+    mt: usize,
+    m_offsets: []const usize,
+    l_i: usize,
+    l_j: usize,
+    i_beta: usize,
+    j_beta: usize,
+    big_l: usize,
+    bm: i32,
+) f64 {
+    var value: f64 = 0.0;
+    const li_i32: i32 = @intCast(l_i);
+    const lj_i32: i32 = @intCast(l_j);
+    var mi: i32 = -li_i32;
+    while (mi <= li_i32) : (mi += 1) {
+        const mi_idx = m_offsets[i_beta] + @as(usize, @intCast(mi + li_i32));
+        var mj: i32 = -lj_i32;
+        while (mj <= lj_i32) : (mj += 1) {
+            const g_coeff = gaunt_table.get(l_i, mi, l_j, mj, big_l, bm);
+            if (g_coeff == 0.0) continue;
+            const mj_idx = m_offsets[j_beta] + @as(usize, @intCast(mj + lj_i32));
+            value += g_coeff * rij_m[mi_idx * mt + mj_idx];
+        }
+    }
+    return value;
+}
+
+fn compensationChargeForAtom(
+    rhoij: *const paw_mod.RhoIJ,
+    tab: *const paw_mod.PawTab,
+    atom: hamiltonian.AtomData,
+    ai: usize,
+    gaunt_table: *const paw_mod.GauntTable,
+    gvec: math.Vec3,
+    g_abs: f64,
+    ylm_g: *const [MAX_YLM_AUG]f64,
+    inv_omega: f64,
+) math.Complex {
+    const mt = rhoij.m_total_per_atom[ai];
+    const rij_m = rhoij.values[ai];
+    const l_list_r = rhoij.l_per_beta[ai];
+    const m_offsets_r = rhoij.m_offsets[ai];
+    const g_dot_r = math.Vec3.dot(gvec, atom.position);
+    const sf_re = @cos(g_dot_r);
+    const sf_im = -@sin(g_dot_r);
+    var sum_re: f64 = 0.0;
+    var sum_im: f64 = 0.0;
+
+    for (0..tab.n_qijl_entries) |e| {
+        const qidx = tab.qijl_indices[e];
+        const qijl_g = tab.evalQijlForm(e, g_abs);
+        if (@abs(qijl_g) < 1e-30) continue;
+
+        const l_i = @as(usize, @intCast(l_list_r[qidx.first]));
+        const l_j = @as(usize, @intCast(l_list_r[qidx.second]));
+        const bl_i32: i32 = @intCast(qidx.l);
+        var bm: i32 = -bl_i32;
+        while (bm <= bl_i32) : (bm += 1) {
+            const ylm_val = ylm_g[paw_mod.GauntTable.lmIndex(qidx.l, bm)];
+            if (@abs(ylm_val) < 1e-30) continue;
+            const gaunt_rhoij = accumulateGauntProjectedRhoij(
+                gaunt_table,
+                rij_m,
+                mt,
+                m_offsets_r,
+                l_i,
+                l_j,
+                qidx.first,
+                qidx.second,
+                qidx.l,
+                bm,
+            );
+            if (@abs(gaunt_rhoij) < 1e-30) continue;
+            const sym_factor: f64 = if (qidx.first != qidx.second) 2.0 else 1.0;
+            const contrib = gaunt_rhoij * qijl_g * ylm_val * sym_factor * inv_omega;
+            sum_re += contrib * sf_re;
+            sum_im += contrib * sf_im;
+        }
+    }
+    return math.complex.init(sum_re, sum_im);
+}
+
+fn initializePawDijBuffers(
+    setup: SpeciesPawSetup,
+    dij: []f64,
+    dij_m: []f64,
+) void {
+    if (setup.dij0.len >= setup.n_ij) {
+        @memcpy(dij, setup.dij0[0..setup.n_ij]);
+    } else {
+        @memset(dij, 0.0);
+    }
+    @memset(dij_m, 0.0);
+
+    for (0..setup.nb) |i| {
+        for (0..setup.nb) |j| {
+            if (setup.tab.l_list[i] != setup.tab.l_list[j]) continue;
+            const d0 = if (setup.dij0.len >= setup.n_ij) setup.dij0[i * setup.nb + j] else 0.0;
+            const m_count = @as(usize, @intCast(2 * setup.tab.l_list[i] + 1));
+            for (0..m_count) |m| {
+                const im = setup.sp_m_offsets[i] + m;
+                const jm = setup.sp_m_offsets[j] + m;
+                dij_m[im * setup.mt + jm] = d0;
+            }
+        }
+    }
+}
+
+fn accumulateDhatMResolvedEntry(
+    setup: SpeciesPawSetup,
+    gaunt_table: *const paw_mod.GauntTable,
+    ylm_g: *const [MAX_YLM_AUG]f64,
+    big_l: usize,
+    i_beta: usize,
+    j_beta: usize,
+    qijl_g: f64,
+    prod_re: f64,
+    dij_m: []f64,
+) void {
+    const l_i = @as(usize, @intCast(setup.tab.l_list[i_beta]));
+    const l_j = @as(usize, @intCast(setup.tab.l_list[j_beta]));
+    const bl_i32: i32 = @intCast(big_l);
+    var bm: i32 = -bl_i32;
+    while (bm <= bl_i32) : (bm += 1) {
+        const ylm_val = ylm_g[paw_mod.GauntTable.lmIndex(big_l, bm)];
+        if (@abs(ylm_val) < 1e-30) continue;
+        const li_i32: i32 = @intCast(l_i);
+        const lj_i32: i32 = @intCast(l_j);
+        var mi: i32 = -li_i32;
+        while (mi <= li_i32) : (mi += 1) {
+            const im = setup.sp_m_offsets[i_beta] + @as(usize, @intCast(mi + li_i32));
+            var mj: i32 = -lj_i32;
+            while (mj <= lj_i32) : (mj += 1) {
+                const g_coeff = gaunt_table.get(l_i, mi, l_j, mj, big_l, bm);
+                if (g_coeff == 0.0) continue;
+                const jm = setup.sp_m_offsets[j_beta] + @as(usize, @intCast(mj + lj_i32));
+                const contrib = prod_re * qijl_g * ylm_val * g_coeff;
+                dij_m[im * setup.mt + jm] += contrib;
+                if (i_beta != j_beta) dij_m[jm * setup.mt + im] += contrib;
+            }
+        }
+    }
+}
+
+fn accumulateDhatForG(
+    setup: SpeciesPawSetup,
+    gaunt_table: *const paw_mod.GauntTable,
+    ylm_g: *const [MAX_YLM_AUG]f64,
+    g_abs: f64,
+    prod_re: f64,
+    dij: []f64,
+    dij_m: []f64,
+) void {
+    for (0..setup.tab.n_qijl_entries) |e| {
+        const qidx = setup.tab.qijl_indices[e];
+        const qijl_g = setup.tab.evalQijlForm(e, g_abs);
+        if (@abs(qijl_g) < 1e-30) continue;
+
+        if (qidx.l == 0) {
+            const ylm_00 = 1.0 / @sqrt(4.0 * std.math.pi);
+            const gaunt_00 = 1.0 / @sqrt(4.0 * std.math.pi);
+            const contrib = prod_re * qijl_g * ylm_00 * gaunt_00;
+            dij[qidx.first * setup.nb + qidx.second] += contrib;
+            if (qidx.first != qidx.second) {
+                dij[qidx.second * setup.nb + qidx.first] += contrib;
+            }
+        }
+        accumulateDhatMResolvedEntry(
+            setup,
+            gaunt_table,
+            ylm_g,
+            qidx.l,
+            qidx.first,
+            qidx.second,
+            qijl_g,
+            prod_re,
+            dij_m,
+        );
+    }
+}
+
+fn addPawDhatForAtom(
+    grid: Grid,
+    ionic: hamiltonian.PotentialGrid,
+    potential: hamiltonian.PotentialGrid,
+    setup: SpeciesPawSetup,
+    pos: math.Vec3,
+    ecutrho: f64,
+    gaunt_table: *const paw_mod.GauntTable,
+    dij: []f64,
+    dij_m: []f64,
+) void {
+    const total = grid.count();
+    var git = gvec_iter.GVecIterator.init(grid);
+    while (git.next()) |g| {
+        if (g.g2 >= ecutrho) continue;
+        const v_hxc = if (g.idx < total) potential.values[g.idx] else math.complex.init(0.0, 0.0);
+        const v_loc = if (g.idx < total) ionic.values[g.idx] else math.complex.init(0.0, 0.0);
+        const v_eff = math.complex.add(v_hxc, v_loc);
+        const g_dot_r = math.Vec3.dot(g.gvec, pos);
+        const prod_re = v_eff.r * @cos(g_dot_r) - v_eff.i * @sin(g_dot_r);
+        var ylm_g: [MAX_YLM_AUG]f64 = undefined;
+        fillAugYlm(gaunt_table, g.gvec, @sqrt(g.g2), &ylm_g);
+        accumulateDhatForG(setup, gaunt_table, &ylm_g, @sqrt(g.g2), prod_re, dij, dij_m);
+    }
+}
+
+fn contractMResolvedDiagonalToRadial(
+    setup: SpeciesPawSetup,
+    correction_m: []const f64,
+    dij: []f64,
+) void {
+    for (0..setup.nb) |i| {
+        for (0..setup.nb) |j| {
+            if (setup.tab.l_list[i] != setup.tab.l_list[j]) continue;
+            const m_count = @as(usize, @intCast(2 * setup.tab.l_list[i] + 1));
+            var sum: f64 = 0.0;
+            for (0..m_count) |m| {
+                const im = setup.sp_m_offsets[i] + m;
+                const jm = setup.sp_m_offsets[j] + m;
+                sum += correction_m[im * setup.mt + jm];
+            }
+            dij[i * setup.nb + j] += sum / @as(f64, @floatFromInt(m_count));
+        }
+    }
+}
+
+fn addMResolvedCorrection(
+    setup: SpeciesPawSetup,
+    correction_m: []const f64,
+    dij: []f64,
+    dij_m: []f64,
+) void {
+    for (0..setup.n_m) |idx| {
+        dij_m[idx] += correction_m[idx];
+    }
+    contractMResolvedDiagonalToRadial(setup, correction_m, dij);
+}
+
+fn fillPawDijXcMatrix(
+    alloc: std.mem.Allocator,
+    setup: SpeciesPawSetup,
+    rhoij: *const paw_mod.RhoIJ,
+    ai: usize,
+    rhoij_spin: ?*const paw_mod.RhoIJ,
+    xc_func: xc.Functional,
+    gaunt_table: *const paw_mod.GauntTable,
+    dij_xc_m: []f64,
+) !void {
+    if (rhoij_spin) |rij_s| {
+        const rij_other = try alloc.alloc(f64, setup.n_m);
+        defer alloc.free(rij_other);
+
+        for (0..setup.n_m) |idx| {
+            rij_other[idx] = rhoij.values[ai][idx] - rij_s.values[ai][idx];
+        }
+        const dij_xc_other = try alloc.alloc(f64, setup.n_m);
+        defer alloc.free(dij_xc_other);
+
+        try paw_mod.paw_xc.computePawDijXcAngularSpin(
+            alloc,
+            dij_xc_m,
+            dij_xc_other,
+            setup.paw,
+            rij_s.values[ai],
+            rij_other,
+            rhoij.m_total_per_atom[ai],
+            rhoij.m_offsets[ai],
+            setup.r,
+            setup.rab,
+            setup.paw.ae_core_density,
+            setup.rho_core_ps,
+            xc_func,
+            gaunt_table,
+        );
+        return;
+    }
+
+    try paw_mod.paw_xc.computePawDijXcAngular(
+        alloc,
+        dij_xc_m,
+        setup.paw,
+        rhoij.values[ai],
+        rhoij.m_total_per_atom[ai],
+        rhoij.m_offsets[ai],
+        setup.r,
+        setup.rab,
+        setup.paw.ae_core_density,
+        setup.rho_core_ps,
+        xc_func,
+        gaunt_table,
+    );
+}
+
+fn fillPawDijHartreeMatrix(
+    alloc: std.mem.Allocator,
+    setup: SpeciesPawSetup,
+    rhoij: *const paw_mod.RhoIJ,
+    ai: usize,
+    gaunt_table: *const paw_mod.GauntTable,
+    dij_h_m: []f64,
+) !void {
+    try paw_mod.paw_xc.computePawDijHartreeMultiL(
+        alloc,
+        dij_h_m,
+        setup.paw,
+        rhoij.values[ai],
+        rhoij.m_total_per_atom[ai],
+        rhoij.m_offsets[ai],
+        setup.r,
+        setup.rab,
+        gaunt_table,
+    );
+}
+
+fn mixAndWritePawDijAtom(
+    apply_caches: []apply.KpointApplyCache,
+    si: usize,
+    atom_counter: usize,
+    dij_mix_beta: f64,
+    dij: []f64,
+    dij_m: []f64,
+) void {
+    if (dij_mix_beta < 1.0 - 1e-10 and apply_caches.len > 0) {
+        if (apply_caches[0].nonlocal_ctx) |*nl| {
+            if (nl.species[si].dij_per_atom) |dpa| {
+                if (atom_counter < dpa.len) {
+                    for (0..@min(dij.len, dpa[atom_counter].len)) |ii| {
+                        dij[ii] = (1.0 - dij_mix_beta) * dpa[atom_counter][ii] +
+                            dij_mix_beta * dij[ii];
+                    }
+                }
+            }
+            if (nl.species[si].dij_m_per_atom) |dpa| {
+                if (atom_counter < dpa.len) {
+                    for (0..@min(dij_m.len, dpa[atom_counter].len)) |ii| {
+                        dij_m[ii] = (1.0 - dij_mix_beta) * dpa[atom_counter][ii] +
+                            dij_mix_beta * dij_m[ii];
+                    }
+                }
+            }
+        }
+    }
+
+    for (apply_caches) |*ac| {
+        if (ac.nonlocal_ctx) |*nl| {
+            nl.updateDijAtom(si, atom_counter, dij);
+            nl.updateDijMAtom(si, atom_counter, dij_m);
+        }
+    }
+}
+
+fn symmetrizeSpeciesRadialDij(
+    alloc: std.mem.Allocator,
+    apply_caches: []apply.KpointApplyCache,
+    si: usize,
+    natom: usize,
+    n_ij: usize,
+) !void {
+    const avg_dij = try alloc.alloc(f64, n_ij);
+    defer alloc.free(avg_dij);
+
+    @memset(avg_dij, 0.0);
+
+    if (apply_caches.len > 0) {
+        if (apply_caches[0].nonlocal_ctx) |*nl| {
+            if (nl.species[si].dij_per_atom) |dpa| {
+                for (0..natom) |a| {
+                    for (0..n_ij) |idx| avg_dij[idx] += dpa[a][idx];
+                }
+            }
+        }
+    }
+    const inv_natom = 1.0 / @as(f64, @floatFromInt(natom));
+    for (0..n_ij) |idx| avg_dij[idx] *= inv_natom;
+    for (apply_caches) |*ac| {
+        if (ac.nonlocal_ctx) |*nl| {
+            if (nl.species[si].dij_per_atom) |dpa| {
+                for (0..natom) |a| @memcpy(dpa[a], avg_dij);
+            }
+        }
+    }
+}
+
+fn symmetrizeSpeciesMResolvedDij(
+    alloc: std.mem.Allocator,
+    apply_caches: []apply.KpointApplyCache,
+    si: usize,
+    natom: usize,
+    n_m: usize,
+) !void {
+    const avg_dij_m = try alloc.alloc(f64, n_m);
+    defer alloc.free(avg_dij_m);
+
+    @memset(avg_dij_m, 0.0);
+
+    if (apply_caches.len > 0) {
+        if (apply_caches[0].nonlocal_ctx) |*nl| {
+            if (nl.species[si].dij_m_per_atom) |dpa| {
+                for (0..natom) |a| {
+                    for (0..n_m) |idx| avg_dij_m[idx] += dpa[a][idx];
+                }
+            }
+        }
+    }
+    const inv_natom = 1.0 / @as(f64, @floatFromInt(natom));
+    for (0..n_m) |idx| avg_dij_m[idx] *= inv_natom;
+    for (apply_caches) |*ac| {
+        if (ac.nonlocal_ctx) |*nl| {
+            if (nl.species[si].dij_m_per_atom) |dpa| {
+                for (0..natom) |a| @memcpy(dpa[a], avg_dij_m);
+            }
         }
     }
 }
@@ -72,6 +584,7 @@ pub fn addPawCompensationCharge(
     const total = grid.count();
     const n_hat_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(n_hat_g);
+
     @memset(n_hat_g, math.complex.init(0.0, 0.0));
 
     const b1 = grid.recip.row(0);
@@ -103,90 +616,24 @@ pub fn addPawCompensationCharge(
                     continue;
                 }
 
-                // Pre-compute Y_{L,M}(Ĝ) for all (L,M) up to lmax_aug
-                var ylm_g: [25]f64 = undefined; // (4+1)^2 = 25 max
-                const lmax_aug = gaunt_table.lmax_aug;
-                if (g_abs > 1e-10) {
-                    for (0..lmax_aug + 1) |big_l| {
-                        const bl_i32: i32 = @intCast(big_l);
-                        var bm: i32 = -bl_i32;
-                        while (bm <= bl_i32) : (bm += 1) {
-                            ylm_g[paw_mod.GauntTable.lmIndex(big_l, bm)] =
-                                nonlocal_mod.realSphericalHarmonic(bl_i32, bm, gvec.x, gvec.y, gvec.z);
-                        }
-                    }
-                } else {
-                    @memset(&ylm_g, 0.0);
-                    ylm_g[0] = 1.0 / @sqrt(4.0 * std.math.pi); // Y_00 at G=0
+                var ylm_g: [MAX_YLM_AUG]f64 = undefined;
+                fillAugYlm(gaunt_table, gvec, g_abs, &ylm_g);
+                for (atoms, 0..) |atom, ai| {
+                    const sp = atom.species_index;
+                    if (sp >= paw_tabs.len or paw_tabs[sp].nbeta == 0) continue;
+                    const contrib = compensationChargeForAtom(
+                        rhoij,
+                        &paw_tabs[sp],
+                        atom,
+                        ai,
+                        gaunt_table,
+                        gvec,
+                        g_abs,
+                        &ylm_g,
+                        inv_omega,
+                    );
+                    n_hat_g[idx] = math.complex.add(n_hat_g[idx], contrib);
                 }
-
-                var sum_re: f64 = 0.0;
-                var sum_im: f64 = 0.0;
-
-                for (0..atoms.len) |a| {
-                    const sp = atoms[a].species_index;
-                    if (sp >= paw_tabs.len) continue;
-                    const tab = &paw_tabs[sp];
-                    if (tab.nbeta == 0) continue;
-                    const mt = rhoij.m_total_per_atom[a];
-                    const rij_m = rhoij.values[a];
-                    const l_list_r = rhoij.l_per_beta[a];
-                    const m_offsets_r = rhoij.m_offsets[a];
-                    const pos = atoms[a].position;
-
-                    const g_dot_r = math.Vec3.dot(gvec, pos);
-                    const sf_re = @cos(g_dot_r);
-                    const sf_im = -@sin(g_dot_r);
-
-                    // For each Q^L entry, sum over m-resolved rhoij with Gaunt coefficients
-                    for (0..tab.n_qijl_entries) |e| {
-                        const qidx = tab.qijl_indices[e];
-                        const big_l = qidx.l;
-                        const i_beta = qidx.first;
-                        const j_beta = qidx.second;
-
-                        const qijl_g = tab.evalQijlForm(e, g_abs);
-                        if (@abs(qijl_g) < 1e-30) continue;
-
-                        const l_i = @as(usize, @intCast(l_list_r[i_beta]));
-                        const l_j = @as(usize, @intCast(l_list_r[j_beta]));
-
-                        // Sum over M: Σ_M Y_{L,M}(Ĝ) × [Σ_{m_i,m_j} G(l_i,m_i,l_j,m_j,L,M) × ρ_{(i,m_i),(j,m_j)}]
-                        const bl_i32: i32 = @intCast(big_l);
-                        var bm: i32 = -bl_i32;
-                        while (bm <= bl_i32) : (bm += 1) {
-                            const ylm_val = ylm_g[paw_mod.GauntTable.lmIndex(big_l, bm)];
-                            if (@abs(ylm_val) < 1e-30) continue;
-
-                            // Sum over m_i, m_j: Σ G(l_i,m_i,l_j,m_j,L,M) × ρ_{(i,m_i),(j,m_j)}
-                            var gaunt_rhoij: f64 = 0.0;
-                            const li_i32: i32 = @intCast(l_i);
-                            const lj_i32: i32 = @intCast(l_j);
-                            var mi: i32 = -li_i32;
-                            while (mi <= li_i32) : (mi += 1) {
-                                const mi_idx = m_offsets_r[i_beta] + @as(usize, @intCast(mi + li_i32));
-                                var mj: i32 = -lj_i32;
-                                while (mj <= lj_i32) : (mj += 1) {
-                                    const g_coeff = gaunt_table.get(l_i, mi, l_j, mj, big_l, bm);
-                                    if (g_coeff == 0.0) continue;
-                                    const mj_idx = m_offsets_r[j_beta] + @as(usize, @intCast(mj + lj_i32));
-                                    gaunt_rhoij += g_coeff * rij_m[mi_idx * mt + mj_idx];
-                                }
-                            }
-                            if (@abs(gaunt_rhoij) < 1e-30) continue;
-
-                            // For i!=j, both (i,j) and (j,i) Q entries should be in qijl.
-                            // If only upper triangle is stored, we need sym_factor.
-                            const sym_factor: f64 = if (i_beta != j_beta) 2.0 else 1.0;
-                            const contrib = gaunt_rhoij * qijl_g * ylm_val * sym_factor * inv_omega;
-                            sum_re += contrib * sf_re;
-                            sum_im += contrib * sf_im;
-                        }
-                    }
-                }
-
-                n_hat_g[idx].r += sum_re;
-                n_hat_g[idx].i += sum_im;
                 idx += 1;
             }
         }
@@ -195,6 +642,7 @@ pub fn addPawCompensationCharge(
     // IFFT n_hat(G) → n_hat(r) and add to density
     const n_hat_r = try reciprocalToReal(alloc, grid, n_hat_g);
     defer alloc.free(n_hat_r);
+
     for (0..@min(rho.len, n_hat_r.len)) |i| {
         rho[i] += n_hat_r[i];
     }
@@ -222,357 +670,78 @@ pub fn updatePawDij(
     rhoij_spin: ?*const paw_mod.RhoIJ,
     dij_mix_beta: f64,
 ) !void {
-    const total = grid.count();
-
     for (species, 0..) |entry_s, si| {
-        if (si >= paw_tabs.len or paw_tabs[si].nbeta == 0) continue;
-        const tab = &paw_tabs[si];
-        const nb = tab.nbeta;
-        const n_ij = nb * nb;
-        const upf = entry_s.upf;
-        const paw = upf.paw orelse continue;
+        if (si >= paw_tabs.len) continue;
+        const setup = initSpeciesPawSetup(entry_s, si, &paw_tabs[si], atoms) orelse continue;
+        try ensureSpeciesDijStorage(apply_caches, setup);
 
-        // Compute m_total for this species
-        var mt: usize = 0;
-        for (0..nb) |b| {
-            mt += @as(usize, @intCast(2 * tab.l_list[b] + 1));
-        }
-        const n_m = mt * mt;
-
-        // Compute m_offsets for this species
-        var sp_m_offsets: [32]usize = undefined;
-        var off: usize = 0;
-        for (0..nb) |b| {
-            sp_m_offsets[b] = off;
-            off += @as(usize, @intCast(2 * tab.l_list[b] + 1));
-        }
-
-        // Count atoms of this species
-        var natom: usize = 0;
-        for (atoms) |atom| {
-            if (atom.species_index == si) natom += 1;
-        }
-        if (natom == 0) continue;
-
-        // Ensure per-atom D_ij arrays are allocated in each cache
-        for (apply_caches) |*ac| {
-            if (ac.nonlocal_ctx) |*nl| {
-                try nl.ensureDijPerAtom(ac.cache_alloc, si, natom);
-                try nl.ensureDijMPerAtom(ac.cache_alloc, si, natom);
-            }
-        }
-
-        // Compute D_ij for each atom of this species
         var atom_counter: usize = 0;
         for (atoms, 0..) |atom, ai| {
             if (atom.species_index != si) continue;
-            const pos = atom.position;
-
-            // Radial D_ij (nb×nb) for forces/stress
-            const dij = try alloc.alloc(f64, n_ij);
+            const dij = try alloc.alloc(f64, setup.n_ij);
             defer alloc.free(dij);
-            if (upf.dij.len >= n_ij) {
-                @memcpy(dij, upf.dij[0..n_ij]);
-            } else {
-                @memset(dij, 0.0);
-            }
 
-            // m-resolved D_ij (mt×mt) for Hamiltonian
-            const dij_m = try alloc.alloc(f64, n_m);
+            const dij_m = try alloc.alloc(f64, setup.n_m);
             defer alloc.free(dij_m);
-            @memset(dij_m, 0.0);
 
-            // Expand D^0 from radial to m-resolved: D^0_{(i,m),(j,m')} = D^0_ij × δ_{mm'} × δ_{li,lj}
-            for (0..nb) |i| {
-                for (0..nb) |j| {
-                    if (tab.l_list[i] != tab.l_list[j]) continue;
-                    const d0 = if (upf.dij.len >= n_ij) upf.dij[i * nb + j] else 0.0;
-                    const m_count = @as(usize, @intCast(2 * tab.l_list[i] + 1));
-                    for (0..m_count) |m| {
-                        const im = sp_m_offsets[i] + m;
-                        const jm = sp_m_offsets[j] + m;
-                        dij_m[im * mt + jm] = d0;
-                    }
-                }
-            }
+            initializePawDijBuffers(setup, dij, dij_m);
+            addPawDhatForAtom(
+                grid,
+                ionic,
+                potential,
+                setup,
+                atom.position,
+                ecutrho,
+                gaunt_table,
+                dij,
+                dij_m,
+            );
 
-            // Add D^hat: radial (L=0 only) and m-resolved (all L with Gaunt)
-            var git = gvec_iter.GVecIterator.init(grid);
-            while (git.next()) |g| {
-                if (g.g2 >= ecutrho) continue;
-                const g_abs = @sqrt(g.g2);
-
-                const v_hxc = if (g.idx < total) potential.values[g.idx] else math.complex.init(0.0, 0.0);
-                const v_loc = if (g.idx < total) ionic.values[g.idx] else math.complex.init(0.0, 0.0);
-                const v_eff = math.complex.add(v_hxc, v_loc);
-
-                const g_dot_r = math.Vec3.dot(g.gvec, pos);
-                const sf_re = @cos(g_dot_r);
-                const sf_im = @sin(g_dot_r);
-                const prod_re = v_eff.r * sf_re - v_eff.i * sf_im;
-
-                // Pre-compute Y_{L,M}(Ĝ) for m-resolved D^hat
-                var ylm_g: [25]f64 = undefined;
-                const lmax_aug = gaunt_table.lmax_aug;
-                if (g_abs > 1e-10) {
-                    for (0..lmax_aug + 1) |big_l| {
-                        const bl_i32: i32 = @intCast(big_l);
-                        var bm: i32 = -bl_i32;
-                        while (bm <= bl_i32) : (bm += 1) {
-                            ylm_g[paw_mod.GauntTable.lmIndex(big_l, bm)] =
-                                nonlocal_mod.realSphericalHarmonic(bl_i32, bm, g.gvec.x, g.gvec.y, g.gvec.z);
-                        }
-                    }
-                } else {
-                    @memset(&ylm_g, 0.0);
-                    ylm_g[0] = 1.0 / @sqrt(4.0 * std.math.pi);
-                }
-
-                for (0..tab.n_qijl_entries) |e| {
-                    const qidx_e = tab.qijl_indices[e];
-                    const big_l = qidx_e.l;
-                    const i_beta = qidx_e.first;
-                    const j_beta = qidx_e.second;
-
-                    const qijl_g = tab.evalQijlForm(e, g_abs);
-                    if (@abs(qijl_g) < 1e-30) continue;
-
-                    // Radial D^hat (L=0 only, for forces)
-                    if (big_l == 0) {
-                        const ylm_00 = 1.0 / @sqrt(4.0 * std.math.pi);
-                        const gaunt_00 = 1.0 / @sqrt(4.0 * std.math.pi);
-                        const contrib = prod_re * qijl_g * ylm_00 * gaunt_00;
-                        dij[i_beta * nb + j_beta] += contrib;
-                        if (i_beta != j_beta) {
-                            dij[j_beta * nb + i_beta] += contrib;
-                        }
-                    }
-
-                    // m-resolved D^hat (all L, for Hamiltonian)
-                    const l_i = @as(usize, @intCast(tab.l_list[i_beta]));
-                    const l_j = @as(usize, @intCast(tab.l_list[j_beta]));
-                    const bl_i32: i32 = @intCast(big_l);
-                    var bm: i32 = -bl_i32;
-                    while (bm <= bl_i32) : (bm += 1) {
-                        const ylm_val = ylm_g[paw_mod.GauntTable.lmIndex(big_l, bm)];
-                        if (@abs(ylm_val) < 1e-30) continue;
-
-                        const li_i32: i32 = @intCast(l_i);
-                        const lj_i32: i32 = @intCast(l_j);
-                        var mi: i32 = -li_i32;
-                        while (mi <= li_i32) : (mi += 1) {
-                            const im = sp_m_offsets[i_beta] + @as(usize, @intCast(mi + li_i32));
-                            var mj: i32 = -lj_i32;
-                            while (mj <= lj_i32) : (mj += 1) {
-                                const g_coeff = gaunt_table.get(l_i, mi, l_j, mj, big_l, bm);
-                                if (g_coeff == 0.0) continue;
-                                const jm = sp_m_offsets[j_beta] + @as(usize, @intCast(mj + lj_i32));
-                                const contrib_m = prod_re * qijl_g * ylm_val * g_coeff;
-                                dij_m[im * mt + jm] += contrib_m;
-                                if (i_beta != j_beta) {
-                                    dij_m[jm * mt + im] += contrib_m;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // D^xc is m-resolved: dij_xc_m[mt × mt]
-            const dij_xc_m = try alloc.alloc(f64, mt * mt);
+            const dij_xc_m = try alloc.alloc(f64, setup.n_m);
             defer alloc.free(dij_xc_m);
+
             if (skip_dxc) {
                 @memset(dij_xc_m, 0.0);
-            } else if (rhoij_spin) |rij_s| {
-                // Spin-resolved D^xc: compute from (this_channel, other_channel)
-                // other_channel = total - this_channel
-                const rij_other = try alloc.alloc(f64, mt * mt);
-                defer alloc.free(rij_other);
-                for (0..mt * mt) |idx2| {
-                    rij_other[idx2] = rhoij.values[ai][idx2] - rij_s.values[ai][idx2];
-                }
-                const dij_xc_other = try alloc.alloc(f64, mt * mt);
-                defer alloc.free(dij_xc_other);
-                try paw_mod.paw_xc.computePawDijXcAngularSpin(
-                    alloc,
-                    dij_xc_m,
-                    dij_xc_other,
-                    paw,
-                    rij_s.values[ai],
-                    rij_other,
-                    rhoij.m_total_per_atom[ai],
-                    rhoij.m_offsets[ai],
-                    upf.r,
-                    upf.rab,
-                    paw.ae_core_density,
-                    if (upf.nlcc.len > 0) upf.nlcc else null,
-                    xc_func,
-                    gaunt_table,
-                );
             } else {
-                try paw_mod.paw_xc.computePawDijXcAngular(
+                try fillPawDijXcMatrix(
                     alloc,
-                    dij_xc_m,
-                    paw,
-                    rhoij.values[ai],
-                    rhoij.m_total_per_atom[ai],
-                    rhoij.m_offsets[ai],
-                    upf.r,
-                    upf.rab,
-                    paw.ae_core_density,
-                    if (upf.nlcc.len > 0) upf.nlcc else null,
+                    setup,
+                    rhoij,
+                    ai,
+                    rhoij_spin,
                     xc_func,
                     gaunt_table,
+                    dij_xc_m,
                 );
             }
-            // Add m-resolved D^xc directly to dij_m
-            for (0..mt * mt) |idx2| {
-                dij_m[idx2] += dij_xc_m[idx2];
-            }
-            // Contract D^xc to radial for dij (used in stress/forces).
-            // Convention: dij[nb×nb] stores the per-m value (same as D^0, D^hat).
-            // Average over m gives the per-m representative value.
-            for (0..nb) |i| {
-                for (0..nb) |j| {
-                    if (tab.l_list[i] != tab.l_list[j]) continue;
-                    const m_count = @as(usize, @intCast(2 * tab.l_list[i] + 1));
-                    var sum_dxc: f64 = 0.0;
-                    for (0..m_count) |m| {
-                        const im = sp_m_offsets[i] + m;
-                        const jm = sp_m_offsets[j] + m;
-                        sum_dxc += dij_xc_m[im * mt + jm];
-                    }
-                    // Average over m: radial D convention is per-m value
-                    dij[i * nb + j] += sum_dxc / @as(f64, @floatFromInt(m_count));
-                }
-            }
+            addMResolvedCorrection(setup, dij_xc_m, dij, dij_m);
 
-            // Add D^H (on-site Hartree, multi-L with Gaunt) to D_full.
-            // E_paw_onsite includes E_H_onsite (computePawEhOnsiteMultiL), so D^H must
-            // also be in D_full and double-counting for Hellmann-Feynman consistency.
-            {
-                const dij_h_m = try alloc.alloc(f64, n_m);
-                defer alloc.free(dij_h_m);
-                try paw_mod.paw_xc.computePawDijHartreeMultiL(
-                    alloc,
-                    dij_h_m,
-                    paw,
-                    rhoij.values[ai],
-                    rhoij.m_total_per_atom[ai],
-                    rhoij.m_offsets[ai],
-                    upf.r,
-                    upf.rab,
-                    gaunt_table,
-                );
-                // Add m-resolved D^H directly to dij_m
-                for (0..n_m) |idx2| {
-                    dij_m[idx2] += dij_h_m[idx2];
-                }
-                // Contract D^H to radial for dij (used in stress/forces).
-                for (0..nb) |i| {
-                    for (0..nb) |j| {
-                        if (tab.l_list[i] != tab.l_list[j]) continue;
-                        const m_count = @as(usize, @intCast(2 * tab.l_list[i] + 1));
-                        var sum_dh: f64 = 0.0;
-                        for (0..m_count) |m| {
-                            const im = sp_m_offsets[i] + m;
-                            const jm = sp_m_offsets[j] + m;
-                            sum_dh += dij_h_m[im * mt + jm];
-                        }
-                        dij[i * nb + j] += sum_dh / @as(f64, @floatFromInt(m_count));
-                    }
-                }
-            }
+            const dij_h_m = try alloc.alloc(f64, setup.n_m);
+            defer alloc.free(dij_h_m);
 
-            // Mix D_ij with old value from first cache, then write to all caches
-            if (dij_mix_beta < 1.0 - 1e-10) {
-                if (apply_caches.len > 0) {
-                    if (apply_caches[0].nonlocal_ctx) |*nl| {
-                        if (nl.species[si].dij_per_atom) |dpa| {
-                            if (atom_counter < dpa.len) {
-                                for (0..@min(dij.len, dpa[atom_counter].len)) |ii| {
-                                    dij[ii] = (1.0 - dij_mix_beta) * dpa[atom_counter][ii] + dij_mix_beta * dij[ii];
-                                }
-                            }
-                        }
-                        if (nl.species[si].dij_m_per_atom) |dpa| {
-                            if (atom_counter < dpa.len) {
-                                for (0..@min(dij_m.len, dpa[atom_counter].len)) |ii| {
-                                    dij_m[ii] = (1.0 - dij_mix_beta) * dpa[atom_counter][ii] + dij_mix_beta * dij_m[ii];
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            for (apply_caches) |*ac| {
-                if (ac.nonlocal_ctx) |*nl| {
-                    nl.updateDijAtom(si, atom_counter, dij);
-                    nl.updateDijMAtom(si, atom_counter, dij_m);
-                }
-            }
+            try fillPawDijHartreeMatrix(alloc, setup, rhoij, ai, gaunt_table, dij_h_m);
+            addMResolvedCorrection(setup, dij_h_m, dij, dij_m);
+
+            mixAndWritePawDijAtom(apply_caches, setup.si, atom_counter, dij_mix_beta, dij, dij_m);
 
             atom_counter += 1;
         }
 
-        // Symmetrize D_ij across equivalent atoms of this species
-        if (symmetrize and natom > 1) {
-            // Symmetrize radial D_ij
-            const avg_dij = try alloc.alloc(f64, n_ij);
-            defer alloc.free(avg_dij);
-            @memset(avg_dij, 0.0);
-            if (apply_caches.len > 0) {
-                if (apply_caches[0].nonlocal_ctx) |*nl| {
-                    if (nl.species[si].dij_per_atom) |dpa| {
-                        for (0..natom) |a| {
-                            for (0..n_ij) |idx2| {
-                                avg_dij[idx2] += dpa[a][idx2];
-                            }
-                        }
-                    }
-                }
-            }
-            const inv_natom = 1.0 / @as(f64, @floatFromInt(natom));
-            for (0..n_ij) |idx2| {
-                avg_dij[idx2] *= inv_natom;
-            }
-            for (apply_caches) |*ac| {
-                if (ac.nonlocal_ctx) |*nl| {
-                    if (nl.species[si].dij_per_atom) |dpa| {
-                        for (0..natom) |a| {
-                            @memcpy(dpa[a], avg_dij);
-                        }
-                    }
-                }
-            }
-
-            // Symmetrize m-resolved D_ij
-            const avg_dij_m = try alloc.alloc(f64, n_m);
-            defer alloc.free(avg_dij_m);
-            @memset(avg_dij_m, 0.0);
-            if (apply_caches.len > 0) {
-                if (apply_caches[0].nonlocal_ctx) |*nl| {
-                    if (nl.species[si].dij_m_per_atom) |dpa| {
-                        for (0..natom) |a| {
-                            for (0..n_m) |idx2| {
-                                avg_dij_m[idx2] += dpa[a][idx2];
-                            }
-                        }
-                    }
-                }
-            }
-            for (0..n_m) |idx2| {
-                avg_dij_m[idx2] *= inv_natom;
-            }
-            for (apply_caches) |*ac| {
-                if (ac.nonlocal_ctx) |*nl| {
-                    if (nl.species[si].dij_m_per_atom) |dpa| {
-                        for (0..natom) |a| {
-                            @memcpy(dpa[a], avg_dij_m);
-                        }
-                    }
-                }
-            }
+        if (symmetrize and setup.natom > 1) {
+            try symmetrizeSpeciesRadialDij(
+                alloc,
+                apply_caches,
+                setup.si,
+                setup.natom,
+                setup.n_ij,
+            );
+            try symmetrizeSpeciesMResolvedDij(
+                alloc,
+                apply_caches,
+                setup.si,
+                setup.natom,
+                setup.n_m,
+            );
         }
     }
 }

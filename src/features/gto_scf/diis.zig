@@ -80,44 +80,15 @@ pub const GtoDiis = struct {
         const err_vec = try self.alloc.alloc(f64, nn);
         errdefer self.alloc.free(err_vec);
 
-        // We need two temporary n×n matrices for FP and SP
-        const fp = try self.alloc.alloc(f64, nn);
-        defer self.alloc.free(fp);
-        const sp = try self.alloc.alloc(f64, nn);
-        defer self.alloc.free(sp);
-
-        matMul(n, f_mat, p_mat, fp); // FP
-        matMul(n, s_mat, p_mat, sp); // SP
-
-        // e = (FP)S - (SP)F
-        // e_ij = Σ_k (FP)_ik S_kj - Σ_k (SP)_ik F_kj
-        for (0..n) |i| {
-            for (0..n) |j| {
-                var fps: f64 = 0.0;
-                var spf: f64 = 0.0;
-                for (0..n) |k| {
-                    fps += fp[i * n + k] * s_mat[k * n + j];
-                    spf += sp[i * n + k] * f_mat[k * n + j];
-                }
-                err_vec[i * n + j] = fps - spf;
-            }
-        }
+        try computeFpsSpfError(self.alloc, n, f_mat, p_mat, s_mat, err_vec);
 
         // Store a copy of the current Fock matrix
         const f_copy = try self.alloc.alloc(f64, nn);
         errdefer self.alloc.free(f_copy);
+
         @memcpy(f_copy, f_mat);
 
-        // Evict oldest entry if at capacity
-        if (self.fock_history.items.len >= self.max_history) {
-            const old_f = self.fock_history.orderedRemove(0);
-            self.alloc.free(old_f);
-            const old_e = self.error_history.orderedRemove(0);
-            self.alloc.free(old_e);
-        }
-
-        try self.fock_history.append(self.alloc, f_copy);
-        try self.error_history.append(self.alloc, err_vec);
+        try self.appendHistory(f_copy, err_vec);
 
         const m = self.fock_history.items.len;
 
@@ -127,29 +98,7 @@ pub const GtoDiis = struct {
             return;
         }
 
-        // Build the DIIS B matrix of size (m+1)×(m+1):
-        //   B[i][j] = <e_i | e_j>   for i,j < m
-        //   B[i][m] = B[m][i] = -1   (Lagrange constraint row/col)
-        //   B[m][m] = 0
-        const dim = m + 1;
-        const b_mat = try self.alloc.alloc(f64, dim * dim);
-        defer self.alloc.free(b_mat);
-        const rhs = try self.alloc.alloc(f64, dim);
-        defer self.alloc.free(rhs);
-
-        for (0..m) |i| {
-            for (0..m) |j| {
-                b_mat[i * dim + j] = dotProduct(nn, self.error_history.items[i], self.error_history.items[j]);
-            }
-            b_mat[i * dim + m] = -1.0;
-            b_mat[m * dim + i] = -1.0;
-            rhs[i] = 0.0;
-        }
-        b_mat[m * dim + m] = 0.0;
-        rhs[m] = -1.0;
-
-        // Solve the linear system B c = rhs
-        const coeffs = try solveDiisSystem(self.alloc, dim, b_mat, rhs);
+        const coeffs = try self.solveForCoefficients(m, nn);
         defer self.alloc.free(coeffs);
 
         // Extrapolate: F_opt = Σ_i c_i F_i
@@ -161,6 +110,49 @@ pub const GtoDiis = struct {
                 f_out[idx] += ci * fi[idx];
             }
         }
+    }
+
+    fn appendHistory(self: *GtoDiis, f_copy: []f64, err_vec: []f64) !void {
+        // Evict oldest entry if at capacity
+        if (self.fock_history.items.len >= self.max_history) {
+            const old_f = self.fock_history.orderedRemove(0);
+            self.alloc.free(old_f);
+            const old_e = self.error_history.orderedRemove(0);
+            self.alloc.free(old_e);
+        }
+
+        try self.fock_history.append(self.alloc, f_copy);
+        try self.error_history.append(self.alloc, err_vec);
+    }
+
+    fn solveForCoefficients(self: *GtoDiis, m: usize, nn: usize) ![]f64 {
+        // Build the DIIS B matrix of size (m+1)×(m+1):
+        //   B[i][j] = <e_i | e_j>   for i,j < m
+        //   B[i][m] = B[m][i] = -1   (Lagrange constraint row/col)
+        //   B[m][m] = 0
+        const dim = m + 1;
+        const b_mat = try self.alloc.alloc(f64, dim * dim);
+        defer self.alloc.free(b_mat);
+
+        const rhs = try self.alloc.alloc(f64, dim);
+        defer self.alloc.free(rhs);
+
+        for (0..m) |i| {
+            for (0..m) |j| {
+                b_mat[i * dim + j] = dotProduct(
+                    nn,
+                    self.error_history.items[i],
+                    self.error_history.items[j],
+                );
+            }
+            b_mat[i * dim + m] = -1.0;
+            b_mat[m * dim + i] = -1.0;
+            rhs[i] = 0.0;
+        }
+        b_mat[m * dim + m] = 0.0;
+        rhs[m] = -1.0;
+
+        return try solveDiisSystem(self.alloc, dim, b_mat, rhs);
     }
 
     /// Reset the DIIS history (e.g., when restarting SCF).
@@ -191,6 +183,41 @@ pub const GtoDiis = struct {
 // Helper functions
 // ---------------------------------------------------------------------------
 
+/// Compute the DIIS error vector e = FPS - SPF for a given (F, P, S).
+fn computeFpsSpfError(
+    alloc: std.mem.Allocator,
+    n: usize,
+    f_mat: []const f64,
+    p_mat: []const f64,
+    s_mat: []const f64,
+    err_vec: []f64,
+) !void {
+    const nn = n * n;
+    // We need two temporary n×n matrices for FP and SP
+    const fp = try alloc.alloc(f64, nn);
+    defer alloc.free(fp);
+
+    const sp = try alloc.alloc(f64, nn);
+    defer alloc.free(sp);
+
+    matMul(n, f_mat, p_mat, fp); // FP
+    matMul(n, s_mat, p_mat, sp); // SP
+
+    // e = (FP)S - (SP)F
+    // e_ij = Σ_k (FP)_ik S_kj - Σ_k (SP)_ik F_kj
+    for (0..n) |i| {
+        for (0..n) |j| {
+            var fps: f64 = 0.0;
+            var spf: f64 = 0.0;
+            for (0..n) |k| {
+                fps += fp[i * n + k] * s_mat[k * n + j];
+                spf += sp[i * n + k] * f_mat[k * n + j];
+            }
+            err_vec[i * n + j] = fps - spf;
+        }
+    }
+}
+
 /// Row-major n×n matrix multiply: C = A × B.
 fn matMul(n: usize, a: []const f64, b: []const f64, c: []f64) void {
     for (0..n) |i| {
@@ -217,68 +244,54 @@ fn dotProduct(len: usize, a: []const f64, b: []const f64) f64 {
 /// elimination. Returns the solution vector x (caller owns the memory).
 ///
 /// Falls back to equal-weight coefficients if the matrix is singular.
-fn solveDiisSystem(
-    alloc: std.mem.Allocator,
-    dim: usize,
-    a_in: []const f64,
-    b_in: []const f64,
-) ![]f64 {
-    // Work on copies since we modify in place
-    const a = try alloc.alloc(f64, dim * dim);
-    defer alloc.free(a);
-    @memcpy(a, a_in);
+fn setEqualWeightsFallback(dim: usize, x: []f64) void {
+    const m = dim - 1; // number of Fock matrices
+    const w = 1.0 / @as(f64, @floatFromInt(m));
+    for (0..m) |i| {
+        x[i] = w;
+    }
+    x[m] = 0.0; // Lagrange multiplier
+}
 
-    const x = try alloc.alloc(f64, dim);
-    @memcpy(x, b_in);
-
-    // Forward elimination with partial pivoting
-    for (0..dim) |col| {
-        // Find pivot
-        var max_val: f64 = @abs(a[col * dim + col]);
-        var max_row: usize = col;
-        for (col + 1..dim) |row| {
-            const v = @abs(a[row * dim + col]);
-            if (v > max_val) {
-                max_val = v;
-                max_row = row;
-            }
-        }
-
-        if (max_val < 1e-14) {
-            // Singular — return equal weights for DIIS coefficients
-            const m = dim - 1; // number of Fock matrices
-            const w = 1.0 / @as(f64, @floatFromInt(m));
-            for (0..m) |i| {
-                x[i] = w;
-            }
-            x[m] = 0.0; // Lagrange multiplier
-            return x;
-        }
-
-        // Swap rows
-        if (max_row != col) {
-            for (0..dim) |j| {
-                const tmp = a[col * dim + j];
-                a[col * dim + j] = a[max_row * dim + j];
-                a[max_row * dim + j] = tmp;
-            }
-            const tmp = x[col];
-            x[col] = x[max_row];
-            x[max_row] = tmp;
-        }
-
-        // Eliminate below
-        const pivot = a[col * dim + col];
-        for (col + 1..dim) |row| {
-            const factor = a[row * dim + col] / pivot;
-            for (col..dim) |j| {
-                a[row * dim + j] -= factor * a[col * dim + j];
-            }
-            x[row] -= factor * x[col];
+fn pivotAndEliminate(dim: usize, col: usize, a: []f64, x: []f64) bool {
+    // Find pivot
+    var max_val: f64 = @abs(a[col * dim + col]);
+    var max_row: usize = col;
+    for (col + 1..dim) |row| {
+        const v = @abs(a[row * dim + col]);
+        if (v > max_val) {
+            max_val = v;
+            max_row = row;
         }
     }
 
-    // Back substitution
+    if (max_val < 1e-14) return false;
+
+    // Swap rows
+    if (max_row != col) {
+        for (0..dim) |j| {
+            const tmp = a[col * dim + j];
+            a[col * dim + j] = a[max_row * dim + j];
+            a[max_row * dim + j] = tmp;
+        }
+        const tmp = x[col];
+        x[col] = x[max_row];
+        x[max_row] = tmp;
+    }
+
+    // Eliminate below
+    const pivot = a[col * dim + col];
+    for (col + 1..dim) |row| {
+        const factor = a[row * dim + col] / pivot;
+        for (col..dim) |j| {
+            a[row * dim + j] -= factor * a[col * dim + j];
+        }
+        x[row] -= factor * x[col];
+    }
+    return true;
+}
+
+fn backSubstitute(dim: usize, a: []const f64, x: []f64) void {
     var col_idx: usize = dim;
     while (col_idx > 0) {
         col_idx -= 1;
@@ -288,6 +301,34 @@ fn solveDiisSystem(
         }
         x[col_idx] = s / a[col_idx * dim + col_idx];
     }
+}
+
+fn solveDiisSystem(
+    alloc: std.mem.Allocator,
+    dim: usize,
+    a_in: []const f64,
+    b_in: []const f64,
+) ![]f64 {
+    // Work on copies since we modify in place
+    const a = try alloc.alloc(f64, dim * dim);
+    defer alloc.free(a);
+
+    @memcpy(a, a_in);
+
+    const x = try alloc.alloc(f64, dim);
+    @memcpy(x, b_in);
+
+    // Forward elimination with partial pivoting
+    for (0..dim) |col| {
+        if (!pivotAndEliminate(dim, col, a, x)) {
+            // Singular — return equal weights for DIIS coefficients
+            setEqualWeightsFallback(dim, x);
+            return x;
+        }
+    }
+
+    // Back substitution
+    backSubstitute(dim, a, x);
 
     return x;
 }
@@ -315,6 +356,7 @@ test "DIIS solver 2x2" {
     const b = [_]f64{ 5, 7 };
     const x = try solveDiisSystem(alloc, 2, &a, &b);
     defer alloc.free(x);
+
     try std.testing.expectApproxEqAbs(1.6, x[0], 1e-12);
     try std.testing.expectApproxEqAbs(1.8, x[1], 1e-12);
 }

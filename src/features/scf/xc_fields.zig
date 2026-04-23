@@ -39,6 +39,270 @@ pub const Gradient = struct {
     }
 };
 
+fn allocGradient(alloc: std.mem.Allocator, total: usize) !Gradient {
+    const x = try alloc.alloc(f64, total);
+    errdefer alloc.free(x);
+    const y = try alloc.alloc(f64, total);
+    errdefer alloc.free(y);
+    const z = try alloc.alloc(f64, total);
+    errdefer alloc.free(z);
+    return .{ .x = x, .y = y, .z = z };
+}
+
+fn allocDensityWithCore(
+    alloc: std.mem.Allocator,
+    rho: []const f64,
+    rho_core: ?[]const f64,
+) !?[]f64 {
+    const core = rho_core orelse return null;
+    const density = try alloc.alloc(f64, rho.len);
+    for (rho, 0..) |value, i| {
+        density[i] = value + core[i];
+    }
+    return density;
+}
+
+fn computeLdaXcFields(
+    alloc: std.mem.Allocator,
+    rho: []const f64,
+    rho_core: ?[]const f64,
+) !XcFields {
+    const total = rho.len;
+    const vxc = try alloc.alloc(f64, total);
+    errdefer alloc.free(vxc);
+    const exc = try alloc.alloc(f64, total);
+    errdefer alloc.free(exc);
+
+    for (rho, 0..) |value, i| {
+        const core = if (rho_core) |rc| rc[i] else 0.0;
+        const n = value + core;
+        const eval = xc.evalPoint(.lda_pz, n, 0.0);
+        vxc[i] = eval.df_dn;
+        exc[i] = eval.f;
+    }
+    return .{ .vxc = vxc, .exc = exc };
+}
+
+fn fillGgaXcFields(
+    density: []const f64,
+    grad: Gradient,
+    xc_func: xc.Functional,
+    vxc: []f64,
+    exc: []f64,
+    b: *Gradient,
+) void {
+    for (density, 0..) |value, i| {
+        const gx = grad.x[i];
+        const gy = grad.y[i];
+        const gz = grad.z[i];
+        const g2 = gx * gx + gy * gy + gz * gz;
+        const eval = xc.evalPoint(xc_func, value, g2);
+        vxc[i] = eval.df_dn;
+        exc[i] = eval.f;
+        b.x[i] = eval.df_dg2 * gx;
+        b.y[i] = eval.df_dg2 * gy;
+        b.z[i] = eval.df_dg2 * gz;
+    }
+}
+
+fn computeGgaXcFields(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    rho: []const f64,
+    rho_core: ?[]const f64,
+    use_rfft: bool,
+    xc_func: xc.Functional,
+) !XcFields {
+    const total = grid.count();
+    const vxc = try alloc.alloc(f64, total);
+    errdefer alloc.free(vxc);
+    const exc = try alloc.alloc(f64, total);
+    errdefer alloc.free(exc);
+
+    const rho_total = try allocDensityWithCore(alloc, rho, rho_core);
+    defer if (rho_total) |values| alloc.free(values);
+
+    const density = rho_total orelse rho;
+
+    var grad = try gradientFromReal(alloc, grid, density, use_rfft);
+    defer grad.deinit(alloc);
+
+    var b = try allocGradient(alloc, total);
+    defer b.deinit(alloc);
+
+    fillGgaXcFields(density, grad, xc_func, vxc, exc, &b);
+
+    const div = try divergenceFromReal(alloc, grid, b.x, b.y, b.z, use_rfft);
+    defer alloc.free(div);
+
+    for (vxc, 0..) |*value, idx| {
+        value.* -= 2.0 * div[idx];
+    }
+    return .{ .vxc = vxc, .exc = exc };
+}
+
+fn computeLdaXcFieldsSpin(
+    alloc: std.mem.Allocator,
+    rho_up: []const f64,
+    rho_down: []const f64,
+    rho_core: ?[]const f64,
+) !XcFieldsSpin {
+    const total = rho_up.len;
+    const vxc_up = try alloc.alloc(f64, total);
+    errdefer alloc.free(vxc_up);
+    const vxc_down = try alloc.alloc(f64, total);
+    errdefer alloc.free(vxc_down);
+    const exc = try alloc.alloc(f64, total);
+    errdefer alloc.free(exc);
+
+    for (0..total) |i| {
+        const core_half = if (rho_core) |rc| rc[i] / 2.0 else 0.0;
+        const n_up = rho_up[i] + core_half;
+        const n_down = rho_down[i] + core_half;
+        const eval = xc.evalPointSpin(.lda_pz, n_up, n_down, 0.0, 0.0, 0.0);
+        vxc_up[i] = eval.df_dn_up;
+        vxc_down[i] = eval.df_dn_down;
+        exc[i] = eval.f;
+    }
+    return .{ .vxc_up = vxc_up, .vxc_down = vxc_down, .exc = exc };
+}
+
+const SpinDensity = struct {
+    up: []f64,
+    down: []f64,
+
+    fn deinit(self: *SpinDensity, alloc: std.mem.Allocator) void {
+        alloc.free(self.up);
+        alloc.free(self.down);
+    }
+};
+
+fn buildSpinDensityWithCore(
+    alloc: std.mem.Allocator,
+    rho_up: []const f64,
+    rho_down: []const f64,
+    rho_core: ?[]const f64,
+) !SpinDensity {
+    const total = rho_up.len;
+    const density_up = try alloc.alloc(f64, total);
+    errdefer alloc.free(density_up);
+    const density_down = try alloc.alloc(f64, total);
+    errdefer alloc.free(density_down);
+
+    for (0..total) |i| {
+        const core_half = if (rho_core) |rc| rc[i] / 2.0 else 0.0;
+        density_up[i] = rho_up[i] + core_half;
+        density_down[i] = rho_down[i] + core_half;
+    }
+    return .{ .up = density_up, .down = density_down };
+}
+
+fn fillGgaSpinXcFields(
+    density: SpinDensity,
+    grad_up: Gradient,
+    grad_down: Gradient,
+    xc_func: xc.Functional,
+    vxc_up: []f64,
+    vxc_down: []f64,
+    exc: []f64,
+    b_up: *Gradient,
+    b_down: *Gradient,
+) void {
+    for (0..vxc_up.len) |i| {
+        const gux = grad_up.x[i];
+        const guy = grad_up.y[i];
+        const guz = grad_up.z[i];
+        const gdx = grad_down.x[i];
+        const gdy = grad_down.y[i];
+        const gdz = grad_down.z[i];
+        const g2_uu = gux * gux + guy * guy + guz * guz;
+        const g2_dd = gdx * gdx + gdy * gdy + gdz * gdz;
+        const g2_ud = gux * gdx + guy * gdy + guz * gdz;
+        const eval = xc.evalPointSpin(
+            xc_func,
+            density.up[i],
+            density.down[i],
+            g2_uu,
+            g2_dd,
+            g2_ud,
+        );
+
+        vxc_up[i] = eval.df_dn_up;
+        vxc_down[i] = eval.df_dn_down;
+        exc[i] = eval.f;
+        b_up.x[i] = 2.0 * eval.df_dg2_uu * gux + eval.df_dg2_ud * gdx;
+        b_up.y[i] = 2.0 * eval.df_dg2_uu * guy + eval.df_dg2_ud * gdy;
+        b_up.z[i] = 2.0 * eval.df_dg2_uu * guz + eval.df_dg2_ud * gdz;
+        b_down.x[i] = 2.0 * eval.df_dg2_dd * gdx + eval.df_dg2_ud * gux;
+        b_down.y[i] = 2.0 * eval.df_dg2_dd * gdy + eval.df_dg2_ud * guy;
+        b_down.z[i] = 2.0 * eval.df_dg2_dd * gdz + eval.df_dg2_ud * guz;
+    }
+}
+
+fn computeGgaXcFieldsSpin(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    rho_up: []const f64,
+    rho_down: []const f64,
+    rho_core: ?[]const f64,
+    use_rfft: bool,
+    xc_func: xc.Functional,
+) !XcFieldsSpin {
+    const total = grid.count();
+    const vxc_up = try alloc.alloc(f64, total);
+    errdefer alloc.free(vxc_up);
+    const vxc_down = try alloc.alloc(f64, total);
+    errdefer alloc.free(vxc_down);
+    const exc = try alloc.alloc(f64, total);
+    errdefer alloc.free(exc);
+
+    var density = try buildSpinDensityWithCore(alloc, rho_up, rho_down, rho_core);
+    defer density.deinit(alloc);
+
+    var grad_up = try gradientFromReal(alloc, grid, density.up, use_rfft);
+    defer grad_up.deinit(alloc);
+
+    var grad_down = try gradientFromReal(alloc, grid, density.down, use_rfft);
+    defer grad_down.deinit(alloc);
+
+    var b_up = try allocGradient(alloc, total);
+    defer b_up.deinit(alloc);
+
+    var b_down = try allocGradient(alloc, total);
+    defer b_down.deinit(alloc);
+
+    fillGgaSpinXcFields(
+        density,
+        grad_up,
+        grad_down,
+        xc_func,
+        vxc_up,
+        vxc_down,
+        exc,
+        &b_up,
+        &b_down,
+    );
+
+    const div_up = try divergenceFromReal(alloc, grid, b_up.x, b_up.y, b_up.z, use_rfft);
+    defer alloc.free(div_up);
+
+    const div_down = try divergenceFromReal(
+        alloc,
+        grid,
+        b_down.x,
+        b_down.y,
+        b_down.z,
+        use_rfft,
+    );
+    defer alloc.free(div_down);
+
+    for (0..total) |i| {
+        vxc_up[i] -= div_up[i];
+        vxc_down[i] -= div_down[i];
+    }
+    return .{ .vxc_up = vxc_up, .vxc_down = vxc_down, .exc = exc };
+}
+
 pub fn gradientFromReal(
     alloc: std.mem.Allocator,
     grid: Grid,
@@ -84,8 +348,10 @@ pub fn divergenceFromReal(
 ) ![]f64 {
     const bx_g = try realToReciprocal(alloc, grid, bx, use_rfft);
     defer alloc.free(bx_g);
+
     const by_g = try realToReciprocal(alloc, grid, by, use_rfft);
     defer alloc.free(by_g);
+
     const bz_g = try realToReciprocal(alloc, grid, bz, use_rfft);
     defer alloc.free(bz_g);
 
@@ -96,10 +362,10 @@ pub fn divergenceFromReal(
 
     var it = gvec_iter.GVecIterator.init(grid);
     while (it.next()) |g| {
-        const sum = math.complex.add(
-            math.complex.add(math.complex.scale(bx_g[g.idx], g.gvec.x), math.complex.scale(by_g[g.idx], g.gvec.y)),
-            math.complex.scale(bz_g[g.idx], g.gvec.z),
-        );
+        const bx_term = math.complex.scale(bx_g[g.idx], g.gvec.x);
+        const by_term = math.complex.scale(by_g[g.idx], g.gvec.y);
+        const bz_term = math.complex.scale(bz_g[g.idx], g.gvec.z);
+        const sum = math.complex.add(math.complex.add(bx_term, by_term), bz_term);
         div_g[g.idx] = math.complex.mul(sum, i_unit);
     }
 
@@ -116,70 +382,8 @@ pub fn computeXcFields(
     use_rfft: bool,
     xc_func: xc.Functional,
 ) !XcFields {
-    const total = grid.count();
-    const vxc = try alloc.alloc(f64, total);
-    errdefer alloc.free(vxc);
-    const exc = try alloc.alloc(f64, total);
-    errdefer alloc.free(exc);
-
-    if (xc_func == .lda_pz) {
-        for (rho, 0..) |value, i| {
-            const core = if (rho_core) |rc| rc[i] else 0.0;
-            const n = value + core;
-            const eval = xc.evalPoint(.lda_pz, n, 0.0);
-            vxc[i] = eval.df_dn;
-            exc[i] = eval.f;
-        }
-        return .{ .vxc = vxc, .exc = exc };
-    }
-
-    var rho_total: ?[]f64 = null;
-    if (rho_core) |rc| {
-        const total_rho = try alloc.alloc(f64, total);
-        for (rho, 0..) |value, i| {
-            total_rho[i] = value + rc[i];
-        }
-        rho_total = total_rho;
-    }
-    defer if (rho_total) |values| alloc.free(values);
-    const density = rho_total orelse rho;
-
-    var grad = try gradientFromReal(alloc, grid, density, use_rfft);
-    defer grad.deinit(alloc);
-
-    const bx = try alloc.alloc(f64, total);
-    errdefer alloc.free(bx);
-    const by = try alloc.alloc(f64, total);
-    errdefer alloc.free(by);
-    const bz = try alloc.alloc(f64, total);
-    errdefer alloc.free(bz);
-
-    var i: usize = 0;
-    while (i < total) : (i += 1) {
-        const gx = grad.x[i];
-        const gy = grad.y[i];
-        const gz = grad.z[i];
-        const g2 = gx * gx + gy * gy + gz * gz;
-        const eval = xc.evalPoint(xc_func, density[i], g2);
-        vxc[i] = eval.df_dn;
-        exc[i] = eval.f;
-        const coeff = eval.df_dg2;
-        bx[i] = coeff * gx;
-        by[i] = coeff * gy;
-        bz[i] = coeff * gz;
-    }
-
-    const div = try divergenceFromReal(alloc, grid, bx, by, bz, use_rfft);
-    defer alloc.free(div);
-    alloc.free(bx);
-    alloc.free(by);
-    alloc.free(bz);
-
-    for (vxc, 0..) |*value, idx| {
-        value.* -= 2.0 * div[idx];
-    }
-
-    return .{ .vxc = vxc, .exc = exc };
+    if (xc_func == .lda_pz) return computeLdaXcFields(alloc, rho, rho_core);
+    return computeGgaXcFields(alloc, grid, rho, rho_core, use_rfft, xc_func);
 }
 
 /// Compute spin-polarized XC fields (V_xc_up, V_xc_down, exc).
@@ -193,105 +397,6 @@ pub fn computeXcFieldsSpin(
     use_rfft: bool,
     xc_func: xc.Functional,
 ) !XcFieldsSpin {
-    const total = grid.count();
-    const vxc_up = try alloc.alloc(f64, total);
-    errdefer alloc.free(vxc_up);
-    const vxc_down = try alloc.alloc(f64, total);
-    errdefer alloc.free(vxc_down);
-    const exc = try alloc.alloc(f64, total);
-    errdefer alloc.free(exc);
-
-    if (xc_func == .lda_pz) {
-        for (0..total) |i| {
-            const core_half = if (rho_core) |rc| rc[i] / 2.0 else 0.0;
-            const n_up = rho_up[i] + core_half;
-            const n_down = rho_down[i] + core_half;
-            const eval = xc.evalPointSpin(.lda_pz, n_up, n_down, 0.0, 0.0, 0.0);
-            vxc_up[i] = eval.df_dn_up;
-            vxc_down[i] = eval.df_dn_down;
-            exc[i] = eval.f;
-        }
-        return .{ .vxc_up = vxc_up, .vxc_down = vxc_down, .exc = exc };
-    }
-
-    // GGA: need gradients for each spin channel
-    // Build total density with core
-    const density_up = try alloc.alloc(f64, total);
-    defer alloc.free(density_up);
-    const density_down = try alloc.alloc(f64, total);
-    defer alloc.free(density_down);
-    for (0..total) |i| {
-        const core_half = if (rho_core) |rc| rc[i] / 2.0 else 0.0;
-        density_up[i] = rho_up[i] + core_half;
-        density_down[i] = rho_down[i] + core_half;
-    }
-
-    // Compute gradients for up and down channels
-    var grad_up = try gradientFromReal(alloc, grid, density_up, use_rfft);
-    defer grad_up.deinit(alloc);
-    var grad_down = try gradientFromReal(alloc, grid, density_down, use_rfft);
-    defer grad_down.deinit(alloc);
-
-    // B vectors for divergence correction (6 components: bx_uu, by_uu, bz_uu, bx_dd, by_dd, bz_dd, + cross terms)
-    // For PBE spin: V_xc_sigma -= 2 * div(df/dg2_ss * grad_sigma + df/dg2_ud * grad_sigma')
-    const bx_up = try alloc.alloc(f64, total);
-    errdefer alloc.free(bx_up);
-    const by_up = try alloc.alloc(f64, total);
-    errdefer alloc.free(by_up);
-    const bz_up = try alloc.alloc(f64, total);
-    errdefer alloc.free(bz_up);
-    const bx_down = try alloc.alloc(f64, total);
-    errdefer alloc.free(bx_down);
-    const by_down = try alloc.alloc(f64, total);
-    errdefer alloc.free(by_down);
-    const bz_down = try alloc.alloc(f64, total);
-    errdefer alloc.free(bz_down);
-
-    for (0..total) |i| {
-        const gux = grad_up.x[i];
-        const guy = grad_up.y[i];
-        const guz = grad_up.z[i];
-        const gdx = grad_down.x[i];
-        const gdy = grad_down.y[i];
-        const gdz = grad_down.z[i];
-
-        const g2_uu = gux * gux + guy * guy + guz * guz;
-        const g2_dd = gdx * gdx + gdy * gdy + gdz * gdz;
-        const g2_ud = gux * gdx + guy * gdy + guz * gdz;
-
-        const eval = xc.evalPointSpin(xc_func, density_up[i], density_down[i], g2_uu, g2_dd, g2_ud);
-        vxc_up[i] = eval.df_dn_up;
-        vxc_down[i] = eval.df_dn_down;
-        exc[i] = eval.f;
-
-        // B_up = 2*df/dg2_uu * grad_up + df/dg2_ud * grad_down
-        bx_up[i] = 2.0 * eval.df_dg2_uu * gux + eval.df_dg2_ud * gdx;
-        by_up[i] = 2.0 * eval.df_dg2_uu * guy + eval.df_dg2_ud * gdy;
-        bz_up[i] = 2.0 * eval.df_dg2_uu * guz + eval.df_dg2_ud * gdz;
-
-        // B_down = 2*df/dg2_dd * grad_down + df/dg2_ud * grad_up
-        bx_down[i] = 2.0 * eval.df_dg2_dd * gdx + eval.df_dg2_ud * gux;
-        by_down[i] = 2.0 * eval.df_dg2_dd * gdy + eval.df_dg2_ud * guy;
-        bz_down[i] = 2.0 * eval.df_dg2_dd * gdz + eval.df_dg2_ud * guz;
-    }
-
-    // Divergence corrections
-    const div_up = try divergenceFromReal(alloc, grid, bx_up, by_up, bz_up, use_rfft);
-    defer alloc.free(div_up);
-    alloc.free(bx_up);
-    alloc.free(by_up);
-    alloc.free(bz_up);
-
-    const div_down = try divergenceFromReal(alloc, grid, bx_down, by_down, bz_down, use_rfft);
-    defer alloc.free(div_down);
-    alloc.free(bx_down);
-    alloc.free(by_down);
-    alloc.free(bz_down);
-
-    for (0..total) |i| {
-        vxc_up[i] -= div_up[i];
-        vxc_down[i] -= div_down[i];
-    }
-
-    return .{ .vxc_up = vxc_up, .vxc_down = vxc_down, .exc = exc };
+    if (xc_func == .lda_pz) return computeLdaXcFieldsSpin(alloc, rho_up, rho_down, rho_core);
+    return computeGgaXcFieldsSpin(alloc, grid, rho_up, rho_down, rho_core, use_rfft, xc_func);
 }

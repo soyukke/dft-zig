@@ -52,7 +52,11 @@ pub fn buildCoreDensity(
                 for (atoms) |atom| {
                     const entry = &species[atom.species_index];
                     if (entry.upf.nlcc.len == 0) continue;
-                    const delta = minimumImage(grid.cell, grid.recip, math.Vec3.sub(rvec, atom.position));
+                    const delta = minimumImage(
+                        grid.cell,
+                        grid.recip,
+                        math.Vec3.sub(rvec, atom.position),
+                    );
                     const r = math.Vec3.norm(delta);
                     sum += sampleRadial(entry.upf.r, entry.upf.nlcc, r);
                 }

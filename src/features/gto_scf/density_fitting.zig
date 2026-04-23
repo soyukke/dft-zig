@@ -20,6 +20,80 @@ const blas = @import("../../lib/linalg/blas.zig");
 
 const ContractedShell = basis_mod.ContractedShell;
 
+fn buildCoulomb2Center(
+    aux_shells: []const ContractedShell,
+    n_aux: usize,
+    coulomb_2c: []f64,
+) void {
+    @memset(coulomb_2c, 0.0);
+    var shell_buf: [MAX_SHELL_CART * MAX_SHELL_CART]f64 = undefined;
+    var off_p: usize = 0;
+    for (aux_shells) |sp| {
+        const np = basis_mod.numCartesian(sp.l);
+        var off_q: usize = 0;
+        for (aux_shells) |sq| {
+            const nq = basis_mod.numCartesian(sq.l);
+            _ = eri_df.contracted2CenterERI(sp, sq, &shell_buf);
+            // Copy into full matrix
+            for (0..np) |ip| {
+                for (0..nq) |iq| {
+                    const row = (off_p + ip) * n_aux + (off_q + iq);
+                    coulomb_2c[row] = shell_buf[ip * nq + iq];
+                }
+            }
+            off_q += nq;
+        }
+        off_p += np;
+    }
+}
+
+fn zeroUpperTriangle(n_aux: usize, coulomb_2c: []f64) void {
+    for (0..n_aux) |i| {
+        for (i + 1..n_aux) |j| {
+            coulomb_2c[i * n_aux + j] = 0.0;
+        }
+    }
+}
+
+fn build3CenterIntegrals(
+    orbital_shells: []const ContractedShell,
+    aux_shells: []const ContractedShell,
+    n_basis: usize,
+    n_aux: usize,
+    eri3: []f64,
+) void {
+    @memset(eri3, 0.0);
+    var shell_buf: [MAX_SHELL_CART * MAX_SHELL_CART * MAX_SHELL_CART]f64 = undefined;
+    var off_a: usize = 0;
+    for (orbital_shells) |sa| {
+        const na_s = basis_mod.numCartesian(sa.l);
+        var off_b: usize = 0;
+        for (orbital_shells) |sb| {
+            const nb_s = basis_mod.numCartesian(sb.l);
+            var off_p: usize = 0;
+            for (aux_shells) |sp| {
+                const np_s = basis_mod.numCartesian(sp.l);
+                _ = eri_df.contracted3CenterERI(sa, sb, sp, &shell_buf);
+                // Copy: eri3[(off_a+ia)*n_basis+(off_b+ib), off_p+ip]
+                for (0..na_s) |ia| {
+                    for (0..nb_s) |ib| {
+                        for (0..np_s) |ip| {
+                            const mu = off_a + ia;
+                            const nu = off_b + ib;
+                            const p_idx = off_p + ip;
+                            eri3[(mu * n_basis + nu) * n_aux + p_idx] =
+                                shell_buf[ia * nb_s * np_s + ib * np_s + ip];
+                        }
+                    }
+                }
+                off_p += np_s;
+            }
+            off_b += nb_s;
+        }
+        off_a += na_s;
+    }
+}
+
 pub const DensityFittingContext = struct {
     n_basis: usize,
     n_aux: usize,
@@ -45,73 +119,18 @@ pub const DensityFittingContext = struct {
         errdefer alloc.free(coulomb_2c);
 
         // Compute (P|Q) shell by shell
-        @memset(coulomb_2c, 0.0);
-        {
-            var shell_buf: [MAX_SHELL_CART * MAX_SHELL_CART]f64 = undefined;
-            var off_p: usize = 0;
-            for (aux_shells) |sp| {
-                const np = basis_mod.numCartesian(sp.l);
-                var off_q: usize = 0;
-                for (aux_shells) |sq| {
-                    const nq = basis_mod.numCartesian(sq.l);
-                    _ = eri_df.contracted2CenterERI(sp, sq, &shell_buf);
-                    // Copy into full matrix
-                    for (0..np) |ip| {
-                        for (0..nq) |iq| {
-                            coulomb_2c[(off_p + ip) * n_aux + (off_q + iq)] = shell_buf[ip * nq + iq];
-                        }
-                    }
-                    off_q += nq;
-                }
-                off_p += np;
-            }
-        }
+        buildCoulomb2Center(aux_shells, n_aux, coulomb_2c);
 
         // Cholesky decomposition: (P|Q) = L * L^T
         try blas.dpotrf(n_aux, coulomb_2c);
         // Zero the upper triangle (dpotrf leaves garbage there)
-        for (0..n_aux) |i| {
-            for (i + 1..n_aux) |j| {
-                coulomb_2c[i * n_aux + j] = 0.0;
-            }
-        }
+        zeroUpperTriangle(n_aux, coulomb_2c);
 
         // Step 2: Build 3-center integrals (μν|P)
         const eri3 = try alloc.alloc(f64, n_basis * n_basis * n_aux);
         errdefer alloc.free(eri3);
-        @memset(eri3, 0.0);
 
-        {
-            var shell_buf: [MAX_SHELL_CART * MAX_SHELL_CART * MAX_SHELL_CART]f64 = undefined;
-            var off_a: usize = 0;
-            for (orbital_shells) |sa| {
-                const na_s = basis_mod.numCartesian(sa.l);
-                var off_b: usize = 0;
-                for (orbital_shells) |sb| {
-                    const nb_s = basis_mod.numCartesian(sb.l);
-                    var off_p: usize = 0;
-                    for (aux_shells) |sp| {
-                        const np_s = basis_mod.numCartesian(sp.l);
-                        _ = eri_df.contracted3CenterERI(sa, sb, sp, &shell_buf);
-                        // Copy: eri3[(off_a+ia)*n_basis+(off_b+ib), off_p+ip]
-                        for (0..na_s) |ia| {
-                            for (0..nb_s) |ib| {
-                                for (0..np_s) |ip| {
-                                    const mu = off_a + ia;
-                                    const nu = off_b + ib;
-                                    const p_idx = off_p + ip;
-                                    eri3[(mu * n_basis + nu) * n_aux + p_idx] =
-                                        shell_buf[ia * nb_s * np_s + ib * np_s + ip];
-                                }
-                            }
-                        }
-                        off_p += np_s;
-                    }
-                    off_b += nb_s;
-                }
-                off_a += na_s;
-            }
-        }
+        build3CenterIntegrals(orbital_shells, aux_shells, n_basis, n_aux, eri3);
 
         return .{
             .n_basis = n_basis,
@@ -133,13 +152,19 @@ pub const DensityFittingContext = struct {
     ///   c_P = Σ_{λσ} P_{λσ} (λσ|P)     [contract density with 3c integrals]
     ///   Solve L * L^T * d = c            [Cholesky solve for fitting coefficients]
     ///   J_{μν} = Σ_P (μν|P) d_P          [expand with 3c integrals]
-    pub fn buildJ(self: *const DensityFittingContext, alloc: std.mem.Allocator, p_mat: []const f64, j_mat: []f64) !void {
+    pub fn buildJ(
+        self: *const DensityFittingContext,
+        alloc: std.mem.Allocator,
+        p_mat: []const f64,
+        j_mat: []f64,
+    ) !void {
         const n = self.n_basis;
         const n_aux = self.n_aux;
 
         // c = eri3^T · p_flat  (n_aux vector)
         const c = try alloc.alloc(f64, n_aux);
         defer alloc.free(c);
+
         @memset(c, 0.0);
 
         // eri3 is (n*n) × n_aux, p_flat is n*n vector
@@ -164,7 +189,12 @@ pub const DensityFittingContext = struct {
     ///   K_{μν} = Σ_P Σ_λ B_{μλ,P} × (Σ_σ P_{λσ} B_{νσ,P})
     ///
     /// Equivalent to: K_{μν} = Σ_P (B^P · P · B^{P T})_{μν}
-    pub fn buildK(self: *const DensityFittingContext, alloc: std.mem.Allocator, p_mat: []const f64, k_mat: []f64) !void {
+    pub fn buildK(
+        self: *const DensityFittingContext,
+        alloc: std.mem.Allocator,
+        p_mat: []const f64,
+        k_mat: []f64,
+    ) !void {
         const n = self.n_basis;
         const n_aux = self.n_aux;
 
@@ -178,6 +208,7 @@ pub const DensityFittingContext = struct {
         // dtrsm(right, lower, trans, ...) on B
         const b_mat = try alloc.alloc(f64, n * n * n_aux);
         defer alloc.free(b_mat);
+
         @memcpy(b_mat, self.eri3);
 
         // Solve B * L^T = eri3 → B = eri3 * L^{-T}
@@ -195,6 +226,7 @@ pub const DensityFittingContext = struct {
         // Work buffer for B^P (n × n) and tmp = B^P · P (n × n)
         const bp_mat = try alloc.alloc(f64, n * n);
         defer alloc.free(bp_mat);
+
         const tmp = try alloc.alloc(f64, n * n);
         defer alloc.free(tmp);
 
@@ -409,6 +441,7 @@ test "DF J/K symmetry" {
     // Use identity-like density matrix
     const p_mat = try alloc.alloc(f64, n * n);
     defer alloc.free(p_mat);
+
     @memset(p_mat, 0.0);
     for (0..n) |i| {
         p_mat[i * n + i] = 1.0;
@@ -416,6 +449,7 @@ test "DF J/K symmetry" {
 
     const j_mat = try alloc.alloc(f64, n * n);
     defer alloc.free(j_mat);
+
     const k_mat = try alloc.alloc(f64, n * n);
     defer alloc.free(k_mat);
 

@@ -17,6 +17,47 @@ const math = @import("../math/math.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const symmetry = @import("symmetry.zig");
 
+/// Compute per-G-vector phase factors for the translation-rotation symmetry operation.
+fn computeRotationPhases(
+    basis_k: plane_wave.Basis,
+    symop: symmetry.SymOp,
+    sk_unwrapped: math.Vec3,
+    time_reversal: bool,
+    phases: []math.Complex,
+) void {
+    const n_pw = basis_k.gvecs.len;
+    const tau = symop.trans;
+    const has_translation = (@abs(tau.x) > 1e-12 or @abs(tau.y) > 1e-12 or @abs(tau.z) > 1e-12);
+
+    if (!has_translation) {
+        for (0..n_pw) |i| {
+            phases[i] = math.complex.init(1.0, 0.0);
+        }
+        return;
+    }
+
+    const rot = symop.k_rot;
+    const phase_sign: f64 = if (time_reversal) 1.0 else -1.0;
+
+    for (basis_k.gvecs, 0..) |gv, i| {
+        const h0 = gv.h;
+        const k0 = gv.k;
+        const l0 = gv.l;
+        // G_rot = k_rot * G (fractional hkl, unnegated)
+        const rm = rot.m;
+        const gr0 = @as(f64, @floatFromInt(rm[0][0] * h0 + rm[0][1] * k0 + rm[0][2] * l0));
+        const gr1 = @as(f64, @floatFromInt(rm[1][0] * h0 + rm[1][1] * k0 + rm[1][2] * l0));
+        const gr2 = @as(f64, @floatFromInt(rm[2][0] * h0 + rm[2][1] * k0 + rm[2][2] * l0));
+
+        // (k_rot*G + sk_unwrapped) · τ
+        const dot = (gr0 + sk_unwrapped.x) * tau.x +
+            (gr1 + sk_unwrapped.y) * tau.y +
+            (gr2 + sk_unwrapped.z) * tau.z;
+        const angle = phase_sign * 2.0 * std.math.pi * dot;
+        phases[i] = math.complex.expi(angle);
+    }
+}
+
 /// Rotate wavefunctions in-place (identity mapping: same G-vector order).
 ///
 /// The target basis is constructed by rotating the IBZ basis G-vectors,
@@ -35,40 +76,13 @@ pub fn rotateWavefunctionsInPlace(
     const n_occ = psi_k.len;
     const n_pw = basis_k.gvecs.len;
 
-    const tau = symop.trans;
-    const has_translation = (@abs(tau.x) > 1e-12 or @abs(tau.y) > 1e-12 or @abs(tau.z) > 1e-12);
-
     // Phase = exp(phase_sign * i 2π (k_rot*G + sk_unwrapped)·τ)
     // Non-TR: phase_sign = -1
     // TR:     phase_sign = +1, and conjugate the input coefficient
     const phases = try alloc.alloc(math.Complex, n_pw);
     defer alloc.free(phases);
 
-    if (has_translation) {
-        const rot = symop.k_rot;
-        const phase_sign: f64 = if (time_reversal) 1.0 else -1.0;
-
-        for (basis_k.gvecs, 0..) |gv, i| {
-            const h0 = gv.h;
-            const k0 = gv.k;
-            const l0 = gv.l;
-            // G_rot = k_rot * G (fractional hkl, unnegated)
-            const gr0 = @as(f64, @floatFromInt(rot.m[0][0] * h0 + rot.m[0][1] * k0 + rot.m[0][2] * l0));
-            const gr1 = @as(f64, @floatFromInt(rot.m[1][0] * h0 + rot.m[1][1] * k0 + rot.m[1][2] * l0));
-            const gr2 = @as(f64, @floatFromInt(rot.m[2][0] * h0 + rot.m[2][1] * k0 + rot.m[2][2] * l0));
-
-            // (k_rot*G + sk_unwrapped) · τ
-            const dot = (gr0 + sk_unwrapped.x) * tau.x +
-                (gr1 + sk_unwrapped.y) * tau.y +
-                (gr2 + sk_unwrapped.z) * tau.z;
-            const angle = phase_sign * 2.0 * std.math.pi * dot;
-            phases[i] = math.complex.expi(angle);
-        }
-    } else {
-        for (0..n_pw) |i| {
-            phases[i] = math.complex.init(1.0, 0.0);
-        }
-    }
+    computeRotationPhases(basis_k, symop, sk_unwrapped, time_reversal, phases);
 
     const wfn = try alloc.alloc([]math.Complex, n_occ);
     const wfn_const = try alloc.alloc([]const math.Complex, n_occ);

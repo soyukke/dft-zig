@@ -9,6 +9,7 @@ pub fn main(init: std.process.Init) !void {
 
     var args_iter = try init.minimal.args.iterateAllocator(alloc);
     defer args_iter.deinit();
+
     _ = args_iter.next(); // program name
     const config_path_opt = args_iter.next();
     if (config_path_opt == null) {
@@ -30,7 +31,11 @@ pub fn main(init: std.process.Init) !void {
     }
     for (cfg.pseudopotentials) |pp| {
         if (cwd.statFile(io, pp.path, .{})) |_| {} else |_| {
-            try logger.print(.err, "[ERROR] [pseudopotential.path] file not found: \"{s}\" (element {s})\n", .{ pp.path, pp.element });
+            try logger.print(
+                .err,
+                "[ERROR] [pseudopotential.path] file not found: \"{s}\" (element {s})\n",
+                .{ pp.path, pp.element },
+            );
             has_file_errors = true;
         }
     }
@@ -39,20 +44,7 @@ pub fn main(init: std.process.Init) !void {
     var validation = try cfg.validate(alloc);
     defer validation.deinit();
 
-    for (validation.issues) |issue| {
-        const level: dft.runtime_logging.Level = switch (issue.severity) {
-            .err => .err,
-            .warning => .warn,
-            .hint => .info,
-        };
-        const prefix: []const u8 = switch (issue.severity) {
-            .err => "ERROR",
-            .warning => "WARNING",
-            .hint => "HINT",
-        };
-        const field_sep: []const u8 = if (issue.field.len > 0) "." else "";
-        try logger.print(level, "[{s}] [{s}{s}{s}] {s}\n", .{ prefix, issue.section, field_sep, issue.field, issue.message });
-    }
+    try reportValidationIssues(logger, validation.issues);
 
     if (has_file_errors or validation.hasErrors()) {
         try logger.print(.err, "Config validation failed. Aborting.\n", .{});
@@ -65,6 +57,30 @@ pub fn main(init: std.process.Init) !void {
     try dft.xyz.validateInCell(atoms.items, cfg.cell);
 
     try dft.dft.run(alloc, io, cfg, atoms.items);
+}
+
+fn reportValidationIssues(
+    logger: dft.runtime_logging.Logger,
+    issues: []const dft.config.ValidationIssue,
+) !void {
+    for (issues) |issue| {
+        const level: dft.runtime_logging.Level = switch (issue.severity) {
+            .err => .err,
+            .warning => .warn,
+            .hint => .info,
+        };
+        const prefix: []const u8 = switch (issue.severity) {
+            .err => "ERROR",
+            .warning => "WARNING",
+            .hint => "HINT",
+        };
+        const field_sep: []const u8 = if (issue.field.len > 0) "." else "";
+        try logger.print(
+            level,
+            "[{s}] [{s}{s}{s}] {s}\n",
+            .{ prefix, issue.section, field_sep, issue.field, issue.message },
+        );
+    }
 }
 
 /// Print CLI usage.

@@ -167,9 +167,25 @@ pub const XcPointSpin = struct {
     df_dg2_ud: f64,
 };
 
+const xc_point_spin_zero = XcPointSpin{
+    .f = 0.0,
+    .df_dn_up = 0.0,
+    .df_dn_down = 0.0,
+    .df_dg2_uu = 0.0,
+    .df_dg2_dd = 0.0,
+    .df_dg2_ud = 0.0,
+};
+
 /// Evaluate spin-polarized XC energy density and potentials at a single point.
 /// All inputs/outputs in Hartree internally, converted to Rydberg on output.
-pub fn evalPointSpin(xc_func: Functional, n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64) XcPointSpin {
+pub fn evalPointSpin(
+    xc_func: Functional,
+    n_up: f64,
+    n_down: f64,
+    g2_uu: f64,
+    g2_dd: f64,
+    g2_ud: f64,
+) XcPointSpin {
     return switch (xc_func) {
         .lda_pz => ldaPzSpin(n_up, n_down),
         .pbe => pbeSpin(n_up, n_down, g2_uu, g2_dd, g2_ud),
@@ -424,8 +440,10 @@ fn pzParaCorrelation(rs: f64) CorrResult {
     }
 }
 
+const SpinInterp = struct { f_z: f64, df_dz: f64 };
+
 /// Spin-interpolation function f(zeta) = [(1+zeta)^(4/3) + (1-zeta)^(4/3) - 2] / [2(2^(1/3) - 1)]
-fn spinInterpolation(zeta: f64) struct { f_z: f64, df_dz: f64 } {
+fn spinInterpolation(zeta: f64) SpinInterp {
     const two13 = std.math.pow(f64, 2.0, 1.0 / 3.0);
     const denom = 2.0 * (two13 - 1.0);
     const zp = 1.0 + zeta;
@@ -442,7 +460,7 @@ fn spinInterpolation(zeta: f64) struct { f_z: f64, df_dz: f64 } {
 /// Correlation: PZ para/ferro interpolation with f(zeta)
 fn ldaPzSpin(n_up: f64, n_down: f64) XcPointSpin {
     const n = n_up + n_down;
-    if (n <= 1e-12) return .{ .f = 0.0, .df_dn_up = 0.0, .df_dn_down = 0.0, .df_dg2_uu = 0.0, .df_dg2_dd = 0.0, .df_dg2_ud = 0.0 };
+    if (n <= 1e-12) return xc_point_spin_zero;
 
     const pi = std.math.pi;
     const c_x = -0.75 * std.math.pow(f64, 3.0 / pi, 1.0 / 3.0);
@@ -452,7 +470,8 @@ fn ldaPzSpin(n_up: f64, n_down: f64) XcPointSpin {
     // E_x[n_up, n_down] = (E_x[2*n_up] + E_x[2*n_down]) / 2
     // eps_x(n) = c_x * n^(1/3), so E_x = n * eps_x = c_x * n^(4/3)
     // E_x_sigma = c_x * (2*n_sigma)^(4/3) / 2
-    // V_x_sigma = d(E_x)/d(n_sigma) = c_x * (4/3) * 2^(1/3) * n_sigma^(1/3) * 2 / 2 = (4/3)*c_x*2^(1/3)*n_sigma^(1/3)
+    // V_x_sigma = d(E_x)/d(n_sigma) = c_x * (4/3) * 2^(1/3) * n_sigma^(1/3) * 2 / 2
+    //           = (4/3)*c_x*2^(1/3)*n_sigma^(1/3)
     const two13 = std.math.pow(f64, 2.0, 1.0 / 3.0);
     var ex: f64 = 0.0;
     var vx_up: f64 = 0.0;
@@ -531,7 +550,8 @@ fn pw92CorrelationGeneric(rs: f64, params: PW92Params) CorrResult {
     const ln_g = @log(g);
     const eps = -2.0 * params.a * (1.0 + params.a1 * rs) * ln_g;
 
-    const df_drs = 0.5 * params.b1 / sqrt_rs + params.b2 + 1.5 * params.b3 * sqrt_rs + 2.0 * params.b4 * rs;
+    const df_drs = 0.5 * params.b1 / sqrt_rs + params.b2 +
+        1.5 * params.b3 * sqrt_rs + 2.0 * params.b4 * rs;
     const dln_g_drs = -(1.0 / (2.0 * params.a * f * f * g)) * df_drs;
     const deps_drs = -2.0 * params.a * (params.a1 * ln_g + (1.0 + params.a1 * rs) * dln_g_drs);
     const v_c = eps - (rs / 3.0) * deps_drs;
@@ -539,22 +559,44 @@ fn pw92CorrelationGeneric(rs: f64, params: PW92Params) CorrResult {
 }
 
 // PW92 paramagnetic (ec0)
-const pw92_para = PW92Params{ .a = 0.031091, .a1 = 0.21370, .b1 = 7.5957, .b2 = 3.5876, .b3 = 1.6382, .b4 = 0.49294 };
+const pw92_para = PW92Params{
+    .a = 0.031091,
+    .a1 = 0.21370,
+    .b1 = 7.5957,
+    .b2 = 3.5876,
+    .b3 = 1.6382,
+    .b4 = 0.49294,
+};
 // PW92 ferromagnetic (ec1)
-const pw92_ferro = PW92Params{ .a = 0.015545, .a1 = 0.20548, .b1 = 14.1189, .b2 = 6.1977, .b3 = 3.3662, .b4 = 0.62517 };
+const pw92_ferro = PW92Params{
+    .a = 0.015545,
+    .a1 = 0.20548,
+    .b1 = 14.1189,
+    .b2 = 6.1977,
+    .b3 = 3.3662,
+    .b4 = 0.62517,
+};
 // PW92 alpha_c (spin stiffness)
-const pw92_alpha = PW92Params{ .a = 0.016887, .a1 = 0.11125, .b1 = 10.357, .b2 = 3.6231, .b3 = 0.88026, .b4 = 0.49671 };
+const pw92_alpha = PW92Params{
+    .a = 0.016887,
+    .a1 = 0.11125,
+    .b1 = 10.357,
+    .b2 = 3.6231,
+    .b3 = 0.88026,
+    .b4 = 0.49671,
+};
 
 /// Spin-polarized PBE.
 fn pbeSpin(n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64) XcPointSpin {
     const n = n_up + n_down;
-    if (n <= 1e-12) return .{ .f = 0.0, .df_dn_up = 0.0, .df_dn_down = 0.0, .df_dg2_uu = 0.0, .df_dg2_dd = 0.0, .df_dg2_ud = 0.0 };
+    if (n <= 1e-12) return xc_point_spin_zero;
 
     const to_ry = 2.0;
 
     // Exchange: spin scaling E_x = (E_x[2n_up, 4g2_uu] + E_x[2n_down, 4g2_dd]) / 2
-    const ex_up = if (n_up > 1e-15) pbeExchange(2.0 * n_up, 4.0 * g2_uu) else XcPoint{ .f = 0.0, .df_dn = 0.0, .df_dg2 = 0.0 };
-    const ex_down = if (n_down > 1e-15) pbeExchange(2.0 * n_down, 4.0 * g2_dd) else XcPoint{ .f = 0.0, .df_dn = 0.0, .df_dg2 = 0.0 };
+    const zero_xc = XcPoint{ .f = 0.0, .df_dn = 0.0, .df_dg2 = 0.0 };
+    const ex_up = if (n_up > 1e-15) pbeExchange(2.0 * n_up, 4.0 * g2_uu) else zero_xc;
+    const ex_down = if (n_down > 1e-15) pbeExchange(2.0 * n_down, 4.0 * g2_dd) else zero_xc;
 
     const f_ex = (ex_up.f + ex_down.f) / 2.0;
     // V_x_sigma = d(E_x)/d(n_sigma) = d(E_x[2n_sigma, 4g2_ss])/d(n_sigma) / 2
@@ -587,11 +629,158 @@ const PbeCorrelationSpinResult = struct {
     df_dg2_ud: f64,
 };
 
-/// Spin-polarized PBE correlation (Hartree units internally).
-fn pbeCorrelationSpin(n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64) PbeCorrelationSpinResult {
+/// Shared intermediates for spin-polarized PBE: LDA inputs + PBE H setup.
+const PbeSpinState = struct {
+    // density-level quantities
+    n: f64,
+    rs: f64,
+    zeta: f64,
+    z4: f64,
+
+    // PW92 LDA pieces
+    ec0: CorrResult,
+    ec1: CorrResult,
+    ac: CorrResult,
+    fz: SpinInterp,
+    fdd0: f64,
+
+    // eps_c(rs,zeta)
+    eps_c: f64,
+
+    // phi(zeta)
+    phi: f64,
+    phi2: f64,
+    phi3: f64,
+    dphi_dzeta: f64,
+
+    // t^2 inputs
+    g2: f64,
+    denom_t: f64,
+    t2: f64,
+
+    // PBE H internals
+    beta: f64,
+    gamma_c: f64,
+    b: f64,
+    x: f64,
+    u: f64,
+    u_minus: f64,
+    A: f64,
+    y: f64,
+    denom2: f64,
+    q: f64,
+    arg: f64,
+    log_arg: f64,
+    H: f64,
+    darg_dt2: f64,
+    dH_dt2: f64,
+};
+
+/// Spin-polarization basis: phi(zeta), phi^2, phi^3, dphi/dzeta.
+const PhiSet = struct { phi: f64, phi2: f64, phi3: f64, dphi_dzeta: f64 };
+
+fn computePhiSet(zeta: f64) PhiSet {
+    // phi(zeta) = ((1+zeta)^(2/3) + (1-zeta)^(2/3)) / 2
+    const zp = 1.0 + zeta;
+    const zm = 1.0 - zeta;
+    const zp23 = if (zp > 1e-15) std.math.pow(f64, zp, 2.0 / 3.0) else 0.0;
+    const zm23 = if (zm > 1e-15) std.math.pow(f64, zm, 2.0 / 3.0) else 0.0;
+    const phi = (zp23 + zm23) / 2.0;
+    const phi2 = phi * phi;
+
+    // dphi/dzeta = (1/3) * ((1+zeta)^(-1/3) - (1-zeta)^(-1/3))
+    const zp_m13 = if (zp > 1e-15) std.math.pow(f64, zp, -1.0 / 3.0) else 0.0;
+    const zm_m13 = if (zm > 1e-15) std.math.pow(f64, zm, -1.0 / 3.0) else 0.0;
+    const dphi_dzeta = (zp_m13 - zm_m13) / 3.0;
+
+    return .{ .phi = phi, .phi2 = phi2, .phi3 = phi * phi * phi, .dphi_dzeta = dphi_dzeta };
+}
+
+/// PBE gradient coefficient t^2 = |grad n|^2 / (4 * phi^2 * ks^2 * n^2)
+/// and its denominator denom_t for later chain-rule use.
+const PbeT2 = struct { g2: f64, denom_t: f64, t2: f64 };
+
+fn computePbeT2(n: f64, phi2: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64) PbeT2 {
     const pi = std.math.pi;
+    const g2 = g2_uu + 2.0 * g2_ud + g2_dd;
+
+    // ks^2 = 4*kf/pi, kf = (3*pi^2*n)^(1/3)
+    const kf = std.math.pow(f64, 3.0 * pi * pi * n, 1.0 / 3.0);
+    const ks2 = 4.0 * kf / pi;
+    const denom_t = 4.0 * phi2 * ks2 * n * n;
+    const t2 = if (g2 > 0.0 and denom_t > 1e-30) g2 / denom_t else 0.0;
+    return .{ .g2 = g2, .denom_t = denom_t, .t2 = t2 };
+}
+
+/// PBE H term (PRL 77, 3865, Eq. 4-5) and its dH/dt^2 derivative.
+const PbeHPieces = struct {
+    beta: f64,
+    gamma_c: f64,
+    b: f64,
+    x: f64,
+    u: f64,
+    u_minus: f64,
+    A: f64,
+    y: f64,
+    denom2: f64,
+    q: f64,
+    arg: f64,
+    log_arg: f64,
+    H: f64,
+    darg_dt2: f64,
+    dH_dt2: f64,
+};
+
+fn computePbeH(eps_c: f64, phi3: f64, t2: f64) PbeHPieces {
+    // H = gamma * phi^3 * ln{1 + (beta/gamma) * t^2 * [(1+At^2)/(1+At^2+A^2*t^4)]}
+    // A = (beta/gamma) / {exp(-ec/(gamma * phi^3)) - 1}
     const beta = 0.06672455060314922;
     const gamma_c = 0.031090690869654895;
+    const b = beta / gamma_c;
+    const x = b * t2;
+    const u = std.math.exp(-eps_c / (gamma_c * phi3));
+    const u_minus = u - 1.0;
+    const A = if (@abs(u_minus) > 1e-12) (beta / gamma_c) / u_minus else 0.0;
+    const y = A * t2;
+    const denom2 = 1.0 + y + y * y;
+    const q = (1.0 + y) / denom2;
+    const arg = 1.0 + x * q;
+    const log_arg = if (arg > 0.0) @log(arg) else 0.0;
+    const H = gamma_c * phi3 * log_arg;
+
+    // Derivatives of H w.r.t. t^2
+    const denom2_sq = denom2 * denom2;
+    const dq_dt2 = -A * y * (2.0 + y) / denom2_sq;
+    const darg_dt2 = b * q + x * dq_dt2;
+    const dH_dt2 = if (arg > 0.0) gamma_c * phi3 * darg_dt2 / arg else 0.0;
+
+    return .{
+        .beta = beta,
+        .gamma_c = gamma_c,
+        .b = b,
+        .x = x,
+        .u = u,
+        .u_minus = u_minus,
+        .A = A,
+        .y = y,
+        .denom2 = denom2,
+        .q = q,
+        .arg = arg,
+        .log_arg = log_arg,
+        .H = H,
+        .darg_dt2 = darg_dt2,
+        .dH_dt2 = dH_dt2,
+    };
+}
+
+fn pbeSpinState(
+    n_up: f64,
+    n_down: f64,
+    g2_uu: f64,
+    g2_dd: f64,
+    g2_ud: f64,
+) PbeSpinState {
+    const pi = std.math.pi;
 
     const n = n_up + n_down;
     const zeta = std.math.clamp((n_up - n_down) / n, -1.0, 1.0);
@@ -607,87 +796,98 @@ fn pbeCorrelationSpin(n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64
     const fz = spinInterpolation(zeta);
     const fdd0 = 1.709921; // f''(0) = 4/(9*(2^(1/3)-1))
 
-    // eps_c(rs, zeta) = ec0 - ac(rs) * f(zeta) / f''(0) * (1 - zeta^4) + (ec1 - ec0) * f(zeta) * zeta^4
+    // eps_c(rs, zeta) = ec0 - ac(rs) * f(zeta) / f''(0) * (1 - zeta^4)
+    //                 + (ec1 - ec0) * f(zeta) * zeta^4
     // Note: ac.eps = -2a(1+a1*rs)*ln(g) < 0, so -ac.eps gives +alpha_c (physical spin stiffness)
     const z4 = zeta * zeta * zeta * zeta;
     const eps_c = ec0.eps - ac.eps * fz.f_z / fdd0 * (1.0 - z4) + (ec1.eps - ec0.eps) * fz.f_z * z4;
 
-    // phi(zeta) = ((1+zeta)^(2/3) + (1-zeta)^(2/3)) / 2
-    const zp = 1.0 + zeta;
-    const zm = 1.0 - zeta;
-    const zp23 = if (zp > 1e-15) std.math.pow(f64, zp, 2.0 / 3.0) else 0.0;
-    const zm23 = if (zm > 1e-15) std.math.pow(f64, zm, 2.0 / 3.0) else 0.0;
-    const phi = (zp23 + zm23) / 2.0;
-    const phi2 = phi * phi;
+    const phi_set = computePhiSet(zeta);
+    const t = computePbeT2(n, phi_set.phi2, g2_uu, g2_dd, g2_ud);
+    const h = computePbeH(eps_c, phi_set.phi3, t.t2);
 
-    // dphi/dzeta = (1/3) * ((1+zeta)^(-1/3) - (1-zeta)^(-1/3))
-    const zp_m13 = if (zp > 1e-15) std.math.pow(f64, zp, -1.0 / 3.0) else 0.0;
-    const zm_m13 = if (zm > 1e-15) std.math.pow(f64, zm, -1.0 / 3.0) else 0.0;
-    const dphi_dzeta = (zp_m13 - zm_m13) / 3.0;
+    return .{
+        .n = n,
+        .rs = rs,
+        .zeta = zeta,
+        .z4 = z4,
+        .ec0 = ec0,
+        .ec1 = ec1,
+        .ac = ac,
+        .fz = fz,
+        .fdd0 = fdd0,
+        .eps_c = eps_c,
+        .phi = phi_set.phi,
+        .phi2 = phi_set.phi2,
+        .phi3 = phi_set.phi3,
+        .dphi_dzeta = phi_set.dphi_dzeta,
+        .g2 = t.g2,
+        .denom_t = t.denom_t,
+        .t2 = t.t2,
+        .beta = h.beta,
+        .gamma_c = h.gamma_c,
+        .b = h.b,
+        .x = h.x,
+        .u = h.u,
+        .u_minus = h.u_minus,
+        .A = h.A,
+        .y = h.y,
+        .denom2 = h.denom2,
+        .q = h.q,
+        .arg = h.arg,
+        .log_arg = h.log_arg,
+        .H = h.H,
+        .darg_dt2 = h.darg_dt2,
+        .dH_dt2 = h.dH_dt2,
+    };
+}
 
-    // Gradient: g2 = g2_uu + 2*g2_ud + g2_dd = |grad n|^2
-    const g2 = g2_uu + 2.0 * g2_ud + g2_dd;
+/// LDA potential (d(n*eps_c)/dn_sigma) for spin-polarized PBE correlation.
+const LdaVc = struct {
+    up: f64,
+    down: f64,
+    deps_c_drs: f64,
+    deps_c_dzeta: f64,
+    drs_dn: f64,
+    dzeta_dn_up: f64,
+    dzeta_dn_down: f64,
+};
 
-    // t^2 = |grad n|^2 / (4 * phi^2 * ks^2 * n^2)
-    // ks^2 = 4*kf/pi, kf = (3*pi^2*n)^(1/3)
-    const kf = std.math.pow(f64, 3.0 * pi * pi * n, 1.0 / 3.0);
-    const ks2 = 4.0 * kf / pi;
-    const denom_t = 4.0 * phi2 * ks2 * n * n;
-    const t2 = if (g2 > 0.0 and denom_t > 1e-30) g2 / denom_t else 0.0;
-
-    // PBE H term (PRL 77, 3865, Eq. 4-5)
-    // H = gamma * phi^3 * ln{1 + (beta/gamma) * t^2 * [(1+At^2)/(1+At^2+A^2*t^4)]}
-    // A = (beta/gamma) / {exp(-ec/(gamma * phi^3)) - 1}
-    const phi3 = phi * phi * phi;
-    const b = beta / gamma_c;
-    const x = b * t2;
-    const u = std.math.exp(-eps_c / (gamma_c * phi3));
-    const u_minus = u - 1.0;
-    const A = if (@abs(u_minus) > 1e-12) (beta / gamma_c) / u_minus else 0.0;
-    const y = A * t2;
-    const denom2 = 1.0 + y + y * y;
-    const q = (1.0 + y) / denom2;
-    const arg = 1.0 + x * q;
-    const log_arg = if (arg > 0.0) @log(arg) else 0.0;
-    const H = gamma_c * phi3 * log_arg;
-
-    // Energy density
-    const f_c = n * (eps_c + H);
-
-    // Derivatives of H w.r.t. t^2
-    const denom2_sq = denom2 * denom2;
-    const dq_dt2 = -A * y * (2.0 + y) / denom2_sq;
-    const darg_dt2 = b * q + x * dq_dt2;
-    const dH_dt2 = if (arg > 0.0) gamma_c * phi3 * darg_dt2 / arg else 0.0;
-
-    // dt^2/dg2 = 1 / denom_t
-    const dt2_dg2 = if (denom_t > 1e-30) 1.0 / denom_t else 0.0;
-    const dH_dg2 = dH_dt2 * dt2_dg2;
-
-    // df/dg2_ss = n * dH/dg2 (g2 = g2_uu + 2*g2_ud + g2_dd, so dg2/dg2_ss = 1)
-    // dH_dg2 already contains phi^3 factor through dH_dt2
-    const df_dg2_uu = n * dH_dg2;
-    const df_dg2_dd = n * dH_dg2;
-    const df_dg2_ud = 2.0 * n * dH_dg2;
-
+fn pbeLdaVc(s: PbeSpinState) LdaVc {
     // Potential: V_c_sigma = d(n*eps_c)/dn_sigma + d(n*H)/dn_sigma
     // LDA part: d(n*eps_c)/dn_sigma
-    const drs_dn = -rs / (3.0 * n);
-    const dzeta_dn_up = (1.0 - zeta) / n;
-    const dzeta_dn_down = -(1.0 + zeta) / n;
+    const drs_dn = -s.rs / (3.0 * s.n);
+    const dzeta_dn_up = (1.0 - s.zeta) / s.n;
+    const dzeta_dn_down = -(1.0 + s.zeta) / s.n;
 
     // deps_c/drs
-    const deps_c_drs = ec0.deps_drs - ac.deps_drs * fz.f_z / fdd0 * (1.0 - z4) + (ec1.deps_drs - ec0.deps_drs) * fz.f_z * z4;
+    const deps_c_drs = s.ec0.deps_drs -
+        s.ac.deps_drs * s.fz.f_z / s.fdd0 * (1.0 - s.z4) +
+        (s.ec1.deps_drs - s.ec0.deps_drs) * s.fz.f_z * s.z4;
 
     // deps_c/dzeta
-    const dz4_dzeta = 4.0 * zeta * zeta * zeta;
-    const deps_c_dzeta = -ac.eps * fz.df_dz / fdd0 * (1.0 - z4) + (-ac.eps) * fz.f_z / fdd0 * (-dz4_dzeta) + (ec1.eps - ec0.eps) * (fz.df_dz * z4 + fz.f_z * dz4_dzeta);
+    const dz4_dzeta = 4.0 * s.zeta * s.zeta * s.zeta;
+    const deps_c_dzeta = -s.ac.eps * s.fz.df_dz / s.fdd0 * (1.0 - s.z4) +
+        (-s.ac.eps) * s.fz.f_z / s.fdd0 * (-dz4_dzeta) +
+        (s.ec1.eps - s.ec0.eps) * (s.fz.df_dz * s.z4 + s.fz.f_z * dz4_dzeta);
 
     // d(n*eps_c)/dn_sigma = eps_c + n * (deps_c/drs * drs/dn + deps_c/dzeta * dzeta/dn_sigma)
-    const vc_lda_common = eps_c + n * deps_c_drs * drs_dn;
-    const vc_lda_up = vc_lda_common + n * deps_c_dzeta * dzeta_dn_up;
-    const vc_lda_down = vc_lda_common + n * deps_c_dzeta * dzeta_dn_down;
+    const vc_lda_common = s.eps_c + s.n * deps_c_drs * drs_dn;
+    const vc_lda_up = vc_lda_common + s.n * deps_c_dzeta * dzeta_dn_up;
+    const vc_lda_down = vc_lda_common + s.n * deps_c_dzeta * dzeta_dn_down;
 
+    return .{
+        .up = vc_lda_up,
+        .down = vc_lda_down,
+        .deps_c_drs = deps_c_drs,
+        .deps_c_dzeta = deps_c_dzeta,
+        .drs_dn = drs_dn,
+        .dzeta_dn_up = dzeta_dn_up,
+        .dzeta_dn_down = dzeta_dn_down,
+    };
+}
+
+fn pbeGgaDHdn(s: PbeSpinState, lda: LdaVc) struct { up: f64, down: f64 } {
     // GGA H part: d(n*H)/dn_sigma
     // H = gamma_c * phi^3 * ln(arg), where arg depends on t^2 and A
     // A = (beta/gamma) / (exp(-eps_c/(gamma*phi^3)) - 1)
@@ -695,26 +895,28 @@ fn pbeCorrelationSpin(n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64
     // dA/deps_c: derivative through the exponent
     // u = exp(-eps_c/(gamma*phi^3)), du/deps_c = -u/(gamma*phi^3)
     // dA/deps_c = -(beta/gamma) * du/deps_c / (u-1)^2 = (beta/gamma) * u / (gamma*phi^3 * (u-1)^2)
-    const dA_deps = if (@abs(u_minus) > 1e-12)
-        (beta / gamma_c) * u / (gamma_c * phi3 * u_minus * u_minus)
+    const dA_deps = if (@abs(s.u_minus) > 1e-12)
+        (s.beta / s.gamma_c) * s.u / (s.gamma_c * s.phi3 * s.u_minus * s.u_minus)
     else
         0.0;
 
     // dA/dphi3: derivative through the exponent
     // du/dphi3 = u * eps_c / (gamma * phi3^2)
-    // dA/dphi3 = -(beta/gamma) * du/dphi3 / (u-1)^2 = -(beta/gamma) * u * eps_c / (gamma * phi3^2 * (u-1)^2)
-    const dA_dphi3 = if (@abs(u_minus) > 1e-12)
-        -(beta / gamma_c) * u * eps_c / (gamma_c * phi3 * phi3 * u_minus * u_minus)
+    // dA/dphi3 = -(beta/gamma) * du/dphi3 / (u-1)^2
+    //          = -(beta/gamma) * u * eps_c / (gamma * phi3^2 * (u-1)^2)
+    const dA_dphi3 = if (@abs(s.u_minus) > 1e-12)
+        -(s.beta / s.gamma_c) * s.u * s.eps_c /
+            (s.gamma_c * s.phi3 * s.phi3 * s.u_minus * s.u_minus)
     else
         0.0;
 
     // dphi3/dn_sigma = 3 * phi^2 * dphi/dzeta * dzeta/dn_sigma
-    const dphi3_dn_up = 3.0 * phi2 * dphi_dzeta * dzeta_dn_up;
-    const dphi3_dn_down = 3.0 * phi2 * dphi_dzeta * dzeta_dn_down;
+    const dphi3_dn_up = 3.0 * s.phi2 * s.dphi_dzeta * lda.dzeta_dn_up;
+    const dphi3_dn_down = 3.0 * s.phi2 * s.dphi_dzeta * lda.dzeta_dn_down;
 
     // deps_c/dn_sigma = deps_c/drs * drs/dn + deps_c/dzeta * dzeta/dn_sigma
-    const deps_dn_up = deps_c_drs * drs_dn + deps_c_dzeta * dzeta_dn_up;
-    const deps_dn_down = deps_c_drs * drs_dn + deps_c_dzeta * dzeta_dn_down;
+    const deps_dn_up = lda.deps_c_drs * lda.drs_dn + lda.deps_c_dzeta * lda.dzeta_dn_up;
+    const deps_dn_down = lda.deps_c_drs * lda.drs_dn + lda.deps_c_dzeta * lda.dzeta_dn_down;
 
     // dA/dn_sigma = dA/deps_c * deps_c/dn_sigma + dA/dphi3 * dphi3/dn_sigma
     const dA_dn_up = dA_deps * deps_dn_up + dA_dphi3 * dphi3_dn_up;
@@ -723,28 +925,61 @@ fn pbeCorrelationSpin(n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64
     // dt^2/dn_sigma: t^2 = g2 / (4 * phi^2 * ks^2 * n^2)
     // dt^2/dn = -7/3 * t2/n (through ks and n)
     // dt^2/dphi = -2*t^2/phi
-    const dt2_dn = -7.0 / 3.0 * t2 / n;
-    const dt2_dphi = if (phi > 1e-15) -2.0 * t2 / phi else 0.0;
+    const dt2_dn = -7.0 / 3.0 * s.t2 / s.n;
+    const dt2_dphi = if (s.phi > 1e-15) -2.0 * s.t2 / s.phi else 0.0;
 
-    const dt2_dn_up = dt2_dn + dt2_dphi * dphi_dzeta * dzeta_dn_up;
-    const dt2_dn_down = dt2_dn + dt2_dphi * dphi_dzeta * dzeta_dn_down;
+    const dt2_dn_up = dt2_dn + dt2_dphi * s.dphi_dzeta * lda.dzeta_dn_up;
+    const dt2_dn_down = dt2_dn + dt2_dphi * s.dphi_dzeta * lda.dzeta_dn_down;
 
     // d(log_arg)/dn_sigma (through t^2 and A dependencies)
     // d(log_arg)/dt^2 = darg_dt2 / arg
     // d(log_arg)/dA = x * dq/dA / arg = x * t2 * dq/dy / arg
     //               = -x * t2 * y * (2+y) / (arg * denom2^2)
-    const dlogarg_dA = if (arg > 0.0) -x * t2 * y * (2.0 + y) / (arg * denom2_sq) else 0.0;
-    const dlogarg_dt2 = if (arg > 0.0) darg_dt2 / arg else 0.0;
+    const denom2_sq = s.denom2 * s.denom2;
+    const dlogarg_dA = if (s.arg > 0.0)
+        -s.x * s.t2 * s.y * (2.0 + s.y) / (s.arg * denom2_sq)
+    else
+        0.0;
+    const dlogarg_dt2 = if (s.arg > 0.0) s.darg_dt2 / s.arg else 0.0;
     const dlogarg_dn_up = dlogarg_dt2 * dt2_dn_up + dlogarg_dA * dA_dn_up;
     const dlogarg_dn_down = dlogarg_dt2 * dt2_dn_down + dlogarg_dA * dA_dn_down;
 
     // dH/dn_sigma = gamma_c * phi3 * d(log_arg)/dn_sigma + gamma_c * dphi3/dn_sigma * log_arg
-    const dH_dn_up = gamma_c * phi3 * dlogarg_dn_up + gamma_c * dphi3_dn_up * log_arg;
-    const dH_dn_down = gamma_c * phi3 * dlogarg_dn_down + gamma_c * dphi3_dn_down * log_arg;
+    const dH_dn_up = s.gamma_c * s.phi3 * dlogarg_dn_up + s.gamma_c * dphi3_dn_up * s.log_arg;
+    const dH_dn_down = s.gamma_c * s.phi3 * dlogarg_dn_down + s.gamma_c * dphi3_dn_down * s.log_arg;
+
+    return .{ .up = dH_dn_up, .down = dH_dn_down };
+}
+
+/// Spin-polarized PBE correlation (Hartree units internally).
+fn pbeCorrelationSpin(
+    n_up: f64,
+    n_down: f64,
+    g2_uu: f64,
+    g2_dd: f64,
+    g2_ud: f64,
+) PbeCorrelationSpinResult {
+    const s = pbeSpinState(n_up, n_down, g2_uu, g2_dd, g2_ud);
+
+    // Energy density
+    const f_c = s.n * (s.eps_c + s.H);
+
+    // dt^2/dg2 = 1 / denom_t
+    const dt2_dg2 = if (s.denom_t > 1e-30) 1.0 / s.denom_t else 0.0;
+    const dH_dg2 = s.dH_dt2 * dt2_dg2;
+
+    // df/dg2_ss = n * dH/dg2 (g2 = g2_uu + 2*g2_ud + g2_dd, so dg2/dg2_ss = 1)
+    // dH_dg2 already contains phi^3 factor through dH_dt2
+    const df_dg2_uu = s.n * dH_dg2;
+    const df_dg2_dd = s.n * dH_dg2;
+    const df_dg2_ud = 2.0 * s.n * dH_dg2;
+
+    const lda = pbeLdaVc(s);
+    const dH_dn = pbeGgaDHdn(s, lda);
 
     // d(n*H)/dn_sigma = H + n * dH/dn_sigma
-    const df_dn_up = vc_lda_up + H + n * dH_dn_up;
-    const df_dn_down = vc_lda_down + H + n * dH_dn_down;
+    const df_dn_up = lda.up + s.H + s.n * dH_dn.up;
+    const df_dn_down = lda.down + s.H + s.n * dH_dn.down;
 
     return .{
         .f = f_c,
@@ -944,7 +1179,8 @@ test "Spin-polarized PBE: libxc spin reference values" {
     const n = n_up + n_down;
 
     // Convert to Hartree for comparison
-    const exc_ha = result.f / (n * 2.0); // f = n * eps_xc in Ry, so eps_xc = f/(n) in Ry = f/(2n) in Ha
+    // f = n * eps_xc in Ry, so eps_xc = f/(n) in Ry = f/(2n) in Ha
+    const exc_ha = result.f / (n * 2.0);
 
     // Verify energy is negative (physical requirement)
     try testing.expect(exc_ha < 0);

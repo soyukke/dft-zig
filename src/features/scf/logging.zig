@@ -12,7 +12,14 @@ pub const ScfLoopProfile = struct {
     build_fft_map_ns: *u64,
 };
 
-pub fn logProgress(io: std.Io, iter: usize, diff: f64, vresid: f64, band_energy: f64, nonlocal_energy: f64) !void {
+pub fn logProgress(
+    io: std.Io,
+    iter: usize,
+    diff: f64,
+    vresid: f64,
+    band_energy: f64,
+    nonlocal_energy: f64,
+) !void {
     const logger = runtime_logging.stderr(io, .info);
     try logger.print(
         .info,
@@ -42,6 +49,7 @@ pub const ScfLog = struct {
         try cwd.createDirPath(io, out_dir);
         const log_path = try std.fs.path.join(alloc, &.{ out_dir, "scf.log" });
         defer alloc.free(log_path);
+
         const file = try cwd.createFile(io, log_path, .{ .truncate = true });
         return .{ .file = file, .io = io };
     }
@@ -90,9 +98,13 @@ pub const ScfLog = struct {
         var buffer: [4096]u8 = undefined;
         var writer = self.file.writer(self.io, &buffer);
         const out = &writer.interface;
-        try out.print("# converged={s} iterations={d}\n", .{ if (converged) "true" else "false", iterations });
         try out.print(
-            "# energy_total={d:.10} band={d:.10} hartree={d:.10} xc={d:.10} ion_ion={d:.10} psp_core={d:.10}\n",
+            "# converged={s} iterations={d}\n",
+            .{ if (converged) "true" else "false", iterations },
+        );
+        try out.print(
+            "# energy_total={d:.10} band={d:.10} hartree={d:.10}" ++
+                " xc={d:.10} ion_ion={d:.10} psp_core={d:.10}\n",
             .{ energy_total, band, hartree, xc, ion_ion, psp_core },
         );
         try out.flush();
@@ -118,6 +130,45 @@ pub const ScfProfile = struct {
     local_gather_ns: u64 = 0,
 };
 
+const GExtrema = struct {
+    min: f64,
+    max: f64,
+    min_idx: usize,
+    max_idx: usize,
+    min_nonzero: f64,
+};
+
+const NonlocalRadialData = struct {
+    radial: []f64,
+    l_list: []i32,
+    angular: []f64,
+    beta_count: usize,
+    g_count: usize,
+
+    fn deinit(self: NonlocalRadialData, alloc: std.mem.Allocator) void {
+        alloc.free(self.radial);
+        alloc.free(self.l_list);
+        alloc.free(self.angular);
+    }
+};
+
+const NonlocalDiagStats = struct {
+    min: f64,
+    max: f64,
+    mean: f64,
+    mean_abs: f64,
+    neg_count: usize,
+};
+
+const LocalDiagStats = struct {
+    min: f64,
+    max: f64,
+    mean: f64,
+    mean_abs: f64,
+    neg_count: usize,
+    count: usize,
+};
+
 pub fn profileStart(io: std.Io) std.Io.Clock.Timestamp {
     return std.Io.Clock.Timestamp.now(io, .awake);
 }
@@ -134,7 +185,11 @@ pub fn logProfile(io: std.Io, profile: ScfProfile, kpoints: usize) !void {
     const to_ms = 1.0 / @as(f64, @floatFromInt(std.time.ns_per_ms));
     try logger.print(
         .info,
-        "profile kpoints={d} basis_ms={d:.3} eig_ms={d:.3} h_ms={d:.3} vnl_ms={d:.3} s_ms={d:.3} apply_ms={d:.3} density_ms={d:.3} local_ms={d:.3} nonlocal_ms={d:.3} apply_calls={d} scatter_ms={d:.3} ifft_ms={d:.3} vmul_ms={d:.3} fft_ms={d:.3} gather_ms={d:.3}\n",
+        "profile kpoints={d} basis_ms={d:.3} eig_ms={d:.3} h_ms={d:.3}" ++
+            " vnl_ms={d:.3} s_ms={d:.3} apply_ms={d:.3} density_ms={d:.3}" ++
+            " local_ms={d:.3} nonlocal_ms={d:.3} apply_calls={d}" ++
+            " scatter_ms={d:.3} ifft_ms={d:.3} vmul_ms={d:.3}" ++
+            " fft_ms={d:.3} gather_ms={d:.3}\n",
         .{
             kpoints,
             @as(f64, @floatFromInt(profile.basis_ns)) * to_ms,
@@ -169,7 +224,9 @@ pub fn logLoopProfile(
     const to_ms = 1.0 / @as(f64, @floatFromInt(std.time.ns_per_ms));
     try logger.print(
         .info,
-        "scf_loop_profile compute_density_ms={d:.3} build_potential_ms={d:.3} residual_ms={d:.3} mixing_ms={d:.3} build_local_r_ms={d:.3} build_fft_map_ms={d:.3}\n",
+        "scf_loop_profile compute_density_ms={d:.3} build_potential_ms={d:.3}" ++
+            " residual_ms={d:.3} mixing_ms={d:.3} build_local_r_ms={d:.3}" ++
+            " build_fft_map_ms={d:.3}\n",
         .{
             @as(f64, @floatFromInt(compute_density_ns)) * to_ms,
             @as(f64, @floatFromInt(build_potential_ns)) * to_ms,
@@ -181,7 +238,13 @@ pub fn logLoopProfile(
     );
 }
 
-pub fn logEnergySummary(io: std.Io, electron_count: f64, ionic_g0: math.Complex, pot_g0: math.Complex, energy_terms: anytype) !void {
+pub fn logEnergySummary(
+    io: std.Io,
+    electron_count: f64,
+    ionic_g0: math.Complex,
+    pot_g0: math.Complex,
+    energy_terms: anytype,
+) !void {
     const logger = runtime_logging.stderr(io, .info);
     try logger.print(.info, "scf: electron_count {d:.6}\n", .{electron_count});
     try logger.print(.info, "scf: ionic_g0 {d:.6} {d:.6}\n", .{ ionic_g0.r, ionic_g0.i });
@@ -210,7 +273,11 @@ pub fn logEnergySummary(io: std.Io, electron_count: f64, ionic_g0: math.Complex,
 
 pub fn logSpinInit(io: std.Io, total_electrons: f64, magnetization: f64) !void {
     const logger = runtime_logging.stderr(io, .info);
-    try logger.print(.info, "spin-scf: nspin=2, nelec={d:.1}, m_init={d:.2}\n", .{ total_electrons, magnetization });
+    try logger.print(
+        .info,
+        "spin-scf: nspin=2, nelec={d:.1}, m_init={d:.2}\n",
+        .{ total_electrons, magnetization },
+    );
 }
 
 pub fn logSpinMagnetization(io: std.Io, magnetization: f64) !void {
@@ -245,7 +312,13 @@ pub fn logSpinEnergySummary(io: std.Io, energy_terms: anytype, include_paw: bool
     }
 }
 
-pub fn logLocalPotentialMean(io: std.Io, prefix: []const u8, mean_local: f64, g0_label: []const u8, g0_value: f64) !void {
+pub fn logLocalPotentialMean(
+    io: std.Io,
+    prefix: []const u8,
+    mean_local: f64,
+    g0_label: []const u8,
+    g0_value: f64,
+) !void {
     const logger = runtime_logging.stderr(io, .debug);
     try logger.print(
         .debug,
@@ -263,7 +336,13 @@ pub fn logBandLocalPotentialMean(io: std.Io, mean_local: f64, ionic_g0: f64, ext
     );
 }
 
-pub fn logEigenvalues(io: std.Io, prefix: []const u8, label: []const u8, values: []const f64, count: usize) !void {
+pub fn logEigenvalues(
+    io: std.Io,
+    prefix: []const u8,
+    label: []const u8,
+    values: []const f64,
+    count: usize,
+) !void {
     const limit = @min(count, 8);
     const logger = runtime_logging.stderr(io, .debug);
     try logger.print(.debug, "{s}: eig {s} nbands={d}", .{ prefix, label, count });
@@ -292,7 +371,8 @@ pub fn logFermiDiag(
     const logger = runtime_logging.stderr(io, .debug);
     try logger.print(
         .debug,
-        "scf: fermi diag min={d:.6} max={d:.6} mu={d:.6} outside={s} nelec={d:.6} nbands={d}-{d} smear={s} sigma={d:.6}\n",
+        "scf: fermi diag min={d:.6} max={d:.6} mu={d:.6} outside={s}" ++
+            " nelec={d:.6} nbands={d}-{d} smear={s} sigma={d:.6}\n",
         .{
             min_energy,
             max_energy,
@@ -307,7 +387,15 @@ pub fn logFermiDiag(
     );
 }
 
-pub fn logIterativeGridTooSmall(io: std.Io, nx: usize, ny: usize, nz: usize, sx: usize, sy: usize, sz: usize) !void {
+pub fn logIterativeGridTooSmall(
+    io: std.Io,
+    nx: usize,
+    ny: usize,
+    nz: usize,
+    sx: usize,
+    sy: usize,
+    sz: usize,
+) !void {
     const logger = runtime_logging.stderr(io, .warn);
     try logger.print(
         .warn,
@@ -349,28 +437,12 @@ pub fn logNonlocalDiagnostics(
 ) !void {
     const g_count = gvecs.len;
     if (g_count == 0) return;
-
-    var g_min = std.math.inf(f64);
-    var g_max: f64 = 0.0;
-    var g_min_idx: usize = 0;
-    var g_max_idx: usize = 0;
-    for (gvecs, 0..) |g, i| {
-        const gmag = math.Vec3.norm(g.kpg);
-        if (gmag < g_min) {
-            g_min = gmag;
-            g_min_idx = i;
-        }
-        if (gmag > g_max) {
-            g_max = gmag;
-            g_max_idx = i;
-        }
-    }
-
+    const g_extrema = computeGExtrema(gvecs);
     const logger = runtime_logging.stderr(io, .debug);
     try logger.print(
         .debug,
         "scf: nonlocal diag g_count={d} g_min={d:.6} g_max={d:.6}\n",
-        .{ g_count, g_min, g_max },
+        .{ g_count, g_extrema.min, g_extrema.max },
     );
 
     var s: usize = 0;
@@ -382,96 +454,20 @@ pub fn logNonlocalDiagnostics(
         if (beta_count == 0 or coeffs.len == 0) continue;
         if (coeffs.len != beta_count * beta_count) return error.InvalidPseudopotential;
 
-        var atom_count: usize = 0;
-        for (atoms) |atom| {
-            if (atom.species_index == s) atom_count += 1;
-        }
+        const atom_count = speciesAtomCount(atoms, s);
+        const radial_data = try buildNonlocalRadialData(alloc, upf, gvecs);
+        defer radial_data.deinit(alloc);
 
-        const radial = try alloc.alloc(f64, beta_count * g_count);
-        defer alloc.free(radial);
-        const l_list = try alloc.alloc(i32, beta_count);
-        defer alloc.free(l_list);
-        const angular = try alloc.alloc(f64, beta_count);
-        defer alloc.free(angular);
-
-        var b: usize = 0;
-        while (b < beta_count) : (b += 1) {
-            const l_val = upf.beta[b].l orelse 0;
-            l_list[b] = l_val;
-            angular[b] = nonlocal.angularFactor(l_val, 1.0);
-            var g: usize = 0;
-            while (g < g_count) : (g += 1) {
-                const gmag = math.Vec3.norm(gvecs[g].kpg);
-                radial[b * g_count + g] = nonlocal.radialProjector(
-                    upf.beta[b].values,
-                    upf.r,
-                    upf.rab,
-                    l_val,
-                    gmag,
-                );
-            }
-        }
-
-        var min_val = std.math.inf(f64);
-        var max_val = -std.math.inf(f64);
-        var sum_val: f64 = 0.0;
-        var sum_abs: f64 = 0.0;
-        var neg_count: usize = 0;
-
-        var g: usize = 0;
-        while (g < g_count) : (g += 1) {
-            var val: f64 = 0.0;
-            var i: usize = 0;
-            while (i < beta_count) : (i += 1) {
-                const li = l_list[i];
-                const ang = angular[i];
-                var j: usize = 0;
-                while (j < beta_count) : (j += 1) {
-                    if (l_list[j] != li) continue;
-                    const coeff = coeffs[i * beta_count + j];
-                    if (coeff == 0.0) continue;
-                    const ri = radial[i * g_count + g];
-                    const rj = radial[j * g_count + g];
-                    val += coeff * ang * ri * rj;
-                }
-            }
-
-            if (val < min_val) min_val = val;
-            if (val > max_val) max_val = val;
-            if (val < 0.0) neg_count += 1;
-            sum_val += val;
-            sum_abs += @abs(val);
-        }
-
-        const count_f = @as(f64, @floatFromInt(g_count));
-        const mean_val = sum_val / count_f;
-        const mean_abs = sum_abs / count_f;
-        const scale = inv_volume * @as(f64, @floatFromInt(atom_count));
-        try logger.print(
-            .debug,
-            "scf: nonlocal diag species={s} atoms={d} min={d:.6} max={d:.6} mean={d:.6} mean_abs={d:.6} neg={d}/{d}\n",
-            .{ entry.symbol, atom_count, min_val, max_val, mean_val, mean_abs, neg_count, g_count },
+        const stats = computeNonlocalDiagStats(radial_data, coeffs);
+        try logNonlocalSpeciesDiagnostics(
+            logger,
+            entry,
+            atom_count,
+            stats,
+            inv_volume,
+            g_extrema,
+            radial_data,
         );
-        try logger.print(
-            .debug,
-            "scf: nonlocal diag scaled species={s} min={d:.6} max={d:.6} mean={d:.6}\n",
-            .{ entry.symbol, min_val * scale, max_val * scale, mean_val * scale },
-        );
-        try logger.print(
-            .debug,
-            "scf: nonlocal radial sample species={s} g_min={d:.6} g_max={d:.6}\n",
-            .{ entry.symbol, g_min, g_max },
-        );
-        b = 0;
-        while (b < beta_count) : (b += 1) {
-            const rmin = radial[b * g_count + g_min_idx];
-            const rmax = radial[b * g_count + g_max_idx];
-            try logger.print(
-                .debug,
-                "  beta[{d}] l={d} rmin={d:.6} rmax={d:.6}\n",
-                .{ b, l_list[b], rmin, rmax },
-            );
-        }
     }
 }
 
@@ -484,85 +480,266 @@ pub fn logLocalDiagnostics(
 ) !void {
     const g_count = gvecs.len;
     if (g_count == 0) return;
-
-    var g_min = std.math.inf(f64);
-    var g_max: f64 = 0.0;
-    var g_min_nonzero = std.math.inf(f64);
-    for (gvecs) |g| {
-        const gmag = math.Vec3.norm(g.kpg);
-        if (gmag < g_min) g_min = gmag;
-        if (gmag > g_max) g_max = gmag;
-        if (gmag > 1e-12 and gmag < g_min_nonzero) {
-            g_min_nonzero = gmag;
-        }
-    }
-    if (g_min_nonzero == std.math.inf(f64)) g_min_nonzero = 0.0;
-
+    const g_extrema = computeGExtrema(gvecs);
     const logger = runtime_logging.stderr(io, .debug);
     try logger.print(
         .debug,
         "scf: local diag g_count={d} g_min={d:.6} g_min_nz={d:.6} g_max={d:.6}\n",
-        .{ g_count, g_min, g_min_nonzero, g_max },
+        .{ g_count, g_extrema.min, g_extrema.min_nonzero, g_extrema.max },
     );
 
     var s: usize = 0;
     while (s < species.len) : (s += 1) {
         const entry = &species[s];
-        var atom_count: usize = 0;
-        for (atoms) |atom| {
-            if (atom.species_index == s) atom_count += 1;
-        }
+        const atom_count = speciesAtomCount(atoms, s);
         if (atom_count == 0) continue;
+        const stats = computeLocalDiagStats(gvecs, entry, local_cfg);
+        try logLocalSpeciesDiagnostics(logger, entry, atom_count, stats, local_cfg, g_extrema);
+    }
+}
 
-        var min_val = std.math.inf(f64);
-        var max_val = -std.math.inf(f64);
-        var sum_val: f64 = 0.0;
-        var sum_abs: f64 = 0.0;
-        var neg_count: usize = 0;
-        var count: usize = 0;
-        for (gvecs) |g| {
-            const gmag = math.Vec3.norm(g.kpg);
-            if (gmag < 1e-12) continue;
-            const vq = hamiltonian.localFormFactor(entry, gmag, local_cfg);
-            if (vq < min_val) min_val = vq;
-            if (vq > max_val) max_val = vq;
-            if (vq < 0.0) neg_count += 1;
-            sum_val += vq;
-            sum_abs += @abs(vq);
-            count += 1;
+fn computeGExtrema(gvecs: []plane_wave.GVector) GExtrema {
+    var min = std.math.inf(f64);
+    var max: f64 = 0.0;
+    var min_idx: usize = 0;
+    var max_idx: usize = 0;
+    var min_nonzero = std.math.inf(f64);
+    for (gvecs, 0..) |g, i| {
+        const gmag = math.Vec3.norm(g.kpg);
+        if (gmag < min) {
+            min = gmag;
+            min_idx = i;
         }
-
-        const count_f = @as(f64, @floatFromInt(count));
-        const mean_val = if (count > 0) sum_val / count_f else 0.0;
-        const mean_abs = if (count > 0) sum_abs / count_f else 0.0;
-        if (count == 0) {
-            min_val = 0.0;
-            max_val = 0.0;
+        if (gmag > max) {
+            max = gmag;
+            max_idx = i;
         }
+        if (gmag > 1e-12 and gmag < min_nonzero) {
+            min_nonzero = gmag;
+        }
+    }
+    return .{
+        .min = min,
+        .max = max,
+        .min_idx = min_idx,
+        .max_idx = max_idx,
+        .min_nonzero = if (min_nonzero == std.math.inf(f64)) 0.0 else min_nonzero,
+    };
+}
 
-        const vq0 = hamiltonian.localFormFactor(entry, 0.0, local_cfg);
-        const vq_min = hamiltonian.localFormFactor(entry, g_min_nonzero, local_cfg);
-        const vq_max = hamiltonian.localFormFactor(entry, g_max, local_cfg);
+fn speciesAtomCount(atoms: []const hamiltonian.AtomData, species_index: usize) usize {
+    var count: usize = 0;
+    for (atoms) |atom| {
+        if (atom.species_index == species_index) count += 1;
+    }
+    return count;
+}
+
+fn buildNonlocalRadialData(
+    alloc: std.mem.Allocator,
+    upf: anytype,
+    gvecs: []plane_wave.GVector,
+) !NonlocalRadialData {
+    const beta_count = upf.beta.len;
+    const g_count = gvecs.len;
+    const radial = try alloc.alloc(f64, beta_count * g_count);
+    errdefer alloc.free(radial);
+    const l_list = try alloc.alloc(i32, beta_count);
+    errdefer alloc.free(l_list);
+    const angular = try alloc.alloc(f64, beta_count);
+    errdefer alloc.free(angular);
+
+    var b: usize = 0;
+    while (b < beta_count) : (b += 1) {
+        const l_val = upf.beta[b].l orelse 0;
+        l_list[b] = l_val;
+        angular[b] = nonlocal.angularFactor(l_val, 1.0);
+        var g: usize = 0;
+        while (g < g_count) : (g += 1) {
+            const gmag = math.Vec3.norm(gvecs[g].kpg);
+            radial[b * g_count + g] = nonlocal.radialProjector(
+                upf.beta[b].values,
+                upf.r,
+                upf.rab,
+                l_val,
+                gmag,
+            );
+        }
+    }
+    return .{
+        .radial = radial,
+        .l_list = l_list,
+        .angular = angular,
+        .beta_count = beta_count,
+        .g_count = g_count,
+    };
+}
+
+fn computeNonlocalDiagStats(
+    radial_data: NonlocalRadialData,
+    coeffs: []const f64,
+) NonlocalDiagStats {
+    var min = std.math.inf(f64);
+    var max = -std.math.inf(f64);
+    var sum: f64 = 0.0;
+    var sum_abs: f64 = 0.0;
+    var neg_count: usize = 0;
+    var g: usize = 0;
+    while (g < radial_data.g_count) : (g += 1) {
+        var value: f64 = 0.0;
+        var i: usize = 0;
+        while (i < radial_data.beta_count) : (i += 1) {
+            const l_val = radial_data.l_list[i];
+            const ang = radial_data.angular[i];
+            var j: usize = 0;
+            while (j < radial_data.beta_count) : (j += 1) {
+                if (radial_data.l_list[j] != l_val) continue;
+                const coeff = coeffs[i * radial_data.beta_count + j];
+                if (coeff == 0.0) continue;
+                const ri = radial_data.radial[i * radial_data.g_count + g];
+                const rj = radial_data.radial[j * radial_data.g_count + g];
+                value += coeff * ang * ri * rj;
+            }
+        }
+        if (value < min) min = value;
+        if (value > max) max = value;
+        if (value < 0.0) neg_count += 1;
+        sum += value;
+        sum_abs += @abs(value);
+    }
+    const count_f = @as(f64, @floatFromInt(radial_data.g_count));
+    return .{
+        .min = min,
+        .max = max,
+        .mean = sum / count_f,
+        .mean_abs = sum_abs / count_f,
+        .neg_count = neg_count,
+    };
+}
+
+fn logNonlocalSpeciesDiagnostics(
+    logger: runtime_logging.Logger,
+    entry: *const hamiltonian.SpeciesEntry,
+    atom_count: usize,
+    stats: NonlocalDiagStats,
+    inv_volume: f64,
+    g_extrema: GExtrema,
+    radial_data: NonlocalRadialData,
+) !void {
+    const scale = inv_volume * @as(f64, @floatFromInt(atom_count));
+    try logger.print(
+        .debug,
+        "scf: nonlocal diag species={s} atoms={d} min={d:.6} max={d:.6}" ++
+            " mean={d:.6} mean_abs={d:.6} neg={d}/{d}\n",
+        .{
+            entry.symbol,
+            atom_count,
+            stats.min,
+            stats.max,
+            stats.mean,
+            stats.mean_abs,
+            stats.neg_count,
+            radial_data.g_count,
+        },
+    );
+    try logger.print(
+        .debug,
+        "scf: nonlocal diag scaled species={s} min={d:.6} max={d:.6} mean={d:.6}\n",
+        .{ entry.symbol, stats.min * scale, stats.max * scale, stats.mean * scale },
+    );
+    try logger.print(
+        .debug,
+        "scf: nonlocal radial sample species={s} g_min={d:.6} g_max={d:.6}\n",
+        .{ entry.symbol, g_extrema.min, g_extrema.max },
+    );
+    var b: usize = 0;
+    while (b < radial_data.beta_count) : (b += 1) {
+        const rmin = radial_data.radial[b * radial_data.g_count + g_extrema.min_idx];
+        const rmax = radial_data.radial[b * radial_data.g_count + g_extrema.max_idx];
         try logger.print(
             .debug,
-            "scf: local diag species={s} mode={s} alpha={d:.6} atoms={d} min={d:.6} max={d:.6} mean={d:.6} mean_abs={d:.6} neg={d}/{d}\n",
-            .{
-                entry.symbol,
-                config.localPotentialModeName(local_cfg.mode),
-                local_cfg.alpha,
-                atom_count,
-                min_val,
-                max_val,
-                mean_val,
-                mean_abs,
-                neg_count,
-                count,
-            },
-        );
-        try logger.print(
-            .debug,
-            "scf: local sample species={s} q0={d:.6} vq0={d:.6} q_min={d:.6} vq_min={d:.6} q_max={d:.6} vq_max={d:.6}\n",
-            .{ entry.symbol, 0.0, vq0, g_min_nonzero, vq_min, g_max, vq_max },
+            "  beta[{d}] l={d} rmin={d:.6} rmax={d:.6}\n",
+            .{ b, radial_data.l_list[b], rmin, rmax },
         );
     }
+}
+
+fn computeLocalDiagStats(
+    gvecs: []plane_wave.GVector,
+    entry: *const hamiltonian.SpeciesEntry,
+    local_cfg: local_potential.LocalPotentialConfig,
+) LocalDiagStats {
+    var min = std.math.inf(f64);
+    var max = -std.math.inf(f64);
+    var sum: f64 = 0.0;
+    var sum_abs: f64 = 0.0;
+    var neg_count: usize = 0;
+    var count: usize = 0;
+    for (gvecs) |g| {
+        const gmag = math.Vec3.norm(g.kpg);
+        if (gmag < 1e-12) continue;
+        const value = hamiltonian.localFormFactor(entry, gmag, local_cfg);
+        if (value < min) min = value;
+        if (value > max) max = value;
+        if (value < 0.0) neg_count += 1;
+        sum += value;
+        sum_abs += @abs(value);
+        count += 1;
+    }
+    if (count == 0) {
+        return .{
+            .min = 0.0,
+            .max = 0.0,
+            .mean = 0.0,
+            .mean_abs = 0.0,
+            .neg_count = 0,
+            .count = 0,
+        };
+    }
+    const count_f = @as(f64, @floatFromInt(count));
+    return .{
+        .min = min,
+        .max = max,
+        .mean = sum / count_f,
+        .mean_abs = sum_abs / count_f,
+        .neg_count = neg_count,
+        .count = count,
+    };
+}
+
+fn logLocalSpeciesDiagnostics(
+    logger: runtime_logging.Logger,
+    entry: *const hamiltonian.SpeciesEntry,
+    atom_count: usize,
+    stats: LocalDiagStats,
+    local_cfg: local_potential.LocalPotentialConfig,
+    g_extrema: GExtrema,
+) !void {
+    const vq0 = hamiltonian.localFormFactor(entry, 0.0, local_cfg);
+    const vq_min = hamiltonian.localFormFactor(entry, g_extrema.min_nonzero, local_cfg);
+    const vq_max = hamiltonian.localFormFactor(entry, g_extrema.max, local_cfg);
+    try logger.print(
+        .debug,
+        "scf: local diag species={s} mode={s} alpha={d:.6} atoms={d}" ++
+            " min={d:.6} max={d:.6} mean={d:.6} mean_abs={d:.6}" ++
+            " neg={d}/{d}\n",
+        .{
+            entry.symbol,
+            config.localPotentialModeName(local_cfg.mode),
+            local_cfg.alpha,
+            atom_count,
+            stats.min,
+            stats.max,
+            stats.mean,
+            stats.mean_abs,
+            stats.neg_count,
+            stats.count,
+        },
+    );
+    try logger.print(
+        .debug,
+        "scf: local sample species={s} q0={d:.6} vq0={d:.6}" ++
+            " q_min={d:.6} vq_min={d:.6} q_max={d:.6} vq_max={d:.6}\n",
+        .{ entry.symbol, 0.0, vq0, g_extrema.min_nonzero, vq_min, g_extrema.max, vq_max },
+    );
 }

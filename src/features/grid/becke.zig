@@ -77,37 +77,16 @@ fn beckeSmooth(mu: f64, k: usize) f64 {
 /// With atomic size adjustment (Becke 1988, Eq. 21):
 ///   mu_ij -> mu_ij + a_ij * (1 - mu_ij^2)
 /// where a_ij depends on the ratio of Bragg-Slater radii.
-pub fn beckeWeight(
-    x: f64,
-    y: f64,
-    z: f64,
+/// Accumulate the Becke cell-function product over all (i, j) pairs into
+/// `p_buf`. Callers must initialize `p_buf[i] = 1.0` before calling.
+fn accumulateBeckeCellFunction(
     atoms: []const Atom,
-    atom_idx: usize,
     config: GridConfig,
-    /// Pre-computed inter-atomic distances (n_atoms x n_atoms, row-major).
     inter_distances: []const f64,
-    /// Scratch buffer for per-atom P values (length n_atoms).
+    dist_buf: []const f64,
     p_buf: []f64,
-) f64 {
+) void {
     const n_atoms = atoms.len;
-
-    if (n_atoms == 1) return 1.0;
-
-    // Compute distances from the point to each atom
-    // We'll reuse p_buf temporarily for distances, then overwrite with P values
-    var dist_buf: [64]f64 = undefined;
-    if (n_atoms > 64) @panic("Too many atoms for stack buffer");
-
-    for (0..n_atoms) |i| {
-        dist_buf[i] = distance(x, y, z, atoms[i].x, atoms[i].y, atoms[i].z);
-    }
-
-    // Initialize P_i = 1 for all atoms
-    for (0..n_atoms) |i| {
-        p_buf[i] = 1.0;
-    }
-
-    // For each pair (i, j), compute the cell function s(mu_ij)
     for (0..n_atoms) |i| {
         for ((i + 1)..n_atoms) |j| {
             const r_ij = inter_distances[i * n_atoms + j];
@@ -137,6 +116,38 @@ pub fn beckeWeight(
             p_buf[j] *= s_ji;
         }
     }
+}
+
+pub fn beckeWeight(
+    x: f64,
+    y: f64,
+    z: f64,
+    atoms: []const Atom,
+    atom_idx: usize,
+    config: GridConfig,
+    /// Pre-computed inter-atomic distances (n_atoms x n_atoms, row-major).
+    inter_distances: []const f64,
+    /// Scratch buffer for per-atom P values (length n_atoms).
+    p_buf: []f64,
+) f64 {
+    const n_atoms = atoms.len;
+
+    if (n_atoms == 1) return 1.0;
+
+    // Compute distances from the point to each atom
+    var dist_buf: [64]f64 = undefined;
+    if (n_atoms > 64) @panic("Too many atoms for stack buffer");
+
+    for (0..n_atoms) |i| {
+        dist_buf[i] = distance(x, y, z, atoms[i].x, atoms[i].y, atoms[i].z);
+    }
+
+    // Initialize P_i = 1 for all atoms
+    for (0..n_atoms) |i| {
+        p_buf[i] = 1.0;
+    }
+
+    accumulateBeckeCellFunction(atoms, config, inter_distances, dist_buf[0..n_atoms], p_buf);
 
     // Normalize: w_i = P_i / sum(P_j)
     var p_sum: f64 = 0.0;
@@ -170,6 +181,91 @@ fn prunedAngularPoints(i_radial: usize, n_radial: usize, n_angular_max: usize) u
     }
 }
 
+/// Fill `inter_distances` (n x n row-major) with Cartesian atom-atom distances.
+fn fillInterAtomicDistances(atoms: []const Atom, inter_distances: []f64) void {
+    const n_atoms = atoms.len;
+    for (0..n_atoms) |i| {
+        for (0..n_atoms) |j| {
+            inter_distances[i * n_atoms + j] = distance(
+                atoms[i].x,
+                atoms[i].y,
+                atoms[i].z,
+                atoms[j].x,
+                atoms[j].y,
+                atoms[j].z,
+            );
+        }
+    }
+}
+
+/// Append all Becke-weighted grid points for a single atom center.
+fn appendAtomGridPoints(
+    allocator: std.mem.Allocator,
+    grid_points: *std.ArrayList(GridPoint),
+    atoms: []const Atom,
+    iatom: usize,
+    config: GridConfig,
+    inter_distances: []const f64,
+    p_buf: []f64,
+) !void {
+    // Generate radial grid
+    const rad_grid = try radial.defaultRadialGrid(
+        allocator,
+        atoms[iatom].z_number,
+        config.n_radial,
+    );
+    defer allocator.free(rad_grid);
+
+    // For each radial shell
+    for (0..config.n_radial) |ir| {
+        const r = rad_grid[ir].r;
+        const w_r = rad_grid[ir].w;
+
+        if (r < 1e-15 or w_r < 1e-300) continue;
+
+        // Determine angular grid size (with optional pruning)
+        const n_ang = if (config.prune)
+            prunedAngularPoints(ir, config.n_radial, config.n_angular)
+        else
+            config.n_angular;
+
+        const ang_grid = lebedev.getLebedevGrid(n_ang);
+
+        // For each angular point
+        for (ang_grid) |apt| {
+            // Convert to Cartesian coordinates centered on atom
+            const gx = atoms[iatom].x + r * apt.x;
+            const gy = atoms[iatom].y + r * apt.y;
+            const gz = atoms[iatom].z + r * apt.z;
+
+            // Compute Becke partitioning weight for this atom
+            const bw = beckeWeight(
+                gx,
+                gy,
+                gz,
+                atoms,
+                iatom,
+                config,
+                inter_distances,
+                p_buf,
+            );
+
+            // Combined weight:
+            // w = w_radial * r^2 * w_angular * 4*pi * w_becke
+            const w = w_r * r * r * apt.w * 4.0 * math.pi * bw;
+
+            if (w > 1e-300) {
+                try grid_points.append(allocator, .{
+                    .x = gx,
+                    .y = gy,
+                    .z = gz,
+                    .w = w,
+                });
+            }
+        }
+    }
+}
+
 /// Builds a molecular integration grid for the given set of atoms.
 ///
 /// The grid combines:
@@ -191,18 +287,7 @@ pub fn buildMolecularGrid(
     const inter_distances = try allocator.alloc(f64, n_atoms * n_atoms);
     defer allocator.free(inter_distances);
 
-    for (0..n_atoms) |i| {
-        for (0..n_atoms) |j| {
-            inter_distances[i * n_atoms + j] = distance(
-                atoms[i].x,
-                atoms[i].y,
-                atoms[i].z,
-                atoms[j].x,
-                atoms[j].y,
-                atoms[j].z,
-            );
-        }
-    }
+    fillInterAtomicDistances(atoms, inter_distances);
 
     // Becke weight scratch buffer
     const p_buf = try allocator.alloc(f64, n_atoms);
@@ -214,58 +299,15 @@ pub fn buildMolecularGrid(
 
     // For each atom, generate atom-centered grid
     for (0..n_atoms) |iatom| {
-        // Generate radial grid
-        const rad_grid = try radial.defaultRadialGrid(allocator, atoms[iatom].z_number, config.n_radial);
-        defer allocator.free(rad_grid);
-
-        // For each radial shell
-        for (0..config.n_radial) |ir| {
-            const r = rad_grid[ir].r;
-            const w_r = rad_grid[ir].w;
-
-            if (r < 1e-15 or w_r < 1e-300) continue;
-
-            // Determine angular grid size (with optional pruning)
-            const n_ang = if (config.prune)
-                prunedAngularPoints(ir, config.n_radial, config.n_angular)
-            else
-                config.n_angular;
-
-            const ang_grid = lebedev.getLebedevGrid(n_ang);
-
-            // For each angular point
-            for (ang_grid) |apt| {
-                // Convert to Cartesian coordinates centered on atom
-                const gx = atoms[iatom].x + r * apt.x;
-                const gy = atoms[iatom].y + r * apt.y;
-                const gz = atoms[iatom].z + r * apt.z;
-
-                // Compute Becke partitioning weight for this atom
-                const bw = beckeWeight(
-                    gx,
-                    gy,
-                    gz,
-                    atoms,
-                    iatom,
-                    config,
-                    inter_distances,
-                    p_buf,
-                );
-
-                // Combined weight:
-                // w = w_radial * r^2 * w_angular * 4*pi * w_becke
-                const w = w_r * r * r * apt.w * 4.0 * math.pi * bw;
-
-                if (w > 1e-300) {
-                    try grid_points.append(allocator, .{
-                        .x = gx,
-                        .y = gy,
-                        .z = gz,
-                        .w = w,
-                    });
-                }
-            }
-        }
+        try appendAtomGridPoints(
+            allocator,
+            &grid_points,
+            atoms,
+            iatom,
+            config,
+            inter_distances,
+            p_buf,
+        );
     }
 
     return grid_points.toOwnedSlice(allocator);

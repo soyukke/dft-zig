@@ -18,7 +18,9 @@ pub fn name(level: Level) []const u8 {
 
 pub fn parseLevel(value: []const u8) !Level {
     if (std.mem.eql(u8, value, "error")) return .err;
-    if (std.mem.eql(u8, value, "warn") or std.mem.eql(u8, value, "warning") or std.mem.eql(u8, value, "quiet")) return .warn;
+    if (std.mem.eql(u8, value, "warn") or
+        std.mem.eql(u8, value, "warning") or
+        std.mem.eql(u8, value, "quiet")) return .warn;
     if (std.mem.eql(u8, value, "info") or std.mem.eql(u8, value, "normal")) return .info;
     if (std.mem.eql(u8, value, "debug") or std.mem.eql(u8, value, "verbose")) return .debug;
     return error.InvalidLogLevel;
@@ -61,7 +63,11 @@ pub fn stderr(io: std.Io, max_level: Level) Logger {
 
 pub fn debugPrint(max_level: Level, level: Level, comptime fmt: []const u8, args: anytype) void {
     if (!enabled(max_level, level)) return;
-    std.debug.print(fmt, args);
+    var buffer: [256]u8 = undefined;
+    const locked_stderr = std.debug.lockStderr(&buffer);
+    defer std.debug.unlockStderr();
+
+    locked_stderr.file_writer.interface.print(fmt, args) catch return;
 }
 
 test "parseLevel supports common aliases" {

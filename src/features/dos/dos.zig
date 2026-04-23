@@ -63,7 +63,8 @@ pub fn computeDos(
             for (kp.eigenvalues) |ek| {
                 const diff = e - ek;
                 if (@abs(diff) <= cutoff) {
-                    d += kp.weight * spin_factor * gaussianDelta(diff, inv_sigma_sqrt2pi, inv_2sigma2);
+                    d += kp.weight * spin_factor *
+                        gaussianDelta(diff, inv_sigma_sqrt2pi, inv_2sigma2);
                 }
             }
         }
@@ -82,9 +83,16 @@ pub fn writeDosCSV(io: std.Io, dir: std.Io.Dir, result: DosResult, fermi_level: 
     return writeDosCSVNamed(io, dir, result, fermi_level, "dos.csv");
 }
 
-pub fn writeDosCSVNamed(io: std.Io, dir: std.Io.Dir, result: DosResult, fermi_level: f64, filename: []const u8) !void {
+pub fn writeDosCSVNamed(
+    io: std.Io,
+    dir: std.Io.Dir,
+    result: DosResult,
+    fermi_level: f64,
+    filename: []const u8,
+) !void {
     const file = try dir.createFile(io, filename, .{});
     defer file.close(io);
+
     var buf: [256]u8 = undefined;
     var writer = file.writer(io, &buf);
     const out = &writer.interface;

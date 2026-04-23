@@ -65,20 +65,29 @@ pub fn solve(
         @min(max_subspace, @max(opts.base.block_size, nbands));
 
     if (debug_parallel) {
-        logging.debug(true, "\n[LOBPCG-PAR] n={d} nbands={d} threads={d} generalized={}\n", .{ op.n, nbands, pool.num_threads, has_overlap });
+        logging.debug(
+            true,
+            "\n[LOBPCG-PAR] n={d} nbands={d} threads={d} generalized={}\n",
+            .{ op.n, nbands, pool.num_threads, has_overlap },
+        );
     }
 
     // Allocate workspace
     const v = try alloc.alloc(math.Complex, op.n * max_subspace);
     defer alloc.free(v);
+
     const w = try alloc.alloc(math.Complex, op.n * max_subspace);
     defer alloc.free(w);
+
     const sv = if (has_overlap) try alloc.alloc(math.Complex, op.n * max_subspace) else null;
     defer if (sv) |s| alloc.free(s);
+
     const ritz = try alloc.alloc(math.Complex, op.n * nbands);
     defer alloc.free(ritz);
+
     const residuals = try alloc.alloc(math.Complex, op.n * nbands);
     defer alloc.free(residuals);
+
     const s_ritz = if (has_overlap) try alloc.alloc(math.Complex, op.n * nbands) else null;
     defer if (s_ritz) |s| alloc.free(s);
 
@@ -96,6 +105,7 @@ pub fn solve(
     if (opts.base.init_diagonal) {
         const order = try alloc.alloc(usize, op.n);
         defer alloc.free(order);
+
         for (order, 0..) |*idx, i| {
             idx.* = i;
         }
@@ -125,8 +135,13 @@ pub fn solve(
 
     const t = try alloc.alloc(math.Complex, max_subspace * max_subspace);
     defer alloc.free(t);
-    const ts = if (has_overlap) try alloc.alloc(math.Complex, max_subspace * max_subspace) else null;
+
+    const ts = if (has_overlap)
+        try alloc.alloc(math.Complex, max_subspace * max_subspace)
+    else
+        null;
     defer if (ts) |s| alloc.free(s);
+
     const last_values = try alloc.alloc(f64, nbands);
     defer alloc.free(last_values);
 
@@ -182,7 +197,11 @@ pub fn solve(
         }
 
         if (debug_parallel) {
-            logging.debug(true, "[LOBPCG-PAR] iter={d} m={d} max_residual={e:.4}\n", .{ iter, m, max_residual });
+            logging.debug(
+                true,
+                "[LOBPCG-PAR] iter={d} m={d} max_residual={e:.4}\n",
+                .{ iter, m, max_residual },
+            );
         }
 
         // Check convergence
@@ -298,7 +317,11 @@ fn applySParallel(
     }
 
     const Ctx = struct {
-        apply_fn: *const fn (ctx: *anyopaque, x: []const math.Complex, y: []math.Complex) anyerror!void,
+        apply_fn: *const fn (
+            ctx: *anyopaque,
+            x: []const math.Complex,
+            y: []math.Complex,
+        ) anyerror!void,
         ctx_ptr: *anyopaque,
         n: usize,
         v: []const math.Complex,
@@ -343,7 +366,9 @@ fn buildProjectedParallel(
     pool.parallelFor(m, ctx, struct {
         fn run(c: Ctx, j: usize) void {
             for (0..j + 1) |i| {
-                const val = common.innerProduct(c.n, common.columnConst(c.v, c.n, i), common.columnConst(c.w, c.n, j));
+                const col_v = common.columnConst(c.v, c.n, i);
+                const col_w = common.columnConst(c.w, c.n, j);
+                const val = common.innerProduct(c.n, col_v, col_w);
                 c.out[i + j * c.m] = val;
                 if (i != j) {
                     c.out[j + i * c.m] = math.complex.conj(val);
@@ -412,14 +437,25 @@ fn applySParallelRange(
     }
 
     const Ctx = struct {
-        apply_fn: *const fn (ctx: *anyopaque, x: []const math.Complex, y: []math.Complex) anyerror!void,
+        apply_fn: *const fn (
+            ctx: *anyopaque,
+            x: []const math.Complex,
+            y: []math.Complex,
+        ) anyerror!void,
         ctx_ptr: *anyopaque,
         n: usize,
         v: []const math.Complex,
         sv: []math.Complex,
         start: usize,
     };
-    const ctx = Ctx{ .apply_fn = apply_s_fn, .ctx_ptr = op.ctx, .n = op.n, .v = v, .sv = sv, .start = start };
+    const ctx = Ctx{
+        .apply_fn = apply_s_fn,
+        .ctx_ptr = op.ctx,
+        .n = op.n,
+        .v = v,
+        .sv = sv,
+        .start = start,
+    };
 
     try pool.parallelForWithError(count, ctx, struct {
         fn run(c: Ctx, i: usize) anyerror!void {

@@ -172,7 +172,12 @@ pub const BFGS = struct {
 
     /// Compute step from forces using inverse Hessian.
     /// step = H^{-1} * (-gradient) = H^{-1} * forces
-    pub fn step(self: *BFGS, alloc: std.mem.Allocator, forces: []const math.Vec3, max_step: f64) ![]math.Vec3 {
+    pub fn step(
+        self: *BFGS,
+        alloc: std.mem.Allocator,
+        forces: []const math.Vec3,
+        max_step: f64,
+    ) ![]math.Vec3 {
         var displacements = try alloc.alloc(math.Vec3, self.n_atoms);
 
         // Convert forces to flat array
@@ -310,7 +315,12 @@ pub const SteepestDescent = struct {
     }
 
     /// Step in direction of forces with limited step size.
-    pub fn step(self: *SteepestDescent, alloc: std.mem.Allocator, forces: []const math.Vec3, max_step: f64) ![]math.Vec3 {
+    pub fn step(
+        self: *SteepestDescent,
+        alloc: std.mem.Allocator,
+        forces: []const math.Vec3,
+        max_step: f64,
+    ) ![]math.Vec3 {
         _ = self;
         var displacements = try alloc.alloc(math.Vec3, forces.len);
 

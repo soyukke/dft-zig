@@ -13,11 +13,19 @@ const forces = @import("features/forces/forces.zig");
 
 const verbose_tests = false;
 
+fn printStderr(comptime fmt: []const u8, args: anytype) !void {
+    var buffer: [256]u8 = undefined;
+    var writer = std.Io.File.stderr().writer(std.testing.io, &buffer);
+    const out = &writer.interface;
+    try out.print(fmt, args);
+    try out.flush();
+}
+
 /// Skip test if a required file does not exist (e.g. pseudo/ files in CI).
 fn requireFile(io: std.Io, path: []const u8) !void {
     std.Io.Dir.cwd().access(io, path, .{}) catch |err| {
         if (err == error.FileNotFound) {
-            std.debug.print("  [SKIP] file not found: {s}\n", .{path});
+            try printStderr("  [SKIP] file not found: {s}\n", .{path});
             return error.SkipZigTest;
         }
         return err;
@@ -25,7 +33,8 @@ fn requireFile(io: std.Io, path: []const u8) !void {
 }
 
 fn vprint(comptime fmt: []const u8, args: anytype) void {
-    if (verbose_tests) std.debug.print(fmt, args);
+    if (!verbose_tests) return;
+    printStderr(fmt, args) catch {};
 }
 
 fn expectVecApproxEqAbs(expected: math.Vec3, actual: math.Vec3, tol: f64) !void {
@@ -37,6 +46,7 @@ fn expectVecApproxEqAbs(expected: math.Vec3, actual: math.Vec3, tol: f64) !void 
 test "spacegroup silicon conventional" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
+
     const alloc = arena.allocator();
 
     const a = 5.431;
@@ -55,15 +65,25 @@ test "spacegroup silicon conventional" {
         .{ .position = .{ .x = half, .y = 0.0, .z = half }, .species_index = 0 },
         .{ .position = .{ .x = half, .y = half, .z = 0.0 }, .species_index = 0 },
         .{ .position = .{ .x = quarter, .y = quarter, .z = quarter }, .species_index = 0 },
-        .{ .position = .{ .x = quarter, .y = three_quarter, .z = three_quarter }, .species_index = 0 },
-        .{ .position = .{ .x = three_quarter, .y = quarter, .z = three_quarter }, .species_index = 0 },
-        .{ .position = .{ .x = three_quarter, .y = three_quarter, .z = quarter }, .species_index = 0 },
+        .{
+            .position = .{ .x = quarter, .y = three_quarter, .z = three_quarter },
+            .species_index = 0,
+        },
+        .{
+            .position = .{ .x = three_quarter, .y = quarter, .z = three_quarter },
+            .species_index = 0,
+        },
+        .{
+            .position = .{ .x = three_quarter, .y = three_quarter, .z = quarter },
+            .species_index = 0,
+        },
     };
 
     const info_opt = try spacegroup.detectSpaceGroupFromAtoms(alloc, cell, atoms[0..], 1e-5);
     try std.testing.expect(info_opt != null);
     var info = info_opt.?;
     defer info.deinit(alloc);
+
     try std.testing.expectEqual(@as(i32, 227), info.number);
     try std.testing.expect(std.mem.eql(u8, info.international_short, "Fd-3m"));
 }
@@ -71,6 +91,7 @@ test "spacegroup silicon conventional" {
 test "spacegroup silicon axis swap" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
+
     const alloc = arena.allocator();
 
     const a = 5.431;
@@ -89,15 +110,25 @@ test "spacegroup silicon axis swap" {
         .{ .position = .{ .x = half, .y = 0.0, .z = half }, .species_index = 0 },
         .{ .position = .{ .x = half, .y = half, .z = 0.0 }, .species_index = 0 },
         .{ .position = .{ .x = quarter, .y = quarter, .z = quarter }, .species_index = 0 },
-        .{ .position = .{ .x = quarter, .y = three_quarter, .z = three_quarter }, .species_index = 0 },
-        .{ .position = .{ .x = three_quarter, .y = quarter, .z = three_quarter }, .species_index = 0 },
-        .{ .position = .{ .x = three_quarter, .y = three_quarter, .z = quarter }, .species_index = 0 },
+        .{
+            .position = .{ .x = quarter, .y = three_quarter, .z = three_quarter },
+            .species_index = 0,
+        },
+        .{
+            .position = .{ .x = three_quarter, .y = quarter, .z = three_quarter },
+            .species_index = 0,
+        },
+        .{
+            .position = .{ .x = three_quarter, .y = three_quarter, .z = quarter },
+            .species_index = 0,
+        },
     };
 
     const info_opt = try spacegroup.detectSpaceGroupFromAtoms(alloc, cell, atoms[0..], 1e-5);
     try std.testing.expect(info_opt != null);
     var info = info_opt.?;
     defer info.deinit(alloc);
+
     try std.testing.expectEqual(@as(i32, 227), info.number);
     try std.testing.expect(std.mem.eql(u8, info.international_short, "Fd-3m"));
 }
@@ -147,7 +178,10 @@ test "local pseudopotential V(q) for Carbon" {
         // Coulomb in Rydberg: -8πZ/q² (factor of 2 for Ry vs Ha)
         const v_coulomb_ry = -8.0 * std.math.pi * z_val / (q * q);
         const vq_sr = vq_tail - v_coulomb_ry;
-        vprint("q={d:.2}: V_raw={d:.1}, V_tail={d:.1}, V_Coul_Ry={d:.1}, V_SR={d:.1} Ry\n", .{ q, vq_raw, vq_tail, v_coulomb_ry, vq_sr });
+        vprint(
+            "q={d:.2}: V_raw={d:.1}, V_tail={d:.1}, V_Coul_Ry={d:.1}, V_SR={d:.1} Ry\n",
+            .{ q, vq_raw, vq_tail, v_coulomb_ry, vq_sr },
+        );
     }
 
     // Test Ewald-compensated form factor
@@ -229,6 +263,7 @@ test "compute forces assembles component forces" {
     const total = grid.nx * grid.ny * grid.nz;
     var rho_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(rho_g);
+
     @memset(rho_g, math.complex.init(0.0, 0.0));
 
     const idx = struct {
@@ -254,18 +289,22 @@ test "compute forces assembles component forces" {
     const ecut_ry = 6.0;
     var basis = try plane_wave.generate(alloc, recip, ecut_ry, k_cart);
     defer basis.deinit(alloc);
+
     try testing.expect(basis.gvecs.len > 0);
 
     const eigenvalues = try alloc.alloc(f64, 1);
     defer alloc.free(eigenvalues);
+
     eigenvalues[0] = 0.0;
 
     const occupations = try alloc.alloc(f64, 1);
     defer alloc.free(occupations);
+
     occupations[0] = 1.0;
 
     const coefficients = try alloc.alloc(math.Complex, basis.gvecs.len);
     defer alloc.free(coefficients);
+
     for (coefficients, 0..) |*c_val, i| {
         const re = 0.05 * @as(f64, @floatFromInt(i + 1));
         const im = -0.03 * @as(f64, @floatFromInt(i + 2));
@@ -274,6 +313,7 @@ test "compute forces assembles component forces" {
 
     const kpoints = try alloc.alloc(scf.KpointWavefunction, 1);
     defer alloc.free(kpoints);
+
     kpoints[0] = .{
         .k_frac = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 },
         .k_cart = k_cart,
@@ -363,7 +403,14 @@ test "compute forces assembles component forces" {
         .tol = 1e-8,
         .quiet = true,
     };
-    const ewald_forces_ha = try ewald.ionIonForces(alloc, cell, recip, charges[0..], positions[0..], ewald_params);
+    const ewald_forces_ha = try ewald.ionIonForces(
+        alloc,
+        cell,
+        recip,
+        charges[0..],
+        positions[0..],
+        ewald_params,
+    );
     defer alloc.free(ewald_forces_ha);
 
     try testing.expect(force_terms.nonlocal != null);
@@ -454,7 +501,8 @@ test "smallest G vector for large vacuum" {
     vprint("\n=== G vector analysis ===\n", .{});
     vprint("Number of plane waves: {d}\n", .{basis.gvecs.len});
     vprint("Reciprocal lattice spacing (z): 2π/c = {d:.4} bohr⁻¹\n", .{2.0 * std.math.pi / c});
-    vprint("Reciprocal lattice spacing (xy): 2π/a ≈ {d:.4} bohr⁻¹\n", .{2.0 * std.math.pi / a});
+    const recip_spacing_xy = 2.0 * std.math.pi / a;
+    vprint("Reciprocal lattice spacing (xy): 2π/a ≈ {d:.4} bohr⁻¹\n", .{recip_spacing_xy});
 
     // Find smallest non-zero G
     var min_g: f64 = 1e10;
@@ -496,22 +544,63 @@ test "ewald force finite difference" {
 
     const delta = 1e-3;
     const alpha = 5.0 / a;
-    const real_params = ewald.Params{ .alpha = alpha, .rcut = 20.0, .gcut = 1e-6, .tol = 1e-8, .quiet = true };
-    const quiet_params = ewald.Params{ .alpha = 0.0, .rcut = 0.0, .gcut = 0.0, .tol = 0.0, .quiet = true };
-    const real_forces = try ewald.ionIonForces(alloc, cell, recip, charges[0..], positions[0..], real_params);
+    const real_params = ewald.Params{
+        .alpha = alpha,
+        .rcut = 20.0,
+        .gcut = 1e-6,
+        .tol = 1e-8,
+        .quiet = true,
+    };
+    const quiet_params = ewald.Params{
+        .alpha = 0.0,
+        .rcut = 0.0,
+        .gcut = 0.0,
+        .tol = 0.0,
+        .quiet = true,
+    };
+    const real_forces = try ewald.ionIonForces(
+        alloc,
+        cell,
+        recip,
+        charges[0..],
+        positions[0..],
+        real_params,
+    );
     defer alloc.free(real_forces);
+
     const fx_real_num = blk: {
         var positions_plus = positions;
         var positions_minus = positions;
         positions_plus[0].x += delta;
         positions_minus[0].x -= delta;
-        const e_plus = try ewald.ionIonEnergy(io, cell, recip, charges[0..], positions_plus[0..], real_params);
-        const e_minus = try ewald.ionIonEnergy(io, cell, recip, charges[0..], positions_minus[0..], real_params);
+        const e_plus = try ewald.ionIonEnergy(
+            io,
+            cell,
+            recip,
+            charges[0..],
+            positions_plus[0..],
+            real_params,
+        );
+        const e_minus = try ewald.ionIonEnergy(
+            io,
+            cell,
+            recip,
+            charges[0..],
+            positions_minus[0..],
+            real_params,
+        );
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
     try testing.expectApproxEqAbs(real_forces[0].x, fx_real_num, 1e-3);
 
-    const ewald_forces = try ewald.ionIonForces(alloc, cell, recip, charges[0..], positions[0..], quiet_params);
+    const ewald_forces = try ewald.ionIonForces(
+        alloc,
+        cell,
+        recip,
+        charges[0..],
+        positions[0..],
+        quiet_params,
+    );
     defer alloc.free(ewald_forces);
 
     const fx_num = blk: {
@@ -519,8 +608,22 @@ test "ewald force finite difference" {
         var positions_minus = positions;
         positions_plus[0].x += delta;
         positions_minus[0].x -= delta;
-        const e_plus = try ewald.ionIonEnergy(io, cell, recip, charges[0..], positions_plus[0..], quiet_params);
-        const e_minus = try ewald.ionIonEnergy(io, cell, recip, charges[0..], positions_minus[0..], quiet_params);
+        const e_plus = try ewald.ionIonEnergy(
+            io,
+            cell,
+            recip,
+            charges[0..],
+            positions_plus[0..],
+            quiet_params,
+        );
+        const e_minus = try ewald.ionIonEnergy(
+            io,
+            cell,
+            recip,
+            charges[0..],
+            positions_minus[0..],
+            quiet_params,
+        );
         break :blk -(e_plus - e_minus) / (2.0 * delta);
     };
 
@@ -640,8 +743,14 @@ test "k-point fractional to Cartesian conversion" {
     );
 
     vprint("\nK point (1/3, 1/3, 0):\n", .{});
-    vprint("  fracToCart k_cart = ({d:.6}, {d:.6}, {d:.6})\n", .{ k_cart_correct.x, k_cart_correct.y, k_cart_correct.z });
-    vprint("  explicit k_cart   = ({d:.6}, {d:.6}, {d:.6})\n", .{ k_cart_explicit.x, k_cart_explicit.y, k_cart_explicit.z });
+    vprint(
+        "  fracToCart k_cart = ({d:.6}, {d:.6}, {d:.6})\n",
+        .{ k_cart_correct.x, k_cart_correct.y, k_cart_correct.z },
+    );
+    vprint(
+        "  explicit k_cart   = ({d:.6}, {d:.6}, {d:.6})\n",
+        .{ k_cart_explicit.x, k_cart_explicit.y, k_cart_explicit.z },
+    );
     vprint("  |k_cart| = {d:.6}\n", .{math.Vec3.norm(k_cart_correct)});
 
     // Check if fracToCart matches explicit calculation
@@ -742,7 +851,13 @@ test "Ewald ion-ion energy for graphene" {
         .{ .x = 3.0991508450, .y = 2.6839433578, .z = 0.0 },
     };
 
-    const quiet_params = ewald.Params{ .alpha = 0.0, .rcut = 0.0, .gcut = 0.0, .tol = 0.0, .quiet = true };
+    const quiet_params = ewald.Params{
+        .alpha = 0.0,
+        .rcut = 0.0,
+        .gcut = 0.0,
+        .tol = 0.0,
+        .quiet = true,
+    };
     const e_ion = try ewald.ionIonEnergy(io, cell, recip, &charges, &positions, quiet_params);
 
     vprint("\n=== Ewald Energy ===\n", .{});
@@ -769,6 +884,7 @@ test "apply local potential vs dense" {
     // V(G=0) = 0.5, V(G=(1,0,0)) = 0.1, V(G=(-1,0,0)) = 0.1
     const v_g = try allocator.alloc(math.Complex, total);
     defer allocator.free(v_g);
+
     @memset(v_g, math.complex.init(0.0, 0.0));
     v_g[0] = math.complex.init(0.5, 0.0); // G=0
     v_g[1] = math.complex.init(0.1, 0.0); // G=(1,0,0)
@@ -777,6 +893,7 @@ test "apply local potential vs dense" {
     // Build local_r = N * IFFT(V_G) (this is what buildLocalPotentialReal does)
     const local_r = try allocator.alloc(f64, total);
     defer allocator.free(local_r);
+
     {
         const temp = try allocator.alloc(math.Complex, total);
         defer allocator.free(temp);
@@ -799,6 +916,7 @@ test "apply local potential vs dense" {
     // Test psi = delta at G=0: psi_G = [1, 0, 0, ...]
     const psi_g = try allocator.alloc(math.Complex, total);
     defer allocator.free(psi_g);
+
     @memset(psi_g, math.complex.init(0.0, 0.0));
     psi_g[0] = math.complex.init(1.0, 0.0);
 
@@ -806,12 +924,14 @@ test "apply local potential vs dense" {
     // For psi = delta at G=0: (V*psi)_G = V_G
     const dense_result = try allocator.alloc(math.Complex, total);
     defer allocator.free(dense_result);
+
     @memcpy(dense_result, v_g); // (V*psi) = V for delta psi
 
     // Method 2: FFT-based (simulating applyLocalPotential)
     // Step 1: IFFT of psi with scale=N (like fftReciprocalToComplexInPlace)
     const psi_r = try allocator.alloc(math.Complex, total);
     defer allocator.free(psi_r);
+
     for (psi_g, 0..) |p, i| {
         psi_r[i] = math.complex.scale(p, @as(f64, @floatFromInt(total)));
     }
@@ -820,6 +940,7 @@ test "apply local potential vs dense" {
     // Step 2: Multiply in real space: local_r * psi_r
     const vpsi_r = try allocator.alloc(math.Complex, total);
     defer allocator.free(vpsi_r);
+
     for (vpsi_r, 0..) |*v, i| {
         v.* = math.complex.scale(psi_r[i], local_r[i]);
     }
@@ -827,6 +948,7 @@ test "apply local potential vs dense" {
     // Step 3: FFT with 1/N (like fftComplexToReciprocalInPlace)
     const fft_result = try allocator.alloc(math.Complex, total);
     defer allocator.free(fft_result);
+
     @memcpy(fft_result, vpsi_r);
     try fft_mod.fft3dForwardInPlace(allocator, fft_result, nx, ny, nz);
     for (fft_result) |*v| {
@@ -864,6 +986,7 @@ test "local potential FFT vs direct" {
     // Create a simple test potential in G-space (just a cosine)
     const v_g = try allocator.alloc(math.Complex, total);
     defer allocator.free(v_g);
+
     @memset(v_g, math.complex.init(0.0, 0.0));
     // Set V(G=0) = 1.0, V(G=(1,0,0)) = 0.5, V(G=(-1,0,0)) = 0.5
     v_g[0] = math.complex.init(1.0, 0.0); // G=0
@@ -873,12 +996,14 @@ test "local potential FFT vs direct" {
     // Create test wavefunction in G-space
     const psi_g = try allocator.alloc(math.Complex, total);
     defer allocator.free(psi_g);
+
     @memset(psi_g, math.complex.init(0.0, 0.0));
     psi_g[0] = math.complex.init(1.0, 0.0); // ψ(G=0) = 1
 
     // Method 1: Direct convolution (V*ψ)_G = Σ_G' V_{G-G'} * ψ_G'
     const direct_result = try allocator.alloc(math.Complex, total);
     defer allocator.free(direct_result);
+
     @memset(direct_result, math.complex.init(0.0, 0.0));
 
     var gz: usize = 0;
@@ -919,18 +1044,21 @@ test "local potential FFT vs direct" {
     // Step 1: IFFT of V_G to get V_r (IFFT applies 1/N normalization)
     const v_temp = try allocator.alloc(math.Complex, total);
     defer allocator.free(v_temp);
+
     @memcpy(v_temp, v_g);
     try fft_mod.fft3dInverseInPlace(allocator, v_temp, nx, ny, nz);
 
     // Step 2: IFFT of ψ_G to get ψ_r
     const psi_temp = try allocator.alloc(math.Complex, total);
     defer allocator.free(psi_temp);
+
     @memcpy(psi_temp, psi_g);
     try fft_mod.fft3dInverseInPlace(allocator, psi_temp, nx, ny, nz);
 
     // Step 3: Pointwise multiply in real space: (V*ψ)_r
     const vpsi_r = try allocator.alloc(math.Complex, total);
     defer allocator.free(vpsi_r);
+
     for (vpsi_r, 0..) |*v, i| {
         v.* = math.complex.mul(v_temp[i], psi_temp[i]);
     }
@@ -1042,7 +1170,10 @@ test "graphene phase factor" {
 
     const bond = math.Vec3.sub(pos2, pos1);
     const bond_length = math.Vec3.norm(bond);
-    vprint("  Bond: ({d:.6}, {d:.6}, {d:.6}), |bond|={d:.6}\n", .{ bond.x, bond.y, bond.z, bond_length });
+    vprint(
+        "  Bond: ({d:.6}, {d:.6}, {d:.6}), |bond|={d:.6}\n",
+        .{ bond.x, bond.y, bond.z, bond_length },
+    );
     vprint("  Expected ~2.68 Bohr, got {d:.4}\n", .{bond_length});
 
     vprint("Reciprocal lattice (1/Bohr):\n", .{});
@@ -1055,7 +1186,10 @@ test "graphene phase factor" {
     const g_test = math.Vec3.sub(b1, b2);
     const g_phase = math.Vec3.dot(g_test, bond);
     vprint("Phase for G = b1 - b2:\n", .{});
-    vprint("  G·Δτ = {d:.6} (mod 2π = {d:.6})\n", .{ g_phase, @mod(g_phase, 2.0 * std.math.pi) });
+    vprint(
+        "  G·Δτ = {d:.6} (mod 2π = {d:.6})\n",
+        .{ g_phase, @mod(g_phase, 2.0 * std.math.pi) },
+    );
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), g_phase, 1e-10);
 
     // Phase for K = (1/3, 2/3, 0) should be 2π/3 for Δτ = (1/3, 1/3, 0)
@@ -1063,7 +1197,10 @@ test "graphene phase factor" {
     const k_cart = math.fracToCart(k_frac, recip);
     const k_phase = math.Vec3.dot(k_cart, bond);
     vprint("Phase for K = (1/3, 2/3, 0):\n", .{});
-    vprint("  K·Δτ = {d:.6} (mod 2π = {d:.6})\n", .{ k_phase, @mod(k_phase, 2.0 * std.math.pi) });
+    vprint(
+        "  K·Δτ = {d:.6} (mod 2π = {d:.6})\n",
+        .{ k_phase, @mod(k_phase, 2.0 * std.math.pi) },
+    );
     vprint("  Expected 2π/3 = {d:.6}\n", .{2.0 * std.math.pi / 3.0});
 
     const exp1 = math.complex.expi(0.0);
@@ -1123,7 +1260,10 @@ test "spherical Bessel Miller algorithm" {
         const computed = nonlocal.sphericalBessel(0, x);
         const expected = std.math.sin(x) / x;
         const err = @abs(computed - expected);
-        vprint("  x={d:.1}: computed={d:.10}, expected={d:.10}, err={e:.2}\n", .{ x, computed, expected, err });
+        vprint(
+            "  x={d:.1}: computed={d:.10}, expected={d:.10}, err={e:.2}\n",
+            .{ x, computed, expected, err },
+        );
         try std.testing.expectApproxEqAbs(expected, computed, 1e-12);
     }
 
@@ -1132,16 +1272,24 @@ test "spherical Bessel Miller algorithm" {
         const computed = nonlocal.sphericalBessel(1, x);
         const expected = std.math.sin(x) / (x * x) - std.math.cos(x) / x;
         const err = @abs(computed - expected);
-        vprint("  x={d:.1}: computed={d:.10}, expected={d:.10}, err={e:.2}\n", .{ x, computed, expected, err });
+        vprint(
+            "  x={d:.1}: computed={d:.10}, expected={d:.10}, err={e:.2}\n",
+            .{ x, computed, expected, err },
+        );
         try std.testing.expectApproxEqAbs(expected, computed, 1e-12);
     }
 
     vprint("j_2(x) = (3/x² - 1)sin(x)/x - 3cos(x)/x²:\n", .{});
     for (test_x) |x| {
         const computed = nonlocal.sphericalBessel(2, x);
-        const expected = (3.0 / (x * x) - 1.0) * std.math.sin(x) / x - 3.0 * std.math.cos(x) / (x * x);
+        const term_a = (3.0 / (x * x) - 1.0) * std.math.sin(x) / x;
+        const term_b = 3.0 * std.math.cos(x) / (x * x);
+        const expected = term_a - term_b;
         const err = @abs(computed - expected);
-        vprint("  x={d:.1}: computed={d:.10}, expected={d:.10}, err={e:.2}\n", .{ x, computed, expected, err });
+        vprint(
+            "  x={d:.1}: computed={d:.10}, expected={d:.10}, err={e:.2}\n",
+            .{ x, computed, expected, err },
+        );
         try std.testing.expectApproxEqAbs(expected, computed, 1e-10);
     }
 
@@ -1150,9 +1298,14 @@ test "spherical Bessel Miller algorithm" {
     vprint("j_3(x) test:\n", .{});
     for (test_x) |x| {
         const computed = nonlocal.sphericalBessel(3, x);
-        const expected = (15.0 / (x * x * x) - 6.0 / x) * std.math.sin(x) / x - (15.0 / (x * x) - 1.0) * std.math.cos(x) / x;
+        const term_a = (15.0 / (x * x * x) - 6.0 / x) * std.math.sin(x) / x;
+        const term_b = (15.0 / (x * x) - 1.0) * std.math.cos(x) / x;
+        const expected = term_a - term_b;
         const err = @abs(computed - expected);
-        vprint("  x={d:.1}: computed={d:.10}, expected={d:.10}, err={e:.2}\n", .{ x, computed, expected, err });
+        vprint(
+            "  x={d:.1}: computed={d:.10}, expected={d:.10}, err={e:.2}\n",
+            .{ x, computed, expected, err },
+        );
         // Allow larger tolerance for l=3 due to numerical accumulation
         try std.testing.expectApproxEqAbs(expected, computed, 1e-8);
     }

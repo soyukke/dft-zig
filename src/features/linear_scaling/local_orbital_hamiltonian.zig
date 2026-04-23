@@ -59,10 +59,18 @@ pub fn buildHamiltonianFromCenters(
         cell,
     );
     defer kinetic.deinit(alloc);
+
     if (opts.kinetic_scale != 1.0) {
         sparse.scaleInPlace(&kinetic, opts.kinetic_scale);
     }
-    const hamiltonian = try sparse.addScaled(alloc, kinetic, 1.0, overlap, opts.local_potential, opts.threshold);
+    const hamiltonian = try sparse.addScaled(
+        alloc,
+        kinetic,
+        1.0,
+        overlap,
+        opts.local_potential,
+        opts.threshold,
+    );
     return .{ .overlap = overlap, .hamiltonian = hamiltonian };
 }
 
@@ -93,6 +101,7 @@ pub fn buildHamiltonianFromCentersWithGrid(
         grid.cell,
     );
     defer kinetic.deinit(alloc);
+
     if (opts.kinetic_scale != 1.0) {
         sparse.scaleInPlace(&kinetic, opts.kinetic_scale);
     }
@@ -105,6 +114,7 @@ pub fn buildHamiltonianFromCentersWithGrid(
         grid,
     );
     defer local.deinit(alloc);
+
     const hamiltonian = try sparse.addScaled(alloc, kinetic, 1.0, local, 1.0, opts.threshold);
     return .{ .overlap = overlap, .hamiltonian = hamiltonian };
 }
@@ -130,6 +140,7 @@ test "buildHamiltonianFromCenters combines kinetic and local potential" {
     };
     var result = try buildHamiltonianFromCenters(alloc, centers[0..], cell, pbc, opts);
     defer result.deinit(alloc);
+
     const alpha = 1.0 / (opts.sigma * opts.sigma);
     const orbitals = [_]local_orbital.Orbital{
         .{ .center = centers[0], .alpha = alpha, .cutoff = opts.cutoff },
@@ -156,14 +167,24 @@ test "buildHamiltonianFromCentersWithGrid matches constant potential" {
     const count = dims[0] * dims[1] * dims[2];
     const values = try alloc.alloc(f64, count);
     defer alloc.free(values);
+
     @memset(values, 0.4);
-    const grid = local_orbital_potential.PotentialGrid{ .cell = cell, .dims = dims, .values = values };
+    const grid = local_orbital_potential.PotentialGrid{
+        .cell = cell,
+        .dims = dims,
+        .values = values,
+    };
     const centers = [_]math.Vec3{
         .{ .x = 2.0, .y = 2.0, .z = 2.0 },
         .{ .x = 3.0, .y = 2.0, .z = 2.0 },
     };
     const pbc = neighbor_list.Pbc{ .x = false, .y = false, .z = false };
-    const opts = HamiltonianGridOptions{ .sigma = 0.5, .cutoff = 3.0, .kinetic_scale = 1.0, .threshold = 0.0 };
+    const opts = HamiltonianGridOptions{
+        .sigma = 0.5,
+        .cutoff = 3.0,
+        .kinetic_scale = 1.0,
+        .threshold = 0.0,
+    };
     var result = try buildHamiltonianFromCentersWithGrid(alloc, centers[0..], pbc, grid, opts);
     defer result.deinit(alloc);
 
