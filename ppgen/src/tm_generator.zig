@@ -72,7 +72,8 @@ pub fn generate(
             const r2 = r * r;
             const p = coeffs.c0 + coeffs.c2 * r2 + coeffs.c4 * r2 * r2 +
                 coeffs.c6 * r2 * r2 * r2 + coeffs.c8 * r2 * r2 * r2 * r2 +
-                coeffs.c10 * r2 * r2 * r2 * r2 * r2 + coeffs.c12 * r2 * r2 * r2 * r2 * r2 * r2;
+                coeffs.c10 * r2 * r2 * r2 * r2 * r2 +
+                coeffs.c12 * r2 * r2 * r2 * r2 * r2 * r2;
             u_ps[i] = std.math.pow(f64, r, fl + 1.0) * @exp(p);
         } else {
             u_ps[i] = u_ae[i];
@@ -104,7 +105,8 @@ pub fn generate(
             const p_double_prime = 2.0 * coeffs.c2 + 12.0 * coeffs.c4 * r2 +
                 30.0 * coeffs.c6 * r4 + 56.0 * coeffs.c8 * r6 + 90.0 * coeffs.c10 * r8;
 
-            v_ps[i] = energy + p_double_prime + 2.0 * (fl + 1.0) * p_prime_over_r + p_prime * p_prime;
+            v_ps[i] =
+                energy + p_double_prime + 2.0 * (fl + 1.0) * p_prime_over_r + p_prime * p_prime;
         } else {
             v_ps[i] = v_eff[i];
         }
@@ -166,8 +168,11 @@ fn wavefunctionDerivatives(grid: *const RadialGrid, u: []const f64, i: usize) Wf
     // 3rd and 4th derivatives using wider stencil
     const h_wide = r[i + 1] - r[i - 1];
     const h_avg = h_wide / 2.0;
-    const d3u = (u[i + 2] - 2.0 * u[i + 1] + 2.0 * u[i - 1] - u[i - 2]) / (2.0 * h_avg * h_avg * h_avg);
-    const d4u = (u[i + 2] - 4.0 * u[i + 1] + 6.0 * u[i] - 4.0 * u[i - 1] + u[i - 2]) / (h_avg * h_avg * h_avg * h_avg);
+    const d3u =
+        (u[i + 2] - 2.0 * u[i + 1] + 2.0 * u[i - 1] - u[i - 2]) / (2.0 * h_avg * h_avg * h_avg);
+    const d4u =
+        (u[i + 2] - 4.0 * u[i + 1] + 6.0 * u[i] - 4.0 * u[i - 1] + u[i - 2]) /
+        (h_avg * h_avg * h_avg * h_avg);
 
     return .{
         .u = u_0,
@@ -217,8 +222,12 @@ fn solveCoefficients(ae: WfDerivatives, rc: f64, l: u32, energy: f64, norm_ae: f
     const f0 = @log(@abs(u_rc)) - (fl + 1.0) * @log(rc);
     const f1 = du_rc - (fl + 1.0) / rc;
     const f2 = d2u_rc - du_rc * du_rc + (fl + 1.0) / rc2;
-    const f3 = d3u_rc - 3.0 * du_rc * d2u_rc + 2.0 * du_rc * du_rc * du_rc - 2.0 * (fl + 1.0) / (rc2 * rc);
-    const f4 = d4u_rc - 4.0 * du_rc * d3u_rc - 3.0 * d2u_rc * d2u_rc + 12.0 * du_rc * du_rc * d2u_rc - 6.0 * du_rc * du_rc * du_rc * du_rc + 6.0 * (fl + 1.0) / rc4;
+    const f3 =
+        d3u_rc - 3.0 * du_rc * d2u_rc + 2.0 * du_rc * du_rc * du_rc - 2.0 * (fl + 1.0) / (rc2 * rc);
+    const f4 =
+        d4u_rc - 4.0 * du_rc * d3u_rc - 3.0 * d2u_rc * d2u_rc +
+        12.0 * du_rc * du_rc * d2u_rc - 6.0 * du_rc * du_rc * du_rc * du_rc +
+        6.0 * (fl + 1.0) / rc4;
 
     // p(rc) = c0 + c2 rc² + c4 rc⁴ + c6 rc⁶ + c8 rc⁸ + c10 rc¹⁰ + c12 rc¹²
     // p'(rc) = 2 c2 rc + 4 c4 rc³ + 6 c6 rc⁵ + 8 c8 rc⁷ + 10 c10 rc⁹ + 12 c12 rc¹¹
@@ -279,7 +288,8 @@ fn solveCoefficients(ae: WfDerivatives, rc: f64, l: u32, energy: f64, norm_ae: f
 
         // Numerical derivative of norm w.r.t. c0
         const dc0 = 1e-8;
-        const result_p = coefficientsFromC0(c0 + dc0, f0, f1, f2, f3, f4, rc, rc2, rc4, rc6, rc8, rc10, rc12, l);
+        const result_p =
+            coefficientsFromC0(c0 + dc0, f0, f1, f2, f3, f4, rc, rc2, rc4, rc6, rc8, rc10, rc12, l);
         const norm_ps_p = computePseudoNorm(result_p, rc, l, 2000);
         const dnorm_dc0 = (norm_ps_p - norm_ps) / dc0;
 
@@ -316,8 +326,9 @@ fn coefficientsFromC0(
     // [4] 24c4 rc + 120c6 rc³ + 336c8 rc⁵ + 720c10 rc⁷ + 1320c12 rc⁹ = f3
     // [5] 24c4 + 360c6 rc² + 1680c8 rc⁴ + 5040c10 rc⁶ + 11880c12 rc⁸ = f4
 
-    // 5 equations, 6 unknowns (c2..c12). We set c12 = 0 for simplicity
-    // (Troullier-Martins original uses c0..c12 with 7 constraints; here we use 5+norm+c12=0=6 constraints).
+    // 5 equations, 6 unknowns (c2..c12). We set c12 = 0 for simplicity.
+    // Troullier-Martins uses c0..c12 with 7 constraints; here we use
+    // 5 matching conditions + norm conservation + c12 = 0.
     // Actually, with c12=0 we have 5 equations for 5 unknowns (c2, c4, c6, c8, c10).
 
     // Solve the 5×5 linear system using Gaussian elimination
@@ -459,6 +470,7 @@ test "TM pseudo wavefunction: continuity at rc" {
     // Bare Coulomb potential for H
     const v = try allocator.alloc(f64, grid.n);
     defer allocator.free(v);
+
     for (0..grid.n) |i| {
         const r = grid.r[i];
         v[i] = if (r > 1e-30) -2.0 / r else -2.0 / 1e-30;
@@ -492,6 +504,7 @@ test "TM pseudo wavefunction: norm conservation" {
 
     const v = try allocator.alloc(f64, grid.n);
     defer allocator.free(v);
+
     for (0..grid.n) |i| {
         const r = grid.r[i];
         v[i] = if (r > 1e-30) -2.0 / r else -2.0 / 1e-30;
@@ -519,6 +532,7 @@ test "TM screened pseudopotential: finite at origin" {
 
     const v = try allocator.alloc(f64, grid.n);
     defer allocator.free(v);
+
     for (0..grid.n) |i| {
         const r = grid.r[i];
         v[i] = if (r > 1e-30) -2.0 / r else -2.0 / 1e-30;

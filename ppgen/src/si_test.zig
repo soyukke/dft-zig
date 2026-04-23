@@ -38,13 +38,6 @@ test "Si all-electron atomic SCF" {
     }, 300, 0.3, 1e-10);
     defer result.deinit();
 
-    std.debug.print("\n  === Si all-electron LDA ===\n", .{});
-    const labels = [_][]const u8{ "1s", "2s", "2p", "3s", "3p" };
-    for (0..5) |i| {
-        std.debug.print("  ε({s}) = {d:12.6} Ry\n", .{ labels[i], result.eigenvalues[i] });
-    }
-    std.debug.print("  E_total = {d:12.6} Ry\n", .{result.total_energy});
-
     // Reference: Si LDA total energy ≈ -577.9 Ry (NIST)
     // Our spin-unpolarized value will be close but not exact for open-shell
     try std.testing.expect(result.total_energy < -570.0);
@@ -91,7 +84,7 @@ test "Si pseudopotential generation: valence only" {
     }, &writer);
 
     const output = writer.buffered();
-    std.debug.print("\n  Si UPF size: {d} bytes\n", .{output.len});
+    try std.testing.expect(output.len > 0);
 
     // z_valence = 4 (3s² + 3p²)
     try std.testing.expect(std.mem.indexOf(u8, output, "z_valence=\"4.0\"") != null);
@@ -103,6 +96,7 @@ test "Si pseudopotential generation: valence only" {
     {
         const file = try cwd.createFile(io, tmp_path, .{});
         defer file.close(io);
+
         try file.writeStreamingAll(io, output);
     }
     defer cwd.deleteFile(io, tmp_path) catch {};
@@ -115,14 +109,9 @@ test "Si pseudopotential generation: valence only" {
     defer parsed.deinit(allocator);
 
     const upf = parsed.upf.?;
-    std.debug.print("  Parsed: mesh={d}, n_beta={d}, dij_len={d}\n", .{ upf.r.len, upf.beta.len, upf.dij.len });
 
     // 1 KB projector (s-channel, since p is local)
     try std.testing.expectEqual(@as(usize, 1), upf.beta.len);
     try std.testing.expectEqual(@as(i32, 0), upf.beta[0].l.?);
     try std.testing.expectApproxEqAbs(4.0, parsed.header.z_valence.?, 0.01);
-
-    std.debug.print("  z_valence = {d:.1}\n", .{parsed.header.z_valence.?});
-    std.debug.print("  l_max = {d}\n", .{parsed.header.l_max.?});
-    std.debug.print("  beta[0]: l={d}, D={d:.6} Ry\n", .{ upf.beta[0].l.?, upf.dij[0] });
 }

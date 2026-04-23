@@ -35,16 +35,16 @@ test "Poisson solver: hydrogen V_H" {
 
     const rho = try allocator.alloc(f64, grid.n);
     defer allocator.free(rho);
+
     for (0..grid.n) |i| {
         rho[i] = hydrogenDensity(grid.r[i]);
     }
 
     const v_h = try allocator.alloc(f64, grid.n);
     defer allocator.free(v_h);
+
     atomic_solver.radialPoisson(&grid, rho, v_h);
 
-    // Check at several r values
-    var max_err: f64 = 0;
     var max_rel_err: f64 = 0;
     for (0..grid.n) |i| {
         const r = grid.r[i];
@@ -52,27 +52,7 @@ test "Poisson solver: hydrogen V_H" {
         const exact = hydrogenVH(r);
         const err = @abs(v_h[i] - exact);
         const rel = err / @abs(exact);
-        if (err > max_err) max_err = err;
         if (rel > max_rel_err) max_rel_err = rel;
-    }
-
-    std.debug.print("\n  Poisson V_H: max_abs_err = {e:.4}, max_rel_err = {e:.4}\n", .{ max_err, max_rel_err });
-
-    // Print V_H at select r values
-    const test_r = [_]f64{ 0.1, 0.5, 1.0, 2.0, 5.0, 10.0 };
-    for (test_r) |r_test| {
-        // Find nearest grid point
-        var best_i: usize = 0;
-        var best_diff: f64 = 1e30;
-        for (0..grid.n) |i| {
-            const diff = @abs(grid.r[i] - r_test);
-            if (diff < best_diff) {
-                best_diff = diff;
-                best_i = i;
-            }
-        }
-        const exact = hydrogenVH(grid.r[best_i]);
-        std.debug.print("  r={d:6.2}: V_H={d:12.8} exact={d:12.8} err={e:.3}\n", .{ grid.r[best_i], v_h[best_i], exact, @abs(v_h[best_i] - exact) });
     }
 
     try std.testing.expect(max_rel_err < 0.01); // <1% relative error
@@ -86,6 +66,7 @@ test "electron count normalization" {
 
     const rho = try allocator.alloc(f64, grid.n);
     defer allocator.free(rho);
+
     for (0..grid.n) |i| {
         rho[i] = hydrogenDensity(grid.r[i]);
     }
@@ -98,7 +79,6 @@ test "electron count normalization" {
         nel += w * rho[i] * 4.0 * std.math.pi * r * r * grid.rab[i];
     }
 
-    std.debug.print("\n  N_electrons = {d:.10} (should be 1.0)\n", .{nel});
     try std.testing.expectApproxEqAbs(1.0, nel, 1e-6);
 }
 
@@ -121,9 +101,8 @@ test "XC energy for hydrogen density" {
         integral_vxc_rho += xc_point.df_dn * rho * vol;
     }
 
-    std.debug.print("\n  E_xc = {d:.8} Ry\n", .{e_xc});
-    std.debug.print("  ∫V_xc ρ dV = {d:.8} Ry\n", .{integral_vxc_rho});
-    std.debug.print("  E_xc - ∫V_xc ρ = {d:.8} Ry\n", .{e_xc - integral_vxc_rho});
+    try std.testing.expect(std.math.isFinite(e_xc));
+    try std.testing.expect(std.math.isFinite(integral_vxc_rho));
 }
 
 test "Hartree energy for hydrogen density" {
@@ -141,12 +120,14 @@ test "Hartree energy for hydrogen density" {
 
     const rho = try allocator.alloc(f64, grid.n);
     defer allocator.free(rho);
+
     for (0..grid.n) |i| {
         rho[i] = hydrogenDensity(grid.r[i]);
     }
 
     const v_h = try allocator.alloc(f64, grid.n);
     defer allocator.free(v_h);
+
     atomic_solver.radialPoisson(&grid, rho, v_h);
 
     var e_h: f64 = 0;
@@ -156,8 +137,6 @@ test "Hartree energy for hydrogen density" {
         e_h += 0.5 * w * v_h[i] * rho[i] * 4.0 * std.math.pi * r * r * grid.rab[i];
     }
 
-    // Exact Hartree energy: 5/8 Ry = 0.625 Ry
-    std.debug.print("\n  E_H = {d:.8} Ry (exact: 0.62500000)\n", .{e_h});
     try std.testing.expectApproxEqAbs(0.625, e_h, 0.01);
 }
 
@@ -172,6 +151,7 @@ test "kinetic energy for hydrogen 1s" {
     // Exact hydrogen 1s: u(r) = 2r exp(-r), normalized ∫u² dr = 1
     const u = try allocator.alloc(f64, grid.n);
     defer allocator.free(u);
+
     for (0..grid.n) |i| {
         u[i] = 2.0 * grid.r[i] * @exp(-grid.r[i]);
     }
@@ -182,7 +162,6 @@ test "kinetic energy for hydrogen 1s" {
         const w = ctrapWeight(i, grid.n);
         norm += w * u[i] * u[i] * grid.rab[i];
     }
-    std.debug.print("\n  u normalization: {d:.10}\n", .{norm});
     try std.testing.expectApproxEqAbs(1.0, norm, 1e-5);
 }
 
@@ -206,6 +185,7 @@ test "total energy decomposition: exact hydrogen density" {
     // Exact density
     const rho = try allocator.alloc(f64, n);
     defer allocator.free(rho);
+
     for (0..n) |i| rho[i] = hydrogenDensity(grid.r[i]);
 
     // E_ext = ∫ V_nuc ρ 4πr² dr = ∫ (-2/r)(e^{-2r}/π) 4πr² dr = -8 ∫ r e^{-2r} dr = -2.0 Ry
@@ -221,6 +201,7 @@ test "total energy decomposition: exact hydrogen density" {
     // E_H via Poisson
     const v_h = try allocator.alloc(f64, n);
     defer allocator.free(v_h);
+
     atomic_solver.radialPoisson(&grid, rho, v_h);
 
     var e_h: f64 = 0;
@@ -244,16 +225,10 @@ test "total energy decomposition: exact hydrogen density" {
 
     const e_total = t_exact + e_ext + e_h + e_xc;
 
-    std.debug.print("\n  === Exact H density, LDA (spin-unpolarized) ===\n", .{});
-    std.debug.print("  T      = {d:12.8} Ry  (exact)\n", .{t_exact});
-    std.debug.print("  E_ext  = {d:12.8} Ry  (exact: -2.0)\n", .{e_ext});
-    std.debug.print("  E_H    = {d:12.8} Ry  (exact: 0.625)\n", .{e_h});
-    std.debug.print("  E_xc   = {d:12.8} Ry\n", .{e_xc});
-    std.debug.print("  E_total= {d:12.8} Ry  (non-SC, exact density)\n", .{e_total});
-
     // Verify exact components
     try std.testing.expectApproxEqAbs(-2.0, e_ext, 1e-5);
     try std.testing.expectApproxEqAbs(0.625, e_h, 1e-4);
+    try std.testing.expect(std.math.isFinite(e_total));
 }
 
 test "H atom SCF: spin-unpolarized LDA" {
@@ -271,11 +246,6 @@ test "H atom SCF: spin-unpolarized LDA" {
         .xc = .lda_pz,
     }, 200, 0.3, 1e-10);
     defer result.deinit();
-
-    std.debug.print("\n  === H atom SCF (spin-unpolarized LDA-PZ) ===\n", .{});
-    std.debug.print("  ε_1s    = {d:12.8} Ry\n", .{result.eigenvalues[0]});
-    std.debug.print("  E_total = {d:12.8} Ry\n", .{result.total_energy});
-    std.debug.print("  Note: spin-polarized ref ≈ -0.958 Ry (not comparable)\n", .{});
 
     // For spin-unpolarized LDA, H atom E ≈ -0.89 Ry
     try std.testing.expect(result.total_energy < -0.88);
@@ -299,11 +269,6 @@ test "He atom SCF: spin-unpolarized LDA" {
         .xc = .lda_pz,
     }, 200, 0.3, 1e-10);
     defer result.deinit();
-
-    std.debug.print("\n  === He atom SCF (LDA-PZ) ===\n", .{});
-    std.debug.print("  ε_1s    = {d:12.8} Ry\n", .{result.eigenvalues[0]});
-    std.debug.print("  E_total = {d:12.8} Ry\n", .{result.total_energy});
-    std.debug.print("  Ref (NIST LDA): ≈ -5.670 Ry\n", .{});
 
     // He is closed-shell, so spin-unpolarized is exact
     try std.testing.expectApproxEqAbs(-5.670, result.total_energy, 0.01);

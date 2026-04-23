@@ -135,6 +135,7 @@ test "radial grid integration: gaussian" {
 
     const f = try allocator.alloc(f64, grid.n);
     defer allocator.free(f);
+
     for (0..grid.n) |i| {
         f[i] = @exp(-grid.r[i] * grid.r[i]);
     }
@@ -153,6 +154,7 @@ test "radial grid integration: hydrogen 1s density normalization" {
 
     const f = try allocator.alloc(f64, grid.n);
     defer allocator.free(f);
+
     for (0..grid.n) |i| {
         f[i] = 4.0 * @exp(-2.0 * grid.r[i]);
     }

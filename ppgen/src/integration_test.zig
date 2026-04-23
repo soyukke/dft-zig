@@ -39,6 +39,7 @@ test "integration: generate Si UPF and write to file" {
     }, &writer);
 
     const output = writer.buffered();
+    try std.testing.expect(output.len > 0);
 
     // Write to project pseudo directory for DFT-Zig to use
     const upf_path = "/tmp/Si_ppgen.upf";
@@ -46,6 +47,7 @@ test "integration: generate Si UPF and write to file" {
     {
         const file = try cwd.createFile(io, upf_path, .{});
         defer file.close(io);
+
         try file.writeStreamingAll(io, output);
     }
     defer cwd.deleteFile(io, upf_path) catch {};
@@ -60,14 +62,4 @@ test "integration: generate Si UPF and write to file" {
 
     try std.testing.expectApproxEqAbs(4.0, parsed.header.z_valence.?, 0.01);
     try std.testing.expectEqual(@as(usize, 1), parsed.upf.?.beta.len);
-
-    std.debug.print("\n  === Si UPF generated: {d} bytes ===\n", .{output.len});
-    std.debug.print("  z_val={d:.1}, l_max={d}, n_beta={d}\n", .{
-        parsed.header.z_valence.?,
-        parsed.header.l_max.?,
-        parsed.upf.?.beta.len,
-    });
-    std.debug.print("  D_11 = {d:.6} Ry\n", .{parsed.upf.?.dij[0]});
-    std.debug.print("  V_local(r=0.1) = {d:.4} Ry\n", .{parsed.upf.?.v_local[100]});
-    std.debug.print("  Written to {s}\n", .{upf_path});
 }

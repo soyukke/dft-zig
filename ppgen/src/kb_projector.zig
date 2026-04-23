@@ -120,6 +120,7 @@ test "KB projector: D_l nonzero for non-local channel" {
 
     const v = try allocator.alloc(f64, grid.n);
     defer allocator.free(v);
+
     for (0..grid.n) |i| {
         const r = grid.r[i];
         v[i] = if (r > 1e-30) -2.0 / r else -2.0 / 1e-30;
@@ -151,6 +152,7 @@ test "KB projector: nonzero for different V_local" {
 
     const v = try allocator.alloc(f64, grid.n);
     defer allocator.free(v);
+
     for (0..grid.n) |i| {
         const r = grid.r[i];
         v[i] = if (r > 1e-30) -2.0 / r else -2.0 / 1e-30;
@@ -159,12 +161,14 @@ test "KB projector: nonzero for different V_local" {
     // s-channel
     var sol_s = try schrodinger.solve(allocator, &grid, v, .{ .n = 1, .l = 0 }, -0.5);
     defer sol_s.deinit();
+
     var pw_s = try tm_generator.generate(allocator, &grid, sol_s.u, v, sol_s.energy, 0, 1.5);
     defer pw_s.deinit();
 
     // p-channel (use 2p for hydrogen)
     var sol_p = try schrodinger.solve(allocator, &grid, v, .{ .n = 2, .l = 1 }, -0.2);
     defer sol_p.deinit();
+
     var pw_p = try tm_generator.generate(allocator, &grid, sol_p.u, v, sol_p.energy, 1, 1.5);
     defer pw_p.deinit();
 
@@ -184,8 +188,10 @@ test "unscreen: V_ion = V_screened - V_H - V_xc" {
 
     const v_scr = try allocator.alloc(f64, n);
     defer allocator.free(v_scr);
+
     const v_h = try allocator.alloc(f64, n);
     defer allocator.free(v_h);
+
     const v_xc = try allocator.alloc(f64, n);
     defer allocator.free(v_xc);
 
