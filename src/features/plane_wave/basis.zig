@@ -97,6 +97,7 @@ pub fn buildSymmetryMapping(
     // Build hash map from (h,k,l) -> index for basis_sk
     var hkl_map = std.AutoHashMap([3]i32, usize).init(alloc);
     defer hkl_map.deinit();
+
     try hkl_map.ensureTotalCapacity(@intCast(basis_sk.gvecs.len));
     for (basis_sk.gvecs, 0..) |gv, j| {
         hkl_map.putAssumeCapacity(.{ gv.h, gv.k, gv.l }, j);

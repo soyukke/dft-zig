@@ -151,6 +151,39 @@ pub const ParseError = error{
 /// ```
 ///
 /// The `charge` parameter specifies the molecular charge (0 for neutral).
+fn parseAtomLine(
+    line: []const u8,
+    out_position: *Vec3,
+    out_charge: *f64,
+    out_atomic_number: *u32,
+) !u32 {
+    const trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
+    if (trimmed.len == 0) return ParseError.InvalidFormat;
+
+    var tokens = std.mem.tokenizeAny(u8, trimmed, &std.ascii.whitespace);
+
+    const symbol = tokens.next() orelse return ParseError.InvalidFormat;
+    const z = symbolToZ(symbol) orelse return ParseError.UnknownElement;
+
+    const x_str = tokens.next() orelse return ParseError.InvalidCoordinate;
+    const y_str = tokens.next() orelse return ParseError.InvalidCoordinate;
+    const z_str = tokens.next() orelse return ParseError.InvalidCoordinate;
+
+    const x = std.fmt.parseFloat(f64, x_str) catch return ParseError.InvalidCoordinate;
+    const y = std.fmt.parseFloat(f64, y_str) catch return ParseError.InvalidCoordinate;
+    const z_coord = std.fmt.parseFloat(f64, z_str) catch return ParseError.InvalidCoordinate;
+
+    // Convert Angstrom to Bohr
+    out_position.* = .{
+        .x = x * angstrom_to_bohr,
+        .y = y * angstrom_to_bohr,
+        .z = z_coord * angstrom_to_bohr,
+    };
+    out_charge.* = @floatFromInt(z);
+    out_atomic_number.* = z;
+    return z;
+}
+
 pub fn parseXyzString(
     alloc: std.mem.Allocator,
     input: []const u8,
@@ -173,8 +206,10 @@ pub fn parseXyzString(
     // Allocate arrays
     const positions = try alloc.alloc(Vec3, n_atoms);
     errdefer alloc.free(positions);
+
     const charges = try alloc.alloc(f64, n_atoms);
     errdefer alloc.free(charges);
+
     const atomic_numbers = try alloc.alloc(u32, n_atoms);
     errdefer alloc.free(atomic_numbers);
 
@@ -183,30 +218,7 @@ pub fn parseXyzString(
     // Parse atom lines
     for (0..n_atoms) |i| {
         const line = lines_iter.next() orelse return ParseError.InvalidFormat;
-        const trimmed = std.mem.trim(u8, line, &std.ascii.whitespace);
-        if (trimmed.len == 0) return ParseError.InvalidFormat;
-
-        var tokens = std.mem.tokenizeAny(u8, trimmed, &std.ascii.whitespace);
-
-        const symbol = tokens.next() orelse return ParseError.InvalidFormat;
-        const z = symbolToZ(symbol) orelse return ParseError.UnknownElement;
-
-        const x_str = tokens.next() orelse return ParseError.InvalidCoordinate;
-        const y_str = tokens.next() orelse return ParseError.InvalidCoordinate;
-        const z_str = tokens.next() orelse return ParseError.InvalidCoordinate;
-
-        const x = std.fmt.parseFloat(f64, x_str) catch return ParseError.InvalidCoordinate;
-        const y = std.fmt.parseFloat(f64, y_str) catch return ParseError.InvalidCoordinate;
-        const z_coord = std.fmt.parseFloat(f64, z_str) catch return ParseError.InvalidCoordinate;
-
-        // Convert Angstrom to Bohr
-        positions[i] = .{
-            .x = x * angstrom_to_bohr,
-            .y = y * angstrom_to_bohr,
-            .z = z_coord * angstrom_to_bohr,
-        };
-        charges[i] = @floatFromInt(z);
-        atomic_numbers[i] = z;
+        const z = try parseAtomLine(line, &positions[i], &charges[i], &atomic_numbers[i]);
         total_z += z;
     }
 
@@ -253,6 +265,7 @@ pub fn loadXyzFile(
 ) !Molecule {
     const content = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc, .limited(1024 * 1024));
     defer alloc.free(content);
+
     return parseXyzString(alloc, content, basis_set, charge);
 }
 

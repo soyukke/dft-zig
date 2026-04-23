@@ -42,10 +42,12 @@ pub fn generateKmeshSymmetry(
 
     const ops = try symmetry.getSymmetryOps(alloc, cell, atoms, 1e-6);
     defer alloc.free(ops);
+
     if (ops.len == 0) return full;
 
     const filtered_ops = try reduction.filterSymOpsForKmesh(alloc, ops, kmesh, shift, 1e-8);
     defer alloc.free(filtered_ops);
+
     if (filtered_ops.len == 0) return full;
 
     if (filtered_ops.len != ops.len) {
@@ -114,6 +116,7 @@ test "abinit kmesh reduction for aluminum fcc" {
         true,
     );
     defer alloc.free(kpoints);
+
     try std.testing.expectEqual(@as(usize, 16), kpoints.len);
     var weight_sum: f64 = 0.0;
     for (kpoints) |kp| {

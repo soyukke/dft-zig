@@ -77,21 +77,28 @@ pub const ApplyWorkspace = struct {
         const grid_total = grid.count();
         const work_recip = try alloc.alloc(math.Complex, grid_total);
         errdefer alloc.free(work_recip);
+
         const work_real = try alloc.alloc(math.Complex, grid_total);
         errdefer alloc.free(work_real);
+
         const work_recip_out = try alloc.alloc(math.Complex, grid_total);
         errdefer alloc.free(work_recip_out);
+
         const work_vec = try alloc.alloc(math.Complex, n_gvecs);
         errdefer alloc.free(work_vec);
+
         const work_phase = try alloc.alloc(math.Complex, n_gvecs);
         errdefer alloc.free(work_phase);
+
         const work_xphase = try alloc.alloc(math.Complex, n_gvecs);
         errdefer alloc.free(work_xphase);
+
         const work_coeff = if (max_m_total > 0)
             try alloc.alloc(math.Complex, max_m_total)
         else
             &[_]math.Complex{};
         errdefer if (max_m_total > 0) alloc.free(work_coeff);
+
         const work_coeff2 = if (max_m_total > 0)
             try alloc.alloc(math.Complex, max_m_total)
         else
@@ -152,6 +159,95 @@ pub const KpointApplyCache = struct {
         self.* = .{};
     }
 };
+
+/// Shared allocation for ws_in_use atomic flag array.
+fn allocWsInUse(alloc: std.mem.Allocator, ws_count: usize) ![]std.atomic.Value(u8) {
+    const ws_in_use = try alloc.alloc(std.atomic.Value(u8), ws_count);
+    for (ws_in_use) |*entry| {
+        entry.store(0, .release);
+    }
+    return ws_in_use;
+}
+
+/// Allocate and initialize `ws_count` workspaces sharing a single FFT plan.
+fn allocSharedPlanWorkspaces(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    n_gvecs: usize,
+    max_m_total: usize,
+    plan: fft.Fft3dPlan,
+    ws_count: usize,
+) ![]ApplyWorkspace {
+    const workspaces = try alloc.alloc(ApplyWorkspace, ws_count);
+    errdefer {
+        for (workspaces) |*ws| {
+            ws.deinitWithoutPlan(alloc);
+        }
+        alloc.free(workspaces);
+    }
+    var i: usize = 0;
+    while (i < ws_count) : (i += 1) {
+        workspaces[i] = try ApplyWorkspace.initWithPlan(alloc, grid, n_gvecs, max_m_total, plan);
+    }
+    return workspaces;
+}
+
+/// Parameters shared by all ApplyContext init paths; ownership flags encode who frees what.
+const ApplyContextSetup = struct {
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    grid: Grid,
+    map: PwGridMap,
+    gvecs: []plane_wave.GVector,
+    local_r: []const f64,
+    vnl: ?[]math.Complex,
+    nonlocal_ctx: ?NonlocalContext,
+    atoms: []const hamiltonian.AtomData,
+    inv_volume: f64,
+    profile: ?*ScfProfile,
+    fft_plan: ?fft.Fft3dPlan,
+    fft_index_map: ?[]const usize,
+    owns_fft_plan: bool,
+    owns_nonlocal: bool,
+    owns_map: bool,
+    workspaces: []ApplyWorkspace,
+    num_workspaces: usize,
+    ws_in_use: []std.atomic.Value(u8),
+};
+
+/// Build a fully-populated ApplyContext from setup params and the first workspace.
+fn buildApplyContext(s: ApplyContextSetup) ApplyContext {
+    return .{
+        .alloc = s.alloc,
+        .io = s.io,
+        .grid = s.grid,
+        .map = s.map,
+        .gvecs = s.gvecs,
+        .local_r = s.local_r,
+        .vnl = s.vnl,
+        .nonlocal_ctx = s.nonlocal_ctx,
+        .atoms = s.atoms,
+        .inv_volume = s.inv_volume,
+        .profile = s.profile,
+        .fft_plan = s.fft_plan,
+        .fft_index_map = s.fft_index_map,
+        .owns_fft_plan = s.owns_fft_plan,
+        .owns_nonlocal = s.owns_nonlocal,
+        .owns_map = s.owns_map,
+        .workspaces = s.workspaces,
+        .num_workspaces = s.num_workspaces,
+        .ws_in_use = s.ws_in_use,
+        .ws_mutex = .init,
+        .work_recip = s.workspaces[0].work_recip,
+        .work_real = s.workspaces[0].work_real,
+        .work_recip_out = s.workspaces[0].work_recip_out,
+        .work_vec = s.workspaces[0].work_vec,
+        .work_phase = s.workspaces[0].work_phase,
+        .work_xphase = s.workspaces[0].work_xphase,
+        .work_coeff = s.workspaces[0].work_coeff,
+        .work_coeff2 = s.workspaces[0].work_coeff2,
+    };
+}
 
 pub const ApplyContext = struct {
     alloc: std.mem.Allocator,
@@ -244,6 +340,7 @@ pub const ApplyContext = struct {
 
         var map = try PwGridMap.init(alloc, gvecs, grid);
         errdefer map.deinit(alloc);
+
         if (fft_index_map) |idx_map| {
             try map.buildFftIndices(alloc, idx_map);
         }
@@ -265,11 +362,10 @@ pub const ApplyContext = struct {
             existing_plan,
         );
 
-        const ws_in_use = try alloc.alloc(std.atomic.Value(u8), 1);
+        const ws_in_use = try allocWsInUse(alloc, 1);
         errdefer alloc.free(ws_in_use);
-        ws_in_use[0].store(0, .release);
 
-        return .{
+        return buildApplyContext(.{
             .alloc = alloc,
             .io = io,
             .grid = grid,
@@ -281,24 +377,15 @@ pub const ApplyContext = struct {
             .atoms = atoms,
             .inv_volume = inv_volume,
             .profile = profile,
-            .fft_plan = existing_plan, // Use the provided plan
+            .fft_plan = existing_plan,
             .fft_index_map = fft_index_map,
-            .owns_fft_plan = false, // We don't own this plan, caller will free it
+            .owns_fft_plan = false,
             .owns_nonlocal = true,
             .owns_map = true,
             .workspaces = workspaces,
             .num_workspaces = 1,
             .ws_in_use = ws_in_use,
-            .ws_mutex = .init,
-            .work_recip = workspaces[0].work_recip,
-            .work_real = workspaces[0].work_real,
-            .work_recip_out = workspaces[0].work_recip_out,
-            .work_vec = workspaces[0].work_vec,
-            .work_phase = workspaces[0].work_phase,
-            .work_xphase = workspaces[0].work_xphase,
-            .work_coeff = workspaces[0].work_coeff,
-            .work_coeff2 = workspaces[0].work_coeff2,
-        };
+        });
     }
 
     /// Initialize using cached NonlocalContext and PwGridMap (avoids expensive recomputation).
@@ -322,6 +409,7 @@ pub const ApplyContext = struct {
         const max_m_total = if (cached_nonlocal) |ctx| ctx.max_m_total else 0;
         const workspaces = try alloc.alloc(ApplyWorkspace, 1);
         errdefer alloc.free(workspaces);
+
         workspaces[0] = try ApplyWorkspace.initWithPlan(
             alloc,
             grid,
@@ -330,11 +418,10 @@ pub const ApplyContext = struct {
             fft_plan,
         );
 
-        const ws_in_use = try alloc.alloc(std.atomic.Value(u8), 1);
+        const ws_in_use = try allocWsInUse(alloc, 1);
         errdefer alloc.free(ws_in_use);
-        ws_in_use[0].store(0, .release);
 
-        return .{
+        return buildApplyContext(.{
             .alloc = alloc,
             .io = io,
             .grid = grid,
@@ -354,16 +441,7 @@ pub const ApplyContext = struct {
             .workspaces = workspaces,
             .num_workspaces = 1,
             .ws_in_use = ws_in_use,
-            .ws_mutex = .init,
-            .work_recip = workspaces[0].work_recip,
-            .work_real = workspaces[0].work_real,
-            .work_recip_out = workspaces[0].work_recip_out,
-            .work_vec = workspaces[0].work_vec,
-            .work_phase = workspaces[0].work_phase,
-            .work_xphase = workspaces[0].work_xphase,
-            .work_coeff = workspaces[0].work_coeff,
-            .work_coeff2 = workspaces[0].work_coeff2,
-        };
+        });
     }
 
     /// Initialize with multiple workspaces for parallel execution
@@ -391,6 +469,7 @@ pub const ApplyContext = struct {
 
         var map = try PwGridMap.init(alloc, gvecs, grid);
         errdefer map.deinit(alloc);
+
         if (fft_index_map) |idx_map| {
             try map.buildFftIndices(alloc, idx_map);
         }
@@ -407,33 +486,25 @@ pub const ApplyContext = struct {
 
         const max_m_total = if (nonlocal_ctx) |ctx| ctx.max_m_total else 0;
         const ws_count = @max(num_workspaces, 1);
-        const workspaces = try alloc.alloc(ApplyWorkspace, ws_count);
+        const workspaces = try allocSharedPlanWorkspaces(
+            alloc,
+            grid,
+            gvecs.len,
+            max_m_total,
+            plan,
+            ws_count,
+        );
         errdefer {
             for (workspaces) |*ws| {
-                // Don't free shared FFT plan (freed by errdefer on plan)
                 ws.deinitWithoutPlan(alloc);
             }
             alloc.free(workspaces);
         }
-        var i: usize = 0;
-        while (i < ws_count) : (i += 1) {
-            // Use shared FFT plan to avoid leaking per-workspace plans
-            workspaces[i] = try ApplyWorkspace.initWithPlan(
-                alloc,
-                grid,
-                gvecs.len,
-                max_m_total,
-                plan,
-            );
-        }
 
-        const ws_in_use = try alloc.alloc(std.atomic.Value(u8), ws_count);
+        const ws_in_use = try allocWsInUse(alloc, ws_count);
         errdefer alloc.free(ws_in_use);
-        for (ws_in_use) |*entry| {
-            entry.store(0, .release);
-        }
 
-        return .{
+        return buildApplyContext(.{
             .alloc = alloc,
             .io = io,
             .grid = grid,
@@ -447,22 +518,13 @@ pub const ApplyContext = struct {
             .profile = profile,
             .fft_plan = plan,
             .fft_index_map = fft_index_map,
-            .owns_fft_plan = true, // We created this plan, so we own it
+            .owns_fft_plan = true,
             .owns_nonlocal = true,
             .owns_map = true,
             .workspaces = workspaces,
             .num_workspaces = ws_count,
             .ws_in_use = ws_in_use,
-            .ws_mutex = .init,
-            .work_recip = workspaces[0].work_recip,
-            .work_real = workspaces[0].work_real,
-            .work_recip_out = workspaces[0].work_recip_out,
-            .work_vec = workspaces[0].work_vec,
-            .work_phase = workspaces[0].work_phase,
-            .work_xphase = workspaces[0].work_xphase,
-            .work_coeff = workspaces[0].work_coeff,
-            .work_coeff2 = workspaces[0].work_coeff2,
-        };
+        });
     }
 
     pub fn deinit(self: *ApplyContext, alloc: std.mem.Allocator) void {
@@ -580,11 +642,13 @@ pub fn applyHamiltonian(ctx_ptr: *anyopaque, x: []const math.Complex, y: []math.
     // Try to acquire a workspace from the pool (thread-safe)
     if (ctx.acquireWorkspace()) |ws_idx| {
         defer ctx.releaseWorkspace(ws_idx);
+
         try applyHamiltonianWithWorkspace(ctx, &ctx.workspaces[ws_idx], x, y);
     } else {
         // All workspaces in use - use first one with lock
         ctx.ws_mutex.lockUncancelable(ctx.io);
         defer ctx.ws_mutex.unlock(ctx.io);
+
         try applyHamiltonianWithWorkspace(ctx, &ctx.workspaces[0], x, y);
     }
 }
@@ -618,6 +682,7 @@ pub fn checkHamiltonianApply(
         .zig, // Use default Zig FFT for testing
     );
     defer ctx.deinit(alloc);
+
     const n = gvecs.len;
     const x = try alloc.alloc(math.Complex, n);
     const y_apply = try alloc.alloc(math.Complex, n);
@@ -625,6 +690,7 @@ pub fn checkHamiltonianApply(
     defer alloc.free(x);
     defer alloc.free(y_apply);
     defer alloc.free(y_dense);
+
     var i: usize = 0;
     while (i < n) : (i += 1) {
         const fi = @as(f64, @floatFromInt(i + 1));
@@ -635,6 +701,7 @@ pub fn checkHamiltonianApply(
     const h = try hamiltonian
         .buildHamiltonian(alloc, gvecs, species, atoms, inv_volume, cfg, potential);
     defer alloc.free(h);
+
     applyDenseMatrix(n, h, x, y_dense);
     var max_abs: f64 = 0.0;
     var max_diff: f64 = 0.0;
@@ -723,110 +790,15 @@ pub fn applyNonlocalPotential(
     x: []const math.Complex,
     out: []math.Complex,
 ) !void {
-    const nl = ctx.nonlocal_ctx orelse {
-        @memset(out, math.complex.init(0.0, 0.0));
-        return;
-    };
-    const n = ctx.gvecs.len;
-    @memset(out, math.complex.init(0.0, 0.0));
-
-    for (nl.species) |entry| {
-        const g_count = entry.g_count;
-        if (g_count != n) return error.InvalidMatrixSize;
-        if (entry.m_total == 0) continue;
-        const coeff = ctx.work_coeff[0..entry.m_total];
-        const coeff2 = ctx.work_coeff2[0..entry.m_total];
-
-        var atom_of_species: usize = 0;
-        for (ctx.atoms) |atom| {
-            if (atom.species_index != entry.species_index) continue;
-            const coeffs = if (entry.dij_per_atom) |dpa| dpa[atom_of_species] else entry.coeffs;
-            const dij_m = if (entry.dij_m_per_atom) |dpa| dpa[atom_of_species] else null;
-            atom_of_species += 1;
-
-            var g: usize = 0;
-            while (g < n) : (g += 1) {
-                const phase = math.complex.expi(math.Vec3.dot(ctx.gvecs[g].cart, atom.position));
-                ctx.work_phase[g] = phase;
-                ctx.work_xphase[g] = math.complex.mul(x[g], phase);
-            }
-
-            // Step 1: Compute projector overlaps <p_{β,m}|ψ>
-            var b: usize = 0;
-            while (b < entry.beta_count) : (b += 1) {
-                const offset = entry.m_offsets[b];
-                const m_count = entry.m_counts[b];
-                var m_idx: usize = 0;
-                while (m_idx < m_count) : (m_idx += 1) {
-                    const phi_start = (offset + m_idx) * g_count;
-                    const phi = entry.phi[phi_start .. phi_start + g_count];
-                    var sum = math.complex.init(0.0, 0.0);
-                    g = 0;
-                    while (g < n) : (g += 1) {
-                        sum = math.complex.add(sum, math.complex.scale(ctx.work_xphase[g], phi[g]));
-                    }
-                    coeff[offset + m_idx] = sum;
-                }
-            }
-
-            // Step 2: Apply D_ij
-            if (dij_m) |dm| {
-                // m-resolved D: coeff2[im] = Σ_jm D[im,jm] × coeff[jm]
-                const mt = entry.m_total;
-                var im: usize = 0;
-                while (im < mt) : (im += 1) {
-                    var sum = math.complex.init(0.0, 0.0);
-                    var jm: usize = 0;
-                    while (jm < mt) : (jm += 1) {
-                        const d_val = dm[im * mt + jm];
-                        if (d_val == 0.0) continue;
-                        sum = math.complex.add(sum, math.complex.scale(coeff[jm], d_val));
-                    }
-                    coeff2[im] = sum;
-                }
-            } else {
-                // Radial D_ij: same-m coupling only
-                b = 0;
-                while (b < entry.beta_count) : (b += 1) {
-                    const l_val = entry.l_list[b];
-                    const offset = entry.m_offsets[b];
-                    const m_count = entry.m_counts[b];
-                    var m_idx: usize = 0;
-                    while (m_idx < m_count) : (m_idx += 1) {
-                        var sum = math.complex.init(0.0, 0.0);
-                        var j: usize = 0;
-                        while (j < entry.beta_count) : (j += 1) {
-                            if (entry.l_list[j] != l_val) continue;
-                            const dij = coeffs[b * entry.beta_count + j];
-                            if (dij == 0.0) continue;
-                            const c = coeff[entry.m_offsets[j] + m_idx];
-                            sum = math.complex.add(sum, math.complex.scale(c, dij));
-                        }
-                        coeff2[offset + m_idx] = sum;
-                    }
-                }
-            }
-
-            g = 0;
-            while (g < n) : (g += 1) {
-                var accum = math.complex.init(0.0, 0.0);
-                b = 0;
-                while (b < entry.beta_count) : (b += 1) {
-                    const offset = entry.m_offsets[b];
-                    const m_count = entry.m_counts[b];
-                    var m_idx: usize = 0;
-                    while (m_idx < m_count) : (m_idx += 1) {
-                        const phi_val = entry.phi[(offset + m_idx) * g_count + g];
-                        const c = coeff2[offset + m_idx];
-                        accum = math.complex.add(accum, math.complex.scale(c, phi_val));
-                    }
-                }
-                const phase_conj = math.complex.conj(ctx.work_phase[g]);
-                const add = math.complex.mul(phase_conj, accum);
-                out[g] = math.complex.add(out[g], math.complex.scale(add, ctx.inv_volume));
-            }
-        }
-    }
+    try applyNonlocalPotentialSafe(
+        ctx,
+        x,
+        out,
+        ctx.work_phase,
+        ctx.work_xphase,
+        ctx.work_coeff,
+        ctx.work_coeff2,
+    );
 }
 
 /// Thread-safe version of applyLocalPotential with explicit work buffers
@@ -898,6 +870,123 @@ fn applyLocalPotentialSafe(
     }
 }
 
+/// Compute atom phase factors and x*phase for subsequent projection.
+fn computeAtomPhase(
+    gvecs: []const plane_wave.GVector,
+    position: math.Vec3,
+    x: []const math.Complex,
+    work_phase: []math.Complex,
+    work_xphase: []math.Complex,
+    n: usize,
+) void {
+    var g: usize = 0;
+    while (g < n) : (g += 1) {
+        const phase = math.complex.expi(math.Vec3.dot(gvecs[g].cart, position));
+        work_phase[g] = phase;
+        work_xphase[g] = math.complex.mul(x[g], phase);
+    }
+}
+
+/// Step 1: coeff[β,m] = Σ_g phi[β,m,g] * work_xphase[g]
+fn projectNonlocalCoeff(
+    entry: *const nonlocal_context.NonlocalSpecies,
+    work_xphase: []const math.Complex,
+    coeff: []math.Complex,
+    g_count: usize,
+    n: usize,
+) void {
+    var b: usize = 0;
+    while (b < entry.beta_count) : (b += 1) {
+        const offset = entry.m_offsets[b];
+        const m_count = entry.m_counts[b];
+        var m_idx: usize = 0;
+        while (m_idx < m_count) : (m_idx += 1) {
+            const phi_start = (offset + m_idx) * g_count;
+            const phi = entry.phi[phi_start .. phi_start + g_count];
+            var sum = math.complex.init(0.0, 0.0);
+            var g: usize = 0;
+            while (g < n) : (g += 1) {
+                sum = math.complex.add(sum, math.complex.scale(work_xphase[g], phi[g]));
+            }
+            coeff[offset + m_idx] = sum;
+        }
+    }
+}
+
+/// Step 2: coeff2 = D_ij * coeff (m-resolved or radial form).
+fn applyNonlocalDij(
+    entry: *const nonlocal_context.NonlocalSpecies,
+    coeffs: []const f64,
+    dij_m: ?[]const f64,
+    coeff: []const math.Complex,
+    coeff2: []math.Complex,
+) void {
+    if (dij_m) |dm| {
+        const mt = entry.m_total;
+        var im: usize = 0;
+        while (im < mt) : (im += 1) {
+            var sum = math.complex.init(0.0, 0.0);
+            var jm: usize = 0;
+            while (jm < mt) : (jm += 1) {
+                const d_val = dm[im * mt + jm];
+                if (d_val == 0.0) continue;
+                sum = math.complex.add(sum, math.complex.scale(coeff[jm], d_val));
+            }
+            coeff2[im] = sum;
+        }
+    } else {
+        var b: usize = 0;
+        while (b < entry.beta_count) : (b += 1) {
+            const l_val = entry.l_list[b];
+            const offset = entry.m_offsets[b];
+            const m_count = entry.m_counts[b];
+            var m_idx: usize = 0;
+            while (m_idx < m_count) : (m_idx += 1) {
+                var sum = math.complex.init(0.0, 0.0);
+                var j: usize = 0;
+                while (j < entry.beta_count) : (j += 1) {
+                    if (entry.l_list[j] != l_val) continue;
+                    const dij = coeffs[b * entry.beta_count + j];
+                    if (dij == 0.0) continue;
+                    const c = coeff[entry.m_offsets[j] + m_idx];
+                    sum = math.complex.add(sum, math.complex.scale(c, dij));
+                }
+                coeff2[offset + m_idx] = sum;
+            }
+        }
+    }
+}
+
+/// Step 3: out[g] += (1/Ω) * conj(phase[g]) * Σ_{β,m} phi[β,m,g] * coeff2[β,m]
+fn backprojectNonlocalAccum(
+    entry: *const nonlocal_context.NonlocalSpecies,
+    coeff2: []const math.Complex,
+    work_phase: []const math.Complex,
+    out: []math.Complex,
+    inv_volume: f64,
+    g_count: usize,
+    n: usize,
+) void {
+    var g: usize = 0;
+    while (g < n) : (g += 1) {
+        var accum = math.complex.init(0.0, 0.0);
+        var b: usize = 0;
+        while (b < entry.beta_count) : (b += 1) {
+            const offset = entry.m_offsets[b];
+            const m_count = entry.m_counts[b];
+            var m_idx: usize = 0;
+            while (m_idx < m_count) : (m_idx += 1) {
+                const phi_val = entry.phi[(offset + m_idx) * g_count + g];
+                const c = coeff2[offset + m_idx];
+                accum = math.complex.add(accum, math.complex.scale(c, phi_val));
+            }
+        }
+        const phase_conj = math.complex.conj(work_phase[g]);
+        const add = math.complex.mul(phase_conj, accum);
+        out[g] = math.complex.add(out[g], math.complex.scale(add, inv_volume));
+    }
+}
+
 /// Thread-safe version of applyNonlocalPotential with explicit work buffers
 fn applyNonlocalPotentialSafe(
     ctx: *ApplyContext,
@@ -929,83 +1018,10 @@ fn applyNonlocalPotentialSafe(
             const dij_m = if (entry.dij_m_per_atom) |dpa| dpa[atom_of_species] else null;
             atom_of_species += 1;
 
-            var g: usize = 0;
-            while (g < n) : (g += 1) {
-                const phase = math.complex.expi(math.Vec3.dot(ctx.gvecs[g].cart, atom.position));
-                work_phase[g] = phase;
-                work_xphase[g] = math.complex.mul(x[g], phase);
-            }
-
-            var b: usize = 0;
-            while (b < entry.beta_count) : (b += 1) {
-                const offset = entry.m_offsets[b];
-                const m_count = entry.m_counts[b];
-                var m_idx: usize = 0;
-                while (m_idx < m_count) : (m_idx += 1) {
-                    const phi_start = (offset + m_idx) * g_count;
-                    const phi = entry.phi[phi_start .. phi_start + g_count];
-                    var sum = math.complex.init(0.0, 0.0);
-                    g = 0;
-                    while (g < n) : (g += 1) {
-                        sum = math.complex.add(sum, math.complex.scale(work_xphase[g], phi[g]));
-                    }
-                    coeff[offset + m_idx] = sum;
-                }
-            }
-
-            if (dij_m) |dm| {
-                const mt = entry.m_total;
-                var im: usize = 0;
-                while (im < mt) : (im += 1) {
-                    var sum = math.complex.init(0.0, 0.0);
-                    var jm: usize = 0;
-                    while (jm < mt) : (jm += 1) {
-                        const d_val = dm[im * mt + jm];
-                        if (d_val == 0.0) continue;
-                        sum = math.complex.add(sum, math.complex.scale(coeff[jm], d_val));
-                    }
-                    coeff2[im] = sum;
-                }
-            } else {
-                b = 0;
-                while (b < entry.beta_count) : (b += 1) {
-                    const l_val = entry.l_list[b];
-                    const offset = entry.m_offsets[b];
-                    const m_count = entry.m_counts[b];
-                    var m_idx: usize = 0;
-                    while (m_idx < m_count) : (m_idx += 1) {
-                        var sum = math.complex.init(0.0, 0.0);
-                        var j: usize = 0;
-                        while (j < entry.beta_count) : (j += 1) {
-                            if (entry.l_list[j] != l_val) continue;
-                            const dij = coeffs[b * entry.beta_count + j];
-                            if (dij == 0.0) continue;
-                            const c = coeff[entry.m_offsets[j] + m_idx];
-                            sum = math.complex.add(sum, math.complex.scale(c, dij));
-                        }
-                        coeff2[offset + m_idx] = sum;
-                    }
-                }
-            }
-
-            g = 0;
-            while (g < n) : (g += 1) {
-                var accum = math.complex.init(0.0, 0.0);
-                b = 0;
-                while (b < entry.beta_count) : (b += 1) {
-                    const offset = entry.m_offsets[b];
-                    const m_count = entry.m_counts[b];
-                    var m_idx: usize = 0;
-                    while (m_idx < m_count) : (m_idx += 1) {
-                        const phi_val = entry.phi[(offset + m_idx) * g_count + g];
-                        const c = coeff2[offset + m_idx];
-                        accum = math.complex.add(accum, math.complex.scale(c, phi_val));
-                    }
-                }
-                const phase_conj = math.complex.conj(work_phase[g]);
-                const add = math.complex.mul(phase_conj, accum);
-                out[g] = math.complex.add(out[g], math.complex.scale(add, ctx.inv_volume));
-            }
+            computeAtomPhase(ctx.gvecs, atom.position, x, work_phase, work_xphase, n);
+            projectNonlocalCoeff(&entry, work_xphase, coeff, g_count, n);
+            applyNonlocalDij(&entry, coeffs, dij_m, coeff, coeff2);
+            backprojectNonlocalAccum(&entry, coeff2, work_phase, out, ctx.inv_volume, g_count, n);
         }
     }
 }
@@ -1018,6 +1034,7 @@ pub fn applyOverlap(ctx_ptr: *anyopaque, x: []const math.Complex, y: []math.Comp
 
     if (ctx.acquireWorkspace()) |ws_idx| {
         defer ctx.releaseWorkspace(ws_idx);
+
         const ws = &ctx.workspaces[ws_idx];
         try applyOverlapSafe(
             ctx,
@@ -1031,6 +1048,7 @@ pub fn applyOverlap(ctx_ptr: *anyopaque, x: []const math.Complex, y: []math.Comp
     } else {
         ctx.ws_mutex.lockUncancelable(ctx.io);
         defer ctx.ws_mutex.unlock(ctx.io);
+
         const ws = &ctx.workspaces[0];
         try applyOverlapSafe(
             ctx,
@@ -1075,72 +1093,10 @@ fn applyOverlapSafe(
         for (ctx.atoms) |atom| {
             if (atom.species_index != entry.species_index) continue;
 
-            // Compute phase factors and x*phase
-            var g: usize = 0;
-            while (g < n) : (g += 1) {
-                const phase = math.complex.expi(math.Vec3.dot(ctx.gvecs[g].cart, atom.position));
-                work_phase[g] = phase;
-                work_xphase[g] = math.complex.mul(x[g], phase);
-            }
-
-            // Step 1: Project onto beta functions: c_i = <p_i|ψ>
-            var b: usize = 0;
-            while (b < entry.beta_count) : (b += 1) {
-                const offset = entry.m_offsets[b];
-                const m_count = entry.m_counts[b];
-                var m_idx: usize = 0;
-                while (m_idx < m_count) : (m_idx += 1) {
-                    const phi_start = (offset + m_idx) * g_count;
-                    const phi = entry.phi[phi_start .. phi_start + g_count];
-                    var sum = math.complex.init(0.0, 0.0);
-                    g = 0;
-                    while (g < n) : (g += 1) {
-                        sum = math.complex.add(sum, math.complex.scale(work_xphase[g], phi[g]));
-                    }
-                    coeff[offset + m_idx] = sum;
-                }
-            }
-
-            // Step 2: Apply q_ij: c'_i = Σ_j q_ij c_j
-            b = 0;
-            while (b < entry.beta_count) : (b += 1) {
-                const l_val = entry.l_list[b];
-                const offset = entry.m_offsets[b];
-                const m_count = entry.m_counts[b];
-                var m_idx: usize = 0;
-                while (m_idx < m_count) : (m_idx += 1) {
-                    var sum = math.complex.init(0.0, 0.0);
-                    var j: usize = 0;
-                    while (j < entry.beta_count) : (j += 1) {
-                        if (entry.l_list[j] != l_val) continue;
-                        const q = qij[b * entry.beta_count + j];
-                        if (q == 0.0) continue;
-                        const c = coeff[entry.m_offsets[j] + m_idx];
-                        sum = math.complex.add(sum, math.complex.scale(c, q));
-                    }
-                    coeff2[offset + m_idx] = sum;
-                }
-            }
-
-            // Step 3: Back-project: out += Σ_i |p_i> c'_i
-            g = 0;
-            while (g < n) : (g += 1) {
-                var accum = math.complex.init(0.0, 0.0);
-                b = 0;
-                while (b < entry.beta_count) : (b += 1) {
-                    const offset = entry.m_offsets[b];
-                    const m_count = entry.m_counts[b];
-                    var m_idx: usize = 0;
-                    while (m_idx < m_count) : (m_idx += 1) {
-                        const phi_val = entry.phi[(offset + m_idx) * g_count + g];
-                        const c = coeff2[offset + m_idx];
-                        accum = math.complex.add(accum, math.complex.scale(c, phi_val));
-                    }
-                }
-                const phase_conj = math.complex.conj(work_phase[g]);
-                const add = math.complex.mul(phase_conj, accum);
-                out[g] = math.complex.add(out[g], math.complex.scale(add, ctx.inv_volume));
-            }
+            computeAtomPhase(ctx.gvecs, atom.position, x, work_phase, work_xphase, n);
+            projectNonlocalCoeff(&entry, work_xphase, coeff, g_count, n);
+            applyNonlocalDij(&entry, qij, null, coeff, coeff2);
+            backprojectNonlocalAccum(&entry, coeff2, work_phase, out, ctx.inv_volume, g_count, n);
         }
     }
 }
@@ -1149,6 +1105,227 @@ fn applyOverlapSafe(
 /// Processes ncols input vectors simultaneously for better cache efficiency.
 /// x_batch and out_batch are column-major: x_batch[col * n_pw + g].
 /// out_batch is zeroed and filled (not accumulated).
+/// Step 1+2: Fill work_phase[g] = exp(i G·τ) and xphase[g,b] = x_batch[b,g] * phase[g].
+fn batchPhaseAndXphase(
+    gvecs: []const plane_wave.GVector,
+    position: math.Vec3,
+    x_batch: []const math.Complex,
+    work_phase: []math.Complex,
+    xphase_re: []f64,
+    xphase_im: []f64,
+    n_pw: usize,
+    ncols: usize,
+) void {
+    for (0..n_pw) |g| {
+        work_phase[g] = math.complex.expi(math.Vec3.dot(gvecs[g].cart, position));
+    }
+    for (0..n_pw) |g| {
+        const ph = work_phase[g];
+        const row = g * ncols;
+        for (0..ncols) |col| {
+            const xv = x_batch[col * n_pw + g];
+            xphase_re[row + col] = xv.r * ph.r - xv.i * ph.i;
+            xphase_im[row + col] = xv.r * ph.i + xv.i * ph.r;
+        }
+    }
+}
+
+/// Step 3: coeffs = phi * xphase (real and imaginary parts).
+fn batchProjectCoeffs(
+    phi: []const f64,
+    xphase_re: []const f64,
+    xphase_im: []const f64,
+    coeffs_re: []f64,
+    coeffs_im: []f64,
+    m_total: usize,
+    g_count: usize,
+    ncols: usize,
+) void {
+    blas.dgemm(
+        .no_trans,
+        .no_trans,
+        m_total,
+        ncols,
+        g_count,
+        1.0,
+        phi,
+        g_count,
+        xphase_re,
+        ncols,
+        0.0,
+        coeffs_re[0 .. m_total * ncols],
+        ncols,
+    );
+    blas.dgemm(
+        .no_trans,
+        .no_trans,
+        m_total,
+        ncols,
+        g_count,
+        1.0,
+        phi,
+        g_count,
+        xphase_im,
+        ncols,
+        0.0,
+        coeffs_im[0 .. m_total * ncols],
+        ncols,
+    );
+}
+
+/// Step 4: coeffs2 = D * coeffs (m-resolved via BLAS or radial sparse).
+fn batchApplyDijRadial(
+    entry: *const nonlocal_context.NonlocalSpecies,
+    dij_coeffs: []const f64,
+    coeffs_re: []const f64,
+    coeffs_im: []const f64,
+    coeffs2_re: []f64,
+    coeffs2_im: []f64,
+    m_total: usize,
+    ncols: usize,
+) void {
+    @memset(coeffs2_re[0 .. m_total * ncols], 0.0);
+    @memset(coeffs2_im[0 .. m_total * ncols], 0.0);
+
+    var b_idx: usize = 0;
+    while (b_idx < entry.beta_count) : (b_idx += 1) {
+        const l_val = entry.l_list[b_idx];
+        const offset = entry.m_offsets[b_idx];
+        const m_count = entry.m_counts[b_idx];
+
+        var j: usize = 0;
+        while (j < entry.beta_count) : (j += 1) {
+            if (entry.l_list[j] != l_val) continue;
+            const dij = dij_coeffs[b_idx * entry.beta_count + j];
+            if (dij == 0.0) continue;
+            const j_offset = entry.m_offsets[j];
+
+            var m_idx: usize = 0;
+            while (m_idx < m_count) : (m_idx += 1) {
+                const src_row = (j_offset + m_idx) * ncols;
+                const dst_row = (offset + m_idx) * ncols;
+                for (0..ncols) |col| {
+                    coeffs2_re[dst_row + col] += dij * coeffs_re[src_row + col];
+                    coeffs2_im[dst_row + col] += dij * coeffs_im[src_row + col];
+                }
+            }
+        }
+    }
+}
+
+fn batchApplyDijDense(
+    dm: []const f64,
+    coeffs_src: []const f64,
+    coeffs_dst: []f64,
+    m_total: usize,
+    ncols: usize,
+) void {
+    blas.dgemm(
+        .no_trans,
+        .no_trans,
+        m_total,
+        ncols,
+        m_total,
+        1.0,
+        dm,
+        m_total,
+        coeffs_src[0 .. m_total * ncols],
+        ncols,
+        0.0,
+        coeffs_dst[0 .. m_total * ncols],
+        ncols,
+    );
+}
+
+fn batchApplyDij(
+    entry: *const nonlocal_context.NonlocalSpecies,
+    dij_coeffs: []const f64,
+    dij_m: ?[]const f64,
+    coeffs_re: []const f64,
+    coeffs_im: []const f64,
+    coeffs2_re: []f64,
+    coeffs2_im: []f64,
+    m_total: usize,
+    ncols: usize,
+) void {
+    if (dij_m) |dm| {
+        batchApplyDijDense(dm, coeffs_re, coeffs2_re, m_total, ncols);
+        batchApplyDijDense(dm, coeffs_im, coeffs2_im, m_total, ncols);
+        return;
+    }
+    batchApplyDijRadial(
+        entry,
+        dij_coeffs,
+        coeffs_re,
+        coeffs_im,
+        coeffs2_re,
+        coeffs2_im,
+        m_total,
+        ncols,
+    );
+}
+
+/// Step 5+6: result = phi^T * coeffs2; out_batch += (1/Ω) * conj(phase) * result.
+fn batchBackprojectAndAccumulate(
+    phi: []const f64,
+    coeffs2_re: []const f64,
+    coeffs2_im: []const f64,
+    xphase_re: []f64,
+    xphase_im: []f64,
+    work_phase: []const math.Complex,
+    out_batch: []math.Complex,
+    inv_volume: f64,
+    m_total: usize,
+    g_count: usize,
+    n_pw: usize,
+    ncols: usize,
+) void {
+    blas.dgemm(
+        .trans,
+        .no_trans,
+        g_count,
+        ncols,
+        m_total,
+        1.0,
+        phi,
+        g_count,
+        coeffs2_re[0 .. m_total * ncols],
+        ncols,
+        0.0,
+        xphase_re,
+        ncols,
+    );
+    blas.dgemm(
+        .trans,
+        .no_trans,
+        g_count,
+        ncols,
+        m_total,
+        1.0,
+        phi,
+        g_count,
+        coeffs2_im[0 .. m_total * ncols],
+        ncols,
+        0.0,
+        xphase_im,
+        ncols,
+    );
+
+    for (0..n_pw) |g| {
+        const ph_conj = math.complex.conj(work_phase[g]);
+        const row = g * ncols;
+        for (0..ncols) |col| {
+            const re = xphase_re[row + col];
+            const im = xphase_im[row + col];
+            const out_r = (ph_conj.r * re - ph_conj.i * im) * inv_volume;
+            const out_i = (ph_conj.r * im + ph_conj.i * re) * inv_volume;
+            const idx = col * n_pw + g;
+            const add_val = math.complex.init(out_r, out_i);
+            out_batch[idx] = math.complex.add(out_batch[idx], add_val);
+        }
+    }
+}
+
 fn applyNonlocalBatched(
     ctx: *ApplyContext,
     alloc: std.mem.Allocator,
@@ -1170,11 +1347,13 @@ fn applyNonlocalBatched(
     // Allocate work buffers: xphase_re/im (reused for result), coeffs, coeffs2
     const buf_gn = try alloc.alloc(f64, n_pw * ncols * 2);
     defer alloc.free(buf_gn);
+
     const xphase_re = buf_gn[0 .. n_pw * ncols];
     const xphase_im = buf_gn[n_pw * ncols .. 2 * n_pw * ncols];
 
     const buf_mn = try alloc.alloc(f64, max_m * ncols * 4);
     defer alloc.free(buf_mn);
+
     const coeffs_re = buf_mn[0 .. max_m * ncols];
     const coeffs_im = buf_mn[max_m * ncols .. 2 * max_m * ncols];
     const coeffs2_re = buf_mn[2 * max_m * ncols .. 3 * max_m * ncols];
@@ -1194,168 +1373,51 @@ fn applyNonlocalBatched(
             const dij_m = if (entry.dij_m_per_atom) |dpa| dpa[atom_of_species] else null;
             atom_of_species += 1;
 
-            // Step 1: Phase factors exp(i G·τ)
-            for (0..n_pw) |g| {
-                work_phase[g] = math.complex.expi(math.Vec3.dot(ctx.gvecs[g].cart, atom.position));
-            }
-
-            // Step 2: xphase[g,b] = x_batch[b,g] * phase[g]
-            // Layout: row-major [g_count × ncols]
-            for (0..n_pw) |g| {
-                const ph = work_phase[g];
-                const row = g * ncols;
-                for (0..ncols) |col| {
-                    const xv = x_batch[col * n_pw + g];
-                    xphase_re[row + col] = xv.r * ph.r - xv.i * ph.i;
-                    xphase_im[row + col] = xv.r * ph.i + xv.i * ph.r;
-                }
-            }
-
-            // Step 3: coeffs = phi × xphase (projection)
-            // phi: [m_total × g_count] row-major, xphase: [g_count × ncols] row-major
-            blas.dgemm(
-                .no_trans,
-                .no_trans,
-                m_total,
-                ncols,
-                g_count,
-                1.0,
-                phi,
-                g_count,
+            batchPhaseAndXphase(
+                ctx.gvecs,
+                atom.position,
+                x_batch,
+                work_phase,
                 xphase_re,
-                ncols,
-                0.0,
-                coeffs_re[0 .. m_total * ncols],
-                ncols,
-            );
-            blas.dgemm(
-                .no_trans,
-                .no_trans,
-                m_total,
-                ncols,
-                g_count,
-                1.0,
-                phi,
-                g_count,
                 xphase_im,
-                ncols,
-                0.0,
-                coeffs_im[0 .. m_total * ncols],
+                n_pw,
                 ncols,
             );
-
-            // Step 4: Apply D_ij
-            if (dij_m) |dm| {
-                // m-resolved D: coeffs2 = D_m × coeffs via BLAS
-                blas.dgemm(
-                    .no_trans,
-                    .no_trans,
-                    m_total,
-                    ncols,
-                    m_total,
-                    1.0,
-                    dm,
-                    m_total,
-                    coeffs_re[0 .. m_total * ncols],
-                    ncols,
-                    0.0,
-                    coeffs2_re[0 .. m_total * ncols],
-                    ncols,
-                );
-                blas.dgemm(
-                    .no_trans,
-                    .no_trans,
-                    m_total,
-                    ncols,
-                    m_total,
-                    1.0,
-                    dm,
-                    m_total,
-                    coeffs_im[0 .. m_total * ncols],
-                    ncols,
-                    0.0,
-                    coeffs2_im[0 .. m_total * ncols],
-                    ncols,
-                );
-            } else {
-                // Radial D_ij: same-m coupling only
-                @memset(coeffs2_re[0 .. m_total * ncols], 0.0);
-                @memset(coeffs2_im[0 .. m_total * ncols], 0.0);
-
-                var b_idx: usize = 0;
-                while (b_idx < entry.beta_count) : (b_idx += 1) {
-                    const l_val = entry.l_list[b_idx];
-                    const offset = entry.m_offsets[b_idx];
-                    const m_count = entry.m_counts[b_idx];
-
-                    var j: usize = 0;
-                    while (j < entry.beta_count) : (j += 1) {
-                        if (entry.l_list[j] != l_val) continue;
-                        const dij = dij_coeffs[b_idx * entry.beta_count + j];
-                        if (dij == 0.0) continue;
-                        const j_offset = entry.m_offsets[j];
-
-                        var m_idx: usize = 0;
-                        while (m_idx < m_count) : (m_idx += 1) {
-                            const src_row = (j_offset + m_idx) * ncols;
-                            const dst_row = (offset + m_idx) * ncols;
-                            for (0..ncols) |col| {
-                                coeffs2_re[dst_row + col] += dij * coeffs_re[src_row + col];
-                                coeffs2_im[dst_row + col] += dij * coeffs_im[src_row + col];
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Step 5: Back-project: result = phi^T × coeffs2
-            // Reuse xphase buffers for result
-            blas.dgemm(
-                .trans,
-                .no_trans,
-                g_count,
-                ncols,
-                m_total,
-                1.0,
+            batchProjectCoeffs(
                 phi,
-                g_count,
-                coeffs2_re[0 .. m_total * ncols],
-                ncols,
-                0.0,
                 xphase_re,
-                ncols,
-            );
-            blas.dgemm(
-                .trans,
-                .no_trans,
-                g_count,
-                ncols,
-                m_total,
-                1.0,
-                phi,
-                g_count,
-                coeffs2_im[0 .. m_total * ncols],
-                ncols,
-                0.0,
                 xphase_im,
+                coeffs_re,
+                coeffs_im,
+                m_total,
+                g_count,
                 ncols,
             );
-
-            // Step 6: out += (1/Ω) * conj(phase) * result
-            const inv_vol = ctx.inv_volume;
-            for (0..n_pw) |g| {
-                const ph_conj = math.complex.conj(work_phase[g]);
-                const row = g * ncols;
-                for (0..ncols) |col| {
-                    const re = xphase_re[row + col];
-                    const im = xphase_im[row + col];
-                    const out_r = (ph_conj.r * re - ph_conj.i * im) * inv_vol;
-                    const out_i = (ph_conj.r * im + ph_conj.i * re) * inv_vol;
-                    const idx = col * n_pw + g;
-                    const add_val = math.complex.init(out_r, out_i);
-                    out_batch[idx] = math.complex.add(out_batch[idx], add_val);
-                }
-            }
+            batchApplyDij(
+                &entry,
+                dij_coeffs,
+                dij_m,
+                coeffs_re,
+                coeffs_im,
+                coeffs2_re,
+                coeffs2_im,
+                m_total,
+                ncols,
+            );
+            batchBackprojectAndAccumulate(
+                phi,
+                coeffs2_re,
+                coeffs2_im,
+                xphase_re,
+                xphase_im,
+                work_phase,
+                out_batch,
+                ctx.inv_volume,
+                m_total,
+                g_count,
+                n_pw,
+                ncols,
+            );
         }
     }
 }
@@ -1363,6 +1425,103 @@ fn applyNonlocalBatched(
 /// Batched Hamiltonian application: y_batch = H * x_batch for ncols vectors.
 /// x_batch and y_batch are column-major: [n_pw × ncols].
 /// Uses BLAS-3 batched nonlocal for better cache efficiency.
+/// Per-column kinetic + local potential accumulation into y.
+fn applyKineticAndLocalForColumn(
+    ctx: *ApplyContext,
+    x: []const math.Complex,
+    y: []math.Complex,
+    n_pw: usize,
+) !void {
+    for (0..n_pw) |g| {
+        y[g] = math.complex.scale(x[g], ctx.gvecs[g].kinetic);
+    }
+    if (ctx.acquireWorkspace()) |ws_idx| {
+        defer ctx.releaseWorkspace(ws_idx);
+
+        const ws = &ctx.workspaces[ws_idx];
+        const plan_ptr: ?*fft.Fft3dPlan = if (ws.fft_plan != null)
+            @constCast(&ws.fft_plan.?)
+        else
+            null;
+        try applyLocalPotentialSafe(
+            ctx,
+            x,
+            ws.work_vec,
+            ws.work_recip,
+            ws.work_real,
+            ws.work_recip_out,
+            plan_ptr,
+        );
+        for (0..n_pw) |g| {
+            y[g] = math.complex.add(y[g], ws.work_vec[g]);
+        }
+    } else {
+        ctx.ws_mutex.lockUncancelable(ctx.io);
+        defer ctx.ws_mutex.unlock(ctx.io);
+
+        const ws = &ctx.workspaces[0];
+        const plan_ptr: ?*fft.Fft3dPlan = if (ws.fft_plan != null)
+            @constCast(&ws.fft_plan.?)
+        else
+            null;
+        try applyLocalPotentialSafe(
+            ctx,
+            x,
+            ws.work_vec,
+            ws.work_recip,
+            ws.work_real,
+            ws.work_recip_out,
+            plan_ptr,
+        );
+        for (0..n_pw) |g| {
+            y[g] = math.complex.add(y[g], ws.work_vec[g]);
+        }
+    }
+}
+
+/// Accumulate batched nonlocal potential contribution into y_batch.
+fn accumulateBatchedNonlocal(
+    ctx: *ApplyContext,
+    x_batch: []const math.Complex,
+    y_batch: []math.Complex,
+    n_pw: usize,
+    ncols: usize,
+) !void {
+    const nl_out = try ctx.alloc.alloc(math.Complex, n_pw * ncols);
+    defer ctx.alloc.free(nl_out);
+
+    const work_phase = try ctx.alloc.alloc(math.Complex, n_pw);
+    defer ctx.alloc.free(work_phase);
+
+    try applyNonlocalBatched(ctx, ctx.alloc, x_batch, nl_out, n_pw, ncols, work_phase);
+
+    for (0..n_pw * ncols) |i| {
+        y_batch[i] = math.complex.add(y_batch[i], nl_out[i]);
+    }
+}
+
+/// Accumulate dense-matrix nonlocal contribution into y_batch (no NonlocalContext path).
+fn accumulateBatchedDenseVnl(
+    ctx: *ApplyContext,
+    mat: []const math.Complex,
+    x_batch: []const math.Complex,
+    y_batch: []math.Complex,
+    n_pw: usize,
+    ncols: usize,
+) !void {
+    for (0..ncols) |col| {
+        const x = x_batch[col * n_pw .. (col + 1) * n_pw];
+        const ws_vec = try ctx.alloc.alloc(math.Complex, n_pw);
+        defer ctx.alloc.free(ws_vec);
+
+        applyDenseMatrix(n_pw, mat, x, ws_vec);
+        const y = y_batch[col * n_pw .. (col + 1) * n_pw];
+        for (0..n_pw) |g| {
+            y[g] = math.complex.add(y[g], ws_vec[g]);
+        }
+    }
+}
+
 pub fn applyHamiltonianBatched(
     ctx_ptr: *anyopaque,
     x_batch: []const math.Complex,
@@ -1380,81 +1539,17 @@ pub fn applyHamiltonianBatched(
     for (0..ncols) |col| {
         const x = x_batch[col * n_pw .. (col + 1) * n_pw];
         const y = y_batch[col * n_pw .. (col + 1) * n_pw];
-
-        // Kinetic energy: y = T*x
-        for (0..n_pw) |g| {
-            y[g] = math.complex.scale(x[g], ctx.gvecs[g].kinetic);
-        }
-
-        // Local potential: y += V_local * x
-        if (ctx.acquireWorkspace()) |ws_idx| {
-            defer ctx.releaseWorkspace(ws_idx);
-            const ws = &ctx.workspaces[ws_idx];
-            const plan_ptr: ?*fft.Fft3dPlan = if (ws.fft_plan != null)
-                @constCast(&ws.fft_plan.?)
-            else
-                null;
-            try applyLocalPotentialSafe(
-                ctx,
-                x,
-                ws.work_vec,
-                ws.work_recip,
-                ws.work_real,
-                ws.work_recip_out,
-                plan_ptr,
-            );
-            for (0..n_pw) |g| {
-                y[g] = math.complex.add(y[g], ws.work_vec[g]);
-            }
-        } else {
-            ctx.ws_mutex.lockUncancelable(ctx.io);
-            defer ctx.ws_mutex.unlock(ctx.io);
-            const ws = &ctx.workspaces[0];
-            const plan_ptr: ?*fft.Fft3dPlan = if (ws.fft_plan != null)
-                @constCast(&ws.fft_plan.?)
-            else
-                null;
-            try applyLocalPotentialSafe(
-                ctx,
-                x,
-                ws.work_vec,
-                ws.work_recip,
-                ws.work_real,
-                ws.work_recip_out,
-                plan_ptr,
-            );
-            for (0..n_pw) |g| {
-                y[g] = math.complex.add(y[g], ws.work_vec[g]);
-            }
-        }
+        try applyKineticAndLocalForColumn(ctx, x, y, n_pw);
     }
     if (ctx.profile) |p| profileAdd(ctx.io, &p.apply_local_ns, local_start);
 
     // Nonlocal potential: batched BLAS-3
     if (ctx.nonlocal_ctx != null) {
         const nonlocal_start = if (ctx.profile != null) profileStart(ctx.io) else null;
-        const nl_out = try ctx.alloc.alloc(math.Complex, n_pw * ncols);
-        defer ctx.alloc.free(nl_out);
-        const work_phase = try ctx.alloc.alloc(math.Complex, n_pw);
-        defer ctx.alloc.free(work_phase);
-
-        try applyNonlocalBatched(ctx, ctx.alloc, x_batch, nl_out, n_pw, ncols, work_phase);
-
-        for (0..n_pw * ncols) |i| {
-            y_batch[i] = math.complex.add(y_batch[i], nl_out[i]);
-        }
+        try accumulateBatchedNonlocal(ctx, x_batch, y_batch, n_pw, ncols);
         if (ctx.profile) |p| profileAdd(ctx.io, &p.apply_nonlocal_ns, nonlocal_start);
     } else if (ctx.vnl) |mat| {
-        for (0..ncols) |col| {
-            const x = x_batch[col * n_pw .. (col + 1) * n_pw];
-            const ws_vec = try ctx.alloc.alloc(math.Complex, n_pw);
-            defer ctx.alloc.free(ws_vec);
-            applyDenseMatrix(n_pw, mat, x, ws_vec);
-            const y = y_batch[col * n_pw .. (col + 1) * n_pw];
-            for (0..n_pw) |g| {
-                y[g] = math.complex.add(y[g], ws_vec[g]);
-            }
-        }
+        try accumulateBatchedDenseVnl(ctx, mat, x_batch, y_batch, n_pw, ncols);
     }
 
     if (ctx.profile) |p| {
@@ -1469,6 +1564,27 @@ pub fn applyHamiltonianBatched(
 ///
 /// The rhoij matrix is m-resolved: ρ_{(i,m_i),(j,m_j)} stores individual
 /// projector-m products (no m-summation). This enables multi-L on-site density.
+/// Accumulate Re[<p_i|ψ> conj(<p_j|ψ>)] * effective_weight into rhoij for one atom.
+fn accumulateRhoIJForAtom(
+    work_coeff: []const math.Complex,
+    rhoij: *paw_mod.RhoIJ,
+    atom_idx: usize,
+    m_total: usize,
+    effective_weight: f64,
+) void {
+    const mt = rhoij.m_total_per_atom[atom_idx];
+    var im: usize = 0;
+    while (im < m_total) : (im += 1) {
+        const ci = work_coeff[im];
+        var jm: usize = 0;
+        while (jm < m_total) : (jm += 1) {
+            const cj = work_coeff[jm];
+            const rho_val = ci.r * cj.r + ci.i * cj.i;
+            rhoij.values[atom_idx][im * mt + jm] += effective_weight * rho_val;
+        }
+    }
+}
+
 pub fn accumulatePawRhoIJ(
     alloc: std.mem.Allocator,
     nl: *const NonlocalContext,
@@ -1486,8 +1602,10 @@ pub fn accumulatePawRhoIJ(
     const n = gvecs.len;
     const work_phase = try alloc.alloc(math.Complex, n);
     defer alloc.free(work_phase);
+
     const work_xphase = try alloc.alloc(math.Complex, n);
     defer alloc.free(work_xphase);
+
     const work_coeff = try alloc.alloc(math.Complex, nl.max_m_total);
     defer alloc.free(work_coeff);
 
@@ -1500,45 +1618,9 @@ pub fn accumulatePawRhoIJ(
         for (atoms, 0..) |atom, atom_idx| {
             if (atom.species_index != entry.species_index) continue;
 
-            // Compute phase factors
-            var g: usize = 0;
-            while (g < n) : (g += 1) {
-                const phase = math.complex.expi(math.Vec3.dot(gvecs[g].cart, atom.position));
-                work_phase[g] = phase;
-                work_xphase[g] = math.complex.mul(psi[g], phase);
-            }
-
-            // Step 1: Compute <p_{beta,m}|ψ> for each (beta, m)
-            var b: usize = 0;
-            while (b < entry.beta_count) : (b += 1) {
-                const offset = entry.m_offsets[b];
-                const m_count = entry.m_counts[b];
-                var m_idx: usize = 0;
-                while (m_idx < m_count) : (m_idx += 1) {
-                    const phi_start = (offset + m_idx) * g_count;
-                    const phi = entry.phi[phi_start .. phi_start + g_count];
-                    var sum = math.complex.init(0.0, 0.0);
-                    g = 0;
-                    while (g < n) : (g += 1) {
-                        sum = math.complex.add(sum, math.complex.scale(work_xphase[g], phi[g]));
-                    }
-                    work_coeff[offset + m_idx] = sum;
-                }
-            }
-
-            // Step 2: Accumulate m-resolved ρ_{(i,m_i),(j,m_j)}
-            // Store Re[<p_{i,m_i}|ψ> conj(<p_{j,m_j}|ψ>)] for ALL (m_i, m_j) pairs
-            const mt = rhoij.m_total_per_atom[atom_idx];
-            var im: usize = 0;
-            while (im < entry.m_total) : (im += 1) {
-                const ci = work_coeff[im];
-                var jm: usize = 0;
-                while (jm < entry.m_total) : (jm += 1) {
-                    const cj = work_coeff[jm];
-                    const rho_val = ci.r * cj.r + ci.i * cj.i;
-                    rhoij.values[atom_idx][im * mt + jm] += effective_weight * rho_val;
-                }
-            }
+            computeAtomPhase(gvecs, atom.position, psi, work_phase, work_xphase, n);
+            projectNonlocalCoeff(&entry, work_xphase, work_coeff[0..entry.m_total], g_count, n);
+            accumulateRhoIJForAtom(work_coeff, rhoij, atom_idx, entry.m_total, effective_weight);
         }
     }
 }

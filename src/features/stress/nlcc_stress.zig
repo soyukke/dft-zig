@@ -9,6 +9,62 @@ const stress_util = @import("stress.zig");
 const Stress3x3 = stress_util.Stress3x3;
 const Grid = stress_util.Grid;
 
+/// Return true if any species has non-empty NLCC core data.
+fn anySpeciesHasNlcc(species: []const hamiltonian.SpeciesEntry) bool {
+    for (species) |sp| {
+        if (sp.upf.nlcc.len > 0) return true;
+    }
+    return false;
+}
+
+/// Convert this stress module's Grid into the SCF module's Grid representation.
+fn toScfGrid(grid: Grid) scf.Grid {
+    return scf.Grid{
+        .nx = grid.nx,
+        .ny = grid.ny,
+        .nz = grid.nz,
+        .min_h = grid.min_h,
+        .min_k = grid.min_k,
+        .min_l = grid.min_l,
+        .cell = grid.cell,
+        .recip = grid.recip,
+        .volume = grid.volume,
+    };
+}
+
+/// Accumulate NLCC stress contributions at a single G-vector.
+fn accumulateNlccStressG(
+    g_vec: math.Vec3,
+    g_norm: f64,
+    vxc_val: math.Complex,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    core_tables: []const form_factor.RadialFormFactorTable,
+    inv_volume: f64,
+    sigma: *Stress3x3,
+) void {
+    const gv = [3]f64{ g_vec.x, g_vec.y, g_vec.z };
+
+    for (atoms) |atom| {
+        const si = atom.species_index;
+        if (species[si].upf.nlcc.len == 0) continue;
+
+        const drhoc = core_tables[si].evalDeriv(g_norm);
+        const phase = math.Vec3.dot(g_vec, atom.position);
+        const cos_phase = std.math.cos(phase);
+        const sin_phase = std.math.sin(phase);
+        // Re[V_xc(G) × conj(exp(-iG·R))] = Re[V_xc × exp(+iGR)] = Vxc_r cos - Vxc_i sin
+        const re_vxc_si = vxc_val.r * cos_phase - vxc_val.i * sin_phase;
+
+        const factor = -drhoc * re_vxc_si / g_norm * inv_volume;
+        for (0..3) |a| {
+            for (a..3) |b| {
+                sigma[a][b] += factor * gv[a] * gv[b];
+            }
+        }
+    }
+}
+
 /// NLCC stress: contribution from core charge density dependence on strain.
 /// σ_αβ = -(1/Ω) Σ_{G≠0} V_xc(G) × Σ_I ρ_core_form'(|G|) × G_αG_β/|G| × Re[S*_I(G)]
 ///        -(E_nlcc/Ω) δ_αβ  (volume scaling)
@@ -26,15 +82,7 @@ pub fn nlccStress(
     var sigma = stress_util.zeroStress();
     const core_tables = rho_core_tables orelse return sigma;
 
-    // Check if any species has NLCC
-    var has_nlcc = false;
-    for (species) |sp| {
-        if (sp.upf.nlcc.len > 0) {
-            has_nlcc = true;
-            break;
-        }
-    }
-    if (!has_nlcc) return sigma;
+    if (!anySpeciesHasNlcc(species)) return sigma;
     if (rho_core == null) return sigma;
 
     const inv_volume = 1.0 / grid.volume;
@@ -43,39 +91,20 @@ pub fn nlccStress(
     const n_grid = grid.nx * grid.ny * grid.nz;
     const rho_total = try alloc.alloc(f64, n_grid);
     defer alloc.free(rho_total);
+
     for (0..n_grid) |i| {
         rho_total[i] = rho_r[i];
         if (rho_core) |rc| rho_total[i] += rc[i];
     }
 
-    const xc_fields = try scf.computeXcFields(alloc, scf.Grid{
-        .nx = grid.nx,
-        .ny = grid.ny,
-        .nz = grid.nz,
-        .min_h = grid.min_h,
-        .min_k = grid.min_k,
-        .min_l = grid.min_l,
-        .cell = grid.cell,
-        .recip = grid.recip,
-        .volume = grid.volume,
-    }, rho_total, null, false, xc_func);
+    const scf_grid = toScfGrid(grid);
+    const xc_fields = try scf.computeXcFields(alloc, scf_grid, rho_total, null, false, xc_func);
     defer {
         alloc.free(xc_fields.vxc);
         alloc.free(xc_fields.exc);
     }
 
-    const fft_obj = scf.Grid{
-        .nx = grid.nx,
-        .ny = grid.ny,
-        .nz = grid.nz,
-        .min_h = grid.min_h,
-        .min_k = grid.min_k,
-        .min_l = grid.min_l,
-        .cell = grid.cell,
-        .recip = grid.recip,
-        .volume = grid.volume,
-    };
-    const vxc_g = try scf.realToReciprocal(alloc, fft_obj, xc_fields.vxc, false);
+    const vxc_g = try scf.realToReciprocal(alloc, scf_grid, xc_fields.vxc, false);
     defer alloc.free(vxc_g);
 
     var it = scf.GVecIterator.init(grid);
@@ -88,27 +117,16 @@ pub fn nlccStress(
             continue;
         }
 
-        const vxc_val = vxc_g[g.idx];
-        const gv = [3]f64{ g.gvec.x, g.gvec.y, g.gvec.z };
-
-        for (atoms) |atom| {
-            const si = atom.species_index;
-            if (species[si].upf.nlcc.len == 0) continue;
-
-            const drhoc = core_tables[si].evalDeriv(g_norm);
-            const phase = math.Vec3.dot(g.gvec, atom.position);
-            const cos_phase = std.math.cos(phase);
-            const sin_phase = std.math.sin(phase);
-            // Re[V_xc(G) × conj(exp(-iG·R))] = Re[V_xc × exp(+iGR)] = Vxc_r cos - Vxc_i sin
-            const re_vxc_si = vxc_val.r * cos_phase - vxc_val.i * sin_phase;
-
-            const factor = -drhoc * re_vxc_si / g_norm * inv_volume;
-            for (0..3) |a| {
-                for (a..3) |b| {
-                    sigma[a][b] += factor * gv[a] * gv[b];
-                }
-            }
-        }
+        accumulateNlccStressG(
+            g.gvec,
+            g_norm,
+            vxc_g[g.idx],
+            species,
+            atoms,
+            core_tables,
+            inv_volume,
+            &sigma,
+        );
     }
 
     // NLCC diagonal: -(∫V_xc × ρ_core dr)/Ω δ_αβ

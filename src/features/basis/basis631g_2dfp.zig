@@ -107,6 +107,60 @@ pub const F_f_pol = [_]PrimitiveGaussian{
 /// C-F: 8 shells (5 from 6-31G + 2 d polarization + 1 f polarization)
 pub const MAX_SHELLS_PER_ATOM = 8;
 
+/// Fill `result` with the hydrogen 6-31G(2df,p) shells at `center`.
+fn fillHydrogenShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
+    // H: 6-31G sp (2 shells) + 1 p polarization
+    result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.H_1s_inner };
+    result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.H_1s_outer };
+    result[2] = .{ .center = center, .l = 1, .primitives = &H_p_pol };
+}
+
+/// Fill `result` with the carbon 6-31G(2df,p) shells at `center`.
+/// PySCF ordering: 1s, 2s_inner, 2s_outer, 2p_inner, 2p_outer, d1, d2, f.
+fn fillCarbonShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
+    result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.C_1s };
+    result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.C_2s_inner };
+    result[2] = .{ .center = center, .l = 0, .primitives = &basis631g.C_2s_outer };
+    result[3] = .{ .center = center, .l = 1, .primitives = &basis631g.C_2p_inner };
+    result[4] = .{ .center = center, .l = 1, .primitives = &basis631g.C_2p_outer };
+    result[5] = .{ .center = center, .l = 2, .primitives = &C_d_pol1 };
+    result[6] = .{ .center = center, .l = 2, .primitives = &C_d_pol2 };
+    result[7] = .{ .center = center, .l = 3, .primitives = &C_f_pol };
+}
+
+fn fillNitrogenShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
+    result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.N_1s };
+    result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.N_2s_inner };
+    result[2] = .{ .center = center, .l = 0, .primitives = &basis631g.N_2s_outer };
+    result[3] = .{ .center = center, .l = 1, .primitives = &basis631g.N_2p_inner };
+    result[4] = .{ .center = center, .l = 1, .primitives = &basis631g.N_2p_outer };
+    result[5] = .{ .center = center, .l = 2, .primitives = &N_d_pol1 };
+    result[6] = .{ .center = center, .l = 2, .primitives = &N_d_pol2 };
+    result[7] = .{ .center = center, .l = 3, .primitives = &N_f_pol };
+}
+
+fn fillOxygenShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
+    result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.O_1s };
+    result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.O_2s_inner };
+    result[2] = .{ .center = center, .l = 0, .primitives = &basis631g.O_2s_outer };
+    result[3] = .{ .center = center, .l = 1, .primitives = &basis631g.O_2p_inner };
+    result[4] = .{ .center = center, .l = 1, .primitives = &basis631g.O_2p_outer };
+    result[5] = .{ .center = center, .l = 2, .primitives = &O_d_pol1 };
+    result[6] = .{ .center = center, .l = 2, .primitives = &O_d_pol2 };
+    result[7] = .{ .center = center, .l = 3, .primitives = &O_f_pol };
+}
+
+fn fillFluorineShells(result: *[MAX_SHELLS_PER_ATOM]ContractedShell, center: math.Vec3) void {
+    result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.F_1s };
+    result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.F_2s_inner };
+    result[2] = .{ .center = center, .l = 0, .primitives = &basis631g.F_2s_outer };
+    result[3] = .{ .center = center, .l = 1, .primitives = &basis631g.F_2p_inner };
+    result[4] = .{ .center = center, .l = 1, .primitives = &basis631g.F_2p_outer };
+    result[5] = .{ .center = center, .l = 2, .primitives = &F_d_pol1 };
+    result[6] = .{ .center = center, .l = 2, .primitives = &F_d_pol2 };
+    result[7] = .{ .center = center, .l = 3, .primitives = &F_f_pol };
+}
+
 /// Build contracted shells for an atom at a given center using 6-31G(2df,p) basis.
 ///
 /// Returns the shells and the count of valid shells, or null if the element
@@ -124,59 +178,23 @@ pub fn buildAtomShells(
 
     switch (z) {
         1 => {
-            // H: 6-31G sp (2 shells) + 1 p polarization
-            result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.H_1s_inner };
-            result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.H_1s_outer };
-            result[2] = .{ .center = center, .l = 1, .primitives = &H_p_pol };
+            fillHydrogenShells(&result, center);
             return .{ .shells = result, .count = 3 };
         },
         6 => {
-            // Carbon: 6-31G sp (5 shells) + 2d + 1f
-            // PySCF ordering: 1s, 2s_inner, 2s_outer, 2p_inner, 2p_outer, d1, d2, f
-            result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.C_1s };
-            result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.C_2s_inner };
-            result[2] = .{ .center = center, .l = 0, .primitives = &basis631g.C_2s_outer };
-            result[3] = .{ .center = center, .l = 1, .primitives = &basis631g.C_2p_inner };
-            result[4] = .{ .center = center, .l = 1, .primitives = &basis631g.C_2p_outer };
-            result[5] = .{ .center = center, .l = 2, .primitives = &C_d_pol1 };
-            result[6] = .{ .center = center, .l = 2, .primitives = &C_d_pol2 };
-            result[7] = .{ .center = center, .l = 3, .primitives = &C_f_pol };
+            fillCarbonShells(&result, center);
             return .{ .shells = result, .count = 8 };
         },
         7 => {
-            // Nitrogen
-            result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.N_1s };
-            result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.N_2s_inner };
-            result[2] = .{ .center = center, .l = 0, .primitives = &basis631g.N_2s_outer };
-            result[3] = .{ .center = center, .l = 1, .primitives = &basis631g.N_2p_inner };
-            result[4] = .{ .center = center, .l = 1, .primitives = &basis631g.N_2p_outer };
-            result[5] = .{ .center = center, .l = 2, .primitives = &N_d_pol1 };
-            result[6] = .{ .center = center, .l = 2, .primitives = &N_d_pol2 };
-            result[7] = .{ .center = center, .l = 3, .primitives = &N_f_pol };
+            fillNitrogenShells(&result, center);
             return .{ .shells = result, .count = 8 };
         },
         8 => {
-            // Oxygen
-            result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.O_1s };
-            result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.O_2s_inner };
-            result[2] = .{ .center = center, .l = 0, .primitives = &basis631g.O_2s_outer };
-            result[3] = .{ .center = center, .l = 1, .primitives = &basis631g.O_2p_inner };
-            result[4] = .{ .center = center, .l = 1, .primitives = &basis631g.O_2p_outer };
-            result[5] = .{ .center = center, .l = 2, .primitives = &O_d_pol1 };
-            result[6] = .{ .center = center, .l = 2, .primitives = &O_d_pol2 };
-            result[7] = .{ .center = center, .l = 3, .primitives = &O_f_pol };
+            fillOxygenShells(&result, center);
             return .{ .shells = result, .count = 8 };
         },
         9 => {
-            // Fluorine
-            result[0] = .{ .center = center, .l = 0, .primitives = &basis631g.F_1s };
-            result[1] = .{ .center = center, .l = 0, .primitives = &basis631g.F_2s_inner };
-            result[2] = .{ .center = center, .l = 0, .primitives = &basis631g.F_2s_outer };
-            result[3] = .{ .center = center, .l = 1, .primitives = &basis631g.F_2p_inner };
-            result[4] = .{ .center = center, .l = 1, .primitives = &basis631g.F_2p_outer };
-            result[5] = .{ .center = center, .l = 2, .primitives = &F_d_pol1 };
-            result[6] = .{ .center = center, .l = 2, .primitives = &F_d_pol2 };
-            result[7] = .{ .center = center, .l = 3, .primitives = &F_f_pol };
+            fillFluorineShells(&result, center);
             return .{ .shells = result, .count = 8 };
         },
         else => return null,

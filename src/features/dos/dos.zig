@@ -92,6 +92,7 @@ pub fn writeDosCSVNamed(
 ) !void {
     const file = try dir.createFile(io, filename, .{});
     defer file.close(io);
+
     var buf: [256]u8 = undefined;
     var writer = file.writer(io, &buf);
     const out = &writer.interface;

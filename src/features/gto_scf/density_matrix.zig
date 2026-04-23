@@ -87,6 +87,7 @@ test "density matrix 1x1" {
     const c = [_]f64{0.8};
     const p = try buildDensityMatrix(alloc, 1, 1, &c);
     defer alloc.free(p);
+
     try testing.expectApproxEqAbs(p[0], 2.0 * 0.8 * 0.8, 1e-12);
 }
 

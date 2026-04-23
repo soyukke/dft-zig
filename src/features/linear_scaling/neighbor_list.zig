@@ -27,17 +27,8 @@ pub const NeighborList = struct {
         if (cutoff <= 0.0) return error.InvalidCutoff;
         const inv_cell = try invertCell(cell);
         const count = positions.len;
-
-        const lists = try alloc.alloc(std.ArrayList(usize), count);
-        errdefer {
-            for (lists) |*list| {
-                list.deinit(alloc);
-            }
-            alloc.free(lists);
-        }
-        for (lists) |*list| {
-            list.* = .empty;
-        }
+        const lists = try initNeighborLists(alloc, count);
+        defer deinitNeighborLists(alloc, lists);
 
         var i: usize = 0;
         while (i < count) : (i += 1) {
@@ -47,46 +38,11 @@ pub const NeighborList = struct {
                 const dvec = minimumImageDelta(cell, inv_cell, pbc, delta);
                 const dist2 = math.Vec3.dot(dvec, dvec);
                 if (dist2 <= cutoff * cutoff) {
-                    try lists[i].append(alloc, j);
-                    try lists[j].append(alloc, i);
+                    try appendNeighborPair(alloc, lists, i, j);
                 }
             }
         }
-
-        const offsets = try alloc.alloc(usize, count + 1);
-        errdefer alloc.free(offsets);
-        offsets[0] = 0;
-        var total: usize = 0;
-        i = 0;
-        while (i < count) : (i += 1) {
-            total += lists[i].items.len;
-            offsets[i + 1] = total;
-        }
-
-        const neighbors = try alloc.alloc(usize, total);
-        errdefer alloc.free(neighbors);
-        var cursor: usize = 0;
-        i = 0;
-        while (i < count) : (i += 1) {
-            for (lists[i].items) |index| {
-                neighbors[cursor] = index;
-                cursor += 1;
-            }
-        }
-
-        for (lists) |*list| {
-            list.deinit(alloc);
-        }
-        alloc.free(lists);
-
-        return .{
-            .offsets = offsets,
-            .neighbors = neighbors,
-            .cell = cell,
-            .inv_cell = inv_cell,
-            .pbc = pbc,
-            .cutoff = cutoff,
-        };
+        return buildNeighborList(alloc, lists, cell, inv_cell, pbc, cutoff);
     }
 
     pub fn initCellList(
@@ -97,131 +53,15 @@ pub const NeighborList = struct {
         cutoff: f64,
     ) !NeighborList {
         if (cutoff <= 0.0) return error.InvalidCutoff;
-        const inv_cell = try invertCell(cell);
-        const count = positions.len;
+        var cell_grid = try initCellGrid(alloc, cell, pbc, positions, cutoff);
+        defer cell_grid.deinit(alloc);
 
-        const lengths = cellLengths(cell);
-        var nx = @max(@as(usize, @intFromFloat(std.math.floor(lengths.x / cutoff))), 1);
-        var ny = @max(@as(usize, @intFromFloat(std.math.floor(lengths.y / cutoff))), 1);
-        var nz = @max(@as(usize, @intFromFloat(std.math.floor(lengths.z / cutoff))), 1);
-        if (!pbc.x) nx = @max(nx, 1);
-        if (!pbc.y) ny = @max(ny, 1);
-        if (!pbc.z) nz = @max(nz, 1);
-        const cell_count = nx * ny * nz;
+        const lists = try initNeighborLists(alloc, positions.len);
+        defer deinitNeighborLists(alloc, lists);
 
-        const heads = try alloc.alloc(i64, cell_count);
-        defer alloc.free(heads);
-        @memset(heads, -1);
-        const next = try alloc.alloc(i64, count);
-        defer alloc.free(next);
-        @memset(next, -1);
+        try appendCellListPairs(alloc, lists, positions, cell, pbc, cutoff, &cell_grid);
 
-        var idx: usize = 0;
-        while (idx < count) : (idx += 1) {
-            const frac = fracFromCart(positions[idx], inv_cell);
-            const ix = clampCellIndex(frac.x, nx);
-            const iy = clampCellIndex(frac.y, ny);
-            const iz = clampCellIndex(frac.z, nz);
-            const cell_index = ix + nx * (iy + ny * iz);
-            next[idx] = heads[cell_index];
-            heads[cell_index] = @as(i64, @intCast(idx));
-        }
-
-        const lists = try alloc.alloc(std.ArrayList(usize), count);
-        errdefer {
-            for (lists) |*list| {
-                list.deinit(alloc);
-            }
-            alloc.free(lists);
-        }
-        for (lists) |*list| {
-            list.* = .empty;
-        }
-
-        var cx: usize = 0;
-        while (cx < nx) : (cx += 1) {
-            var cy: usize = 0;
-            while (cy < ny) : (cy += 1) {
-                var cz: usize = 0;
-                while (cz < nz) : (cz += 1) {
-                    const cell_index = cx + nx * (cy + ny * cz);
-                    var i_atom = heads[cell_index];
-                    while (i_atom >= 0) : (i_atom = next[@as(usize, @intCast(i_atom))]) {
-                        var dx: i32 = -1;
-                        while (dx <= 1) : (dx += 1) {
-                            var dy: i32 = -1;
-                            while (dy <= 1) : (dy += 1) {
-                                var dz: i32 = -1;
-                                while (dz <= 1) : (dz += 1) {
-                                    if (!pbc.x and (cx == 0 and dx < 0)) continue;
-                                    if (!pbc.x and (cx + 1 == nx and dx > 0)) continue;
-                                    if (!pbc.y and (cy == 0 and dy < 0)) continue;
-                                    if (!pbc.y and (cy + 1 == ny and dy > 0)) continue;
-                                    if (!pbc.z and (cz == 0 and dz < 0)) continue;
-                                    if (!pbc.z and (cz + 1 == nz and dz > 0)) continue;
-
-                                    const nx_i = wrapCellIndex(cx, nx, dx, pbc.x);
-                                    const ny_i = wrapCellIndex(cy, ny, dy, pbc.y);
-                                    const nz_i = wrapCellIndex(cz, nz, dz, pbc.z);
-                                    const neighbor_cell = nx_i + nx * (ny_i + ny * nz_i);
-                                    var j_atom = heads[neighbor_cell];
-                                    while (j_atom >= 0) : (j_atom =
-                                        next[@as(usize, @intCast(j_atom))])
-                                    {
-                                        const i_idx = @as(usize, @intCast(i_atom));
-                                        const j_idx = @as(usize, @intCast(j_atom));
-                                        if (j_idx <= i_idx) continue;
-                                        const pos_j = positions[j_idx];
-                                        const delta = math.Vec3.sub(pos_j, positions[i_idx]);
-                                        const dvec = minimumImageDelta(cell, inv_cell, pbc, delta);
-                                        const dist2 = math.Vec3.dot(dvec, dvec);
-                                        if (dist2 <= cutoff * cutoff) {
-                                            try lists[i_idx].append(alloc, j_idx);
-                                            try lists[j_idx].append(alloc, i_idx);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        const offsets = try alloc.alloc(usize, count + 1);
-        errdefer alloc.free(offsets);
-        offsets[0] = 0;
-        var total: usize = 0;
-        idx = 0;
-        while (idx < count) : (idx += 1) {
-            total += lists[idx].items.len;
-            offsets[idx + 1] = total;
-        }
-
-        const neighbors = try alloc.alloc(usize, total);
-        errdefer alloc.free(neighbors);
-        var cursor: usize = 0;
-        idx = 0;
-        while (idx < count) : (idx += 1) {
-            for (lists[idx].items) |index| {
-                neighbors[cursor] = index;
-                cursor += 1;
-            }
-        }
-
-        for (lists) |*list| {
-            list.deinit(alloc);
-        }
-        alloc.free(lists);
-
-        return .{
-            .offsets = offsets,
-            .neighbors = neighbors,
-            .cell = cell,
-            .inv_cell = inv_cell,
-            .pbc = pbc,
-            .cutoff = cutoff,
-        };
+        return buildNeighborList(alloc, lists, cell, cell_grid.inv_cell, pbc, cutoff);
     }
 
     pub fn deinit(self: *NeighborList, alloc: std.mem.Allocator) void {
@@ -236,6 +76,269 @@ pub const NeighborList = struct {
         return self.neighbors[start..end];
     }
 };
+
+const NeighborStorage = struct {
+    offsets: []usize,
+    neighbors: []usize,
+};
+
+const CellGrid = struct {
+    heads: []i64,
+    next: []i64,
+    inv_cell: math.Mat3,
+    nx: usize,
+    ny: usize,
+    nz: usize,
+
+    fn deinit(self: *CellGrid, alloc: std.mem.Allocator) void {
+        alloc.free(self.heads);
+        alloc.free(self.next);
+    }
+};
+
+const neighbor_offsets = [_][3]i32{
+    .{ -1, -1, -1 },
+    .{ -1, -1, 0 },
+    .{ -1, -1, 1 },
+    .{ -1, 0, -1 },
+    .{ -1, 0, 0 },
+    .{ -1, 0, 1 },
+    .{ -1, 1, -1 },
+    .{ -1, 1, 0 },
+    .{ -1, 1, 1 },
+    .{ 0, -1, -1 },
+    .{ 0, -1, 0 },
+    .{ 0, -1, 1 },
+    .{ 0, 0, -1 },
+    .{ 0, 0, 0 },
+    .{ 0, 0, 1 },
+    .{ 0, 1, -1 },
+    .{ 0, 1, 0 },
+    .{ 0, 1, 1 },
+    .{ 1, -1, -1 },
+    .{ 1, -1, 0 },
+    .{ 1, -1, 1 },
+    .{ 1, 0, -1 },
+    .{ 1, 0, 0 },
+    .{ 1, 0, 1 },
+    .{ 1, 1, -1 },
+    .{ 1, 1, 0 },
+    .{ 1, 1, 1 },
+};
+
+fn initNeighborLists(
+    alloc: std.mem.Allocator,
+    count: usize,
+) ![]std.ArrayList(usize) {
+    const lists = try alloc.alloc(std.ArrayList(usize), count);
+    errdefer alloc.free(lists);
+    for (lists) |*list| {
+        list.* = .empty;
+    }
+    return lists;
+}
+
+fn deinitNeighborLists(
+    alloc: std.mem.Allocator,
+    lists: []std.ArrayList(usize),
+) void {
+    for (lists) |*list| {
+        list.deinit(alloc);
+    }
+    alloc.free(lists);
+}
+
+fn appendNeighborPair(
+    alloc: std.mem.Allocator,
+    lists: []std.ArrayList(usize),
+    i: usize,
+    j: usize,
+) !void {
+    try lists[i].append(alloc, j);
+    try lists[j].append(alloc, i);
+}
+
+fn buildNeighborStorage(
+    alloc: std.mem.Allocator,
+    lists: []std.ArrayList(usize),
+) !NeighborStorage {
+    const offsets = try alloc.alloc(usize, lists.len + 1);
+    errdefer alloc.free(offsets);
+    offsets[0] = 0;
+
+    var total: usize = 0;
+    for (lists, 0..) |list, i| {
+        total += list.items.len;
+        offsets[i + 1] = total;
+    }
+
+    const neighbors = try alloc.alloc(usize, total);
+    errdefer alloc.free(neighbors);
+    var cursor: usize = 0;
+    for (lists) |list| {
+        for (list.items) |index| {
+            neighbors[cursor] = index;
+            cursor += 1;
+        }
+    }
+    return .{ .offsets = offsets, .neighbors = neighbors };
+}
+
+fn buildNeighborList(
+    alloc: std.mem.Allocator,
+    lists: []std.ArrayList(usize),
+    cell: math.Mat3,
+    inv_cell: math.Mat3,
+    pbc: Pbc,
+    cutoff: f64,
+) !NeighborList {
+    const storage = try buildNeighborStorage(alloc, lists);
+    return .{
+        .offsets = storage.offsets,
+        .neighbors = storage.neighbors,
+        .cell = cell,
+        .inv_cell = inv_cell,
+        .pbc = pbc,
+        .cutoff = cutoff,
+    };
+}
+
+fn cellGridDims(cell: math.Mat3, pbc: Pbc, cutoff: f64) struct { nx: usize, ny: usize, nz: usize } {
+    const lengths = cellLengths(cell);
+    var nx = @max(@as(usize, @intFromFloat(std.math.floor(lengths.x / cutoff))), 1);
+    var ny = @max(@as(usize, @intFromFloat(std.math.floor(lengths.y / cutoff))), 1);
+    var nz = @max(@as(usize, @intFromFloat(std.math.floor(lengths.z / cutoff))), 1);
+    if (!pbc.x) nx = @max(nx, 1);
+    if (!pbc.y) ny = @max(ny, 1);
+    if (!pbc.z) nz = @max(nz, 1);
+    return .{ .nx = nx, .ny = ny, .nz = nz };
+}
+
+fn initCellGrid(
+    alloc: std.mem.Allocator,
+    cell: math.Mat3,
+    pbc: Pbc,
+    positions: []const math.Vec3,
+    cutoff: f64,
+) !CellGrid {
+    const inv_cell = try invertCell(cell);
+    const dims = cellGridDims(cell, pbc, cutoff);
+    const cell_count = dims.nx * dims.ny * dims.nz;
+    const heads = try alloc.alloc(i64, cell_count);
+    errdefer alloc.free(heads);
+    @memset(heads, -1);
+
+    const next = try alloc.alloc(i64, positions.len);
+    errdefer alloc.free(next);
+    @memset(next, -1);
+
+    for (positions, 0..) |position, idx| {
+        const frac = fracFromCart(position, inv_cell);
+        const ix = clampCellIndex(frac.x, dims.nx);
+        const iy = clampCellIndex(frac.y, dims.ny);
+        const iz = clampCellIndex(frac.z, dims.nz);
+        const cell_index = ix + dims.nx * (iy + dims.ny * iz);
+        next[idx] = heads[cell_index];
+        heads[cell_index] = @as(i64, @intCast(idx));
+    }
+
+    return .{
+        .heads = heads,
+        .next = next,
+        .inv_cell = inv_cell,
+        .nx = dims.nx,
+        .ny = dims.ny,
+        .nz = dims.nz,
+    };
+}
+
+fn neighborOffsetAllowed(
+    pbc: Pbc,
+    cx: usize,
+    cy: usize,
+    cz: usize,
+    grid: *const CellGrid,
+    offset: [3]i32,
+) bool {
+    if (!pbc.x and
+        ((cx == 0 and offset[0] < 0) or (cx + 1 == grid.nx and offset[0] > 0))) return false;
+    if (!pbc.y and
+        ((cy == 0 and offset[1] < 0) or (cy + 1 == grid.ny and offset[1] > 0))) return false;
+    if (!pbc.z and
+        ((cz == 0 and offset[2] < 0) or (cz + 1 == grid.nz and offset[2] > 0))) return false;
+    return true;
+}
+
+fn appendPairsForCell(
+    alloc: std.mem.Allocator,
+    lists: []std.ArrayList(usize),
+    positions: []const math.Vec3,
+    cell: math.Mat3,
+    pbc: Pbc,
+    cutoff: f64,
+    grid: *const CellGrid,
+    cx: usize,
+    cy: usize,
+    cz: usize,
+) !void {
+    const cell_index = cx + grid.nx * (cy + grid.ny * cz);
+    var i_atom = grid.heads[cell_index];
+    while (i_atom >= 0) : (i_atom = grid.next[@as(usize, @intCast(i_atom))]) {
+        const i_idx = @as(usize, @intCast(i_atom));
+        for (neighbor_offsets) |offset| {
+            if (!neighborOffsetAllowed(pbc, cx, cy, cz, grid, offset)) continue;
+
+            const nx_i = wrapCellIndex(cx, grid.nx, offset[0], pbc.x);
+            const ny_i = wrapCellIndex(cy, grid.ny, offset[1], pbc.y);
+            const nz_i = wrapCellIndex(cz, grid.nz, offset[2], pbc.z);
+            const neighbor_cell = nx_i + grid.nx * (ny_i + grid.ny * nz_i);
+            var j_atom = grid.heads[neighbor_cell];
+            while (j_atom >= 0) : (j_atom = grid.next[@as(usize, @intCast(j_atom))]) {
+                const j_idx = @as(usize, @intCast(j_atom));
+                if (j_idx <= i_idx) continue;
+
+                const delta = math.Vec3.sub(positions[j_idx], positions[i_idx]);
+                const dvec = minimumImageDelta(cell, grid.inv_cell, pbc, delta);
+                const dist2 = math.Vec3.dot(dvec, dvec);
+                if (dist2 <= cutoff * cutoff) {
+                    try appendNeighborPair(alloc, lists, i_idx, j_idx);
+                }
+            }
+        }
+    }
+}
+
+fn appendCellListPairs(
+    alloc: std.mem.Allocator,
+    lists: []std.ArrayList(usize),
+    positions: []const math.Vec3,
+    cell: math.Mat3,
+    pbc: Pbc,
+    cutoff: f64,
+    grid: *const CellGrid,
+) !void {
+    var cx: usize = 0;
+    while (cx < grid.nx) : (cx += 1) {
+        var cy: usize = 0;
+        while (cy < grid.ny) : (cy += 1) {
+            var cz: usize = 0;
+            while (cz < grid.nz) : (cz += 1) {
+                try appendPairsForCell(
+                    alloc,
+                    lists,
+                    positions,
+                    cell,
+                    pbc,
+                    cutoff,
+                    grid,
+                    cx,
+                    cy,
+                    cz,
+                );
+            }
+        }
+    }
+}
 
 fn invertCell(cell: math.Mat3) !math.Mat3 {
     const r0 = cell.row(0);
@@ -307,6 +410,7 @@ test "neighbor list PBC wraps across boundary" {
     const pbc = Pbc{ .x = true, .y = true, .z = true };
     var list = try NeighborList.init(alloc, cell, pbc, positions[0..], 1.0);
     defer list.deinit(alloc);
+
     try std.testing.expectEqual(@as(usize, 1), list.neighborsOf(0).len);
     try std.testing.expectEqual(@as(usize, 1), list.neighborsOf(1).len);
 }
@@ -325,6 +429,7 @@ test "neighbor list without PBC ignores across boundary" {
     const pbc = Pbc{ .x = false, .y = false, .z = false };
     var list = try NeighborList.init(alloc, cell, pbc, positions[0..], 1.0);
     defer list.deinit(alloc);
+
     try std.testing.expectEqual(@as(usize, 0), list.neighborsOf(0).len);
     try std.testing.expectEqual(@as(usize, 0), list.neighborsOf(1).len);
 }
@@ -382,6 +487,7 @@ test "neighbor list cell list matches naive" {
 
     var naive = try NeighborList.init(alloc, cell, pbc, positions[0..], cutoff);
     defer naive.deinit(alloc);
+
     var cell_list = try NeighborList.initCellList(alloc, cell, pbc, positions[0..], cutoff);
     defer cell_list.deinit(alloc);
 
@@ -400,6 +506,7 @@ test "neighbor list diamond conventional PBC" {
     const cutoff = 0.45 * a;
     var list = try NeighborList.initCellList(alloc, cell, pbc, positions[0..], cutoff);
     defer list.deinit(alloc);
+
     var idx: usize = 0;
     while (idx < positions.len) : (idx += 1) {
         try std.testing.expectEqual(@as(usize, 4), list.neighborsOf(idx).len);

@@ -2,7 +2,9 @@ const std = @import("std");
 const math = @import("../math/math.zig");
 const config_mod = @import("../config/config.zig");
 const coulomb_mod = @import("../coulomb/coulomb.zig");
+const form_factor_mod = @import("../pseudopotential/form_factor.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
+const nonlocal_mod = @import("../pseudopotential/nonlocal.zig");
 const paw_mod = @import("../paw/paw.zig");
 const local_potential = @import("../pseudopotential/local_potential.zig");
 const timing_mod = @import("../runtime/timing.zig");
@@ -67,6 +69,905 @@ pub const RelaxStep = struct {
     }
 };
 
+const max_backtrack: usize = 5;
+
+const RelaxTables = struct {
+    local_cfg: local_potential.LocalPotentialConfig,
+    force_radial_tables_buf: []nonlocal_mod.RadialTableSet,
+    ff_tables_buf: []form_factor_mod.LocalFormFactorTable,
+    rho_atom_tables_buf: []form_factor_mod.RadialFormFactorTable,
+    rho_core_tables_buf: []form_factor_mod.RadialFormFactorTable,
+
+    fn deinit(self: *RelaxTables, alloc: std.mem.Allocator) void {
+        for (self.force_radial_tables_buf) |*t| {
+            if (t.tables.len > 0) t.deinit(alloc);
+        }
+        alloc.free(self.force_radial_tables_buf);
+        for (self.ff_tables_buf) |*t| t.deinit(alloc);
+        alloc.free(self.ff_tables_buf);
+        for (self.rho_atom_tables_buf) |*t| t.deinit(alloc);
+        alloc.free(self.rho_atom_tables_buf);
+        for (self.rho_core_tables_buf) |*t| t.deinit(alloc);
+        alloc.free(self.rho_core_tables_buf);
+    }
+
+    fn forceRadialTables(self: *const RelaxTables) ?[]nonlocal_mod.RadialTableSet {
+        return self.force_radial_tables_buf;
+    }
+
+    fn ffTables(self: *const RelaxTables) ?[]const form_factor_mod.LocalFormFactorTable {
+        return self.ff_tables_buf;
+    }
+
+    fn rhoAtomTables(self: *const RelaxTables) ?[]const form_factor_mod.RadialFormFactorTable {
+        return self.rho_atom_tables_buf;
+    }
+
+    fn rhoCoreTables(self: *const RelaxTables) ?[]const form_factor_mod.RadialFormFactorTable {
+        return self.rho_core_tables_buf;
+    }
+};
+
+const RelaxWarmstart = struct {
+    prev_density: ?[]f64 = null,
+    prev_kpoint_cache: ?[]scf.KpointCache = null,
+    prev_apply_caches: ?[]scf.KpointApplyCache = null,
+    final_potential_saved: ?hamiltonian.PotentialGrid = null,
+
+    fn deinit(self: *RelaxWarmstart, alloc: std.mem.Allocator) void {
+        if (self.prev_density) |pd| alloc.free(pd);
+        if (self.prev_kpoint_cache) |cache| {
+            for (cache) |*c| c.deinit();
+            alloc.free(cache);
+        }
+        if (self.prev_apply_caches) |caches| {
+            for (caches) |*ac| ac.deinit(alloc);
+            alloc.free(caches);
+        }
+        if (self.final_potential_saved) |*p| p.deinit(alloc);
+    }
+
+    fn updateFromScf(
+        self: *RelaxWarmstart,
+        alloc: std.mem.Allocator,
+        scf_result: *scf.ScfResult,
+    ) !void {
+        if (self.prev_density) |pd| alloc.free(pd);
+        self.prev_density = try alloc.alloc(f64, scf_result.density.len);
+        @memcpy(self.prev_density.?, scf_result.density);
+
+        if (self.prev_kpoint_cache) |old_cache| {
+            for (old_cache) |*c| c.deinit();
+            alloc.free(old_cache);
+        }
+        self.prev_kpoint_cache = scf_result.kpoint_cache;
+        scf_result.kpoint_cache = null;
+
+        self.prev_apply_caches = scf_result.apply_caches;
+        scf_result.apply_caches = null;
+    }
+
+    fn invalidateForCellChange(self: *RelaxWarmstart, alloc: std.mem.Allocator) void {
+        if (self.prev_density) |pd| {
+            alloc.free(pd);
+            self.prev_density = null;
+        }
+        if (self.prev_kpoint_cache) |cache| {
+            for (cache) |*c| c.deinit();
+            alloc.free(cache);
+            self.prev_kpoint_cache = null;
+        }
+        if (self.prev_apply_caches) |caches| {
+            for (caches) |*ac| ac.deinit(alloc);
+            alloc.free(caches);
+            self.prev_apply_caches = null;
+        }
+    }
+
+    fn saveFinalPotential(self: *RelaxWarmstart, scf_result: *scf.ScfResult) void {
+        self.final_potential_saved = scf_result.potential;
+        scf_result.potential = .{
+            .nx = 0,
+            .ny = 0,
+            .nz = 0,
+            .min_h = 0,
+            .min_k = 0,
+            .min_l = 0,
+            .values = &[_]math.Complex{},
+        };
+    }
+};
+
+const RelaxState = struct {
+    atoms: []hamiltonian.AtomData,
+    opt: optimizer.Optimizer,
+    trajectory: ?std.ArrayList(RelaxStep),
+    current_cell: math.Mat3,
+    current_recip: math.Mat3,
+    current_volume: f64,
+    alpha: f64,
+    prev_positions: ?[]math.Vec3 = null,
+    prev_forces: ?[]math.Vec3 = null,
+    prev_energy: f64 = std.math.inf(f64),
+    saved_positions: ?[]math.Vec3 = null,
+    saved_displacement: ?[]math.Vec3 = null,
+    backtrack_count: usize = 0,
+    warmstart: RelaxWarmstart = .{},
+    converged: bool = false,
+    final_energy: f64 = 0.0,
+    final_forces: []math.Vec3 = &[_]math.Vec3{},
+    iterations: usize = 0,
+
+    fn deinit(self: *RelaxState, alloc: std.mem.Allocator) void {
+        if (self.atoms.len > 0) alloc.free(self.atoms);
+        self.opt.deinit(alloc);
+        if (self.trajectory) |*t| {
+            for (t.items) |*step| step.deinit(alloc);
+            t.deinit(alloc);
+        }
+        if (self.prev_positions) |pp| alloc.free(pp);
+        if (self.prev_forces) |pf| alloc.free(pf);
+        if (self.saved_positions) |sp| alloc.free(sp);
+        if (self.saved_displacement) |sd| alloc.free(sd);
+        if (self.final_forces.len > 0) alloc.free(self.final_forces);
+        self.warmstart.deinit(alloc);
+    }
+
+    fn takeResult(
+        self: *RelaxState,
+        alloc: std.mem.Allocator,
+        cfg: config_mod.Config,
+    ) !RelaxResult {
+        var result_trajectory: ?[]RelaxStep = null;
+        if (self.trajectory) |*traj| {
+            result_trajectory = try traj.toOwnedSlice(alloc);
+            self.trajectory = null;
+        }
+
+        const out_density = self.warmstart.prev_density;
+        self.warmstart.prev_density = null;
+        const out_kpoint_cache = self.warmstart.prev_kpoint_cache;
+        self.warmstart.prev_kpoint_cache = null;
+        const out_apply_caches = self.warmstart.prev_apply_caches;
+        self.warmstart.prev_apply_caches = null;
+        const out_potential = self.warmstart.final_potential_saved;
+        self.warmstart.final_potential_saved = null;
+
+        const result = RelaxResult{
+            .final_atoms = self.atoms,
+            .final_energy = self.final_energy,
+            .final_forces = self.final_forces,
+            .iterations = self.iterations,
+            .converged = self.converged,
+            .trajectory = result_trajectory,
+            .final_density = out_density,
+            .final_kpoint_cache = out_kpoint_cache,
+            .final_apply_caches = out_apply_caches,
+            .final_potential = out_potential,
+            .final_cell = if (cfg.relax.cell_relax) self.current_cell else null,
+            .final_recip = if (cfg.relax.cell_relax) self.current_recip else null,
+            .final_volume = if (cfg.relax.cell_relax) self.current_volume else null,
+        };
+        self.atoms = &[_]hamiltonian.AtomData{};
+        self.final_forces = &[_]math.Vec3{};
+        return result;
+    }
+};
+
+const RelaxContext = struct {
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: config_mod.Config,
+    relax_cfg: config_mod.Config,
+    species: []const hamiltonian.SpeciesEntry,
+    tables: RelaxTables,
+
+    fn deinit(self: *RelaxContext) void {
+        self.tables.deinit(self.alloc);
+    }
+};
+
+fn buildRelaxConfig(
+    io: std.Io,
+    cfg: config_mod.Config,
+    cell: math.Mat3,
+) !config_mod.Config {
+    var relax_cfg = cfg;
+    if (cfg.scf.symmetry) {
+        try logWarn(io, "scf.symmetry is enabled, but will be disabled during relaxation " ++
+            "to ensure consistent k-point sets across iterations. " ++
+            "Set scf.symmetry = false to suppress this warning.");
+    }
+    relax_cfg.scf.symmetry = false;
+    if (cfg.relax.cell_relax) {
+        relax_cfg.scf.compute_stress = true;
+        relax_cfg.units = .bohr;
+        relax_cfg.cell = cell;
+    }
+    return relax_cfg;
+}
+
+fn buildForceRadialTables(
+    alloc: std.mem.Allocator,
+    cfg: config_mod.Config,
+    species: []const hamiltonian.SpeciesEntry,
+) ![]nonlocal_mod.RadialTableSet {
+    const g_max = @sqrt(2.0 * cfg.scf.ecut_ry) * 1.5;
+    const tables = try alloc.alloc(nonlocal_mod.RadialTableSet, species.len);
+    for (species, 0..) |entry, si| {
+        const upf = entry.upf.*;
+        if (upf.beta.len == 0 or upf.dij.len == 0) {
+            tables[si] = .{ .tables = &[_]nonlocal_mod.RadialTable{} };
+            continue;
+        }
+        tables[si] = try nonlocal_mod.RadialTableSet.init(
+            alloc,
+            upf.beta,
+            upf.r,
+            upf.rab,
+            g_max,
+        );
+    }
+    return tables;
+}
+
+fn buildLocalFormFactorTables(
+    alloc: std.mem.Allocator,
+    cfg: config_mod.Config,
+    species: []const hamiltonian.SpeciesEntry,
+    cell: math.Mat3,
+) !struct {
+    local_cfg: local_potential.LocalPotentialConfig,
+    tables: []form_factor_mod.LocalFormFactorTable,
+} {
+    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, cell);
+    const ff_q_max = @sqrt(2.0 * cfg.scf.ecut_ry) * 3.0;
+    const tables = try alloc.alloc(form_factor_mod.LocalFormFactorTable, species.len);
+    for (species, 0..) |entry, si| {
+        tables[si] = try form_factor_mod.LocalFormFactorTable.init(
+            alloc,
+            entry.upf.*,
+            entry.z_valence,
+            local_cfg,
+            ff_q_max,
+        );
+    }
+    return .{ .local_cfg = local_cfg, .tables = tables };
+}
+
+fn buildResidualFormFactorTables(
+    alloc: std.mem.Allocator,
+    cfg: config_mod.Config,
+    species: []const hamiltonian.SpeciesEntry,
+) !struct {
+    rho_atom: []form_factor_mod.RadialFormFactorTable,
+    rho_core: []form_factor_mod.RadialFormFactorTable,
+} {
+    const ff_q_max = @sqrt(2.0 * cfg.scf.ecut_ry) * 3.0;
+    const rho_atom = try alloc.alloc(form_factor_mod.RadialFormFactorTable, species.len);
+    errdefer alloc.free(rho_atom);
+    const rho_core = try alloc.alloc(form_factor_mod.RadialFormFactorTable, species.len);
+    errdefer alloc.free(rho_core);
+
+    for (species, 0..) |entry, si| {
+        rho_atom[si] = try form_factor_mod.RadialFormFactorTable.initRhoAtom(
+            alloc,
+            entry.upf.*,
+            ff_q_max,
+        );
+        rho_core[si] = try form_factor_mod.RadialFormFactorTable.initRhoCore(
+            alloc,
+            entry.upf.*,
+            ff_q_max,
+        );
+    }
+    return .{ .rho_atom = rho_atom, .rho_core = rho_core };
+}
+
+fn initRelaxTables(
+    alloc: std.mem.Allocator,
+    cfg: config_mod.Config,
+    species: []const hamiltonian.SpeciesEntry,
+    cell: math.Mat3,
+) !RelaxTables {
+    const force_radial_tables_buf = try buildForceRadialTables(alloc, cfg, species);
+    errdefer {
+        for (force_radial_tables_buf) |*t| {
+            if (t.tables.len > 0) t.deinit(alloc);
+        }
+        alloc.free(force_radial_tables_buf);
+    }
+
+    const local = try buildLocalFormFactorTables(alloc, cfg, species, cell);
+    errdefer {
+        for (local.tables) |*t| t.deinit(alloc);
+        alloc.free(local.tables);
+    }
+
+    const residual = try buildResidualFormFactorTables(alloc, cfg, species);
+    errdefer {
+        for (residual.rho_atom) |*t| t.deinit(alloc);
+        alloc.free(residual.rho_atom);
+        for (residual.rho_core) |*t| t.deinit(alloc);
+        alloc.free(residual.rho_core);
+    }
+
+    return .{
+        .local_cfg = local.local_cfg,
+        .force_radial_tables_buf = force_radial_tables_buf,
+        .ff_tables_buf = local.tables,
+        .rho_atom_tables_buf = residual.rho_atom,
+        .rho_core_tables_buf = residual.rho_core,
+    };
+}
+
+fn initRelaxContext(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: config_mod.Config,
+    species: []const hamiltonian.SpeciesEntry,
+    cell: math.Mat3,
+) !RelaxContext {
+    return .{
+        .alloc = alloc,
+        .io = io,
+        .cfg = cfg,
+        .relax_cfg = try buildRelaxConfig(io, cfg, cell),
+        .species = species,
+        .tables = try initRelaxTables(alloc, cfg, species, cell),
+    };
+}
+
+fn initRelaxState(
+    alloc: std.mem.Allocator,
+    cfg: config_mod.Config,
+    initial_atoms: []hamiltonian.AtomData,
+    cell: math.Mat3,
+    recip: math.Mat3,
+    volume: f64,
+) !RelaxState {
+    const atoms = try alloc.alloc(hamiltonian.AtomData, initial_atoms.len);
+    @memcpy(atoms, initial_atoms);
+
+    return .{
+        .atoms = atoms,
+        .opt = try optimizer.Optimizer.init(
+            alloc,
+            cfg.relax.algorithm,
+            initial_atoms.len,
+            initial_atoms,
+            cell,
+        ),
+        .trajectory = if (cfg.relax.output_trajectory) .empty else null,
+        .current_cell = cell,
+        .current_recip = recip,
+        .current_volume = volume,
+        .alpha = if (cfg.ewald.alpha > 0.0) cfg.ewald.alpha else computeDefaultAlpha(cell),
+    };
+}
+
+const RelaxStressInfo = struct {
+    stress_converged: bool = true,
+    cached_stress_total: ?stress_mod.Stress3x3 = null,
+};
+
+const ForceVxcInput = struct {
+    avg: ?[]f64 = null,
+    values: ?[]const f64 = null,
+
+    fn deinit(self: *ForceVxcInput, alloc: std.mem.Allocator) void {
+        if (self.avg) |v| alloc.free(v);
+    }
+};
+
+fn buildStepModel(
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    current_cell: math.Mat3,
+    current_recip: math.Mat3,
+    current_volume: f64,
+) model_mod.Model {
+    return .{
+        .species = species,
+        .atoms = atoms,
+        .cell_bohr = current_cell,
+        .recip = current_recip,
+        .volume_bohr = current_volume,
+    };
+}
+
+fn runRelaxScf(
+    ctx: *const RelaxContext,
+    state: *const RelaxState,
+) !scf.ScfResult {
+    const step_model = buildStepModel(
+        ctx.species,
+        state.atoms,
+        state.current_cell,
+        state.current_recip,
+        state.current_volume,
+    );
+    return try scf.run(.{
+        .alloc = ctx.alloc,
+        .io = ctx.io,
+        .cfg = ctx.relax_cfg,
+        .model = &step_model,
+        .initial_density = state.warmstart.prev_density,
+        .initial_kpoint_cache = state.warmstart.prev_kpoint_cache,
+        .initial_apply_caches = state.warmstart.prev_apply_caches,
+        .ff_tables = ctx.tables.ffTables(),
+    });
+}
+
+fn clearRelaxHistory(state: *RelaxState, alloc: std.mem.Allocator) void {
+    if (state.prev_positions) |pp| {
+        alloc.free(pp);
+        state.prev_positions = null;
+    }
+    if (state.prev_forces) |pf| {
+        alloc.free(pf);
+        state.prev_forces = null;
+    }
+}
+
+fn restoreBacktrackedPositions(
+    atoms: []hamiltonian.AtomData,
+    saved_positions: []const math.Vec3,
+    saved_displacement: []const math.Vec3,
+    scale: f64,
+) void {
+    for (0..atoms.len) |i| {
+        atoms[i].position = math.Vec3.add(
+            saved_positions[i],
+            math.Vec3.scale(saved_displacement[i], scale),
+        );
+    }
+}
+
+fn handleBacktrack(
+    ctx: *const RelaxContext,
+    state: *RelaxState,
+) !bool {
+    const energy_increased = state.final_energy > state.prev_energy;
+    const have_saved_step = state.saved_positions != null and state.saved_displacement != null;
+    if (ctx.cfg.relax.cell_relax or !energy_increased or !have_saved_step) {
+        state.backtrack_count = 0;
+        state.prev_energy = state.final_energy;
+        return false;
+    }
+
+    state.backtrack_count += 1;
+    try logBacktrack(ctx.io, state.backtrack_count, state.final_energy, state.prev_energy);
+    if (state.backtrack_count > max_backtrack) {
+        state.opt.reset();
+        state.backtrack_count = 0;
+        state.prev_energy = state.final_energy;
+        clearRelaxHistory(state, ctx.alloc);
+        return false;
+    }
+
+    const scale = std.math.pow(f64, 0.5, @as(f64, @floatFromInt(state.backtrack_count)));
+    restoreBacktrackedPositions(
+        state.atoms,
+        state.saved_positions.?,
+        state.saved_displacement.?,
+        scale,
+    );
+    return true;
+}
+
+fn averageForcesInPlace(forces: []math.Vec3) void {
+    var avg = math.Vec3{ .x = 0, .y = 0, .z = 0 };
+    for (forces) |f| {
+        avg.x += f.x;
+        avg.y += f.y;
+        avg.z += f.z;
+    }
+    const inv_n = 1.0 / @as(f64, @floatFromInt(forces.len));
+    avg.x *= inv_n;
+    avg.y *= inv_n;
+    avg.z *= inv_n;
+    for (forces) |*f| {
+        f.x -= avg.x;
+        f.y -= avg.y;
+        f.z -= avg.z;
+    }
+}
+
+fn buildForceVxcInput(
+    alloc: std.mem.Allocator,
+    scf_result: *const scf.ScfResult,
+) !ForceVxcInput {
+    const have_spin_vxc = scf_result.vxc_r_up != null and scf_result.vxc_r_down != null;
+    if (!have_spin_vxc) return .{ .values = scf_result.vxc_r };
+
+    const up = scf_result.vxc_r_up.?;
+    const down = scf_result.vxc_r_down.?;
+    const avg = try alloc.alloc(f64, up.len);
+    for (0..up.len) |i| {
+        avg[i] = (up[i] + down[i]) * 0.5;
+    }
+    return .{ .avg = avg, .values = avg };
+}
+
+fn pawDijSlice(scf_result: *const scf.ScfResult) ?[]const []const f64 {
+    if (scf_result.paw_dij) |dij| {
+        return @as([]const []const f64, dij);
+    }
+    return null;
+}
+
+fn pawRhoijSlice(scf_result: *const scf.ScfResult) ?[]const []const f64 {
+    if (scf_result.paw_rhoij) |rij| {
+        return @as([]const []const f64, rij);
+    }
+    return null;
+}
+
+fn computeRelaxForces(
+    ctx: *const RelaxContext,
+    state: *const RelaxState,
+    scf_result: *const scf.ScfResult,
+) !forces_mod.ForceTerms {
+    const grid = forces_mod.Grid{
+        .nx = scf_result.potential.nx,
+        .ny = scf_result.potential.ny,
+        .nz = scf_result.potential.nz,
+        .min_h = scf_result.potential.min_h,
+        .min_k = scf_result.potential.min_k,
+        .min_l = scf_result.potential.min_l,
+        .cell = state.current_cell,
+        .recip = state.current_recip,
+    };
+    const rho_g = try densityToReciprocal(
+        ctx.alloc,
+        ctx.io,
+        grid,
+        scf_result.density,
+        ctx.cfg.scf.fft_backend,
+    );
+    defer ctx.alloc.free(rho_g);
+
+    const coulomb_r_cut = if (ctx.cfg.boundary == .isolated)
+        coulomb_mod.cutoffRadius(state.current_cell)
+    else
+        null;
+    var vxc_input = try buildForceVxcInput(ctx.alloc, scf_result);
+    defer vxc_input.deinit(ctx.alloc);
+
+    const force_terms = try forces_mod.computeForces(
+        ctx.alloc,
+        ctx.io,
+        grid,
+        rho_g,
+        scf_result.potential.values,
+        scf_result.ionic_g,
+        ctx.species,
+        state.atoms,
+        state.current_cell,
+        state.current_recip,
+        state.current_volume,
+        state.alpha,
+        ctx.tables.local_cfg,
+        scf_result.wavefunctions,
+        if (scf_result.vresid) |vresid| vresid.values else null,
+        ctx.cfg.scf.quiet,
+        ctx.tables.forceRadialTables(),
+        vxc_input.values,
+        ctx.tables.rhoAtomTables(),
+        ctx.tables.rhoCoreTables(),
+        ctx.tables.ffTables(),
+        coulomb_r_cut,
+        ctx.cfg.vdw,
+        scf_result.paw_tabs,
+        pawDijSlice(scf_result),
+        pawRhoijSlice(scf_result),
+        scf_result.wavefunctions_down,
+    );
+    averageForcesInPlace(force_terms.total);
+    return force_terms;
+}
+
+fn maybeComputeRelaxStress(
+    ctx: *const RelaxContext,
+    state: *const RelaxState,
+    scf_result: *const scf.ScfResult,
+) !RelaxStressInfo {
+    var info = RelaxStressInfo{};
+    if (!ctx.cfg.relax.cell_relax) return info;
+
+    const step_model = buildStepModel(
+        ctx.species,
+        state.atoms,
+        state.current_cell,
+        state.current_recip,
+        state.current_volume,
+    );
+    const stress_terms = try stress_mod.computeStressFromScf(
+        ctx.alloc,
+        ctx.io,
+        @constCast(scf_result),
+        ctx.relax_cfg,
+        &step_model,
+    );
+    var sym_total = stress_terms.total;
+    if (ctx.cfg.scf.symmetry) {
+        const symmetry = @import("../symmetry/symmetry.zig");
+        const sym_ops = try symmetry.getSymmetryOps(
+            ctx.alloc,
+            state.current_cell,
+            state.atoms,
+            1e-5,
+        );
+        defer ctx.alloc.free(sym_ops);
+
+        if (sym_ops.len > 1) {
+            sym_total = stress_mod.symmetrizeStress(sym_total, sym_ops, state.current_cell);
+        }
+    }
+
+    const ry_bohr3_to_gpa = 14710.507;
+    if (ctx.cfg.relax.target_pressure != 0.0) {
+        const p_offset = -ctx.cfg.relax.target_pressure / ry_bohr3_to_gpa;
+        for (0..3) |aa| sym_total[aa][aa] += p_offset;
+    }
+    info.cached_stress_total = sym_total;
+
+    var max_stress_gpa: f64 = 0.0;
+    for (0..3) |aa| {
+        for (0..3) |bb| {
+            const dev = @abs(sym_total[aa][bb]) * ry_bohr3_to_gpa;
+            if (dev > max_stress_gpa) max_stress_gpa = dev;
+        }
+    }
+    info.stress_converged = max_stress_gpa < ctx.cfg.relax.stress_tol;
+    const p = -(sym_total[0][0] + sym_total[1][1] + sym_total[2][2]) / 3.0;
+    try logVcRelaxIter(
+        ctx.io,
+        state.iterations - 1,
+        p * ry_bohr3_to_gpa,
+        max_stress_gpa,
+        state.current_volume,
+    );
+    return info;
+}
+
+fn replaceFinalForces(
+    alloc: std.mem.Allocator,
+    state: *RelaxState,
+    forces: []const math.Vec3,
+) !void {
+    if (state.final_forces.len > 0) alloc.free(state.final_forces);
+    state.final_forces = try alloc.alloc(math.Vec3, forces.len);
+    @memcpy(state.final_forces, forces);
+}
+
+fn logRelaxStepProfile(
+    io: std.Io,
+    iter: usize,
+    scf_iterations: usize,
+    relax_step_start: std.Io.Clock.Timestamp,
+    relax_step_cpu_start: u64,
+    scf_start: std.Io.Clock.Timestamp,
+    scf_end: std.Io.Clock.Timestamp,
+    force_start: std.Io.Clock.Timestamp,
+    force_end: std.Io.Clock.Timestamp,
+) void {
+    const step_cpu_end = timing_mod.Timing.getCpuTimeUs();
+    const scf_ns = scf_start.durationTo(scf_end).raw.nanoseconds;
+    const force_ns = force_start.durationTo(force_end).raw.nanoseconds;
+    const step_ns = relax_step_start.untilNow(io).raw.nanoseconds;
+    const scf_ms = @as(f64, @floatFromInt(@as(u64, @intCast(scf_ns)))) / 1_000_000.0;
+    const force_ms = @as(f64, @floatFromInt(@as(u64, @intCast(force_ns)))) / 1_000_000.0;
+    const step_ms = @as(f64, @floatFromInt(@as(u64, @intCast(step_ns)))) / 1_000_000.0;
+    const cpu_ms = @as(f64, @floatFromInt(step_cpu_end - relax_step_cpu_start)) / 1_000.0;
+    var tbuf: [512]u8 = undefined;
+    const msg = std.fmt.bufPrint(
+        &tbuf,
+        "relax_step_profile iter={d} scf_iters={d} scf_ms={d:.1}" ++
+            " force_ms={d:.1} wall_ms={d:.1} cpu_ms={d:.1}\n",
+        .{ iter, scf_iterations, scf_ms, force_ms, step_ms, cpu_ms },
+    ) catch "";
+    std.Io.File.stderr().writeStreamingAll(io, msg) catch {};
+}
+
+fn maybeFinishRelaxation(
+    ctx: *const RelaxContext,
+    state: *RelaxState,
+    scf_result: *scf.ScfResult,
+    max_force: f64,
+    stress_info: RelaxStressInfo,
+) !bool {
+    if (max_force >= ctx.cfg.relax.force_tol or !stress_info.stress_converged) return false;
+    state.converged = true;
+    state.warmstart.saveFinalPotential(scf_result);
+    try logRelaxConverged(ctx.io, state.iterations - 1, state.final_energy, max_force);
+    return true;
+}
+
+fn appendTrajectoryStep(
+    alloc: std.mem.Allocator,
+    trajectory: *?std.ArrayList(RelaxStep),
+    atoms: []const hamiltonian.AtomData,
+    forces: []const math.Vec3,
+    energy: f64,
+    max_force: f64,
+) !void {
+    if (trajectory.* == null) return;
+    const step_atoms = try alloc.alloc(hamiltonian.AtomData, atoms.len);
+    @memcpy(step_atoms, atoms);
+    const step_forces = try alloc.alloc(math.Vec3, forces.len);
+    @memcpy(step_forces, forces);
+    try trajectory.*.?.append(alloc, .{
+        .atoms = step_atoms,
+        .energy = energy,
+        .forces = step_forces,
+        .max_force = max_force,
+    });
+}
+
+fn ensureVec3Buffer(
+    alloc: std.mem.Allocator,
+    slot: *?[]math.Vec3,
+    len: usize,
+) ![]math.Vec3 {
+    if (slot.* == null) {
+        slot.* = try alloc.alloc(math.Vec3, len);
+    }
+    return slot.*.?;
+}
+
+fn snapshotPositions(
+    alloc: std.mem.Allocator,
+    atoms: []const hamiltonian.AtomData,
+) ![]math.Vec3 {
+    const positions = try alloc.alloc(math.Vec3, atoms.len);
+    for (atoms, 0..) |atom, i| {
+        positions[i] = atom.position;
+    }
+    return positions;
+}
+
+fn rememberOptimizerHistory(
+    alloc: std.mem.Allocator,
+    state: *RelaxState,
+    current_positions: []const math.Vec3,
+    forces: []const math.Vec3,
+) !void {
+    const prev_positions = try ensureVec3Buffer(
+        alloc,
+        &state.prev_positions,
+        current_positions.len,
+    );
+    const prev_forces = try ensureVec3Buffer(alloc, &state.prev_forces, forces.len);
+    @memcpy(prev_positions, current_positions);
+    @memcpy(prev_forces, forces);
+}
+
+fn saveBacktrackStep(
+    alloc: std.mem.Allocator,
+    state: *RelaxState,
+    displacement: []const math.Vec3,
+) !void {
+    const saved_positions = try ensureVec3Buffer(alloc, &state.saved_positions, state.atoms.len);
+    const saved_displacement = try ensureVec3Buffer(
+        alloc,
+        &state.saved_displacement,
+        displacement.len,
+    );
+    for (state.atoms, 0..) |atom, i| {
+        saved_positions[i] = atom.position;
+    }
+    @memcpy(saved_displacement, displacement);
+}
+
+fn applyDisplacement(
+    atoms: []hamiltonian.AtomData,
+    displacement: []const math.Vec3,
+) void {
+    for (0..atoms.len) |i| {
+        atoms[i].position = math.Vec3.add(atoms[i].position, displacement[i]);
+    }
+}
+
+fn maybeUpdateCellAfterStep(
+    ctx: *RelaxContext,
+    state: *RelaxState,
+    stress_info: RelaxStressInfo,
+) !void {
+    if (!ctx.cfg.relax.cell_relax or stress_info.stress_converged) return;
+    try updateCellFromStress(
+        &state.current_cell,
+        &state.current_recip,
+        &state.current_volume,
+        stress_info.cached_stress_total.?,
+        state.atoms,
+        ctx.cfg.relax.cell_step,
+    );
+    ctx.relax_cfg.cell = state.current_cell;
+    state.warmstart.invalidateForCellChange(ctx.alloc);
+    if (ctx.cfg.ewald.alpha <= 0.0) {
+        state.alpha = computeDefaultAlpha(state.current_cell);
+    }
+    state.opt.reset();
+    clearRelaxHistory(state, ctx.alloc);
+}
+
+fn advanceRelaxStep(
+    ctx: *RelaxContext,
+    state: *RelaxState,
+    forces: []const math.Vec3,
+    stress_info: RelaxStressInfo,
+) !void {
+    const current_positions = try snapshotPositions(ctx.alloc, state.atoms);
+    defer ctx.alloc.free(current_positions);
+
+    if (state.prev_positions != null and state.prev_forces != null) {
+        state.opt.update(state.prev_positions.?, current_positions, state.prev_forces.?, forces);
+    }
+    const displacement = try state.opt.step(ctx.alloc, forces, ctx.cfg.relax.max_step);
+    defer ctx.alloc.free(displacement);
+
+    try rememberOptimizerHistory(ctx.alloc, state, current_positions, forces);
+    try saveBacktrackStep(ctx.alloc, state, displacement);
+    applyDisplacement(state.atoms, displacement);
+    try maybeUpdateCellAfterStep(ctx, state, stress_info);
+}
+
+fn relaxIterations(
+    ctx: *RelaxContext,
+    state: *RelaxState,
+) !void {
+    for (0..ctx.cfg.relax.max_iter) |iter| {
+        state.iterations = iter + 1;
+        const relax_step_start = std.Io.Clock.Timestamp.now(ctx.io, .awake);
+        const relax_step_cpu_start = timing_mod.Timing.getCpuTimeUs();
+        try logRelaxIter(ctx.io, iter, null, null);
+
+        const scf_start = std.Io.Clock.Timestamp.now(ctx.io, .awake);
+        var scf_result = try runRelaxScf(ctx, state);
+        defer scf_result.deinit(ctx.alloc);
+
+        const scf_end = std.Io.Clock.Timestamp.now(ctx.io, .awake);
+
+        try state.warmstart.updateFromScf(ctx.alloc, &scf_result);
+        state.final_energy = scf_result.energy.total;
+        if (try handleBacktrack(ctx, state)) continue;
+
+        const force_start = std.Io.Clock.Timestamp.now(ctx.io, .awake);
+        var force_terms = try computeRelaxForces(ctx, state, &scf_result);
+        defer force_terms.deinit(ctx.alloc);
+
+        const force_end = std.Io.Clock.Timestamp.now(ctx.io, .awake);
+
+        const stress_info = try maybeComputeRelaxStress(ctx, state, &scf_result);
+        try replaceFinalForces(ctx.alloc, state, force_terms.total);
+        const max_force = forces_mod.maxForce(force_terms.total);
+        try logRelaxIter(ctx.io, iter, state.final_energy, max_force);
+        logRelaxStepProfile(
+            ctx.io,
+            iter,
+            scf_result.iterations,
+            relax_step_start,
+            relax_step_cpu_start,
+            scf_start,
+            scf_end,
+            force_start,
+            force_end,
+        );
+        if (try maybeFinishRelaxation(ctx, state, &scf_result, max_force, stress_info)) break;
+        try appendTrajectoryStep(
+            ctx.alloc,
+            &state.trajectory,
+            state.atoms,
+            force_terms.total,
+            state.final_energy,
+            max_force,
+        );
+        try advanceRelaxStep(ctx, state, force_terms.total, stress_info);
+    }
+}
+
 /// Run structure relaxation.
 pub fn run(
     alloc: std.mem.Allocator,
@@ -78,619 +979,22 @@ pub fn run(
     recip: math.Mat3,
     volume: f64,
 ) !RelaxResult {
-    const n_atoms = initial_atoms.len;
+    var ctx = try initRelaxContext(alloc, io, cfg, species, cell);
+    defer ctx.deinit();
 
-    // Disable symmetry during relaxation to ensure consistent k-point sets
-    // across iterations. Atom displacements change symmetry, causing different
-    // k-point reductions and energy discontinuities that break backtracking.
-    var relax_cfg = cfg;
-    if (cfg.scf.symmetry) {
-        try logWarn(io, "scf.symmetry is enabled, but will be disabled during relaxation " ++
-            "to ensure consistent k-point sets across iterations. " ++
-            "Set scf.symmetry = false to suppress this warning.");
-    }
-    relax_cfg.scf.symmetry = false;
+    var state = try initRelaxState(alloc, cfg, initial_atoms, cell, recip, volume);
+    defer state.deinit(alloc);
 
-    // Enable stress computation for vc-relax
-    if (cfg.relax.cell_relax) {
-        relax_cfg.scf.compute_stress = true;
-        // Override units to bohr since we'll update cell in Bohr
-        relax_cfg.units = .bohr;
-        relax_cfg.cell = cell; // cell is already in Bohr
-    }
-
-    // Mutable cell for vc-relax
-    var current_cell = cell;
-    var current_recip = recip;
-    var current_volume = volume;
-
-    // Copy initial atoms
-    var atoms = try alloc.alloc(hamiltonian.AtomData, n_atoms);
-    for (initial_atoms, 0..) |atom, i| {
-        atoms[i] = atom;
-    }
-
-    // Initialize optimizer
-    var opt = try optimizer.Optimizer.init(
-        alloc,
-        cfg.relax.algorithm,
-        n_atoms,
-        initial_atoms,
-        cell,
-    );
-    defer opt.deinit(alloc);
-
-    // Trajectory storage
-    var trajectory: ?std.ArrayList(RelaxStep) = if (cfg.relax.output_trajectory)
-        .empty
-    else
-        null;
-    defer if (trajectory) |*t| {
-        for (t.items) |*step| {
-            step.deinit(alloc);
-        }
-        t.deinit(alloc);
-    };
-
-    var prev_positions: ?[]math.Vec3 = null;
-    defer if (prev_positions) |pp| alloc.free(pp);
-    var prev_forces: ?[]math.Vec3 = null;
-    defer if (prev_forces) |pf| alloc.free(pf);
-
-    var converged = false;
-    var final_energy: f64 = 0.0;
-    var final_forces: []math.Vec3 = &[_]math.Vec3{};
-    var iterations: usize = 0;
-
-    // Backtracking line search state
-    var prev_energy: f64 = std.math.inf(f64);
-    var saved_positions: ?[]math.Vec3 = null;
-    defer if (saved_positions) |sp| alloc.free(sp);
-    var saved_displacement: ?[]math.Vec3 = null;
-    defer if (saved_displacement) |sd| alloc.free(sd);
-    var backtrack_count: usize = 0;
-    const max_backtrack: usize = 5;
-
-    // Density warmstart: reuse converged density from previous SCF
-    var prev_density: ?[]f64 = null;
-    defer if (prev_density) |pd| alloc.free(pd);
-
-    // Wavefunction warmstart: reuse eigenvectors from previous SCF
-    var prev_kpoint_cache: ?[]scf.KpointCache = null;
-    defer if (prev_kpoint_cache) |cache| {
-        for (cache) |*c| c.deinit();
-        alloc.free(cache);
-    };
-
-    // NonlocalContext warmstart: reuse apply caches across relax steps
-    var prev_apply_caches: ?[]scf.KpointApplyCache = null;
-    defer if (prev_apply_caches) |caches| {
-        for (caches) |*ac| ac.deinit(alloc);
-        alloc.free(caches);
-    };
-
-    // Save final potential for band calculation (skip post-relax SCF)
-    var final_potential_saved: ?hamiltonian.PotentialGrid = null;
-    errdefer if (final_potential_saved) |*p| p.deinit(alloc);
-
-    // Ewald alpha from config (or compute default); recomputed per step for vc-relax
-    var alpha = if (cfg.ewald.alpha > 0.0) cfg.ewald.alpha else computeDefaultAlpha(cell);
-
-    // Build radial lookup tables for nonlocal force (position-independent, reused across steps)
-    const nonlocal_mod = @import("../pseudopotential/nonlocal.zig");
-    const g_max = @sqrt(2.0 * cfg.scf.ecut_ry) * 1.5;
-    var force_radial_tables_buf = try alloc.alloc(nonlocal_mod.RadialTableSet, species.len);
-    for (species, 0..) |entry, si| {
-        const upf = entry.upf.*;
-        if (upf.beta.len == 0 or upf.dij.len == 0) {
-            force_radial_tables_buf[si] = .{ .tables = &[_]nonlocal_mod.RadialTable{} };
-            continue;
-        }
-        force_radial_tables_buf[si] = try nonlocal_mod.RadialTableSet.init(
-            alloc,
-            upf.beta,
-            upf.r,
-            upf.rab,
-            g_max,
-        );
-    }
-    defer {
-        for (force_radial_tables_buf) |*t| {
-            if (t.tables.len > 0) t.deinit(alloc);
-        }
-        alloc.free(force_radial_tables_buf);
-    }
-    const force_radial_tables: ?[]nonlocal_mod.RadialTableSet = force_radial_tables_buf;
-
-    // Build local form factor lookup tables (position-independent, reused across steps)
-    const form_factor_mod = @import("../pseudopotential/form_factor.zig");
-    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, cell);
-    const ff_q_max = @sqrt(2.0 * cfg.scf.ecut_ry) * 3.0;
-    var ff_tables_buf = try alloc.alloc(form_factor_mod.LocalFormFactorTable, species.len);
-    for (species, 0..) |entry, si| {
-        ff_tables_buf[si] = try form_factor_mod.LocalFormFactorTable.init(
-            alloc,
-            entry.upf.*,
-            entry.z_valence,
-            local_cfg,
-            ff_q_max,
-        );
-    }
-    defer {
-        for (ff_tables_buf) |*t| t.deinit(alloc);
-        alloc.free(ff_tables_buf);
-    }
-    const ff_tables: ?[]const form_factor_mod.LocalFormFactorTable = ff_tables_buf;
-
-    // Build radial form factor tables for residual force (rhoAtomG and rhoCoreG)
-    var rho_atom_tables_buf = try alloc.alloc(form_factor_mod.RadialFormFactorTable, species.len);
-    var rho_core_tables_buf = try alloc.alloc(form_factor_mod.RadialFormFactorTable, species.len);
-    for (species, 0..) |entry, si| {
-        rho_atom_tables_buf[si] = try form_factor_mod.RadialFormFactorTable.initRhoAtom(
-            alloc,
-            entry.upf.*,
-            ff_q_max,
-        );
-        rho_core_tables_buf[si] = try form_factor_mod.RadialFormFactorTable.initRhoCore(
-            alloc,
-            entry.upf.*,
-            ff_q_max,
-        );
-    }
-    defer {
-        for (rho_atom_tables_buf) |*t| t.deinit(alloc);
-        alloc.free(rho_atom_tables_buf);
-        for (rho_core_tables_buf) |*t| t.deinit(alloc);
-        alloc.free(rho_core_tables_buf);
-    }
-    const rho_atom_tables: ?[]const form_factor_mod.RadialFormFactorTable = rho_atom_tables_buf;
-    const rho_core_tables: ?[]const form_factor_mod.RadialFormFactorTable = rho_core_tables_buf;
-
-    for (0..cfg.relax.max_iter) |iter| {
-        iterations = iter + 1;
-        const relax_step_start = std.Io.Clock.Timestamp.now(io, .awake);
-        const relax_step_cpu_start = timing_mod.Timing.getCpuTimeUs();
-
-        // Log iteration start
-        try logRelaxIter(io, iter, null, null);
-
-        // Run SCF calculation (with density + wavefunction + nonlocal warmstart)
-        const scf_start = std.Io.Clock.Timestamp.now(io, .awake);
-        const step_model = model_mod.Model{
-            .species = species,
-            .atoms = atoms,
-            .cell_bohr = current_cell,
-            .recip = current_recip,
-            .volume_bohr = current_volume,
-        };
-        var scf_result = try scf.run(.{
-            .alloc = alloc,
-            .io = io,
-            .cfg = relax_cfg,
-            .model = &step_model,
-            .initial_density = if (prev_density) |pd| pd else null,
-            .initial_kpoint_cache = prev_kpoint_cache,
-            .initial_apply_caches = prev_apply_caches,
-            .ff_tables = ff_tables,
-        });
-        defer scf_result.deinit(alloc);
-        const scf_end = std.Io.Clock.Timestamp.now(io, .awake);
-
-        // Save converged density for warmstarting next SCF iteration
-        {
-            if (prev_density) |pd| alloc.free(pd);
-            prev_density = try alloc.alloc(f64, scf_result.density.len);
-            @memcpy(prev_density.?, scf_result.density);
-        }
-
-        // Save eigenvector cache for warmstarting next SCF iteration
-        {
-            if (prev_kpoint_cache) |old_cache| {
-                for (old_cache) |*c| c.deinit();
-                alloc.free(old_cache);
-            }
-            prev_kpoint_cache = scf_result.kpoint_cache;
-            scf_result.kpoint_cache = null;
-        }
-
-        // Save apply caches (NonlocalContext + PwGridMap) for next relax step
-        {
-            // No need to free old - ownership was transferred to scf.run()
-            prev_apply_caches = scf_result.apply_caches;
-            scf_result.apply_caches = null;
-        }
-
-        final_energy = scf_result.energy.total;
-
-        // Backtracking line search: reject step if energy increased
-        // Disabled for vc-relax: cell changes invalidate caches causing energy jumps
-        const energy_increased = final_energy > prev_energy;
-        const have_saved_step = saved_positions != null and saved_displacement != null;
-        if (!cfg.relax.cell_relax and energy_increased and have_saved_step) {
-            backtrack_count += 1;
-            try logBacktrack(io, backtrack_count, final_energy, prev_energy);
-
-            if (backtrack_count > max_backtrack) {
-                // Give up backtracking, reset Hessian and continue with current position
-                opt.reset();
-                backtrack_count = 0;
-                prev_energy = final_energy;
-                // Also reset prev_positions/prev_forces so BFGS starts fresh
-                if (prev_positions) |pp| {
-                    alloc.free(pp);
-                    prev_positions = null;
-                }
-                if (prev_forces) |pf| {
-                    alloc.free(pf);
-                    prev_forces = null;
-                }
-            } else {
-                // Restore to saved_positions + scale * saved_displacement
-                const scale = std.math.pow(f64, 0.5, @as(f64, @floatFromInt(backtrack_count)));
-                for (0..n_atoms) |i| {
-                    atoms[i].position = math.Vec3.add(
-                        saved_positions.?[i],
-                        math.Vec3.scale(saved_displacement.?[i], scale),
-                    );
-                }
-                continue;
-            }
-        } else {
-            // Step accepted
-            backtrack_count = 0;
-            prev_energy = final_energy;
-        }
-
-        // Compute forces
-        // First, get electron density in reciprocal space
-        const grid = forces_mod.Grid{
-            .nx = scf_result.potential.nx,
-            .ny = scf_result.potential.ny,
-            .nz = scf_result.potential.nz,
-            .min_h = scf_result.potential.min_h,
-            .min_k = scf_result.potential.min_k,
-            .min_l = scf_result.potential.min_l,
-            .cell = current_cell,
-            .recip = current_recip,
-        };
-
-        // Get rho_g from density (need to FFT)
-        const rho_g = try densityToReciprocal(
-            alloc,
+    try relaxIterations(&ctx, &state);
+    if (!state.converged) {
+        try logRelaxNotConverged(
             io,
-            grid,
-            scf_result.density,
-            cfg.scf.fft_backend,
+            state.iterations,
+            state.final_energy,
+            forces_mod.maxForce(state.final_forces),
         );
-        defer alloc.free(rho_g);
-
-        const coulomb_r_cut: ?f64 = if (cfg.boundary == .isolated)
-            coulomb_mod.cutoffRadius(current_cell)
-        else
-            null;
-
-        // For spin-polarized NLCC force, compute averaged V_xc
-        var vxc_avg: ?[]f64 = null;
-        defer if (vxc_avg) |v| alloc.free(v);
-        const have_spin_vxc = scf_result.vxc_r_up != null and scf_result.vxc_r_down != null;
-        const vxc_for_force: ?[]const f64 = if (have_spin_vxc) blk: {
-            const up = scf_result.vxc_r_up.?;
-            const down = scf_result.vxc_r_down.?;
-            vxc_avg = try alloc.alloc(f64, up.len);
-            for (0..up.len) |i| {
-                vxc_avg.?[i] = (up[i] + down[i]) * 0.5;
-            }
-            break :blk vxc_avg.?;
-        } else scf_result.vxc_r;
-
-        const force_start = std.Io.Clock.Timestamp.now(io, .awake);
-        // Build PAW S_ij per-species array for nonlocal force
-        const paw_dij_slice: ?[]const []const f64 = if (scf_result.paw_dij) |dij| blk: {
-            const s = @as([]const []const f64, dij);
-            break :blk s;
-        } else null;
-        const paw_rhoij_slice: ?[]const []const f64 = if (scf_result.paw_rhoij) |rij| blk: {
-            const s = @as([]const []const f64, rij);
-            break :blk s;
-        } else null;
-        const paw_tabs_slice: ?[]const paw_mod.PawTab =
-            if (scf_result.paw_tabs) |tabs| tabs else null;
-        var force_terms = try forces_mod.computeForces(
-            alloc,
-            io,
-            grid,
-            rho_g,
-            scf_result.potential.values,
-            scf_result.ionic_g,
-            species,
-            atoms,
-            current_cell,
-            current_recip,
-            current_volume,
-            alpha,
-            local_cfg,
-            scf_result.wavefunctions,
-            if (scf_result.vresid) |vresid| vresid.values else null,
-            cfg.scf.quiet,
-            force_radial_tables,
-            vxc_for_force,
-            rho_atom_tables,
-            rho_core_tables,
-            ff_tables,
-            coulomb_r_cut,
-            cfg.vdw,
-            paw_tabs_slice,
-            paw_dij_slice,
-            paw_rhoij_slice,
-            scf_result.wavefunctions_down,
-        );
-        defer force_terms.deinit(alloc);
-        const force_end = std.Io.Clock.Timestamp.now(io, .awake);
-
-        // Remove average force (eliminate net translational force)
-        // In periodic systems, forces should satisfy Newton's third law (sum = 0)
-        // but numerical noise can introduce a non-zero average
-        {
-            var avg = math.Vec3{ .x = 0, .y = 0, .z = 0 };
-            for (force_terms.total) |f| {
-                avg.x += f.x;
-                avg.y += f.y;
-                avg.z += f.z;
-            }
-            const inv_n: f64 = 1.0 / @as(f64, @floatFromInt(n_atoms));
-            avg.x *= inv_n;
-            avg.y *= inv_n;
-            avg.z *= inv_n;
-            for (force_terms.total) |*f| {
-                f.x -= avg.x;
-                f.y -= avg.y;
-                f.z -= avg.z;
-            }
-        }
-
-        // Copy forces for storage (after average removal so output matches convergence check)
-        final_forces = try alloc.alloc(math.Vec3, n_atoms);
-        for (force_terms.total, 0..) |f, i| {
-            final_forces[i] = f;
-        }
-
-        // Check convergence
-        const max_force = forces_mod.maxForce(force_terms.total);
-        try logRelaxIter(io, iter, final_energy, max_force);
-
-        // Relax step timing profile (unbuffered write to avoid buffer corruption)
-        {
-            const step_cpu_end = timing_mod.Timing.getCpuTimeUs();
-            const scf_ns = scf_start.durationTo(scf_end).raw.nanoseconds;
-            const force_ns = force_start.durationTo(force_end).raw.nanoseconds;
-            const step_ns = relax_step_start.untilNow(io).raw.nanoseconds;
-            const scf_ms = @as(f64, @floatFromInt(@as(u64, @intCast(scf_ns)))) / 1_000_000.0;
-            const force_ms = @as(f64, @floatFromInt(@as(u64, @intCast(force_ns)))) / 1_000_000.0;
-            const step_ms = @as(f64, @floatFromInt(@as(u64, @intCast(step_ns)))) / 1_000_000.0;
-            const cpu_ms = @as(f64, @floatFromInt(step_cpu_end - relax_step_cpu_start)) / 1_000.0;
-            var tbuf: [512]u8 = undefined;
-            const msg = std.fmt.bufPrint(
-                &tbuf,
-                "relax_step_profile iter={d} scf_iters={d} scf_ms={d:.1}" ++
-                    " force_ms={d:.1} wall_ms={d:.1} cpu_ms={d:.1}\n",
-                .{ iter, scf_result.iterations, scf_ms, force_ms, step_ms, cpu_ms },
-            ) catch "";
-            std.Io.File.stderr().writeStreamingAll(io, msg) catch {};
-        }
-
-        // vc-relax: compute stress and check stress convergence
-        var stress_converged = true; // default true for non-vc-relax
-        var max_stress_gpa: f64 = 0.0;
-        var cached_stress_total: ?stress_mod.Stress3x3 = null;
-        if (cfg.relax.cell_relax) {
-            const stress_terms = try stress_mod.computeStressFromScf(
-                alloc,
-                io,
-                &scf_result,
-                relax_cfg,
-                &step_model,
-            );
-            // Symmetrize stress using original symmetry (even though k-points are not reduced)
-            var sym_total = stress_terms.total;
-            if (cfg.scf.symmetry) {
-                const symmetry = @import("../symmetry/symmetry.zig");
-                const sym_ops = try symmetry.getSymmetryOps(alloc, current_cell, atoms, 1e-5);
-                defer alloc.free(sym_ops);
-                if (sym_ops.len > 1) {
-                    sym_total = stress_mod.symmetrizeStress(sym_total, sym_ops, current_cell);
-                }
-            }
-            // Subtract target pressure from diagonal (Pulay stress compensation)
-            const ry_bohr3_to_gpa = 14710.507;
-            if (cfg.relax.target_pressure != 0.0) {
-                // convert GPa to Ry/Bohr³
-                const p_offset = -cfg.relax.target_pressure / ry_bohr3_to_gpa;
-                for (0..3) |aa| sym_total[aa][aa] += p_offset;
-            }
-            cached_stress_total = sym_total;
-            const sigma = sym_total;
-            // Check convergence: all stress components → 0 (target_pressure already subtracted)
-            for (0..3) |aa| {
-                for (0..3) |bb| {
-                    const dev = @abs(sigma[aa][bb]) * ry_bohr3_to_gpa;
-                    if (dev > max_stress_gpa) max_stress_gpa = dev;
-                }
-            }
-            stress_converged = max_stress_gpa < cfg.relax.stress_tol;
-
-            const p = -(sigma[0][0] + sigma[1][1] + sigma[2][2]) / 3.0;
-            try logVcRelaxIter(io, iter, p * ry_bohr3_to_gpa, max_stress_gpa, current_volume);
-        }
-
-        if (max_force < cfg.relax.force_tol and stress_converged) {
-            converged = true;
-            // Transfer potential ownership for band calculation (avoids post-relax SCF)
-            final_potential_saved = scf_result.potential;
-            scf_result.potential = .{
-                .nx = 0,
-                .ny = 0,
-                .nz = 0,
-                .min_h = 0,
-                .min_k = 0,
-                .min_l = 0,
-                .values = &[_]math.Complex{},
-            };
-            try logRelaxConverged(io, iter, final_energy, max_force);
-            break;
-        }
-
-        // Save to trajectory if enabled
-        if (trajectory) |*traj| {
-            var step_atoms = try alloc.alloc(hamiltonian.AtomData, n_atoms);
-            for (atoms, 0..) |a, i| {
-                step_atoms[i] = a;
-            }
-            var step_forces = try alloc.alloc(math.Vec3, n_atoms);
-            for (force_terms.total, 0..) |f, i| {
-                step_forces[i] = f;
-            }
-            try traj.append(alloc, RelaxStep{
-                .atoms = step_atoms,
-                .energy = final_energy,
-                .forces = step_forces,
-                .max_force = max_force,
-            });
-        }
-
-        // Extract current positions for optimizer
-        var current_positions = try alloc.alloc(math.Vec3, n_atoms);
-        defer alloc.free(current_positions);
-        for (atoms, 0..) |a, i| {
-            current_positions[i] = a.position;
-        }
-
-        // Update optimizer state BEFORE computing step (so step uses updated Hessian)
-        if (prev_positions != null and prev_forces != null) {
-            opt.update(prev_positions.?, current_positions, prev_forces.?, force_terms.total);
-        }
-
-        // Compute displacement using optimizer (now with updated Hessian)
-        const displacement = try opt.step(alloc, force_terms.total, cfg.relax.max_step);
-        defer alloc.free(displacement);
-
-        // Store current state for next iteration
-        if (prev_positions == null) {
-            prev_positions = try alloc.alloc(math.Vec3, n_atoms);
-        }
-        if (prev_forces == null) {
-            prev_forces = try alloc.alloc(math.Vec3, n_atoms);
-        }
-        for (0..n_atoms) |i| {
-            prev_positions.?[i] = current_positions[i];
-        }
-        for (force_terms.total, 0..) |f, i| {
-            prev_forces.?[i] = f;
-        }
-
-        // Save positions and displacement for potential backtracking
-        if (saved_positions == null) {
-            saved_positions = try alloc.alloc(math.Vec3, n_atoms);
-        }
-        if (saved_displacement == null) {
-            saved_displacement = try alloc.alloc(math.Vec3, n_atoms);
-        }
-        for (0..n_atoms) |i| {
-            saved_positions.?[i] = atoms[i].position;
-            saved_displacement.?[i] = displacement[i];
-        }
-
-        // Update positions
-        for (0..n_atoms) |i| {
-            atoms[i].position = math.Vec3.add(atoms[i].position, displacement[i]);
-        }
-
-        // vc-relax: update cell based on stress tensor (skip if stress already converged)
-        if (cfg.relax.cell_relax and !stress_converged) {
-            try updateCellFromStress(
-                &current_cell,
-                &current_recip,
-                &current_volume,
-                cached_stress_total.?,
-                atoms,
-                cfg.relax.cell_step,
-            );
-            relax_cfg.cell = current_cell;
-
-            // Invalidate ALL caches that depend on cell (k-points, FFT grids, density)
-            // Density grid size may change with cell, so discard it
-            if (prev_density) |pd| {
-                alloc.free(pd);
-                prev_density = null;
-            }
-            if (prev_kpoint_cache) |old_cache| {
-                for (old_cache) |*c| c.deinit();
-                alloc.free(old_cache);
-                prev_kpoint_cache = null;
-            }
-            if (prev_apply_caches) |caches| {
-                for (caches) |*ac| ac.deinit(alloc);
-                alloc.free(caches);
-                prev_apply_caches = null;
-            }
-            // Recompute Ewald alpha for new cell
-            if (cfg.ewald.alpha <= 0.0) {
-                alpha = computeDefaultAlpha(current_cell);
-            }
-            // Reset BFGS Hessian since cell changed
-            opt.reset();
-            if (prev_positions) |pp| {
-                alloc.free(pp);
-                prev_positions = null;
-            }
-            if (prev_forces) |pf| {
-                alloc.free(pf);
-                prev_forces = null;
-            }
-        }
-
-        // Free forces allocated this iteration (will be reallocated next iteration)
-        // But keep the last iteration's forces for output
-        if (iter + 1 < cfg.relax.max_iter) {
-            alloc.free(final_forces);
-            final_forces = &[_]math.Vec3{};
-        }
     }
-
-    if (!converged) {
-        try logRelaxNotConverged(io, iterations, final_energy, forces_mod.maxForce(final_forces));
-    }
-
-    // Build result
-    var result_trajectory: ?[]RelaxStep = null;
-    if (trajectory) |*traj| {
-        result_trajectory = try traj.toOwnedSlice(alloc);
-    }
-
-    // Transfer cache ownership to result (prevent defer from freeing them)
-    const out_density = prev_density;
-    prev_density = null;
-    const out_kpoint_cache = prev_kpoint_cache;
-    prev_kpoint_cache = null;
-    const out_apply_caches = prev_apply_caches;
-    prev_apply_caches = null;
-    const out_potential = final_potential_saved;
-    final_potential_saved = null;
-
-    return RelaxResult{
-        .final_atoms = atoms,
-        .final_energy = final_energy,
-        .final_forces = final_forces,
-        .iterations = iterations,
-        .converged = converged,
-        .trajectory = result_trajectory,
-        .final_density = out_density,
-        .final_kpoint_cache = out_kpoint_cache,
-        .final_apply_caches = out_apply_caches,
-        .final_potential = out_potential,
-        .final_cell = if (cfg.relax.cell_relax) current_cell else null,
-        .final_recip = if (cfg.relax.cell_relax) current_recip else null,
-        .final_volume = if (cfg.relax.cell_relax) current_volume else null,
-    };
+    return try state.takeResult(alloc, cfg);
 }
 
 /// Update cell parameters based on stress tensor.
@@ -827,6 +1131,7 @@ fn densityToReciprocal(
     // Convert to complex and allocate output
     var data = try alloc.alloc(math.Complex, total);
     defer alloc.free(data);
+
     for (density, 0..) |d, i| {
         data[i] = math.complex.init(d, 0.0);
     }
@@ -834,6 +1139,7 @@ fn densityToReciprocal(
     // 3D FFT in place using the specified backend
     var plan = try fft.Fft3dPlan.initWithBackend(alloc, io, nx, ny, nz, fft_backend);
     defer plan.deinit(alloc);
+
     plan.forward(data);
 
     // Scale by 1/N and reorder to match grid layout (min_h, min_k, min_l)
@@ -941,6 +1247,7 @@ pub fn writeOutput(
     {
         var file = try dir.createFile(io, "relax_status.txt", .{ .truncate = true });
         defer file.close(io);
+
         var buffer: [4096]u8 = undefined;
         var writer = file.writer(io, &buffer);
         const out = &writer.interface;
@@ -963,6 +1270,7 @@ pub fn writeOutput(
     {
         var file = try dir.createFile(io, "relax_final.xyz", .{ .truncate = true });
         defer file.close(io);
+
         var buffer: [8192]u8 = undefined;
         var writer = file.writer(io, &buffer);
         const out = &writer.interface;
@@ -985,6 +1293,7 @@ pub fn writeOutput(
     if (result.final_forces.len > 0) {
         var file = try dir.createFile(io, "relax_forces.csv", .{ .truncate = true });
         defer file.close(io);
+
         var buffer: [8192]u8 = undefined;
         var writer = file.writer(io, &buffer);
         const out = &writer.interface;
@@ -1006,6 +1315,7 @@ pub fn writeOutput(
     if (result.trajectory) |traj| {
         var file = try dir.createFile(io, "relax_trajectory.csv", .{ .truncate = true });
         defer file.close(io);
+
         var buffer: [8192]u8 = undefined;
         var writer = file.writer(io, &buffer);
         const out = &writer.interface;
@@ -1037,6 +1347,7 @@ pub fn writeTrajectoryXyz(
 
     var file = try dir.createFile(io, "relax_trajectory.xyz", .{ .truncate = true });
     defer file.close(io);
+
     var buffer: [16384]u8 = undefined;
     var writer = file.writer(io, &buffer);
     const out = &writer.interface;

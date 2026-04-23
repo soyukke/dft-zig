@@ -209,66 +209,79 @@ fn tridiagEigen(n: usize, diag: []f64, offdiag: []f64, z: *[MAX_NROOTS]f64) void
     for (0..n) |l| {
         var iter: usize = 0;
         while (iter < max_iter) {
-            // Find small off-diagonal element
-            var m: usize = l;
-            while (m < n - 1) {
-                const dd = @abs(diag[m]) + @abs(diag[m + 1]);
-                if (@abs(e[m]) <= 1e-14 * dd) break;
-                m += 1;
-            }
+            const m = findTridiagSplit(n, diag, &e, l);
             if (m == l) break;
 
             iter += 1;
+            applyQlSweep(diag, &e, z, l, m);
+        }
+    }
+}
 
-            // Implicit shift
-            var g = (diag[l + 1] - diag[l]) / (2.0 * e[l]);
-            var r = @sqrt(g * g + 1.0);
-            if (g < 0.0) {
-                r = -r;
+fn findTridiagSplit(n: usize, diag: []const f64, e: *const [MAX_NROOTS]f64, l: usize) usize {
+    var m: usize = l;
+    while (m < n - 1) {
+        const dd = @abs(diag[m]) + @abs(diag[m + 1]);
+        if (@abs(e[m]) <= 1e-14 * dd) break;
+        m += 1;
+    }
+    return m;
+}
+
+fn applyQlSweep(
+    diag: []f64,
+    e: *[MAX_NROOTS]f64,
+    z: *[MAX_NROOTS]f64,
+    l: usize,
+    m: usize,
+) void {
+    // Implicit shift
+    var g = (diag[l + 1] - diag[l]) / (2.0 * e[l]);
+    var r = @sqrt(g * g + 1.0);
+    if (g < 0.0) {
+        r = -r;
+    }
+    g = diag[m] - diag[l] + e[l] / (g + r);
+
+    var s: f64 = 1.0;
+    var c_val: f64 = 1.0;
+    var p: f64 = 0.0;
+
+    // QL transformation
+    if (m > l) {
+        var i: usize = m - 1;
+        var converged = false;
+        while (true) {
+            var f = s * e[i];
+            const b = c_val * e[i];
+            r = @sqrt(f * f + g * g);
+            e[i + 1] = r;
+            if (r < 1e-30) {
+                diag[i + 1] -= p;
+                e[m] = 0.0;
+                converged = true;
+                break;
             }
-            g = diag[m] - diag[l] + e[l] / (g + r);
+            s = f / r;
+            c_val = g / r;
+            g = diag[i + 1] - p;
+            r = (diag[i] - g) * s + 2.0 * c_val * b;
+            p = s * r;
+            diag[i + 1] = g + p;
+            g = c_val * r - b;
 
-            var s: f64 = 1.0;
-            var c_val: f64 = 1.0;
-            var p: f64 = 0.0;
+            // Track eigenvector first components
+            f = z[i + 1];
+            z[i + 1] = s * z[i] + c_val * f;
+            z[i] = c_val * z[i] - s * f;
 
-            // QL transformation
-            if (m > l) {
-                var i: usize = m - 1;
-                var converged = false;
-                while (true) {
-                    var f = s * e[i];
-                    const b = c_val * e[i];
-                    r = @sqrt(f * f + g * g);
-                    e[i + 1] = r;
-                    if (r < 1e-30) {
-                        diag[i + 1] -= p;
-                        e[m] = 0.0;
-                        converged = true;
-                        break;
-                    }
-                    s = f / r;
-                    c_val = g / r;
-                    g = diag[i + 1] - p;
-                    r = (diag[i] - g) * s + 2.0 * c_val * b;
-                    p = s * r;
-                    diag[i + 1] = g + p;
-                    g = c_val * r - b;
-
-                    // Track eigenvector first components
-                    f = z[i + 1];
-                    z[i + 1] = s * z[i] + c_val * f;
-                    z[i] = c_val * z[i] - s * f;
-
-                    if (i == l) break;
-                    i -= 1;
-                }
-                if (!converged) {
-                    diag[l] -= p;
-                    e[l] = g;
-                    e[m] = 0.0;
-                }
-            }
+            if (i == l) break;
+            i -= 1;
+        }
+        if (!converged) {
+            diag[l] -= p;
+            e[l] = g;
+            e[m] = 0.0;
         }
     }
 }

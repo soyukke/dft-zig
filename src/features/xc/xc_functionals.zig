@@ -247,15 +247,20 @@ fn lypEpsilon(rho_val: f64, sigma_val: f64) f64 {
     return lyp_a * (t1 + omega * (t2 + t3 + t4 + t5 + t6));
 }
 
-/// Lee-Yang-Parr correlation for closed-shell systems.
-/// Reference: Lee, Yang, Parr, PRB 37, 785 (1988).
-/// Miehlich parametrization: CPL 157, 200 (1989).
-/// Implementation follows libxc gga_c_lyp.mpl exactly.
-/// Uses analytical derivatives for both v_xc and v_sigma.
-pub fn lypCorrelation(rho: f64, sigma: f64) XcResult {
-    if (rho < 1e-30) return .{ .eps_xc = 0.0, .v_xc = 0.0, .v_sigma = 0.0 };
+/// Intermediate quantities shared between energy and derivative blocks.
+const LypTerms = struct {
+    rho_83: f64,
+    rr: f64,
+    xt2: f64,
+    xs2: f64,
+    den: f64,
+    omega: f64,
+    delta: f64,
+    sigma_terms: f64,
+    t1: f64,
+};
 
-    // Intermediate variables
+fn lypTerms(rho: f64, sigma: f64) LypTerms {
     const rho_13 = math.pow(f64, rho, 1.0 / 3.0);
     const rho_83 = math.pow(f64, rho, 8.0 / 3.0);
     const rr = 1.0 / rho_13; // rho^(-1/3)
@@ -275,47 +280,60 @@ pub fn lypCorrelation(rho: f64, sigma: f64) XcResult {
     const t5 = lyp_aux5 * (delta - 11.0) * (2.0 * xs2);
     const t6 = -lyp_aux6 * xs2 * 5.0 / 6.0;
 
-    const sigma_terms = t2 + t3 + t4 + t5 + t6;
-    const eps_c = lyp_a * (t1 + omega * sigma_terms);
+    return .{
+        .rho_83 = rho_83,
+        .rr = rr,
+        .xt2 = xt2,
+        .xs2 = xs2,
+        .den = den,
+        .omega = omega,
+        .delta = delta,
+        .sigma_terms = t2 + t3 + t4 + t5 + t6,
+        .t1 = t1,
+    };
+}
 
-    // --- Analytical v_xc = d(rho * eps_c) / d(rho) ---
+/// Compute d(eps_c)/d(rho) via chain rule through all intermediates.
+fn lypDepsDrho(rho: f64, t: LypTerms) f64 {
     // Chain rule through intermediate variables:
     //   drr/drho = -1/(3*rho^(4/3)) = -rr/(3*rho)
-    const drr_drho = -rr / (3.0 * rho);
+    const drr_drho = -t.rr / (3.0 * rho);
 
     //   dden/drho = d * drr/drho
     const dden_drho = lyp_d * drr_drho;
 
     //   dt1/drho = d(−1/den)/drho = dden/(den^2)
-    const dt1_drho = dden_drho / (den * den);
+    const dt1_drho = dden_drho / (t.den * t.den);
 
     //   d(omega)/drho = omega * (−c*drr/drho − dden/drho/den)
-    const domega_drho = omega * (-lyp_c * drr_drho - dden_drho / den);
+    const domega_drho = t.omega * (-lyp_c * drr_drho - dden_drho / t.den);
 
     //   d(delta)/drho = d((c + d/den)*rr)/drho
     //     = (−d*dden/drho/(den^2))*rr + (c + d/den)*drr/drho
-    const ddelta_drho = (-lyp_d * dden_drho / (den * den)) * rr + (lyp_c + lyp_d / den) * drr_drho;
+    const ddelta_drho = (-lyp_d * dden_drho / (t.den * t.den)) * t.rr +
+        (lyp_c + lyp_d / t.den) * drr_drho;
 
     //   d(xt2)/drho = −(8/3) * xt2 / rho
-    const dxt2_drho = -(8.0 / 3.0) * xt2 / rho;
+    const dxt2_drho = -(8.0 / 3.0) * t.xt2 / rho;
     //   d(xs2)/drho = −(8/3) * xs2 / rho
-    const dxs2_drho = -(8.0 / 3.0) * xs2 / rho;
+    const dxs2_drho = -(8.0 / 3.0) * t.xs2 / rho;
 
     // Derivatives of t2..t6 w.r.t. rho
     // t2 = -xt2 * ((47 - 7*delta)/72 - 2/3)
-    const dt2_drho = -dxt2_drho * ((47.0 - 7.0 * delta) / 72.0 - 2.0 / 3.0) -
-        xt2 * (-7.0 * ddelta_drho / 72.0);
+    const dt2_drho = -dxt2_drho * ((47.0 - 7.0 * t.delta) / 72.0 - 2.0 / 3.0) -
+        t.xt2 * (-7.0 * ddelta_drho / 72.0);
 
     // t3 = -c_f (constant w.r.t. rho)
     // dt3_drho = 0
 
     // t4 = aux4 * (5/2 - delta/18) * 2*xs2
     const dt4_drho = lyp_aux4 *
-        ((-ddelta_drho / 18.0) * (2.0 * xs2) +
-            (5.0 / 2.0 - delta / 18.0) * (2.0 * dxs2_drho));
+        ((-ddelta_drho / 18.0) * (2.0 * t.xs2) +
+            (5.0 / 2.0 - t.delta / 18.0) * (2.0 * dxs2_drho));
 
     // t5 = aux5 * (delta - 11) * 2*xs2
-    const dt5_drho = lyp_aux5 * (ddelta_drho * (2.0 * xs2) + (delta - 11.0) * (2.0 * dxs2_drho));
+    const dt5_drho = lyp_aux5 *
+        (ddelta_drho * (2.0 * t.xs2) + (t.delta - 11.0) * (2.0 * dxs2_drho));
 
     // t6 = -aux6 * xs2 * 5/6
     const dt6_drho = -lyp_aux6 * dxs2_drho * 5.0 / 6.0;
@@ -323,22 +341,39 @@ pub fn lypCorrelation(rho: f64, sigma: f64) XcResult {
     const dsigma_terms_drho = dt2_drho + dt4_drho + dt5_drho + dt6_drho;
 
     // d(eps_c)/drho = a * (dt1/drho + domega/drho * sigma_terms + omega * dsigma_terms/drho)
-    const deps_drho = lyp_a * (dt1_drho + domega_drho * sigma_terms + omega * dsigma_terms_drho);
+    return lyp_a * (dt1_drho + domega_drho * t.sigma_terms + t.omega * dsigma_terms_drho);
+}
 
-    const v_xc = eps_c + rho * deps_drho;
-
-    // --- Analytical v_sigma = d(rho * eps_c) / d(sigma) ---
-    // Only t2, t4, t5, t6 depend on sigma (via xt2 and xs2).
+/// Compute v_sigma = d(rho * eps_c)/d(sigma).
+/// Only t2, t4, t5, t6 depend on sigma (via xt2 and xs2).
+fn lypVsigma(rho: f64, t: LypTerms) f64 {
     // d(xt2)/d(sigma) = 1/rho^(8/3), d(xs2)/d(sigma) = 2^(2/3)/rho^(8/3)
-    const dxt2_ds = 1.0 / rho_83;
-    const dxs2_ds = two_2_3 / rho_83;
+    const dxt2_ds = 1.0 / t.rho_83;
+    const dxs2_ds = two_2_3 / t.rho_83;
 
-    const dt2_ds = -dxt2_ds * ((47.0 - 7.0 * delta) / 72.0 - 2.0 / 3.0);
-    const dt4_ds = lyp_aux4 * (5.0 / 2.0 - delta / 18.0) * 2.0 * dxs2_ds;
-    const dt5_ds = lyp_aux5 * (delta - 11.0) * 2.0 * dxs2_ds;
+    const dt2_ds = -dxt2_ds * ((47.0 - 7.0 * t.delta) / 72.0 - 2.0 / 3.0);
+    const dt4_ds = lyp_aux4 * (5.0 / 2.0 - t.delta / 18.0) * 2.0 * dxs2_ds;
+    const dt5_ds = lyp_aux5 * (t.delta - 11.0) * 2.0 * dxs2_ds;
     const dt6_ds = -lyp_aux6 * dxs2_ds * 5.0 / 6.0;
 
-    const v_s = rho * lyp_a * omega * (dt2_ds + dt4_ds + dt5_ds + dt6_ds);
+    return rho * lyp_a * t.omega * (dt2_ds + dt4_ds + dt5_ds + dt6_ds);
+}
+
+/// Lee-Yang-Parr correlation for closed-shell systems.
+/// Reference: Lee, Yang, Parr, PRB 37, 785 (1988).
+/// Miehlich parametrization: CPL 157, 200 (1989).
+/// Implementation follows libxc gga_c_lyp.mpl exactly.
+/// Uses analytical derivatives for both v_xc and v_sigma.
+pub fn lypCorrelation(rho: f64, sigma: f64) XcResult {
+    if (rho < 1e-30) return .{ .eps_xc = 0.0, .v_xc = 0.0, .v_sigma = 0.0 };
+
+    const t = lypTerms(rho, sigma);
+    const eps_c = lyp_a * (t.t1 + t.omega * t.sigma_terms);
+
+    const deps_drho = lypDepsDrho(rho, t);
+    const v_xc = eps_c + rho * deps_drho;
+
+    const v_s = lypVsigma(rho, t);
 
     return .{ .eps_xc = eps_c, .v_xc = v_xc, .v_sigma = v_s };
 }

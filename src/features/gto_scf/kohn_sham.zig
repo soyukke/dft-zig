@@ -244,28 +244,7 @@ pub const BasisEvalHessian = struct {
 ///
 /// where dG/dx_i = -2*alpha*x_i*G
 ///       d²G/dx_i dx_j = (-2*alpha*delta_ij + 4*alpha²*x_i*x_j) * G
-pub fn evalBasisFunctionWithHessian(
-    shell: ContractedShell,
-    ang: AngularMomentum,
-    rx: f64,
-    ry: f64,
-    rz: f64,
-) BasisEvalHessian {
-    const dx_c = rx - shell.center.x;
-    const dy_c = ry - shell.center.y;
-    const dz_c = rz - shell.center.z;
-    const r2 = dx_c * dx_c + dy_c * dy_c + dz_c * dz_c;
-    const coords = [3]f64{ dx_c, dy_c, dz_c };
-    const angs = [3]u32{ ang.x, ang.y, ang.z };
-
-    // Angular part: x^ax * y^ay * z^az
-    var pows: [3]f64 = undefined;
-    for (0..3) |i| {
-        pows[i] = intPow(coords[i], angs[i]);
-    }
-    const angular = pows[0] * pows[1] * pows[2];
-
-    // First derivatives of angular part: dA/dx_i
+fn angularFirstDeriv(coords: [3]f64, angs: [3]u32, pows: [3]f64) [3]f64 {
     var dang: [3]f64 = undefined;
     for (0..3) |i| {
         if (angs[i] > 0) {
@@ -279,10 +258,10 @@ pub fn evalBasisFunctionWithHessian(
             dang[i] = 0.0;
         }
     }
+    return dang;
+}
 
-    // Second derivatives of angular part: d²A/dx_i dx_j
-    // For i == j: d²A/dx_i² = ax*(ax-1)*x^(ax-2) * y^ay * z^az (if ax >= 2)
-    // For i != j: d²A/dx_i dx_j = ax*x^(ax-1) * ay*y^(ay-1) * z^az (for x,y), etc.
+fn angularSecondDeriv(coords: [3]f64, angs: [3]u32, pows: [3]f64) [3][3]f64 {
     var d2ang: [3][3]f64 = undefined;
     for (0..3) |i| {
         for (0..3) |j| {
@@ -318,6 +297,74 @@ pub fn evalBasisFunctionWithHessian(
             }
         }
     }
+    return d2ang;
+}
+
+fn accumulatePrimitiveHessian(
+    prim_alpha: f64,
+    c_n_g: f64,
+    coords: [3]f64,
+    angular: f64,
+    dang: [3]f64,
+    d2ang: [3][3]f64,
+    val: *f64,
+    grad: *[3]f64,
+    hess: *[3][3]f64,
+) void {
+    const a2 = -2.0 * prim_alpha;
+    val.* += c_n_g * angular;
+
+    // Gradient: d(phi)/dx_i = c*N * [dA/dx_i * G + A * dG/dx_i]
+    //                        = c*N*G * [dA/dx_i + A * (-2*alpha*x_i)]
+    for (0..3) |i| {
+        grad[i] += c_n_g * (dang[i] + angular * a2 * coords[i]);
+    }
+
+    // Hessian: d²phi/dx_i dx_j = c*N*G * [
+    //   d²A/dx_i dx_j
+    //   + dA/dx_i * (-2*alpha*x_j)
+    //   + dA/dx_j * (-2*alpha*x_i)
+    //   + A * (-2*alpha*delta_ij + 4*alpha²*x_i*x_j)
+    // ]
+    const alpha2 = prim_alpha * prim_alpha;
+    for (0..3) |i| {
+        for (i..3) |j| {
+            const delta_ij: f64 = if (i == j) 1.0 else 0.0;
+            // d²G/dxi dxj / G = -2α δ_ij + 4α² xi xj
+            const d2_gaussian = a2 * delta_ij + 4.0 * alpha2 * coords[i] * coords[j];
+            const h_val = d2ang[i][j] + dang[i] * a2 * coords[j] +
+                dang[j] * a2 * coords[i] + angular * d2_gaussian;
+            hess[i][j] += c_n_g * h_val;
+        }
+    }
+}
+
+pub fn evalBasisFunctionWithHessian(
+    shell: ContractedShell,
+    ang: AngularMomentum,
+    rx: f64,
+    ry: f64,
+    rz: f64,
+) BasisEvalHessian {
+    const dx_c = rx - shell.center.x;
+    const dy_c = ry - shell.center.y;
+    const dz_c = rz - shell.center.z;
+    const r2 = dx_c * dx_c + dy_c * dy_c + dz_c * dz_c;
+    const coords = [3]f64{ dx_c, dy_c, dz_c };
+    const angs = [3]u32{ ang.x, ang.y, ang.z };
+
+    // Angular part: x^ax * y^ay * z^az
+    var pows: [3]f64 = undefined;
+    for (0..3) |i| {
+        pows[i] = intPow(coords[i], angs[i]);
+    }
+    const angular = pows[0] * pows[1] * pows[2];
+
+    // First derivatives of angular part: dA/dx_i
+    const dang = angularFirstDeriv(coords, angs, pows);
+
+    // Second derivatives of angular part: d²A/dx_i dx_j
+    const d2ang = angularSecondDeriv(coords, angs, pows);
 
     var val: f64 = 0.0;
     var grad: [3]f64 = .{ 0.0, 0.0, 0.0 };
@@ -327,33 +374,17 @@ pub fn evalBasisFunctionWithHessian(
         const norm = basis_mod.normalization(prim.alpha, ang.x, ang.y, ang.z);
         const g = @exp(-prim.alpha * r2);
         const c_n_g = prim.coeff * norm * g;
-        const a2 = -2.0 * prim.alpha;
-
-        val += c_n_g * angular;
-
-        // Gradient: d(phi)/dx_i = c*N * [dA/dx_i * G + A * dG/dx_i]
-        //                        = c*N*G * [dA/dx_i + A * (-2*alpha*x_i)]
-        for (0..3) |i| {
-            grad[i] += c_n_g * (dang[i] + angular * a2 * coords[i]);
-        }
-
-        // Hessian: d²phi/dx_i dx_j = c*N*G * [
-        //   d²A/dx_i dx_j
-        //   + dA/dx_i * (-2*alpha*x_j)
-        //   + dA/dx_j * (-2*alpha*x_i)
-        //   + A * (-2*alpha*delta_ij + 4*alpha²*x_i*x_j)
-        // ]
-        for (0..3) |i| {
-            for (i..3) |j| {
-                const delta_ij: f64 = if (i == j) 1.0 else 0.0;
-                // d²G/dxi dxj / G = -2α δ_ij + 4α² xi xj
-                const alpha2 = prim.alpha * prim.alpha;
-                const d2_gaussian = a2 * delta_ij + 4.0 * alpha2 * coords[i] * coords[j];
-                const h_val = d2ang[i][j] + dang[i] * a2 * coords[j] +
-                    dang[j] * a2 * coords[i] + angular * d2_gaussian;
-                hess[i][j] += c_n_g * h_val;
-            }
-        }
+        accumulatePrimitiveHessian(
+            prim.alpha,
+            c_n_g,
+            coords,
+            angular,
+            dang,
+            d2ang,
+            &val,
+            &grad,
+            &hess,
+        );
     }
 
     return .{
@@ -402,6 +433,122 @@ const BasisFuncInfo = struct {
 /// Pre-evaluate all basis functions (and their gradients) on all grid points.
 /// Uses precomputed normalization constants and grid-point screening to skip
 /// negligible basis functions (exp(-alpha_min*r²) < threshold).
+fn countBasisPrimitivePairs(shells: []const ContractedShell) usize {
+    var total_pairs: usize = 0;
+    for (shells) |shell| {
+        const n_cart = basis_mod.numCartesian(shell.l);
+        total_pairs += n_cart * shell.primitives.len;
+    }
+    return total_pairs;
+}
+
+fn buildBasisInfoTable(
+    shells: []const ContractedShell,
+    cn_flat: []f64,
+    alpha_flat: []f64,
+    basis_info: []BasisFuncInfo,
+    screen_threshold_log: f64,
+) void {
+    var mu: usize = 0;
+    var pair_off: usize = 0;
+    for (shells) |shell| {
+        const cart = basis_mod.cartesianExponents(shell.l);
+        const n_cart = basis_mod.numCartesian(shell.l);
+
+        // Find minimum alpha for this shell (most diffuse primitive)
+        var alpha_min: f64 = shell.primitives[0].alpha;
+        for (shell.primitives[1..]) |prim| {
+            if (prim.alpha < alpha_min) alpha_min = prim.alpha;
+        }
+        // screen_r2: beyond this r², exp(-alpha_min*r²) < threshold
+        const sr2 = screen_threshold_log / alpha_min;
+
+        for (0..n_cart) |ic| {
+            const ang = cart[ic];
+            const n_prim = shell.primitives.len;
+            for (shell.primitives, 0..) |prim, ip| {
+                const norm_val = basis_mod.normalization(prim.alpha, ang.x, ang.y, ang.z);
+                cn_flat[pair_off + ip] = prim.coeff * norm_val;
+                alpha_flat[pair_off + ip] = prim.alpha;
+            }
+            basis_info[mu] = .{
+                .cx = shell.center.x,
+                .cy = shell.center.y,
+                .cz = shell.center.z,
+                .ax = ang.x,
+                .ay = ang.y,
+                .az = ang.z,
+                .coeff_norm = cn_flat[pair_off .. pair_off + n_prim],
+                .alphas = alpha_flat[pair_off .. pair_off + n_prim],
+                .screen_r2 = sr2,
+            };
+            pair_off += n_prim;
+            mu += 1;
+        }
+    }
+}
+
+fn evalBasisAtGridPoint(
+    bi: BasisFuncInfo,
+    gp: GridPoint,
+    idx: usize,
+    phi: []f64,
+    dphi_x: []f64,
+    dphi_y: []f64,
+    dphi_z: []f64,
+) void {
+    const dx_c = gp.x - bi.cx;
+    const dy_c = gp.y - bi.cy;
+    const dz_c = gp.z - bi.cz;
+    const r2 = dx_c * dx_c + dy_c * dy_c + dz_c * dz_c;
+
+    // Grid-point screening: skip if all primitives are negligible
+    if (r2 > bi.screen_r2) {
+        // phi/dphi already initialized to 0
+        return;
+    }
+
+    // Angular part
+    const x_pow = intPow(dx_c, bi.ax);
+    const y_pow = intPow(dy_c, bi.ay);
+    const z_pow = intPow(dz_c, bi.az);
+    const angular = x_pow * y_pow * z_pow;
+
+    // Angular derivatives
+    const dang_dx = if (bi.ax > 0)
+        @as(f64, @floatFromInt(bi.ax)) * intPow(dx_c, bi.ax - 1) * y_pow * z_pow
+    else
+        0.0;
+    const dang_dy = if (bi.ay > 0)
+        x_pow * @as(f64, @floatFromInt(bi.ay)) * intPow(dy_c, bi.ay - 1) * z_pow
+    else
+        0.0;
+    const dang_dz = if (bi.az > 0)
+        x_pow * y_pow * @as(f64, @floatFromInt(bi.az)) * intPow(dz_c, bi.az - 1)
+    else
+        0.0;
+
+    // Contract primitives using precomputed coeff*norm
+    var val: f64 = 0.0;
+    var gx: f64 = 0.0;
+    var gy: f64 = 0.0;
+    var gz: f64 = 0.0;
+
+    for (bi.coeff_norm, bi.alphas) |cn, alpha| {
+        const g = @exp(-alpha * r2);
+        const cng = cn * g;
+        val += cng * angular;
+        gx += cng * (dang_dx + angular * (-2.0 * alpha * dx_c));
+        gy += cng * (dang_dy + angular * (-2.0 * alpha * dy_c));
+        gz += cng * (dang_dz + angular * (-2.0 * alpha * dz_c));
+    }
+
+    phi[idx] = val;
+    dphi_x[idx] = gx;
+    dphi_y[idx] = gy;
+    dphi_z[idx] = gz;
+}
+
 pub fn evaluateBasisOnGrid(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
@@ -427,116 +574,24 @@ pub fn evaluateBasisOnGrid(
     @memset(dphi_z, 0.0);
 
     // --- Precompute coeff*norm and alpha for each (basis function, primitive) pair ---
-    // Count total number of (basis function, primitive) pairs.
-    var total_pairs: usize = 0;
-    for (shells) |shell| {
-        const n_cart = basis_mod.numCartesian(shell.l);
-        total_pairs += n_cart * shell.primitives.len;
-    }
+    const total_pairs = countBasisPrimitivePairs(shells);
 
     const cn_flat = try alloc.alloc(f64, total_pairs);
     defer alloc.free(cn_flat);
+
     const alpha_flat = try alloc.alloc(f64, total_pairs);
     defer alloc.free(alpha_flat);
 
     const basis_info = try alloc.alloc(BasisFuncInfo, n_basis);
     defer alloc.free(basis_info);
 
-    {
-        var mu: usize = 0;
-        var pair_off: usize = 0;
-        for (shells) |shell| {
-            const cart = basis_mod.cartesianExponents(shell.l);
-            const n_cart = basis_mod.numCartesian(shell.l);
-
-            // Find minimum alpha for this shell (most diffuse primitive)
-            var alpha_min: f64 = shell.primitives[0].alpha;
-            for (shell.primitives[1..]) |prim| {
-                if (prim.alpha < alpha_min) alpha_min = prim.alpha;
-            }
-            // screen_r2: beyond this r², exp(-alpha_min*r²) < threshold
-            const sr2 = screen_threshold_log / alpha_min;
-
-            for (0..n_cart) |ic| {
-                const ang = cart[ic];
-                const n_prim = shell.primitives.len;
-                for (shell.primitives, 0..) |prim, ip| {
-                    const norm_val = basis_mod.normalization(prim.alpha, ang.x, ang.y, ang.z);
-                    cn_flat[pair_off + ip] = prim.coeff * norm_val;
-                    alpha_flat[pair_off + ip] = prim.alpha;
-                }
-                basis_info[mu] = .{
-                    .cx = shell.center.x,
-                    .cy = shell.center.y,
-                    .cz = shell.center.z,
-                    .ax = ang.x,
-                    .ay = ang.y,
-                    .az = ang.z,
-                    .coeff_norm = cn_flat[pair_off .. pair_off + n_prim],
-                    .alphas = alpha_flat[pair_off .. pair_off + n_prim],
-                    .screen_r2 = sr2,
-                };
-                pair_off += n_prim;
-                mu += 1;
-            }
-        }
-    }
+    buildBasisInfoTable(shells, cn_flat, alpha_flat, basis_info, screen_threshold_log);
 
     // --- Evaluate on grid using precomputed tables with screening ---
     for (grid_points, 0..) |gp, ig| {
         const row_off = ig * n_basis;
         for (basis_info, 0..) |bi, mu| {
-            const dx_c = gp.x - bi.cx;
-            const dy_c = gp.y - bi.cy;
-            const dz_c = gp.z - bi.cz;
-            const r2 = dx_c * dx_c + dy_c * dy_c + dz_c * dz_c;
-
-            // Grid-point screening: skip if all primitives are negligible
-            if (r2 > bi.screen_r2) {
-                // phi/dphi already initialized to 0
-                continue;
-            }
-
-            // Angular part
-            const x_pow = intPow(dx_c, bi.ax);
-            const y_pow = intPow(dy_c, bi.ay);
-            const z_pow = intPow(dz_c, bi.az);
-            const angular = x_pow * y_pow * z_pow;
-
-            // Angular derivatives
-            const dang_dx = if (bi.ax > 0)
-                @as(f64, @floatFromInt(bi.ax)) * intPow(dx_c, bi.ax - 1) * y_pow * z_pow
-            else
-                0.0;
-            const dang_dy = if (bi.ay > 0)
-                x_pow * @as(f64, @floatFromInt(bi.ay)) * intPow(dy_c, bi.ay - 1) * z_pow
-            else
-                0.0;
-            const dang_dz = if (bi.az > 0)
-                x_pow * y_pow * @as(f64, @floatFromInt(bi.az)) * intPow(dz_c, bi.az - 1)
-            else
-                0.0;
-
-            // Contract primitives using precomputed coeff*norm
-            var val: f64 = 0.0;
-            var gx: f64 = 0.0;
-            var gy: f64 = 0.0;
-            var gz: f64 = 0.0;
-
-            for (bi.coeff_norm, bi.alphas) |cn, alpha| {
-                const g = @exp(-alpha * r2);
-                const cng = cn * g;
-                val += cng * angular;
-                gx += cng * (dang_dx + angular * (-2.0 * alpha * dx_c));
-                gy += cng * (dang_dy + angular * (-2.0 * alpha * dy_c));
-                gz += cng * (dang_dz + angular * (-2.0 * alpha * dz_c));
-            }
-
-            const idx = row_off + mu;
-            phi[idx] = val;
-            dphi_x[idx] = gx;
-            dphi_y[idx] = gy;
-            dphi_z[idx] = gz;
+            evalBasisAtGridPoint(bi, gp, row_off + mu, phi, dphi_x, dphi_y, dphi_z);
         }
     }
 
@@ -631,6 +686,115 @@ pub fn computeDensityOnGrid(
 ///   Vxc_{mu,nu} = sum_g w_g * [v_xc * phi_mu * phi_nu
 ///                 + 2 * v_sigma * (grad_rho . (grad(phi_mu)*phi_nu + phi_mu*grad(phi_nu)))]
 ///   E_xc = sum_g w_g * eps_xc(r_g) * rho(r_g)
+const XcPointValues = struct { eps_xc: f64, v_xc: f64, v_sigma: f64 };
+
+fn evaluateXcAtPoint(xc_func: XcFunctional, rho_g: f64, sigma: f64) XcPointValues {
+    switch (xc_func) {
+        .lda_svwn => {
+            const xc = xc_functionals.ldaSvwn(rho_g);
+            return .{ .eps_xc = xc.eps_xc, .v_xc = xc.v_xc, .v_sigma = 0.0 };
+        },
+        .b3lyp => {
+            const xc = xc_functionals.b3lyp(rho_g, sigma);
+            return .{ .eps_xc = xc.eps_xc, .v_xc = xc.v_xc, .v_sigma = xc.v_sigma };
+        },
+    }
+}
+
+fn writeHRowForGridPoint(
+    n_basis: usize,
+    g_off: usize,
+    bog: BasisOnGrid,
+    h_buf: []f64,
+    w: f64,
+    v_xc: f64,
+    v_sigma: f64,
+    grx: f64,
+    gry: f64,
+    grz: f64,
+) void {
+    const half_w_vxc = 0.5 * w * v_xc;
+    const w_vsigma = w * v_sigma;
+
+    if (w_vsigma != 0.0) {
+        // GGA: H[g,mu] = 0.5*w*v_xc*phi + 2*w*v_sigma*(grx*dphi_x + gry*dphi_y + grz*dphi_z)
+        // The factor 2 comes from the chain rule: d(sigma)/d(∇ρ) = 2*∇ρ
+        // where sigma = |∇ρ|², so d(E_xc)/d(∇ρ) = v_sigma * 2*∇ρ
+        const wvs_grx = 2.0 * w_vsigma * grx;
+        const wvs_gry = 2.0 * w_vsigma * gry;
+        const wvs_grz = 2.0 * w_vsigma * grz;
+        for (0..n_basis) |mu| {
+            h_buf[g_off + mu] = half_w_vxc * bog.phi[g_off + mu] +
+                wvs_grx * bog.dphi_x[g_off + mu] +
+                wvs_gry * bog.dphi_y[g_off + mu] +
+                wvs_grz * bog.dphi_z[g_off + mu];
+        }
+    } else {
+        // LDA only: H[g,mu] = 0.5*w*v_xc*phi
+        for (0..n_basis) |mu| {
+            h_buf[g_off + mu] = half_w_vxc * bog.phi[g_off + mu];
+        }
+    }
+}
+
+fn buildHBufferAndXcEnergy(
+    n_basis: usize,
+    n_grid: usize,
+    grid_points: []const GridPoint,
+    bog: BasisOnGrid,
+    rho_vals: []const f64,
+    grad_rho_x: []const f64,
+    grad_rho_y: []const f64,
+    grad_rho_z: []const f64,
+    xc_func: XcFunctional,
+    h_buf: []f64,
+) f64 {
+    @memset(h_buf, 0.0);
+    var e_xc: f64 = 0.0;
+    for (0..n_grid) |ig| {
+        const rho_g = rho_vals[ig];
+        if (rho_g < 1e-20) continue;
+
+        const w = grid_points[ig].w;
+        const grx = grad_rho_x[ig];
+        const gry = grad_rho_y[ig];
+        const grz = grad_rho_z[ig];
+        const sigma = grx * grx + gry * gry + grz * grz;
+
+        const xc_vals = evaluateXcAtPoint(xc_func, rho_g, sigma);
+
+        // Accumulate XC energy
+        e_xc += w * xc_vals.eps_xc * rho_g;
+
+        // Build H row for this grid point
+        writeHRowForGridPoint(
+            n_basis,
+            ig * n_basis,
+            bog,
+            h_buf,
+            w,
+            xc_vals.v_xc,
+            xc_vals.v_sigma,
+            grx,
+            gry,
+            grz,
+        );
+    }
+    return e_xc;
+}
+
+fn symmetrizeVxcMat(n_basis: usize, vxc_mat: []f64) void {
+    for (0..n_basis) |mu| {
+        for (mu + 1..n_basis) |nu| {
+            const val = vxc_mat[mu * n_basis + nu] + vxc_mat[nu * n_basis + mu];
+            vxc_mat[mu * n_basis + nu] = val;
+            vxc_mat[nu * n_basis + mu] = val;
+        }
+        // Diagonal: Vxc[mu,mu] = 2 * Tmp[mu,mu] (from H^T*Phi, symmetric part)
+        vxc_mat[mu * n_basis + mu] *= 2.0;
+    }
+}
+
 fn buildXcContribution(
     n_basis: usize,
     n_grid: usize,
@@ -647,8 +811,6 @@ fn buildXcContribution(
     // Zero out Vxc
     @memset(vxc_mat, 0.0);
 
-    var e_xc: f64 = 0.0;
-
     // Step 1: Evaluate XC functional at all grid points and build
     // weighted basis function array H[g, mu]:
     //   H[g,mu] = 0.5*w*v_xc*phi[g,mu] + w*v_sigma*(grx*dphi_x + gry*dphi_y + grz*dphi_z)[g,mu]
@@ -660,66 +822,18 @@ fn buildXcContribution(
 
     // H buffer: n_grid × n_basis, stored in work_buf
     const h_buf = work_buf[0 .. n_grid * n_basis];
-    @memset(h_buf, 0.0);
-
-    for (0..n_grid) |ig| {
-        const rho_g = rho_vals[ig];
-        if (rho_g < 1e-20) continue;
-
-        const w = grid_points[ig].w;
-        const grx = grad_rho_x[ig];
-        const gry = grad_rho_y[ig];
-        const grz = grad_rho_z[ig];
-        const sigma = grx * grx + gry * gry + grz * grz;
-
-        // Evaluate XC functional
-        var v_xc: f64 = undefined;
-        var v_sigma: f64 = undefined;
-        var eps_xc: f64 = undefined;
-
-        switch (xc_func) {
-            .lda_svwn => {
-                const xc = xc_functionals.ldaSvwn(rho_g);
-                eps_xc = xc.eps_xc;
-                v_xc = xc.v_xc;
-                v_sigma = 0.0;
-            },
-            .b3lyp => {
-                const xc = xc_functionals.b3lyp(rho_g, sigma);
-                eps_xc = xc.eps_xc;
-                v_xc = xc.v_xc;
-                v_sigma = xc.v_sigma;
-            },
-        }
-
-        // Accumulate XC energy
-        e_xc += w * eps_xc * rho_g;
-
-        // Build H row for this grid point
-        const g_off = ig * n_basis;
-        const half_w_vxc = 0.5 * w * v_xc;
-        const w_vsigma = w * v_sigma;
-
-        if (w_vsigma != 0.0) {
-            // GGA: H[g,mu] = 0.5*w*v_xc*phi + 2*w*v_sigma*(grx*dphi_x + gry*dphi_y + grz*dphi_z)
-            // The factor 2 comes from the chain rule: d(sigma)/d(∇ρ) = 2*∇ρ
-            // where sigma = |∇ρ|², so d(E_xc)/d(∇ρ) = v_sigma * 2*∇ρ
-            const wvs_grx = 2.0 * w_vsigma * grx;
-            const wvs_gry = 2.0 * w_vsigma * gry;
-            const wvs_grz = 2.0 * w_vsigma * grz;
-            for (0..n_basis) |mu| {
-                h_buf[g_off + mu] = half_w_vxc * bog.phi[g_off + mu] +
-                    wvs_grx * bog.dphi_x[g_off + mu] +
-                    wvs_gry * bog.dphi_y[g_off + mu] +
-                    wvs_grz * bog.dphi_z[g_off + mu];
-            }
-        } else {
-            // LDA only: H[g,mu] = 0.5*w*v_xc*phi
-            for (0..n_basis) |mu| {
-                h_buf[g_off + mu] = half_w_vxc * bog.phi[g_off + mu];
-            }
-        }
-    }
+    const e_xc = buildHBufferAndXcEnergy(
+        n_basis,
+        n_grid,
+        grid_points,
+        bog,
+        rho_vals,
+        grad_rho_x,
+        grad_rho_y,
+        grad_rho_z,
+        xc_func,
+        h_buf,
+    );
 
     // Step 2: Vxc = H^T * Phi (dgemm), then symmetrize: Vxc += Vxc^T
     // H is n_grid × n_basis (row-major), Phi is n_grid × n_basis (row-major)
@@ -745,15 +859,7 @@ fn buildXcContribution(
     );
 
     // Step 3: Symmetrize: Vxc = Tmp + Tmp^T
-    for (0..n_basis) |mu| {
-        for (mu + 1..n_basis) |nu| {
-            const val = vxc_mat[mu * n_basis + nu] + vxc_mat[nu * n_basis + mu];
-            vxc_mat[mu * n_basis + nu] = val;
-            vxc_mat[nu * n_basis + mu] = val;
-        }
-        // Diagonal: Vxc[mu,mu] = 2 * Tmp[mu,mu] (from H^T*Phi, symmetric part)
-        vxc_mat[mu * n_basis + mu] *= 2.0;
-    }
+    symmetrizeVxcMat(n_basis, vxc_mat);
 
     return e_xc;
 }
@@ -800,6 +906,1060 @@ fn buildExchangeMatrix(
     }
 }
 
+const KsJkCtx = struct {
+    n: usize,
+    hf_frac: f64,
+    df_context: ?*DensityFittingContext,
+    use_libcint_actual: bool,
+    jk_builder: ?*libcint.LibcintJKBuilder,
+    use_direct_scf: bool,
+    shells: []const ContractedShell,
+    schwarz_table: ?*fock.SchwarzTable,
+    schwarz_threshold: f64,
+    eri_table: ?*obara_saika.GeneralEriTable,
+};
+
+fn buildJKForKs(
+    alloc: std.mem.Allocator,
+    ctx: KsJkCtx,
+    p_mat: []const f64,
+    j_mat: []f64,
+    k_mat: []f64,
+) !void {
+    if (ctx.df_context != null) {
+        try ctx.df_context.?.buildJ(alloc, p_mat, j_mat);
+        if (ctx.hf_frac > 0.0) {
+            try ctx.df_context.?.buildK(alloc, p_mat, k_mat);
+        } else {
+            @memset(k_mat, 0.0);
+        }
+    } else if (ctx.use_libcint_actual) {
+        const jk = try ctx.jk_builder.?.buildJK(alloc, p_mat);
+        @memcpy(j_mat, jk.j_matrix);
+        @memcpy(k_mat, jk.k_matrix);
+        alloc.free(jk.j_matrix);
+        alloc.free(jk.k_matrix);
+        if (ctx.hf_frac == 0.0) {
+            @memset(k_mat, 0.0);
+        }
+    } else if (ctx.use_direct_scf) {
+        fock.buildJKDirect(
+            ctx.n,
+            p_mat,
+            ctx.shells,
+            ctx.schwarz_table.?,
+            ctx.schwarz_threshold,
+            j_mat,
+            k_mat,
+        );
+        if (ctx.hf_frac == 0.0) {
+            @memset(k_mat, 0.0);
+        }
+    } else {
+        buildCoulombMatrix(ctx.n, p_mat, ctx.eri_table.?.*, j_mat);
+        if (ctx.hf_frac > 0.0) {
+            buildExchangeMatrix(ctx.n, p_mat, ctx.eri_table.?.*, k_mat);
+        }
+    }
+}
+
+const KsEnergyTerms = struct {
+    e_1e: f64,
+    e_j: f64,
+    e_k: f64,
+};
+
+fn computeKsEnergyTerms(
+    n: usize,
+    p_mat: []const f64,
+    h_core: []const f64,
+    j_mat: []const f64,
+    k_mat: []const f64,
+    hf_frac: f64,
+) KsEnergyTerms {
+    var e_1e: f64 = 0.0;
+    for (0..n) |mu| {
+        for (0..n) |nu| {
+            e_1e += p_mat[mu * n + nu] * h_core[mu * n + nu];
+        }
+    }
+
+    var e_j: f64 = 0.0;
+    for (0..n) |mu| {
+        for (0..n) |nu| {
+            e_j += p_mat[mu * n + nu] * j_mat[mu * n + nu];
+        }
+    }
+    e_j *= 0.5;
+
+    var e_k: f64 = 0.0;
+    if (hf_frac > 0.0) {
+        for (0..n) |mu| {
+            for (0..n) |nu| {
+                e_k += p_mat[mu * n + nu] * k_mat[mu * n + nu];
+            }
+        }
+        e_k *= -0.25 * hf_frac;
+    }
+    return .{ .e_1e = e_1e, .e_j = e_j, .e_k = e_k };
+}
+
+fn assembleFockMatrix(
+    n: usize,
+    h_core: []const f64,
+    j_mat: []const f64,
+    vxc_mat: []const f64,
+    k_mat: []const f64,
+    hf_frac: f64,
+    f_mat: []f64,
+) void {
+    // Build Fock matrix: F = H_core + J - 0.5 * hf_frac * K + Vxc
+    for (0..n * n) |i| {
+        f_mat[i] = h_core[i] + j_mat[i] + vxc_mat[i];
+        if (hf_frac > 0.0) {
+            f_mat[i] -= 0.5 * hf_frac * k_mat[i];
+        }
+    }
+}
+
+fn buildDensityAndXc(
+    alloc: std.mem.Allocator,
+    n: usize,
+    grid_points: []const GridPoint,
+    p_mat: []const f64,
+    bog: BasisOnGrid,
+    xc_func: XcFunctional,
+    vxc_mat: []f64,
+    xc_work_buf: []f64,
+) !f64 {
+    const dens = try computeDensityOnGrid(alloc, n, grid_points.len, p_mat, bog);
+    defer {
+        alloc.free(dens.rho);
+        alloc.free(dens.grad_x);
+        alloc.free(dens.grad_y);
+        alloc.free(dens.grad_z);
+    }
+
+    return buildXcContribution(
+        n,
+        grid_points.len,
+        grid_points,
+        bog,
+        dens.rho,
+        dens.grad_x,
+        dens.grad_y,
+        dens.grad_z,
+        xc_func,
+        vxc_mat,
+        xc_work_buf,
+    );
+}
+
+fn logKsIterVerbose(
+    verbose: bool,
+    iter: usize,
+    n: usize,
+    e_total: f64,
+    delta_e: f64,
+    rms_p: f64,
+    terms: KsEnergyTerms,
+    e_xc: f64,
+    v_nn: f64,
+    p_mat: []const f64,
+    s_mat: []const f64,
+) void {
+    if (!verbose) return;
+    logging.verbose(
+        true,
+        "  SCF iter {d:3}: E = {d:20.12}  dE = {e:10.3}  dP = {e:10.3}\n",
+        .{ iter, e_total, delta_e, rms_p },
+    );
+    if (iter == 0) {
+        logging.verbose(
+            true,
+            "    E_1e = {d:20.12}  E_J = {d:20.12}  E_K = {d:20.12}" ++
+                "  E_XC = {d:20.12}  V_nn = {d:20.12}\n",
+            .{ terms.e_1e, terms.e_j, terms.e_k, e_xc, v_nn },
+        );
+        var tr_p: f64 = 0.0;
+        var tr_ps: f64 = 0.0;
+        for (0..n) |imu| {
+            tr_p += p_mat[imu * n + imu];
+            for (0..n) |inu| {
+                tr_ps += p_mat[imu * n + inu] * s_mat[imu * n + inu];
+            }
+        }
+        logging.verbose(
+            true,
+            "    Tr(P) = {d:20.12}  Tr(P*S) = {d:20.12}\n",
+            .{ tr_p, tr_ps },
+        );
+    }
+}
+
+fn logInitialEigenAndSMatrix(
+    alloc: std.mem.Allocator,
+    n: usize,
+    eigen_values: []const f64,
+    s_mat: []const f64,
+    step5_secs: f64,
+) !void {
+    logging.verbose(
+        true,
+        "  [KS] Step 5: Done. ({d:.2}s)\n",
+        .{step5_secs},
+    );
+    // Print initial orbital eigenvalues for comparison with PySCF
+    logging.verbose(true, "  [KS] Initial orbital eigenvalues (ALL {d}):\n", .{n});
+    for (0..n) |i| {
+        logging.verbose(true, "    [{d:2}] {e:20.12}\n", .{ i, eigen_values[i] });
+    }
+    // Print S matrix eigenvalues for condition number check
+    const s_copy = try alloc.alloc(f64, n * n);
+    defer alloc.free(s_copy);
+
+    @memcpy(s_copy, s_mat);
+    const s_eigen = try solveStandardEigen(alloc, n, s_copy);
+    defer {
+        alloc.free(s_eigen.values);
+        alloc.free(s_eigen.vectors);
+    }
+
+    logging.verbose(true, "  [KS] S matrix eigenvalues:\n", .{});
+    logging.verbose(true, "    min = {e:20.12}\n", .{s_eigen.values[0]});
+    logging.verbose(true, "    max = {e:20.12}\n", .{s_eigen.values[n - 1]});
+    const cond_num = s_eigen.values[n - 1] / s_eigen.values[0];
+    logging.verbose(true, "    condition number = {e:10.3}\n", .{cond_num});
+    for (0..@min(n, 5)) |i| {
+        logging.verbose(true, "    [{d:2}] {e:20.12}\n", .{ i, s_eigen.values[i] });
+    }
+    if (n > 10) {
+        logging.verbose(true, "    ...\n", .{});
+        for (n - 5..n) |i| {
+            logging.verbose(true, "    [{d:2}] {e:20.12}\n", .{ i, s_eigen.values[i] });
+        }
+    }
+}
+
+const OneElectronMats = struct {
+    s_mat: []f64,
+    t_mat: []f64,
+    v_mat: []f64,
+    h_core: []f64,
+};
+
+fn buildKsOneElectronMats(
+    alloc: std.mem.Allocator,
+    shells: []const ContractedShell,
+    nuc_positions: []const math_mod.Vec3,
+    nuc_charges: []const f64,
+    n: usize,
+    cint_data_storage: ?libcint.LibcintData,
+    use_libcint_actual: bool,
+) !OneElectronMats {
+    const s_mat = if (use_libcint_actual)
+        try libcint.buildOverlapMatrix(alloc, cint_data_storage.?)
+    else
+        try obara_saika.buildOverlapMatrix(alloc, shells);
+
+    const t_mat = if (use_libcint_actual)
+        try libcint.buildKineticMatrix(alloc, cint_data_storage.?)
+    else
+        try obara_saika.buildKineticMatrix(alloc, shells);
+
+    const v_mat = if (use_libcint_actual)
+        try libcint.buildNuclearMatrix(alloc, cint_data_storage.?)
+    else
+        try obara_saika.buildNuclearMatrix(alloc, shells, nuc_positions, nuc_charges);
+
+    const h_core = try alloc.alloc(f64, n * n);
+    for (0..n * n) |i| {
+        h_core[i] = t_mat[i] + v_mat[i];
+    }
+    return .{ .s_mat = s_mat, .t_mat = t_mat, .v_mat = v_mat, .h_core = h_core };
+}
+
+fn buildAutoAuxShells(
+    alloc: std.mem.Allocator,
+    n: usize,
+    nuc_positions: []const math_mod.Vec3,
+    nuc_charges: []const f64,
+    out_buf_to_free: *?[]ContractedShell,
+) ![]const ContractedShell {
+    // Build def2-universal-JKFIT auxiliary basis automatically
+    const aux_buf = try alloc.alloc(ContractedShell, n * 10); // generous upper bound
+    errdefer alloc.free(aux_buf);
+
+    var aux_count: usize = 0;
+
+    for (0..nuc_positions.len) |i| {
+        const z: u32 = @intFromFloat(nuc_charges[i]);
+        if (aux_basis_mod.buildDef2UniversalJkfit(z, nuc_positions[i])) |aux_result| {
+            for (aux_result.shells[0..aux_result.count]) |s| {
+                aux_buf[aux_count] = s;
+                aux_count += 1;
+            }
+        }
+    }
+    out_buf_to_free.* = aux_buf;
+    return aux_buf[0..aux_count];
+}
+
+fn buildMolecularGridFromNuclei(
+    alloc: std.mem.Allocator,
+    nuc_positions: []const math_mod.Vec3,
+    nuc_charges: []const f64,
+    params: KsParams,
+) ![]becke.GridPoint {
+    const n_atoms = nuc_positions.len;
+    const atoms = try alloc.alloc(becke.Atom, n_atoms);
+    defer alloc.free(atoms);
+
+    for (0..n_atoms) |i| {
+        atoms[i] = .{
+            .x = nuc_positions[i].x,
+            .y = nuc_positions[i].y,
+            .z = nuc_positions[i].z,
+            .z_number = @intFromFloat(nuc_charges[i]),
+        };
+    }
+
+    const grid_config = becke.GridConfig{
+        .n_radial = params.n_radial,
+        .n_angular = params.n_angular,
+        .prune = params.prune,
+        .use_atomic_radii = true,
+        .becke_hardness = 3,
+    };
+    return try becke.buildMolecularGrid(alloc, atoms, grid_config);
+}
+
+const KsScfState = struct {
+    e_total: f64,
+    e_old: f64,
+    converged: bool,
+    final_e_xc: f64,
+    final_e_1e: f64,
+    final_e_j: f64,
+    final_e_k: f64,
+    scf_jk_ns: u64,
+    scf_xc_ns: u64,
+    scf_diag_ns: u64,
+};
+
+const KsScfBuffers = struct {
+    p_old: []f64,
+    f_mat: []f64,
+    j_mat: []f64,
+    k_mat: []f64,
+    vxc_mat: []f64,
+    xc_work_buf: []f64,
+    diis: ?GtoDiis,
+    f_diis: ?[]f64,
+
+    fn deinit(self: *KsScfBuffers, alloc: std.mem.Allocator) void {
+        alloc.free(self.p_old);
+        alloc.free(self.f_mat);
+        alloc.free(self.j_mat);
+        alloc.free(self.k_mat);
+        alloc.free(self.vxc_mat);
+        alloc.free(self.xc_work_buf);
+        if (self.diis) |*d| d.deinit();
+        if (self.f_diis) |buf| alloc.free(buf);
+    }
+};
+
+fn allocKsScfBuffers(
+    alloc: std.mem.Allocator,
+    n: usize,
+    grid_point_count: usize,
+    params: KsParams,
+) !KsScfBuffers {
+    const p_old = try alloc.alloc(f64, n * n);
+    errdefer alloc.free(p_old);
+    @memset(p_old, 0.0);
+
+    const f_mat = try alloc.alloc(f64, n * n);
+    errdefer alloc.free(f_mat);
+    const j_mat = try alloc.alloc(f64, n * n);
+    errdefer alloc.free(j_mat);
+    const k_mat = try alloc.alloc(f64, n * n);
+    errdefer alloc.free(k_mat);
+    const vxc_mat = try alloc.alloc(f64, n * n);
+    errdefer alloc.free(vxc_mat);
+    const xc_work_buf = try alloc.alloc(f64, grid_point_count * n);
+    errdefer alloc.free(xc_work_buf);
+
+    var diis: ?GtoDiis = if (params.use_diis)
+        GtoDiis.init(alloc, n, params.diis_max_vectors)
+    else
+        null;
+    errdefer if (diis) |*d| d.deinit();
+
+    const f_diis = if (params.use_diis) try alloc.alloc(f64, n * n) else null;
+    errdefer if (f_diis) |buf| alloc.free(buf);
+
+    return .{
+        .p_old = p_old,
+        .f_mat = f_mat,
+        .j_mat = j_mat,
+        .k_mat = k_mat,
+        .vxc_mat = vxc_mat,
+        .xc_work_buf = xc_work_buf,
+        .diis = diis,
+        .f_diis = f_diis,
+    };
+}
+
+fn initKsScfState() KsScfState {
+    return .{
+        .e_total = 0.0,
+        .e_old = 0.0,
+        .converged = false,
+        .final_e_xc = 0.0,
+        .final_e_1e = 0.0,
+        .final_e_j = 0.0,
+        .final_e_k = 0.0,
+        .scf_jk_ns = 0,
+        .scf_xc_ns = 0,
+        .scf_diag_ns = 0,
+    };
+}
+
+fn logKsScfTiming(verbose: bool, state: KsScfState) void {
+    if (!verbose) return;
+    logging.verbose(true, "  [KS] SCF timing: J/K={d:.2}s  XC={d:.2}s  diag={d:.2}s\n", .{
+        @as(f64, @floatFromInt(state.scf_jk_ns)) / 1e9,
+        @as(f64, @floatFromInt(state.scf_xc_ns)) / 1e9,
+        @as(f64, @floatFromInt(state.scf_diag_ns)) / 1e9,
+    });
+}
+
+fn finalizeUnconvergedKsState(
+    alloc: std.mem.Allocator,
+    n: usize,
+    hf_frac: f64,
+    v_nn: f64,
+    h_core: []const f64,
+    jk_ctx: KsJkCtx,
+    grid_points: []const becke.GridPoint,
+    p_mat: []f64,
+    bog: BasisOnGrid,
+    xc_functional: XcFunctional,
+    bufs: *const KsScfBuffers,
+    state: *KsScfState,
+) !void {
+    if (state.converged) return;
+    try buildJKForKs(alloc, jk_ctx, p_mat, bufs.j_mat, bufs.k_mat);
+    state.final_e_xc = try buildDensityAndXc(
+        alloc,
+        n,
+        grid_points,
+        p_mat,
+        bog,
+        xc_functional,
+        bufs.vxc_mat,
+        bufs.xc_work_buf,
+    );
+    const terms = computeKsEnergyTerms(n, p_mat, h_core, bufs.j_mat, bufs.k_mat, hf_frac);
+    state.final_e_1e = terms.e_1e;
+    state.final_e_j = terms.e_j;
+    state.final_e_k = terms.e_k;
+    state.e_total = terms.e_1e + terms.e_j + terms.e_k + state.final_e_xc + v_nn;
+}
+
+fn computeKsIterEnergyAndFock(
+    n: usize,
+    hf_frac: f64,
+    v_nn: f64,
+    h_core: []const f64,
+    j_mat: []const f64,
+    k_mat: []const f64,
+    vxc_mat: []const f64,
+    e_xc: f64,
+    p_mat: []const f64,
+    f_mat: []f64,
+    state: *KsScfState,
+) KsEnergyTerms {
+    assembleFockMatrix(n, h_core, j_mat, vxc_mat, k_mat, hf_frac, f_mat);
+    const terms = computeKsEnergyTerms(n, p_mat, h_core, j_mat, k_mat, hf_frac);
+    state.e_total = terms.e_1e + terms.e_j + terms.e_k + e_xc + v_nn;
+    state.final_e_xc = e_xc;
+    state.final_e_1e = terms.e_1e;
+    state.final_e_j = terms.e_j;
+    state.final_e_k = terms.e_k;
+    return terms;
+}
+
+fn diagonalizeAndUpdateDensity(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    iter: usize,
+    n: usize,
+    n_occ: usize,
+    s_mat: []const f64,
+    f_mat: []f64,
+    p_mat: []f64,
+    f_diis: ?[]f64,
+    diis: *?GtoDiis,
+    eigen: *linalg.RealEigenDecomp,
+    params: KsParams,
+    state: *KsScfState,
+) !void {
+    const f_to_diag = if (diis.* != null and iter >= params.diis_start_iter) blk: {
+        try diis.*.?.extrapolate(f_mat, p_mat, s_mat, f_diis.?);
+        break :blk f_diis.?;
+    } else f_mat;
+
+    alloc.free(eigen.vectors);
+    alloc.free(eigen.values);
+
+    const timer = std.Io.Clock.Timestamp.now(io, .awake);
+    eigen.* = try solveRoothaanHall(alloc, n, f_to_diag, s_mat);
+    state.scf_diag_ns += @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
+
+    density_matrix.updateDensityMatrix(n, n_occ, eigen.vectors, p_mat);
+}
+
+fn runKsScfIteration(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    iter: usize,
+    n: usize,
+    n_occ: usize,
+    hf_frac: f64,
+    v_nn: f64,
+    h_core: []const f64,
+    s_mat: []const f64,
+    jk_ctx: KsJkCtx,
+    grid_points: []const becke.GridPoint,
+    bog: BasisOnGrid,
+    xc_functional: XcFunctional,
+    params: KsParams,
+    p_mat: []f64,
+    p_old: []f64,
+    f_mat: []f64,
+    j_mat: []f64,
+    k_mat: []f64,
+    vxc_mat: []f64,
+    xc_work_buf: []f64,
+    f_diis: ?[]f64,
+    diis: *?GtoDiis,
+    eigen: *linalg.RealEigenDecomp,
+    state: *KsScfState,
+) !bool {
+    var timer = std.Io.Clock.Timestamp.now(io, .awake);
+    try buildJKForKs(alloc, jk_ctx, p_mat, j_mat, k_mat);
+    state.scf_jk_ns += @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
+
+    timer = std.Io.Clock.Timestamp.now(io, .awake);
+    const e_xc = try buildDensityAndXc(
+        alloc,
+        n,
+        grid_points,
+        p_mat,
+        bog,
+        xc_functional,
+        vxc_mat,
+        xc_work_buf,
+    );
+    state.scf_xc_ns += @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
+
+    const terms = computeKsIterEnergyAndFock(
+        n,
+        hf_frac,
+        v_nn,
+        h_core,
+        j_mat,
+        k_mat,
+        vxc_mat,
+        e_xc,
+        p_mat,
+        f_mat,
+        state,
+    );
+
+    const delta_e = @abs(state.e_total - state.e_old);
+    const rms_p = density_matrix.densityRmsDiff(n, p_mat, p_old);
+
+    logKsIterVerbose(
+        params.verbose,
+        iter,
+        n,
+        state.e_total,
+        delta_e,
+        rms_p,
+        terms,
+        e_xc,
+        v_nn,
+        p_mat,
+        s_mat,
+    );
+
+    if (iter > 0 and delta_e < params.energy_threshold and rms_p < params.density_threshold) {
+        state.converged = true;
+        return true;
+    }
+
+    state.e_old = state.e_total;
+    @memcpy(p_old, p_mat);
+
+    try diagonalizeAndUpdateDensity(
+        alloc,
+        io,
+        iter,
+        n,
+        n_occ,
+        s_mat,
+        f_mat,
+        p_mat,
+        f_diis,
+        diis,
+        eigen,
+        params,
+        state,
+    );
+    return false;
+}
+
+fn elapsedSeconds(io: std.Io, timer: std.Io.Clock.Timestamp) f64 {
+    return @as(
+        f64,
+        @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds))),
+    ) / 1e9;
+}
+
+fn logKsStepDone(
+    verbose: bool,
+    step_label: []const u8,
+    io: std.Io,
+    timer: std.Io.Clock.Timestamp,
+) void {
+    const secs = elapsedSeconds(io, timer);
+    logging.verbose(verbose, "  [KS] {s}: Done. ({d:.2}s)\n", .{ step_label, secs });
+}
+
+fn logKsStep3Done(
+    verbose: bool,
+    grid_count: usize,
+    io: std.Io,
+    timer: std.Io.Clock.Timestamp,
+) void {
+    const secs = elapsedSeconds(io, timer);
+    logging.verbose(
+        verbose,
+        "  [KS] Step 3: Done ({d} grid points). ({d:.2}s)\n",
+        .{ grid_count, secs },
+    );
+}
+
+fn logKsStep5Verbose(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    timer: std.Io.Clock.Timestamp,
+    n: usize,
+    eigen_values: []const f64,
+    s_mat: []const f64,
+) !void {
+    const step5_secs = elapsedSeconds(io, timer);
+    try logInitialEigenAndSMatrix(alloc, n, eigen_values, s_mat, step5_secs);
+}
+
+fn prepareLibcintIfEnabled(
+    alloc: std.mem.Allocator,
+    shells: []const ContractedShell,
+    nuc_positions: []const math_mod.Vec3,
+    nuc_charges: []const f64,
+    use_libcint: bool,
+    out_nuc_pos_flat: *[]const [3]f64,
+) !?libcint.LibcintData {
+    const nuc_pos_flat = try alloc.alloc([3]f64, nuc_positions.len);
+    for (nuc_positions, 0..) |pos, i| {
+        nuc_pos_flat[i] = .{ pos.x, pos.y, pos.z };
+    }
+    out_nuc_pos_flat.* = nuc_pos_flat;
+
+    if (!use_libcint) return null;
+    return libcint.LibcintData.init(alloc, shells, nuc_pos_flat, nuc_charges) catch null;
+}
+
+fn buildEriOrSchwarzTables(
+    alloc: std.mem.Allocator,
+    shells: []const ContractedShell,
+    cint_data_storage: ?libcint.LibcintData,
+    use_libcint_actual: bool,
+    params: KsParams,
+    eri_table: *?obara_saika.GeneralEriTable,
+    schwarz_table: *?fock.SchwarzTable,
+    jk_builder: *?libcint.LibcintJKBuilder,
+) !void {
+    if (use_libcint_actual) {
+        jk_builder.* = try libcint.LibcintJKBuilder.init(
+            alloc,
+            cint_data_storage.?,
+            params.schwarz_threshold,
+        );
+    } else if (params.use_direct_scf) {
+        schwarz_table.* = try fock.buildSchwarzTable(alloc, shells);
+    } else {
+        eri_table.* = try obara_saika.buildEriTable(alloc, shells);
+    }
+}
+
+fn buildDensityFittingIfEnabled(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    shells: []const ContractedShell,
+    nuc_positions: []const math_mod.Vec3,
+    nuc_charges: []const f64,
+    n: usize,
+    params: KsParams,
+) !?DensityFittingContext {
+    if (!params.use_density_fitting) return null;
+    const timer = std.Io.Clock.Timestamp.now(io, .awake);
+    logging.verbose(params.verbose, "  [KS] Step 2b: Building density fitting context...\n", .{});
+
+    var aux_buf_to_free: ?[]ContractedShell = null;
+    const aux_shells = if (params.aux_shells) |as|
+        as
+    else
+        try buildAutoAuxShells(alloc, n, nuc_positions, nuc_charges, &aux_buf_to_free);
+
+    const df = try DensityFittingContext.init(alloc, shells, aux_shells);
+    if (aux_buf_to_free) |buf| alloc.free(buf);
+
+    const step2b_ns = @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 2b: Done (n_aux={d}). ({d:.2}s)\n",
+        .{ df.n_aux, @as(f64, @floatFromInt(step2b_ns)) / 1e9 },
+    );
+    return df;
+}
+
+fn packageKsResult(
+    loop_out: anytype,
+    v_nn: f64,
+    eigen: linalg.RealEigenDecomp,
+    p_mat: []f64,
+) KsResult {
+    return .{
+        .total_energy = loop_out.state.e_total,
+        .electronic_energy = loop_out.state.e_total - v_nn,
+        .nuclear_repulsion = v_nn,
+        .one_electron_energy = loop_out.state.final_e_1e,
+        .coulomb_energy = loop_out.state.final_e_j,
+        .xc_energy = loop_out.state.final_e_xc,
+        .hf_exchange_energy = loop_out.state.final_e_k,
+        .orbital_energies = eigen.values,
+        .mo_coefficients = eigen.vectors,
+        .density_matrix_result = p_mat,
+        .iterations = loop_out.iter,
+        .converged = loop_out.state.converged,
+    };
+}
+
+fn makeKsJkCtx(
+    n: usize,
+    hf_frac: f64,
+    shells: []const ContractedShell,
+    use_libcint_actual: bool,
+    params: KsParams,
+    df_context: *?DensityFittingContext,
+    jk_builder: *?libcint.LibcintJKBuilder,
+    schwarz_table: *?fock.SchwarzTable,
+    eri_table: *?obara_saika.GeneralEriTable,
+) KsJkCtx {
+    return .{
+        .n = n,
+        .hf_frac = hf_frac,
+        .df_context = if (df_context.*) |*dfc| dfc else null,
+        .use_libcint_actual = use_libcint_actual,
+        .jk_builder = if (jk_builder.*) |*jkb| jkb else null,
+        .use_direct_scf = params.use_direct_scf,
+        .shells = shells,
+        .schwarz_table = if (schwarz_table.*) |*st| st else null,
+        .schwarz_threshold = params.schwarz_threshold,
+        .eri_table = if (eri_table.*) |*et| et else null,
+    };
+}
+
+const KsIntegralResources = struct {
+    nuc_pos_flat: []const [3]f64,
+    cint_data_storage: ?libcint.LibcintData,
+    one_mats: OneElectronMats,
+    eri_table: ?obara_saika.GeneralEriTable,
+    schwarz_table: ?fock.SchwarzTable,
+    jk_builder: ?libcint.LibcintJKBuilder,
+    df_context: ?DensityFittingContext,
+    use_libcint_actual: bool,
+
+    fn deinit(self: *KsIntegralResources, alloc: std.mem.Allocator) void {
+        alloc.free(self.nuc_pos_flat);
+        if (self.cint_data_storage) |*cd| cd.deinit(alloc);
+        alloc.free(self.one_mats.s_mat);
+        alloc.free(self.one_mats.t_mat);
+        alloc.free(self.one_mats.v_mat);
+        alloc.free(self.one_mats.h_core);
+        if (self.eri_table) |*et| et.deinit(alloc);
+        if (self.schwarz_table) |*st| st.deinit(alloc);
+        if (self.jk_builder) |*jkb| jkb.deinit(alloc);
+        if (self.df_context) |*dfc| dfc.deinit();
+    }
+};
+
+const KsOneElectronStage = struct {
+    nuc_pos_flat: []const [3]f64,
+    cint_data_storage: ?libcint.LibcintData,
+    one_mats: OneElectronMats,
+    use_libcint_actual: bool,
+};
+
+fn runKsStepOne(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    shells: []const ContractedShell,
+    nuc_positions: []const math_mod.Vec3,
+    nuc_charges: []const f64,
+    n: usize,
+    params: KsParams,
+) !KsOneElectronStage {
+    const timer = std.Io.Clock.Timestamp.now(io, .awake);
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 1: Building one-electron integrals (n={d}, libcint={})...\n",
+        .{ n, params.use_libcint },
+    );
+
+    var nuc_pos_flat: []const [3]f64 = &.{};
+    const cint_data_storage = try prepareLibcintIfEnabled(
+        alloc,
+        shells,
+        nuc_positions,
+        nuc_charges,
+        params.use_libcint,
+        &nuc_pos_flat,
+    );
+    const use_libcint_actual = cint_data_storage != null;
+
+    const one_mats = try buildKsOneElectronMats(
+        alloc,
+        shells,
+        nuc_positions,
+        nuc_charges,
+        n,
+        cint_data_storage,
+        use_libcint_actual,
+    );
+    logKsStepDone(params.verbose, "Step 1", io, timer);
+
+    return .{
+        .nuc_pos_flat = nuc_pos_flat,
+        .cint_data_storage = cint_data_storage,
+        .one_mats = one_mats,
+        .use_libcint_actual = use_libcint_actual,
+    };
+}
+
+const KsTwoElectronStage = struct {
+    eri_table: ?obara_saika.GeneralEriTable,
+    schwarz_table: ?fock.SchwarzTable,
+    jk_builder: ?libcint.LibcintJKBuilder,
+};
+
+fn runKsStepTwo(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    shells: []const ContractedShell,
+    cint_data_storage: ?libcint.LibcintData,
+    use_libcint_actual: bool,
+    params: KsParams,
+) !KsTwoElectronStage {
+    const timer = std.Io.Clock.Timestamp.now(io, .awake);
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 2: Building Schwarz/ERI table (direct={}, libcint={})...\n",
+        .{ params.use_direct_scf, use_libcint_actual },
+    );
+    var eri_table: ?obara_saika.GeneralEriTable = null;
+    var schwarz_table: ?fock.SchwarzTable = null;
+    var jk_builder: ?libcint.LibcintJKBuilder = null;
+    try buildEriOrSchwarzTables(
+        alloc,
+        shells,
+        cint_data_storage,
+        use_libcint_actual,
+        params,
+        &eri_table,
+        &schwarz_table,
+        &jk_builder,
+    );
+    logKsStepDone(params.verbose, "Step 2", io, timer);
+    return .{ .eri_table = eri_table, .schwarz_table = schwarz_table, .jk_builder = jk_builder };
+}
+
+fn prepareKsIntegralResources(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    shells: []const ContractedShell,
+    nuc_positions: []const math_mod.Vec3,
+    nuc_charges: []const f64,
+    n: usize,
+    params: KsParams,
+) !KsIntegralResources {
+    const stage1 = try runKsStepOne(alloc, io, shells, nuc_positions, nuc_charges, n, params);
+    const stage2 = try runKsStepTwo(
+        alloc,
+        io,
+        shells,
+        stage1.cint_data_storage,
+        stage1.use_libcint_actual,
+        params,
+    );
+    const df_context = try buildDensityFittingIfEnabled(
+        alloc,
+        io,
+        shells,
+        nuc_positions,
+        nuc_charges,
+        n,
+        params,
+    );
+
+    return .{
+        .nuc_pos_flat = stage1.nuc_pos_flat,
+        .cint_data_storage = stage1.cint_data_storage,
+        .one_mats = stage1.one_mats,
+        .eri_table = stage2.eri_table,
+        .schwarz_table = stage2.schwarz_table,
+        .jk_builder = stage2.jk_builder,
+        .df_context = df_context,
+        .use_libcint_actual = stage1.use_libcint_actual,
+    };
+}
+
+fn runKsMainSccLoop(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    n: usize,
+    n_occ: usize,
+    hf_frac: f64,
+    v_nn: f64,
+    h_core: []const f64,
+    s_mat: []const f64,
+    jk_ctx: KsJkCtx,
+    grid_points: []const becke.GridPoint,
+    bog: BasisOnGrid,
+    params: KsParams,
+    p_mat: []f64,
+    eigen: *linalg.RealEigenDecomp,
+) !struct { state: KsScfState, iter: usize } {
+    var bufs = try allocKsScfBuffers(alloc, n, grid_points.len, params);
+    defer bufs.deinit(alloc);
+
+    var state = initKsScfState();
+
+    var iter: usize = 0;
+    while (iter < params.max_iter) : (iter += 1) {
+        if (try runKsScfIteration(
+            alloc,
+            io,
+            iter,
+            n,
+            n_occ,
+            hf_frac,
+            v_nn,
+            h_core,
+            s_mat,
+            jk_ctx,
+            grid_points,
+            bog,
+            params.xc_functional,
+            params,
+            p_mat,
+            bufs.p_old,
+            bufs.f_mat,
+            bufs.j_mat,
+            bufs.k_mat,
+            bufs.vxc_mat,
+            bufs.xc_work_buf,
+            bufs.f_diis,
+            &bufs.diis,
+            eigen,
+            &state,
+        )) break;
+    }
+
+    logKsScfTiming(params.verbose, state);
+    try finalizeUnconvergedKsState(
+        alloc,
+        n,
+        hf_frac,
+        v_nn,
+        h_core,
+        jk_ctx,
+        grid_points,
+        p_mat,
+        bog,
+        params.xc_functional,
+        &bufs,
+        &state,
+    );
+
+    return .{ .state = state, .iter = iter };
+}
+
+fn runKsStepThree(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    nuc_positions: []const math_mod.Vec3,
+    nuc_charges: []const f64,
+    params: KsParams,
+) ![]becke.GridPoint {
+    const timer = std.Io.Clock.Timestamp.now(io, .awake);
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 3: Building molecular grid ({d} radial, {d} angular)...\n",
+        .{ params.n_radial, params.n_angular },
+    );
+    const grid_points = try buildMolecularGridFromNuclei(alloc, nuc_positions, nuc_charges, params);
+    logKsStep3Done(params.verbose, grid_points.len, io, timer);
+    return grid_points;
+}
+
+fn runKsStepFour(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    shells: []const ContractedShell,
+    grid_points: []const becke.GridPoint,
+    params: KsParams,
+) !BasisOnGrid {
+    const timer = std.Io.Clock.Timestamp.now(io, .awake);
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 4: Pre-evaluating basis functions on grid...\n",
+        .{},
+    );
+    const bog = try evaluateBasisOnGrid(alloc, shells, grid_points);
+    logKsStepDone(params.verbose, "Step 4", io, timer);
+    return bog;
+}
+
+fn runKsStepFive(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    n: usize,
+    h_core: []const f64,
+    s_mat: []const f64,
+    params: KsParams,
+) !linalg.RealEigenDecomp {
+    const timer = std.Io.Clock.Timestamp.now(io, .awake);
+    logging.verbose(params.verbose, "  [KS] Step 5: Initial guess (diagonalize H_core)...\n", .{});
+    const eigen = try solveRoothaanHall(alloc, n, h_core, s_mat);
+    if (params.verbose) try logKsStep5Verbose(alloc, io, timer, n, eigen.values, s_mat);
+    return eigen;
+}
+
 /// Run a Kohn-Sham DFT SCF calculation.
 pub fn runKohnShamScf(
     alloc: std.mem.Allocator,
@@ -820,275 +1980,36 @@ pub fn runKohnShamScf(
         .b3lyp => 0.20,
     };
 
-    // Step 1: Build one-electron integrals
-    var timer = std.Io.Clock.Timestamp.now(io, .awake);
-    logging.verbose(
-        params.verbose,
-        "  [KS] Step 1: Building one-electron integrals (n={d}, libcint={})...\n",
-        .{ n, params.use_libcint },
+    // Steps 1, 2, 2b: one-electron integrals, ERI/Schwarz tables, DF context
+    var resources = try prepareKsIntegralResources(
+        alloc,
+        io,
+        shells,
+        nuc_positions,
+        nuc_charges,
+        n,
+        params,
     );
+    defer resources.deinit(alloc);
 
-    // Initialize libcint data if enabled
-    // Convert Vec3 positions to [3]f64 arrays for libcint
-    const nuc_pos_flat = try alloc.alloc([3]f64, nuc_positions.len);
-    defer alloc.free(nuc_pos_flat);
-    for (nuc_positions, 0..) |pos, i| {
-        nuc_pos_flat[i] = .{ pos.x, pos.y, pos.z };
-    }
-
-    var cint_data_storage: ?libcint.LibcintData = null;
-    if (params.use_libcint) {
-        cint_data_storage = libcint.LibcintData.init(
-            alloc,
-            shells,
-            nuc_pos_flat,
-            nuc_charges,
-        ) catch null;
-    }
-    defer {
-        if (cint_data_storage) |*cd| cd.deinit(alloc);
-    }
-    const use_libcint_actual = cint_data_storage != null;
-
-    const s_mat = if (use_libcint_actual)
-        try libcint.buildOverlapMatrix(alloc, cint_data_storage.?)
-    else
-        try obara_saika.buildOverlapMatrix(alloc, shells);
-    defer alloc.free(s_mat);
-
-    const t_mat = if (use_libcint_actual)
-        try libcint.buildKineticMatrix(alloc, cint_data_storage.?)
-    else
-        try obara_saika.buildKineticMatrix(alloc, shells);
-    defer alloc.free(t_mat);
-
-    const v_mat = if (use_libcint_actual)
-        try libcint.buildNuclearMatrix(alloc, cint_data_storage.?)
-    else
-        try obara_saika.buildNuclearMatrix(alloc, shells, nuc_positions, nuc_charges);
-    defer alloc.free(v_mat);
-    logging.verbose(
-        params.verbose,
-        "  [KS] Step 1: Done. ({d:.2}s)\n",
-        .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9},
-    );
-
-    const h_core = try alloc.alloc(f64, n * n);
-    defer alloc.free(h_core);
-    for (0..n * n) |i| {
-        h_core[i] = t_mat[i] + v_mat[i];
-    }
-
-    // Step 2: Build ERI table or Schwarz table
-    timer = std.Io.Clock.Timestamp.now(io, .awake);
-    logging.verbose(
-        params.verbose,
-        "  [KS] Step 2: Building Schwarz/ERI table (direct={}, libcint={})...\n",
-        .{ params.use_direct_scf, use_libcint_actual },
-    );
-    var eri_table: ?obara_saika.GeneralEriTable = null;
-    var schwarz_table: ?fock.SchwarzTable = null;
-    var jk_builder: ?libcint.LibcintJKBuilder = null;
-    if (use_libcint_actual) {
-        // libcint path: build LibcintJKBuilder once (CINTOpt + Schwarz table).
-        // Reused across all SCF iterations.
-        jk_builder = try libcint.LibcintJKBuilder.init(
-            alloc,
-            cint_data_storage.?,
-            params.schwarz_threshold,
-        );
-    } else if (params.use_direct_scf) {
-        schwarz_table = try fock.buildSchwarzTable(alloc, shells);
-    } else {
-        eri_table = try obara_saika.buildEriTable(alloc, shells);
-    }
-    logging.verbose(
-        params.verbose,
-        "  [KS] Step 2: Done. ({d:.2}s)\n",
-        .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9},
-    );
-    defer {
-        if (eri_table) |*et| et.deinit(alloc);
-        if (schwarz_table) |*st| st.deinit(alloc);
-        if (jk_builder) |*jkb| jkb.deinit(alloc);
-    }
-
-    // Step 2b: Build density fitting context if requested
-    var df_context: ?DensityFittingContext = null;
-    if (params.use_density_fitting) {
-        timer = std.Io.Clock.Timestamp.now(io, .awake);
-        logging.verbose(
-            params.verbose,
-            "  [KS] Step 2b: Building density fitting context...\n",
-            .{},
-        );
-
-        var aux_buf_to_free: ?[]ContractedShell = null;
-        const aux_shells = if (params.aux_shells) |as| as else blk: {
-            // Build def2-universal-JKFIT auxiliary basis automatically
-            const aux_buf = try alloc.alloc(ContractedShell, n * 10); // generous upper bound
-            errdefer alloc.free(aux_buf);
-            var aux_count: usize = 0;
-
-            for (0..nuc_positions.len) |i| {
-                const z: u32 = @intFromFloat(nuc_charges[i]);
-                if (aux_basis_mod.buildDef2UniversalJkfit(z, nuc_positions[i])) |aux_result| {
-                    for (aux_result.shells[0..aux_result.count]) |s| {
-                        aux_buf[aux_count] = s;
-                        aux_count += 1;
-                    }
-                }
-            }
-            aux_buf_to_free = aux_buf;
-            break :blk aux_buf[0..aux_count];
-        };
-
-        df_context = try DensityFittingContext.init(alloc, shells, aux_shells);
-        if (aux_buf_to_free) |buf| {
-            alloc.free(buf);
-        }
-
-        const step2b_ns = @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
-        const step2b_secs = @as(f64, @floatFromInt(step2b_ns)) / 1e9;
-        logging.verbose(
-            params.verbose,
-            "  [KS] Step 2b: Done (n_aux={d}). ({d:.2}s)\n",
-            .{ df_context.?.n_aux, step2b_secs },
-        );
-    }
-    defer if (df_context) |*dfc| dfc.deinit();
+    const s_mat = resources.one_mats.s_mat;
+    const h_core = resources.one_mats.h_core;
 
     // Nuclear repulsion
     const v_nn = energy_mod.nuclearRepulsionEnergy(nuc_positions, nuc_charges);
 
     // Step 3: Build molecular grid
-    const n_atoms = nuc_positions.len;
-    const atoms = try alloc.alloc(becke.Atom, n_atoms);
-    defer alloc.free(atoms);
-    for (0..n_atoms) |i| {
-        atoms[i] = .{
-            .x = nuc_positions[i].x,
-            .y = nuc_positions[i].y,
-            .z = nuc_positions[i].z,
-            .z_number = @intFromFloat(nuc_charges[i]),
-        };
-    }
-
-    const grid_config = becke.GridConfig{
-        .n_radial = params.n_radial,
-        .n_angular = params.n_angular,
-        .prune = params.prune,
-        .use_atomic_radii = true,
-        .becke_hardness = 3,
-    };
-
-    timer = std.Io.Clock.Timestamp.now(io, .awake);
-    logging.verbose(
-        params.verbose,
-        "  [KS] Step 3: Building molecular grid ({d} radial, {d} angular)...\n",
-        .{ params.n_radial, params.n_angular },
-    );
-    const grid_points = try becke.buildMolecularGrid(alloc, atoms, grid_config);
+    const grid_points = try runKsStepThree(alloc, io, nuc_positions, nuc_charges, params);
     defer alloc.free(grid_points);
-    logging.verbose(
-        params.verbose,
-        "  [KS] Step 3: Done ({d} grid points). ({d:.2}s)\n",
-        .{
-            grid_points.len,
-            @as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9,
-        },
-    );
 
     // Step 4: Pre-evaluate basis functions on grid
-    timer = std.Io.Clock.Timestamp.now(io, .awake);
-    logging.verbose(
-        params.verbose,
-        "  [KS] Step 4: Pre-evaluating basis functions on grid...\n",
-        .{},
-    );
-    var bog = try evaluateBasisOnGrid(alloc, shells, grid_points);
+    var bog = try runKsStepFour(alloc, io, shells, grid_points, params);
     defer bog.deinit(alloc);
-    logging.verbose(
-        params.verbose,
-        "  [KS] Step 4: Done. ({d:.2}s)\n",
-        .{@as(f64, @floatFromInt(@as(u64, @intCast(timer.untilNow(io).raw.nanoseconds)))) / 1e9},
-    );
 
     // Step 5: Initial guess — diagonalize H_core
-    timer = std.Io.Clock.Timestamp.now(io, .awake);
-    logging.verbose(params.verbose, "  [KS] Step 5: Initial guess (diagonalize H_core)...\n", .{});
-    var eigen = try solveRoothaanHall(alloc, n, h_core, s_mat);
-    if (params.verbose) {
-        const step5_ns = @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
-        const step5_secs = @as(f64, @floatFromInt(step5_ns)) / 1e9;
-        logging.verbose(
-            true,
-            "  [KS] Step 5: Done. ({d:.2}s)\n",
-            .{step5_secs},
-        );
-        // Print initial orbital eigenvalues for comparison with PySCF
-        logging.verbose(true, "  [KS] Initial orbital eigenvalues (ALL {d}):\n", .{n});
-        for (0..n) |i| {
-            logging.verbose(true, "    [{d:2}] {e:20.12}\n", .{ i, eigen.values[i] });
-        }
-        // Print S matrix eigenvalues for condition number check
-        // Compute S eigenvalues using dsyev_ (standard eigenvalue problem)
-        const s_copy = try alloc.alloc(f64, n * n);
-        defer alloc.free(s_copy);
-        @memcpy(s_copy, s_mat);
-        const s_eigen = try solveStandardEigen(alloc, n, s_copy);
-        defer {
-            alloc.free(s_eigen.values);
-            alloc.free(s_eigen.vectors);
-        }
-        logging.verbose(true, "  [KS] S matrix eigenvalues:\n", .{});
-        logging.verbose(true, "    min = {e:20.12}\n", .{s_eigen.values[0]});
-        logging.verbose(true, "    max = {e:20.12}\n", .{s_eigen.values[n - 1]});
-        const cond_num = s_eigen.values[n - 1] / s_eigen.values[0];
-        logging.verbose(true, "    condition number = {e:10.3}\n", .{cond_num});
-        // Print first few and last few
-        for (0..@min(n, 5)) |i| {
-            logging.verbose(true, "    [{d:2}] {e:20.12}\n", .{ i, s_eigen.values[i] });
-        }
-        if (n > 10) {
-            logging.verbose(true, "    ...\n", .{});
-            for (n - 5..n) |i| {
-                logging.verbose(true, "    [{d:2}] {e:20.12}\n", .{ i, s_eigen.values[i] });
-            }
-        }
-    }
+    var eigen = try runKsStepFive(alloc, io, n, h_core, s_mat, params);
 
     const p_mat = try density_matrix.buildDensityMatrix(alloc, n, n_occ, eigen.vectors);
-    const p_old = try alloc.alloc(f64, n * n);
-    defer alloc.free(p_old);
-    @memset(p_old, 0.0);
-
-    // Allocate work matrices
-    const f_mat = try alloc.alloc(f64, n * n);
-    defer alloc.free(f_mat);
-
-    const j_mat = try alloc.alloc(f64, n * n);
-    defer alloc.free(j_mat);
-
-    const k_mat = try alloc.alloc(f64, n * n);
-    defer alloc.free(k_mat);
-
-    const vxc_mat = try alloc.alloc(f64, n * n);
-    defer alloc.free(vxc_mat);
-
-    // Work buffer for XC integration (H matrix: n_grid × n_basis)
-    const xc_work_buf = try alloc.alloc(f64, grid_points.len * n);
-    defer alloc.free(xc_work_buf);
-
-    // DIIS
-    var diis: ?GtoDiis = if (params.use_diis)
-        GtoDiis.init(alloc, n, params.diis_max_vectors)
-    else
-        null;
-    defer if (diis) |*d| d.deinit();
-
-    const f_diis = if (params.use_diis) try alloc.alloc(f64, n * n) else null;
-    defer if (f_diis) |buf| alloc.free(buf);
 
     // Step 6: SCF loop
     logging.verbose(
@@ -1096,302 +2017,37 @@ pub fn runKohnShamScf(
         "  [KS] Step 6: Starting SCF loop (max_iter={d})...\n",
         .{params.max_iter},
     );
-    var e_total: f64 = 0.0;
-    var e_old: f64 = 0.0;
-    var converged = false;
-    var iter: usize = 0;
-    var final_e_xc: f64 = 0.0;
-    var final_e_1e: f64 = 0.0;
-    var final_e_j: f64 = 0.0;
-    var final_e_k: f64 = 0.0;
-    var scf_jk_ns: u64 = 0;
-    var scf_xc_ns: u64 = 0;
-    var scf_diag_ns: u64 = 0;
 
-    while (iter < params.max_iter) : (iter += 1) {
-        // Build J and K matrices
-        timer = std.Io.Clock.Timestamp.now(io, .awake);
-        if (df_context != null) {
-            try df_context.?.buildJ(alloc, p_mat, j_mat);
-            if (hf_frac > 0.0) {
-                try df_context.?.buildK(alloc, p_mat, k_mat);
-            } else {
-                @memset(k_mat, 0.0);
-            }
-        } else if (use_libcint_actual) {
-            const jk = try jk_builder.?.buildJK(alloc, p_mat);
-            @memcpy(j_mat, jk.j_matrix);
-            @memcpy(k_mat, jk.k_matrix);
-            alloc.free(jk.j_matrix);
-            alloc.free(jk.k_matrix);
-            if (hf_frac == 0.0) {
-                @memset(k_mat, 0.0);
-            }
-        } else if (params.use_direct_scf) {
-            fock.buildJKDirect(
-                n,
-                p_mat,
-                shells,
-                &schwarz_table.?,
-                params.schwarz_threshold,
-                j_mat,
-                k_mat,
-            );
-            if (hf_frac == 0.0) {
-                @memset(k_mat, 0.0);
-            }
-        } else {
-            buildCoulombMatrix(n, p_mat, eri_table.?, j_mat);
-            if (hf_frac > 0.0) {
-                buildExchangeMatrix(n, p_mat, eri_table.?, k_mat);
-            }
-        }
-        scf_jk_ns += @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
+    const jk_ctx = makeKsJkCtx(
+        n,
+        hf_frac,
+        shells,
+        resources.use_libcint_actual,
+        params,
+        &resources.df_context,
+        &resources.jk_builder,
+        &resources.schwarz_table,
+        &resources.eri_table,
+    );
 
-        // Compute density on grid
-        timer = std.Io.Clock.Timestamp.now(io, .awake);
-        const dens = try computeDensityOnGrid(alloc, n, grid_points.len, p_mat, bog);
-        defer {
-            alloc.free(dens.rho);
-            alloc.free(dens.grad_x);
-            alloc.free(dens.grad_y);
-            alloc.free(dens.grad_z);
-        }
+    const loop_out = try runKsMainSccLoop(
+        alloc,
+        io,
+        n,
+        n_occ,
+        hf_frac,
+        v_nn,
+        h_core,
+        s_mat,
+        jk_ctx,
+        grid_points,
+        bog,
+        params,
+        p_mat,
+        &eigen,
+    );
 
-        // Build Vxc matrix and compute E_xc
-        const e_xc = buildXcContribution(
-            n,
-            grid_points.len,
-            grid_points,
-            bog,
-            dens.rho,
-            dens.grad_x,
-            dens.grad_y,
-            dens.grad_z,
-            params.xc_functional,
-            vxc_mat,
-            xc_work_buf,
-        );
-        scf_xc_ns += @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
-
-        // Build Fock matrix: F = H_core + J - 0.5 * hf_frac * K + Vxc
-        // The factor of 0.5 on K comes from the closed-shell RHF antisymmetry:
-        // in closed-shell, the two-electron part is G = J - 0.5*K, so for
-        // hybrid DFT we replace the full exchange with a fraction c_x:
-        // G = J - c_x * 0.5 * K + Vxc
-        for (0..n * n) |i| {
-            f_mat[i] = h_core[i] + j_mat[i] + vxc_mat[i];
-            if (hf_frac > 0.0) {
-                f_mat[i] -= 0.5 * hf_frac * k_mat[i];
-            }
-        }
-
-        // Compute energy components
-        // E_1e = Tr[P * H_core]
-        var e_1e: f64 = 0.0;
-        for (0..n) |mu| {
-            for (0..n) |nu| {
-                e_1e += p_mat[mu * n + nu] * h_core[mu * n + nu];
-            }
-        }
-
-        // E_J = 0.5 * Tr[P * J]
-        var e_j: f64 = 0.0;
-        for (0..n) |mu| {
-            for (0..n) |nu| {
-                e_j += p_mat[mu * n + nu] * j_mat[mu * n + nu];
-            }
-        }
-        e_j *= 0.5;
-
-        // E_K = -0.25 * hf_frac * Tr[P * K]
-        // The factor 0.25 = 0.5 (from closed-shell G matrix) * 0.5 (from E = 0.5*Tr[P*(H+F)])
-        var e_k: f64 = 0.0;
-        if (hf_frac > 0.0) {
-            for (0..n) |mu| {
-                for (0..n) |nu| {
-                    e_k += p_mat[mu * n + nu] * k_mat[mu * n + nu];
-                }
-            }
-            e_k *= -0.25 * hf_frac;
-        }
-
-        e_total = e_1e + e_j + e_k + e_xc + v_nn;
-
-        // Store for final output
-        final_e_xc = e_xc;
-        final_e_1e = e_1e;
-        final_e_j = e_j;
-        final_e_k = e_k;
-
-        // Check convergence
-        const delta_e = @abs(e_total - e_old);
-        const rms_p = density_matrix.densityRmsDiff(n, p_mat, p_old);
-
-        if (params.verbose) {
-            logging.verbose(
-                true,
-                "  SCF iter {d:3}: E = {d:20.12}  dE = {e:10.3}  dP = {e:10.3}\n",
-                .{ iter, e_total, delta_e, rms_p },
-            );
-            if (iter == 0) {
-                logging.verbose(
-                    true,
-                    "    E_1e = {d:20.12}  E_J = {d:20.12}  E_K = {d:20.12}" ++
-                        "  E_XC = {d:20.12}  V_nn = {d:20.12}\n",
-                    .{ e_1e, e_j, e_k, e_xc, v_nn },
-                );
-                // Print Tr(P), Tr(P*S)
-                var tr_p: f64 = 0.0;
-                var tr_ps: f64 = 0.0;
-                for (0..n) |imu| {
-                    tr_p += p_mat[imu * n + imu];
-                    for (0..n) |inu| {
-                        tr_ps += p_mat[imu * n + inu] * s_mat[imu * n + inu];
-                    }
-                }
-                logging.verbose(
-                    true,
-                    "    Tr(P) = {d:20.12}  Tr(P*S) = {d:20.12}\n",
-                    .{ tr_p, tr_ps },
-                );
-            }
-        }
-
-        if (iter > 0 and delta_e < params.energy_threshold and rms_p < params.density_threshold) {
-            converged = true;
-            break;
-        }
-
-        e_old = e_total;
-        @memcpy(p_old, p_mat);
-
-        // Apply DIIS
-        const f_to_diag = if (diis != null and iter >= params.diis_start_iter) blk: {
-            try diis.?.extrapolate(f_mat, p_mat, s_mat, f_diis.?);
-            break :blk f_diis.?;
-        } else f_mat;
-
-        alloc.free(eigen.vectors);
-        alloc.free(eigen.values);
-
-        timer = std.Io.Clock.Timestamp.now(io, .awake);
-        eigen = try solveRoothaanHall(alloc, n, f_to_diag, s_mat);
-        scf_diag_ns += @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
-
-        density_matrix.updateDensityMatrix(n, n_occ, eigen.vectors, p_mat);
-    }
-
-    if (params.verbose) {
-        logging.verbose(true, "  [KS] SCF timing: J/K={d:.2}s  XC={d:.2}s  diag={d:.2}s\n", .{
-            @as(f64, @floatFromInt(scf_jk_ns)) / 1e9,
-            @as(f64, @floatFromInt(scf_xc_ns)) / 1e9,
-            @as(f64, @floatFromInt(scf_diag_ns)) / 1e9,
-        });
-    }
-
-    // If not converged, do final energy evaluation
-    if (!converged) {
-        if (df_context != null) {
-            try df_context.?.buildJ(alloc, p_mat, j_mat);
-            if (hf_frac > 0.0) {
-                try df_context.?.buildK(alloc, p_mat, k_mat);
-            } else {
-                @memset(k_mat, 0.0);
-            }
-        } else if (use_libcint_actual) {
-            const jk = try jk_builder.?.buildJK(alloc, p_mat);
-            @memcpy(j_mat, jk.j_matrix);
-            @memcpy(k_mat, jk.k_matrix);
-            alloc.free(jk.j_matrix);
-            alloc.free(jk.k_matrix);
-            if (hf_frac == 0.0) {
-                @memset(k_mat, 0.0);
-            }
-        } else if (params.use_direct_scf) {
-            fock.buildJKDirect(
-                n,
-                p_mat,
-                shells,
-                &schwarz_table.?,
-                params.schwarz_threshold,
-                j_mat,
-                k_mat,
-            );
-            if (hf_frac == 0.0) {
-                @memset(k_mat, 0.0);
-            }
-        } else {
-            buildCoulombMatrix(n, p_mat, eri_table.?, j_mat);
-            if (hf_frac > 0.0) {
-                buildExchangeMatrix(n, p_mat, eri_table.?, k_mat);
-            }
-        }
-
-        const dens = try computeDensityOnGrid(alloc, n, grid_points.len, p_mat, bog);
-        defer {
-            alloc.free(dens.rho);
-            alloc.free(dens.grad_x);
-            alloc.free(dens.grad_y);
-            alloc.free(dens.grad_z);
-        }
-
-        final_e_xc = buildXcContribution(
-            n,
-            grid_points.len,
-            grid_points,
-            bog,
-            dens.rho,
-            dens.grad_x,
-            dens.grad_y,
-            dens.grad_z,
-            params.xc_functional,
-            vxc_mat,
-            xc_work_buf,
-        );
-
-        final_e_1e = 0.0;
-        for (0..n) |mu| {
-            for (0..n) |nu| {
-                final_e_1e += p_mat[mu * n + nu] * h_core[mu * n + nu];
-            }
-        }
-
-        final_e_j = 0.0;
-        for (0..n) |mu| {
-            for (0..n) |nu| {
-                final_e_j += p_mat[mu * n + nu] * j_mat[mu * n + nu];
-            }
-        }
-        final_e_j *= 0.5;
-
-        final_e_k = 0.0;
-        if (hf_frac > 0.0) {
-            for (0..n) |mu| {
-                for (0..n) |nu| {
-                    final_e_k += p_mat[mu * n + nu] * k_mat[mu * n + nu];
-                }
-            }
-            final_e_k *= -0.25 * hf_frac;
-        }
-
-        e_total = final_e_1e + final_e_j + final_e_k + final_e_xc + v_nn;
-    }
-
-    return KsResult{
-        .total_energy = e_total,
-        .electronic_energy = e_total - v_nn,
-        .nuclear_repulsion = v_nn,
-        .one_electron_energy = final_e_1e,
-        .coulomb_energy = final_e_j,
-        .xc_energy = final_e_xc,
-        .hf_exchange_energy = final_e_k,
-        .orbital_energies = eigen.values,
-        .mo_coefficients = eigen.vectors,
-        .density_matrix_result = p_mat,
-        .iterations = iter,
-        .converged = converged,
-    };
+    return packageKsResult(loop_out, v_nn, eigen, p_mat);
 }
 
 /// Solve the Roothaan-Hall equation FC = SCε using canonical orthogonalization.
@@ -1404,49 +2060,40 @@ pub fn runKohnShamScf(
 ///   5. Back-transform: C = S^{-1/2} * C'
 ///
 /// This is more robust than dsygv_ for near-linearly-dependent basis sets.
-fn solveRoothaanHall(
+fn buildSInvHalfTransform(
     alloc: std.mem.Allocator,
     n: usize,
-    f_mat: []const f64,
-    s_mat: []const f64,
-) !linalg.RealEigenDecomp {
-    // Step 1: Diagonalize S matrix
-    const s_copy = try alloc.alloc(f64, n * n);
-    defer alloc.free(s_copy);
-    @memcpy(s_copy, s_mat);
-
-    const s_eigen = try linalg.realSymmetricEigenDecomp(alloc, .accelerate, n, s_copy);
-    defer alloc.free(s_eigen.values);
-    // s_eigen.vectors is column-major: eigenvector j is at s_eigen.vectors[j*n .. (j+1)*n]
-    defer alloc.free(s_eigen.vectors);
-
-    // Step 2: Build S^{-1/2} = U * diag(1/sqrt(s)) * U^T
-    // Threshold for linear dependence
-    const threshold: f64 = 1e-8;
+    s_values: []const f64,
+    s_vectors: []const f64,
+    threshold: f64,
+) !struct { x_mat: []f64, n_indep: usize } {
     var n_indep: usize = 0;
     for (0..n) |i| {
-        if (s_eigen.values[i] > threshold) n_indep += 1;
+        if (s_values[i] > threshold) n_indep += 1;
     }
-
-    // Build X = U * diag(1/sqrt(s)) for independent eigenvectors only
-    // X is n x n_indep, stored column-major
     const x_mat = try alloc.alloc(f64, n * n_indep);
-    defer alloc.free(x_mat);
 
     var col: usize = 0;
     for (0..n) |i| {
-        if (s_eigen.values[i] > threshold) {
-            const inv_sqrt_s = 1.0 / @sqrt(s_eigen.values[i]);
-            // Column i of U (eigenvector i) is at s_eigen.vectors[i*n .. (i+1)*n]
+        if (s_values[i] > threshold) {
+            const inv_sqrt_s = 1.0 / @sqrt(s_values[i]);
             for (0..n) |mu| {
-                x_mat[col * n + mu] = s_eigen.vectors[i * n + mu] * inv_sqrt_s;
+                x_mat[col * n + mu] = s_vectors[i * n + mu] * inv_sqrt_s;
             }
             col += 1;
         }
     }
+    return .{ .x_mat = x_mat, .n_indep = n_indep };
+}
 
-    // Step 3: F' = X^T * F * X  (n_indep x n_indep)
-    // First compute temp = F * X (n x n_indep)
+fn transformFockToOrthBasis(
+    alloc: std.mem.Allocator,
+    n: usize,
+    n_indep: usize,
+    f_mat: []const f64,
+    x_mat: []const f64,
+) ![]f64 {
+    // temp = F * X (n x n_indep, column-major X)
     const temp = try alloc.alloc(f64, n * n_indep);
     defer alloc.free(temp);
 
@@ -1460,9 +2107,9 @@ fn solveRoothaanHall(
         }
     }
 
-    // F' = X^T * temp  (n_indep x n_indep), stored as flat array
+    // F' = X^T * temp  (n_indep x n_indep)
     const f_prime = try alloc.alloc(f64, n_indep * n_indep);
-    defer alloc.free(f_prime);
+    errdefer alloc.free(f_prime);
 
     for (0..n_indep) |i| {
         for (0..n_indep) |j| {
@@ -1470,27 +2117,29 @@ fn solveRoothaanHall(
             for (0..n) |mu| {
                 sum += x_mat[i * n + mu] * temp[j * n + mu];
             }
-            // Store in both row-major and column-major (symmetric)
             f_prime[i * n_indep + j] = sum;
         }
     }
+    return f_prime;
+}
 
-    // Step 4: Solve standard eigenvalue problem for F'
-    var eigen_prime = try linalg.realSymmetricEigenDecomp(alloc, .accelerate, n_indep, f_prime);
-    // eigen_prime.vectors is column-major: eigenvector j at [j*n_indep .. (j+1)*n_indep]
-    defer alloc.free(eigen_prime.vectors);
-
-    // Step 5: Back-transform C = X * C'
-    // Result: n x n matrix in column-major order
-    // We need to produce n x n output (padded if n_indep < n)
+fn backTransformEigenvectors(
+    alloc: std.mem.Allocator,
+    n: usize,
+    n_indep: usize,
+    x_mat: []const f64,
+    eigen_prime_values: []const f64,
+    eigen_prime_vectors: []const f64,
+) !linalg.RealEigenDecomp {
     const result_values = try alloc.alloc(f64, n);
     errdefer alloc.free(result_values);
+
     const result_vectors = try alloc.alloc(f64, n * n);
     errdefer alloc.free(result_vectors);
 
     // Fill eigenvalues: first n_indep from the eigensolver, rest = very large
     for (0..n_indep) |i| {
-        result_values[i] = eigen_prime.values[i];
+        result_values[i] = eigen_prime_values[i];
     }
     for (n_indep..n) |i| {
         result_values[i] = 1e10; // mark dependent vectors with large energy
@@ -1502,20 +2151,65 @@ fn solveRoothaanHall(
         for (0..n) |mu| {
             var sum: f64 = 0.0;
             for (0..n_indep) |k| {
-                sum += x_mat[k * n + mu] * eigen_prime.vectors[j * n_indep + k];
+                sum += x_mat[k * n + mu] * eigen_prime_vectors[j * n_indep + k];
             }
             result_vectors[j * n + mu] = sum;
         }
     }
-
-    alloc.free(eigen_prime.values);
-    eigen_prime.values = &.{}; // prevent double free in defer
 
     return linalg.RealEigenDecomp{
         .values = result_values,
         .vectors = result_vectors,
         .n = n,
     };
+}
+
+fn solveRoothaanHall(
+    alloc: std.mem.Allocator,
+    n: usize,
+    f_mat: []const f64,
+    s_mat: []const f64,
+) !linalg.RealEigenDecomp {
+    // Step 1: Diagonalize S matrix
+    const s_copy = try alloc.alloc(f64, n * n);
+    defer alloc.free(s_copy);
+
+    @memcpy(s_copy, s_mat);
+
+    const s_eigen = try linalg.realSymmetricEigenDecomp(alloc, .accelerate, n, s_copy);
+    defer alloc.free(s_eigen.values);
+    // s_eigen.vectors is column-major: eigenvector j is at s_eigen.vectors[j*n .. (j+1)*n]
+    defer alloc.free(s_eigen.vectors);
+
+    // Step 2: Build S^{-1/2} = U * diag(1/sqrt(s)) * U^T
+    const threshold: f64 = 1e-8;
+    const xt = try buildSInvHalfTransform(alloc, n, s_eigen.values, s_eigen.vectors, threshold);
+    const x_mat = xt.x_mat;
+    const n_indep = xt.n_indep;
+    defer alloc.free(x_mat);
+
+    // Step 3: F' = X^T * F * X  (n_indep x n_indep)
+    const f_prime = try transformFockToOrthBasis(alloc, n, n_indep, f_mat, x_mat);
+    defer alloc.free(f_prime);
+
+    // Step 4: Solve standard eigenvalue problem for F'
+    var eigen_prime = try linalg.realSymmetricEigenDecomp(alloc, .accelerate, n_indep, f_prime);
+    defer alloc.free(eigen_prime.vectors);
+
+    // Step 5: Back-transform C = X * C'
+    const result = try backTransformEigenvectors(
+        alloc,
+        n,
+        n_indep,
+        x_mat,
+        eigen_prime.values,
+        eigen_prime.vectors,
+    );
+
+    alloc.free(eigen_prime.values);
+    eigen_prime.values = &.{}; // prevent double free in defer
+
+    return result;
 }
 
 /// Solve the standard eigenvalue problem A·x = λ·x for a real symmetric matrix.

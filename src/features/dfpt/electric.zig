@@ -35,6 +35,89 @@ pub const DielectricResult = struct {
     epsilon: [3][3]f64,
 };
 
+const BandSet = [][]math.Complex;
+const DirectionBandSet = [3]BandSet;
+
+const DdkResponse = struct {
+    values: []DirectionBandSet,
+
+    fn deinit(self: *DdkResponse, alloc: std.mem.Allocator) void {
+        for (self.values) |dirs| deinitDirectionBandSet(alloc, dirs);
+        alloc.free(self.values);
+    }
+};
+
+const Psi0Cache = struct {
+    values: []BandSet,
+
+    fn deinit(self: *Psi0Cache, alloc: std.mem.Allocator) void {
+        for (self.values) |bands| deinitBandSet(alloc, bands);
+        alloc.free(self.values);
+    }
+};
+
+const EfieldResponse = struct {
+    values: []BandSet,
+
+    fn deinit(self: *EfieldResponse, alloc: std.mem.Allocator) void {
+        for (self.values) |bands| deinitBandSet(alloc, bands);
+        alloc.free(self.values);
+    }
+};
+
+const DdkNonlocalBuffers = struct {
+    nl_out: []math.Complex,
+    nl_phase: []math.Complex,
+    nl_c1: []math.Complex,
+    nl_c2: []math.Complex,
+    nl_dc1: []math.Complex,
+    nl_dc2: []math.Complex,
+
+    fn init(
+        alloc: std.mem.Allocator,
+        n_pw: usize,
+        max_m_total: usize,
+    ) !DdkNonlocalBuffers {
+        return .{
+            .nl_out = try alloc.alloc(math.Complex, n_pw),
+            .nl_phase = try alloc.alloc(math.Complex, n_pw),
+            .nl_c1 = try alloc.alloc(math.Complex, @max(max_m_total, 1)),
+            .nl_c2 = try alloc.alloc(math.Complex, @max(max_m_total, 1)),
+            .nl_dc1 = try alloc.alloc(math.Complex, @max(max_m_total, 1)),
+            .nl_dc2 = try alloc.alloc(math.Complex, @max(max_m_total, 1)),
+        };
+    }
+
+    fn deinit(self: *DdkNonlocalBuffers, alloc: std.mem.Allocator) void {
+        alloc.free(self.nl_out);
+        alloc.free(self.nl_phase);
+        alloc.free(self.nl_c1);
+        alloc.free(self.nl_c2);
+        alloc.free(self.nl_dc1);
+        alloc.free(self.nl_dc2);
+    }
+};
+
+const EfieldMixState = struct {
+    best_vresid: f64 = std.math.inf(f64),
+    best_v1: ?[]math.Complex = null,
+    pulay_active_since: usize,
+    force_converge: bool = false,
+
+    fn init(dfpt_cfg: DfptConfig) EfieldMixState {
+        return .{ .pulay_active_since = dfpt_cfg.pulay_start };
+    }
+
+    fn deinit(self: *EfieldMixState, alloc: std.mem.Allocator) void {
+        if (self.best_v1) |v| alloc.free(v);
+    }
+};
+
+const EfieldMixOutcome = enum {
+    keep_iterating,
+    converged,
+};
+
 /// Compute ε∞ by solving ddk Sternheimer at all k-points,
 /// then self-consistently solving the efield Sternheimer with V^(1)_Hxc.
 pub fn computeDielectricAllK(
@@ -50,9 +133,7 @@ pub fn computeDielectricAllK(
     volume: f64,
 ) !DielectricResult {
     const grid = gs.grid;
-    const total = grid.count();
     const dfpt_cfg = DfptConfig.fromConfig(cfg);
-
     const kgs = try phonon_q.prepareFullBZKpointsFromIBZ(
         alloc,
         io,
@@ -66,520 +147,749 @@ pub fn computeDielectricAllK(
         volume,
         grid,
     );
-    defer {
-        for (@constCast(kgs)) |*k| k.deinit(alloc);
-        alloc.free(kgs);
-    }
-    const n_kpts = kgs.len;
-    logDfptInfo("ddk: {d} k-points in full BZ\n", .{n_kpts});
+    defer deinitKgs(alloc, kgs);
 
-    // Build RadialTableSets once
-    const n_species = species.len;
-    const radial_tables = try alloc.alloc(nonlocal.RadialTableSet, n_species);
-    defer {
-        for (radial_tables) |*t| t.deinit(alloc);
-        alloc.free(radial_tables);
-    }
-    {
-        var g_max: f64 = 0.0;
-        for (kgs) |kg| {
-            for (kg.basis_k.gvecs) |gv| {
-                const gnorm = math.Vec3.norm(gv.kpg);
-                if (gnorm > g_max) g_max = gnorm;
-            }
-        }
-        g_max += 1.0;
-        for (0..n_species) |si| {
-            radial_tables[si] = try nonlocal.RadialTableSet.init(
-                alloc,
-                species[si].upf.beta,
-                species[si].upf.r,
-                species[si].upf.rab,
-                g_max,
-            );
-        }
-    }
+    logDfptInfo("ddk: {d} k-points in full BZ\n", .{kgs.len});
+    const radial_tables = try buildRadialTables(alloc, species, kgs);
+    defer deinitRadialTables(alloc, radial_tables);
 
-    // ================================================================
-    // Phase 1: Solve ddk Sternheimer for ALL k-points, 3 directions.
-    // Store psi1_ddk[k][dir][band][G].
-    // ================================================================
-    // Allocate psi1_ddk: [n_kpts][3][n_occ][n_pw]
-    const psi1_ddk = try alloc.alloc([3][][]math.Complex, n_kpts);
+    var ddk = try solveDdkAllK(alloc, dfpt_cfg, kgs, atoms, radial_tables, volume);
+    defer ddk.deinit(alloc);
+
+    var psi0_cache = try cachePsi0RealSpace(alloc, grid, kgs);
+    defer psi0_cache.deinit(alloc);
+
+    var epsilon = try computeDielectricTensor(
+        alloc,
+        grid,
+        gs,
+        dfpt_cfg,
+        kgs,
+        ddk.values,
+        psi0_cache.values,
+        volume,
+    );
+    epsilon = try symmetrizeDielectricTensor(alloc, epsilon, cell_bohr, atoms, recip);
+    return .{ .epsilon = epsilon };
+}
+
+fn deinitKgs(alloc: std.mem.Allocator, kgs: []KPointGsData) void {
+    for (@constCast(kgs)) |*k| k.deinit(alloc);
+    alloc.free(kgs);
+}
+
+fn deinitBandSet(alloc: std.mem.Allocator, bands: BandSet) void {
+    for (bands) |band| alloc.free(band);
+    alloc.free(bands);
+}
+
+fn deinitDirectionBandSet(
+    alloc: std.mem.Allocator,
+    directions: DirectionBandSet,
+) void {
+    for (0..3) |dir| deinitBandSet(alloc, directions[dir]);
+}
+
+fn deinitRadialTables(
+    alloc: std.mem.Allocator,
+    radial_tables: []nonlocal.RadialTableSet,
+) void {
+    for (radial_tables) |*table| table.deinit(alloc);
+    alloc.free(radial_tables);
+}
+
+fn buildRadialTables(
+    alloc: std.mem.Allocator,
+    species: []const hamiltonian.SpeciesEntry,
+    kgs: []const KPointGsData,
+) ![]nonlocal.RadialTableSet {
+    var g_max: f64 = 0.0;
+    for (kgs) |kg| {
+        for (kg.basis_k.gvecs) |gv| {
+            g_max = @max(g_max, math.Vec3.norm(gv.kpg));
+        }
+    }
+    g_max += 1.0;
+
+    const radial_tables = try alloc.alloc(nonlocal.RadialTableSet, species.len);
+    errdefer alloc.free(radial_tables);
+
+    for (species, 0..) |entry, si| {
+        radial_tables[si] = try nonlocal.RadialTableSet.init(
+            alloc,
+            entry.upf.beta,
+            entry.upf.r,
+            entry.upf.rab,
+            g_max,
+        );
+    }
+    return radial_tables;
+}
+
+fn solveDdkAllK(
+    alloc: std.mem.Allocator,
+    dfpt_cfg: DfptConfig,
+    kgs: []const KPointGsData,
+    atoms: []const hamiltonian.AtomData,
+    radial_tables: []const nonlocal.RadialTableSet,
+    volume: f64,
+) !DdkResponse {
+    const values = try alloc.alloc(DirectionBandSet, kgs.len);
     var kpts_built: usize = 0;
-    defer {
-        for (0..kpts_built) |ik| {
-            for (0..3) |d| {
-                for (psi1_ddk[ik][d]) |p| alloc.free(p);
-                alloc.free(psi1_ddk[ik][d]);
-            }
-        }
-        alloc.free(psi1_ddk);
+    errdefer {
+        for (0..kpts_built) |ik| deinitDirectionBandSet(alloc, values[ik]);
+        alloc.free(values);
     }
 
-    for (kgs, 0..) |*kg, ik| {
-        const n_occ = kg.n_occ;
-        const n_pw = kg.n_pw_k;
-        const gvecs = kg.basis_k.gvecs;
-
+    for (kgs, 0..) |kg, ik| {
         const nl_ctx_opt = kg.apply_ctx_k.nonlocal_ctx;
-        const max_m = if (nl_ctx_opt) |nc| nc.max_m_total else 0;
+        const max_m = if (nl_ctx_opt) |ctx| ctx.max_m_total else 0;
+        var buffers = try DdkNonlocalBuffers.init(alloc, kg.n_pw_k, max_m);
+        defer buffers.deinit(alloc);
 
-        const nl_out = try alloc.alloc(math.Complex, n_pw);
-        defer alloc.free(nl_out);
-        const nl_phase = try alloc.alloc(math.Complex, n_pw);
-        defer alloc.free(nl_phase);
-        const nl_c1 = try alloc.alloc(math.Complex, @max(max_m, 1));
-        defer alloc.free(nl_c1);
-        const nl_c2 = try alloc.alloc(math.Complex, @max(max_m, 1));
-        defer alloc.free(nl_c2);
-        const nl_dc1 = try alloc.alloc(math.Complex, @max(max_m, 1));
-        defer alloc.free(nl_dc1);
-        const nl_dc2 = try alloc.alloc(math.Complex, @max(max_m, 1));
-        defer alloc.free(nl_dc2);
+        var dirs_built: usize = 0;
+        errdefer for (0..dirs_built) |dir| deinitBandSet(alloc, values[ik][dir]);
 
         for (0..3) |dir| {
-            const psi1 = try alloc.alloc([]math.Complex, n_occ);
-            var bands_built: usize = 0;
-            errdefer {
-                for (psi1[0..bands_built]) |p| alloc.free(p);
-                alloc.free(psi1);
-            }
-
-            for (0..n_occ) |n| {
-                const h1psi = try alloc.alloc(math.Complex, n_pw);
-                defer alloc.free(h1psi);
-
-                for (0..n_pw) |g| {
-                    const kpg_dir = perturbation.gComponent(gvecs[g].kpg, dir);
-                    h1psi[g] = math.complex.scale(kg.wavefunctions_k[n][g], 2.0 * kpg_dir);
-                }
-                if (nl_ctx_opt) |nl_ctx| {
-                    applyDdkNonlocal(
-                        gvecs,
-                        atoms,
-                        nl_ctx,
-                        dir,
-                        1.0 / volume,
-                        kg.wavefunctions_k[n],
-                        radial_tables,
-                        nl_out,
-                        nl_phase,
-                        nl_c1,
-                        nl_c2,
-                        nl_dc1,
-                        nl_dc2,
-                    );
-                    for (0..n_pw) |g| {
-                        h1psi[g] = math.complex.add(h1psi[g], nl_out[g]);
-                    }
-                }
-
-                const rhs = try alloc.alloc(math.Complex, n_pw);
-                defer alloc.free(rhs);
-                for (0..n_pw) |g| {
-                    rhs[g] = math.complex.scale(h1psi[g], -1.0);
-                }
-                sternheimer.projectConduction(rhs, kg.wavefunctions_k_const, n_occ);
-
-                const result = try sternheimer.solve(
-                    alloc,
-                    kg.apply_ctx_k,
-                    rhs,
-                    kg.eigenvalues_k[n],
-                    kg.wavefunctions_k_const,
-                    n_occ,
-                    gvecs,
-                    .{
-                        .tol = dfpt_cfg.sternheimer_tol,
-                        .max_iter = dfpt_cfg.sternheimer_max_iter,
-                        .alpha_shift = dfpt_cfg.alpha_shift,
-                    },
-                );
-                psi1[n] = result.psi1;
-                bands_built = n + 1;
-            }
-            psi1_ddk[ik][dir] = psi1;
+            values[ik][dir] = try solveDdkDirection(
+                alloc,
+                dfpt_cfg,
+                &kg,
+                atoms,
+                radial_tables,
+                volume,
+                dir,
+                &buffers,
+            );
+            dirs_built = dir + 1;
         }
 
-        if (ik == 0 or (ik + 1) % 8 == 0 or ik + 1 == n_kpts) {
-            logDfpt("ddk: k-point {d}/{d} done\n", .{ ik + 1, n_kpts });
+        if (ik == 0 or (ik + 1) % 8 == 0 or ik + 1 == kgs.len) {
+            logDfpt("ddk: k-point {d}/{d} done\n", .{ ik + 1, kgs.len });
         }
         kpts_built = ik + 1;
     }
 
-    // ================================================================
-    // Pre-cache ψ^(0)(r) for all k-points (IFFT once)
-    // ================================================================
-    const psi0_r_cache = try alloc.alloc([][]math.Complex, n_kpts);
-    var psi0_cache_built: usize = 0;
-    defer {
-        for (0..psi0_cache_built) |ik| {
-            for (psi0_r_cache[ik]) |p| alloc.free(p);
-            alloc.free(psi0_r_cache[ik]);
-        }
-        alloc.free(psi0_r_cache);
+    return .{ .values = values };
+}
+
+fn solveDdkDirection(
+    alloc: std.mem.Allocator,
+    dfpt_cfg: DfptConfig,
+    kg: *const KPointGsData,
+    atoms: []const hamiltonian.AtomData,
+    radial_tables: []const nonlocal.RadialTableSet,
+    volume: f64,
+    dir: usize,
+    buffers: *DdkNonlocalBuffers,
+) !BandSet {
+    const psi1 = try alloc.alloc([]math.Complex, kg.n_occ);
+    var bands_built: usize = 0;
+    errdefer {
+        for (psi1[0..bands_built]) |band| alloc.free(band);
+        alloc.free(psi1);
     }
 
-    for (kgs, 0..) |*kg, ik| {
-        psi0_r_cache[ik] = try alloc.alloc([]math.Complex, kg.n_occ);
+    for (0..kg.n_occ) |n| {
+        const h1psi = try alloc.alloc(math.Complex, kg.n_pw_k);
+        defer alloc.free(h1psi);
+
+        for (0..kg.n_pw_k) |g| {
+            const kpg_dir = perturbation.gComponent(kg.basis_k.gvecs[g].kpg, dir);
+            h1psi[g] = math.complex.scale(kg.wavefunctions_k[n][g], 2.0 * kpg_dir);
+        }
+
+        if (kg.apply_ctx_k.nonlocal_ctx) |nl_ctx| {
+            applyDdkNonlocal(
+                kg.basis_k.gvecs,
+                atoms,
+                nl_ctx,
+                dir,
+                1.0 / volume,
+                kg.wavefunctions_k[n],
+                radial_tables,
+                buffers.nl_out,
+                buffers.nl_phase,
+                buffers.nl_c1,
+                buffers.nl_c2,
+                buffers.nl_dc1,
+                buffers.nl_dc2,
+            );
+            for (0..kg.n_pw_k) |g| {
+                h1psi[g] = math.complex.add(h1psi[g], buffers.nl_out[g]);
+            }
+        }
+
+        const rhs = try alloc.alloc(math.Complex, kg.n_pw_k);
+        defer alloc.free(rhs);
+
+        for (0..kg.n_pw_k) |g| rhs[g] = math.complex.scale(h1psi[g], -1.0);
+        sternheimer.projectConduction(rhs, kg.wavefunctions_k_const, kg.n_occ);
+
+        const result = try sternheimer.solve(
+            alloc,
+            kg.apply_ctx_k,
+            rhs,
+            kg.eigenvalues_k[n],
+            kg.wavefunctions_k_const,
+            kg.n_occ,
+            kg.basis_k.gvecs,
+            .{
+                .tol = dfpt_cfg.sternheimer_tol,
+                .max_iter = dfpt_cfg.sternheimer_max_iter,
+                .alpha_shift = dfpt_cfg.alpha_shift,
+            },
+        );
+        psi1[n] = result.psi1;
+        bands_built = n + 1;
+    }
+
+    return psi1;
+}
+
+fn cachePsi0RealSpace(
+    alloc: std.mem.Allocator,
+    grid: plane_wave.Grid,
+    kgs: []const KPointGsData,
+) !Psi0Cache {
+    const total = grid.count();
+    const values = try alloc.alloc(BandSet, kgs.len);
+    var kpts_built: usize = 0;
+    errdefer {
+        for (0..kpts_built) |ik| deinitBandSet(alloc, values[ik]);
+        alloc.free(values);
+    }
+
+    for (kgs, 0..) |kg, ik| {
+        values[ik] = try alloc.alloc([]math.Complex, kg.n_occ);
         var bands_built: usize = 0;
         errdefer {
-            for (psi0_r_cache[ik][0..bands_built]) |p| alloc.free(p);
-            alloc.free(psi0_r_cache[ik]);
+            for (values[ik][0..bands_built]) |band| alloc.free(band);
+            alloc.free(values[ik]);
         }
+
         for (0..kg.n_occ) |n| {
-            psi0_r_cache[ik][n] = try alloc.alloc(math.Complex, total);
+            values[ik][n] = try alloc.alloc(math.Complex, total);
             const work = try alloc.alloc(math.Complex, total);
             defer alloc.free(work);
+
             @memset(work, math.complex.init(0.0, 0.0));
             kg.map_k.scatter(kg.wavefunctions_k_const[n], work);
-            try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work, psi0_r_cache[ik][n], null);
+            try scf_mod.fftReciprocalToComplexInPlace(
+                alloc,
+                grid,
+                work,
+                values[ik][n],
+                null,
+            );
             bands_built = n + 1;
         }
-        psi0_cache_built = ik + 1;
+        kpts_built = ik + 1;
     }
 
-    // ================================================================
-    // Phase 2: Self-consistent efield Sternheimer for each direction β.
-    // ================================================================
+    return .{ .values = values };
+}
+
+fn computeDielectricTensor(
+    alloc: std.mem.Allocator,
+    grid: plane_wave.Grid,
+    gs: *const GroundState,
+    dfpt_cfg: DfptConfig,
+    kgs: []const KPointGsData,
+    psi1_ddk: []const DirectionBandSet,
+    psi0_r_cache: []const BandSet,
+    volume: f64,
+) ![3][3]f64 {
     var epsilon: [3][3]f64 = .{ .{ 0, 0, 0 }, .{ 0, 0, 0 }, .{ 0, 0, 0 } };
-
     for (0..3) |beta| {
-        logDfptInfo("efield SCF: direction β={d}\n", .{beta});
+        const column = try computeDielectricColumn(
+            alloc,
+            grid,
+            gs,
+            dfpt_cfg,
+            kgs,
+            psi1_ddk,
+            psi0_r_cache,
+            volume,
+            beta,
+        );
+        for (0..3) |alpha| epsilon[alpha][beta] = column[alpha];
+    }
+    for (0..3) |i| epsilon[i][i] += 1.0;
+    return epsilon;
+}
 
-        // V^(1)_Hxc in reciprocal space (real potential → Hermitian in G)
-        // For q=0 efield, V^(1) is real, so we work in real G-space representation.
-        const v1_hxc_g = try alloc.alloc(math.Complex, total);
-        defer alloc.free(v1_hxc_g);
-        @memset(v1_hxc_g, math.complex.init(0.0, 0.0));
+fn computeDielectricColumn(
+    alloc: std.mem.Allocator,
+    grid: plane_wave.Grid,
+    gs: *const GroundState,
+    dfpt_cfg: DfptConfig,
+    kgs: []const KPointGsData,
+    psi1_ddk: []const DirectionBandSet,
+    psi0_r_cache: []const BandSet,
+    volume: f64,
+    beta: usize,
+) ![3]f64 {
+    logDfptInfo("efield SCF: direction β={d}\n", .{beta});
 
-        // Allocate ψ¹_E storage per k-point
-        const psi1_ef = try alloc.alloc([][]math.Complex, n_kpts);
-        var ef_kpts_built: usize = 0;
-        defer {
-            for (0..ef_kpts_built) |ik| {
-                for (psi1_ef[ik]) |p| alloc.free(p);
-                alloc.free(psi1_ef[ik]);
-            }
-            alloc.free(psi1_ef);
-        }
-        for (kgs, 0..) |*kg, ik| {
-            psi1_ef[ik] = try alloc.alloc([]math.Complex, kg.n_occ);
-            var bands_built: usize = 0;
-            errdefer {
-                for (psi1_ef[ik][0..bands_built]) |p| alloc.free(p);
-                alloc.free(psi1_ef[ik]);
-            }
-            for (0..kg.n_occ) |n| {
-                psi1_ef[ik][n] = try alloc.alloc(math.Complex, kg.n_pw_k);
-                @memset(psi1_ef[ik][n], math.complex.init(0.0, 0.0));
-                bands_built = n + 1;
-            }
-            ef_kpts_built = ik + 1;
-        }
+    const v1_hxc_g = try alloc.alloc(math.Complex, grid.count());
+    defer alloc.free(v1_hxc_g);
 
-        // Pulay mixer for V^(1)_Hxc potential mixing
-        var pulay = scf_mod.ComplexPulayMixer.init(alloc, dfpt_cfg.pulay_history);
-        defer pulay.deinit();
+    @memset(v1_hxc_g, math.complex.init(0.0, 0.0));
 
-        var best_vresid: f64 = std.math.inf(f64);
-        var best_v1: ?[]math.Complex = null;
-        defer if (best_v1) |v| alloc.free(v);
-        var pulay_active_since: usize = dfpt_cfg.pulay_start;
-        const restart_factor: f64 = 5.0;
-        var force_converge: bool = false;
+    var psi1_ef = try initEfieldResponse(alloc, kgs);
+    defer psi1_ef.deinit(alloc);
 
-        // SCF loop
-        var iter: usize = 0;
-        while (iter < dfpt_cfg.scf_max_iter) : (iter += 1) {
-            // IFFT V^(1)_Hxc(G) → V^(1)_Hxc(r) (real, but stored as complex for mul)
-            const v1_g_copy = try alloc.alloc(math.Complex, total);
-            defer alloc.free(v1_g_copy);
-            @memcpy(v1_g_copy, v1_hxc_g);
-            const v1_hxc_r = try alloc.alloc(math.Complex, total);
-            defer alloc.free(v1_hxc_r);
-            try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, v1_g_copy, v1_hxc_r, null);
+    var pulay = scf_mod.ComplexPulayMixer.init(alloc, dfpt_cfg.pulay_history);
+    defer pulay.deinit();
 
-            // Accumulate ρ^(1) over all k-points
-            const rho1_r = try alloc.alloc(math.Complex, total);
-            defer alloc.free(rho1_r);
-            @memset(rho1_r, math.complex.init(0.0, 0.0));
+    var mix_state = EfieldMixState.init(dfpt_cfg);
+    defer mix_state.deinit(alloc);
 
-            for (kgs, 0..) |*kg, ik| {
-                const n_occ = kg.n_occ;
-                const n_pw = kg.n_pw_k;
-                const gvecs = kg.basis_k.gvecs;
-                const map_k_ptr: *const scf_mod.PwGridMap = &kg.map_k;
+    try runEfieldScfDirection(
+        alloc,
+        grid,
+        gs,
+        dfpt_cfg,
+        kgs,
+        psi1_ddk,
+        psi0_r_cache,
+        beta,
+        v1_hxc_g,
+        psi1_ef.values,
+        &pulay,
+        &mix_state,
+    );
+    return accumulateDielectricColumn(kgs, psi1_ddk, psi1_ef.values, volume);
+}
 
-                for (0..n_occ) |n| {
-                    // RHS = -P_c[+i × du/dk_β + V^(1)_Hxc |ψ_k⟩]
-                    const rhs_ef = try alloc.alloc(math.Complex, n_pw);
-                    defer alloc.free(rhs_ef);
+fn initEfieldResponse(
+    alloc: std.mem.Allocator,
+    kgs: []const KPointGsData,
+) !EfieldResponse {
+    const values = try alloc.alloc(BandSet, kgs.len);
+    var kpts_built: usize = 0;
+    errdefer {
+        for (0..kpts_built) |ik| deinitBandSet(alloc, values[ik]);
+        alloc.free(values);
+    }
 
-                    // Term 1: +i × du/dk_β
-                    // +i × (a+bi) = (-b+ai)
-                    for (0..n_pw) |g| {
-                        rhs_ef[g] = math.complex.init(
-                            -psi1_ddk[ik][beta][n][g].i,
-                            psi1_ddk[ik][beta][n][g].r,
-                        );
-                    }
-
-                    // Term 2: V^(1)_Hxc |ψ_k⟩ (apply real-space potential)
-                    // Use cached ψ^(0)(r), multiply by V^(1)(r), FFT back, gather
-                    const v1psi = try phonon_q.applyV1PsiQCached(
-                        alloc,
-                        grid,
-                        map_k_ptr,
-                        v1_hxc_r,
-                        psi0_r_cache[ik][n],
-                        n_pw,
-                    );
-                    defer alloc.free(v1psi);
-
-                    // Combine: rhs = -(term1 + term2)
-                    for (0..n_pw) |g| {
-                        rhs_ef[g] = math.complex.scale(
-                            math.complex.add(rhs_ef[g], v1psi[g]),
-                            -1.0,
-                        );
-                    }
-
-                    // Project onto conduction bands
-                    sternheimer.projectConduction(rhs_ef, kg.wavefunctions_k_const, n_occ);
-
-                    // Solve Sternheimer
-                    const ef_result = try sternheimer.solve(
-                        alloc,
-                        kg.apply_ctx_k,
-                        rhs_ef,
-                        kg.eigenvalues_k[n],
-                        kg.wavefunctions_k_const,
-                        n_occ,
-                        gvecs,
-                        .{
-                            .tol = dfpt_cfg.sternheimer_tol,
-                            .max_iter = dfpt_cfg.sternheimer_max_iter,
-                            .alpha_shift = dfpt_cfg.alpha_shift,
-                        },
-                    );
-                    // Store result
-                    @memcpy(psi1_ef[ik][n], ef_result.psi1);
-                    alloc.free(ef_result.psi1);
-                }
-
-                // Compute ρ^(1) for this k-point: 2(spin)×2(cc)×wtk/Ω × Σ_n ψ*(r)×ψ¹(r)
-                const psi1_const = try alloc.alloc([]const math.Complex, n_occ);
-                defer alloc.free(psi1_const);
-                for (0..n_occ) |nn| psi1_const[nn] = psi1_ef[ik][nn];
-
-                const psi0_r_const = try alloc.alloc([]const math.Complex, n_occ);
-                defer alloc.free(psi0_r_const);
-                for (0..n_occ) |nn| psi0_r_const[nn] = psi0_r_cache[ik][nn];
-
-                const rho1_k_r = try phonon_q.computeRho1QCached(
-                    alloc,
-                    grid,
-                    map_k_ptr,
-                    psi0_r_const,
-                    psi1_const,
-                    n_occ,
-                    kg.weight,
-                );
-                defer alloc.free(rho1_k_r);
-
-                for (0..total) |i| {
-                    rho1_r[i] = math.complex.add(rho1_r[i], rho1_k_r[i]);
-                }
-            }
-
-            // FFT ρ^(1)(r) → ρ^(1)(G)
-            const rho1_r_copy = try alloc.alloc(math.Complex, total);
-            defer alloc.free(rho1_r_copy);
-            @memcpy(rho1_r_copy, rho1_r);
-            const rho1_g = try alloc.alloc(math.Complex, total);
-            defer alloc.free(rho1_g);
-            try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, rho1_r_copy, rho1_g, null);
-
-            // Build V^(1)_H(G) = 8π ρ^(1)(G) / |G|²  (G=0 → 0)
-            const vh1_g = try perturbation.buildHartreePerturbation(alloc, grid, rho1_g);
-            defer alloc.free(vh1_g);
-
-            // Build V^(1)_xc(r) = f_xc × ρ^(1)(r) (no NLCC for efield: ρ^(1)_core=0)
-            // ρ^(1) for efield at q=0 is real; extract real part for XC kernel
-            const rho1_real = try alloc.alloc(f64, total);
-            defer alloc.free(rho1_real);
-            for (0..total) |i| {
-                rho1_real[i] = rho1_r[i].r;
-            }
-            const vxc1_r = try perturbation.buildXcPerturbationFull(alloc, gs.*, rho1_real);
-            defer alloc.free(vxc1_r);
-
-            // FFT V^(1)_xc(r) → V^(1)_xc(G)
-            const vxc1_g = try scf_mod.realToReciprocal(alloc, grid, vxc1_r, false);
-            defer alloc.free(vxc1_g);
-
-            // V^(1)_out(G) = V_H^(1) + V_xc^(1)
-            const v_out_g = try alloc.alloc(math.Complex, total);
-            defer alloc.free(v_out_g);
-            for (0..total) |i| {
-                v_out_g[i] = math.complex.add(vh1_g[i], vxc1_g[i]);
-            }
-
-            // Compute residual
-            var residual_norm: f64 = 0.0;
-            const residual = try alloc.alloc(math.Complex, total);
-            for (0..total) |i| {
-                residual[i] = math.complex.sub(v_out_g[i], v1_hxc_g[i]);
-                residual_norm += residual[i].r * residual[i].r + residual[i].i * residual[i].i;
-            }
-            residual_norm = @sqrt(residual_norm);
-
-            logDfpt("efield SCF β={d}: iter={d} vresid={e:.6}\n", .{ beta, iter, residual_norm });
-
-            const converged_strict = residual_norm < dfpt_cfg.scf_tol;
-            const converged_forced = force_converge and residual_norm < 10.0 * dfpt_cfg.scf_tol;
-            if (converged_strict or converged_forced) {
-                alloc.free(residual);
-                logDfptInfo(
-                    "efield SCF β={d}: converged at iter={d} vresid={e:.6}\n",
-                    .{ beta, iter, residual_norm },
-                );
-                break;
-            }
-
-            // Track best residual
-            if (residual_norm < best_vresid) {
-                best_vresid = residual_norm;
-                if (best_v1 == null) best_v1 = try alloc.alloc(math.Complex, total);
-                @memcpy(best_v1.?, v1_hxc_g);
-            }
-
-            // Pulay restart check
-            const pulay_ready = iter >= pulay_active_since;
-            const residual_blew_up = residual_norm > restart_factor * best_vresid;
-            const best_is_good = best_vresid < 1.0;
-            if (pulay_ready and residual_blew_up and best_is_good) {
-                if (best_v1) |v| @memcpy(v1_hxc_g, v);
-                if (best_vresid < 10.0 * dfpt_cfg.scf_tol) {
-                    force_converge = true;
-                    logDfpt(
-                        "efield SCF β={d}: Pulay restart (near-converged) iter={d}\n",
-                        .{ beta, iter },
-                    );
-                    alloc.free(residual);
-                    continue;
-                }
-                pulay.reset();
-                pulay_active_since = iter + 1 + dfpt_cfg.pulay_start;
-                logDfpt(
-                    "efield SCF β={d}: Pulay restart iter={d} vresid={e:.6} best={e:.6}\n",
-                    .{ beta, iter, residual_norm, best_vresid },
-                );
-                alloc.free(residual);
-                continue;
-            }
-
-            // Mix V^(1)
-            if (dfpt_cfg.pulay_history > 0 and iter >= pulay_active_since) {
-                try pulay.mixWithResidual(v1_hxc_g, residual, dfpt_cfg.mixing_beta);
-            } else {
-                const mix_beta = dfpt_cfg.mixing_beta;
-                for (0..total) |i| {
-                    const delta = math.complex.scale(residual[i], mix_beta);
-                    v1_hxc_g[i] = math.complex.add(v1_hxc_g[i], delta);
-                }
-                alloc.free(residual);
-            }
+    for (kgs, 0..) |kg, ik| {
+        values[ik] = try alloc.alloc([]math.Complex, kg.n_occ);
+        var bands_built: usize = 0;
+        errdefer {
+            for (values[ik][0..bands_built]) |band| alloc.free(band);
+            alloc.free(values[ik]);
         }
 
-        // Reset Pulay state for next direction
-        best_vresid = std.math.inf(f64);
-        if (best_v1) |v| {
-            alloc.free(v);
-            best_v1 = null;
+        for (0..kg.n_occ) |n| {
+            values[ik][n] = try alloc.alloc(math.Complex, kg.n_pw_k);
+            @memset(values[ik][n], math.complex.init(0.0, 0.0));
+            bands_built = n + 1;
+        }
+        kpts_built = ik + 1;
+    }
+
+    return .{ .values = values };
+}
+
+fn runEfieldScfDirection(
+    alloc: std.mem.Allocator,
+    grid: plane_wave.Grid,
+    gs: *const GroundState,
+    dfpt_cfg: DfptConfig,
+    kgs: []const KPointGsData,
+    psi1_ddk: []const DirectionBandSet,
+    psi0_r_cache: []const BandSet,
+    beta: usize,
+    v1_hxc_g: []math.Complex,
+    psi1_ef: []BandSet,
+    pulay: *scf_mod.ComplexPulayMixer,
+    mix_state: *EfieldMixState,
+) !void {
+    var iter: usize = 0;
+    while (iter < dfpt_cfg.scf_max_iter) : (iter += 1) {
+        const v1_hxc_r = try reciprocalToRealComplexCopy(alloc, grid, v1_hxc_g);
+        defer alloc.free(v1_hxc_r);
+
+        const rho1_r = try accumulateEfieldDensity(
+            alloc,
+            grid,
+            dfpt_cfg,
+            kgs,
+            psi1_ddk,
+            psi0_r_cache,
+            beta,
+            v1_hxc_r,
+            psi1_ef,
+        );
+        defer alloc.free(rho1_r);
+
+        const v_out_g = try buildEfieldOutputPotential(alloc, grid, gs, rho1_r);
+        defer alloc.free(v_out_g);
+
+        switch (try mixEfieldPotential(
+            alloc,
+            beta,
+            iter,
+            dfpt_cfg,
+            v1_hxc_g,
+            v_out_g,
+            pulay,
+            mix_state,
+        )) {
+            .converged => break,
+            .keep_iterating => {},
+        }
+    }
+}
+
+fn reciprocalToRealComplexCopy(
+    alloc: std.mem.Allocator,
+    grid: plane_wave.Grid,
+    values_g: []const math.Complex,
+) ![]math.Complex {
+    const work = try alloc.alloc(math.Complex, values_g.len);
+    defer alloc.free(work);
+
+    @memcpy(work, values_g);
+    const values_r = try alloc.alloc(math.Complex, values_g.len);
+    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work, values_r, null);
+    return values_r;
+}
+
+fn accumulateEfieldDensity(
+    alloc: std.mem.Allocator,
+    grid: plane_wave.Grid,
+    dfpt_cfg: DfptConfig,
+    kgs: []const KPointGsData,
+    psi1_ddk: []const DirectionBandSet,
+    psi0_r_cache: []const BandSet,
+    beta: usize,
+    v1_hxc_r: []const math.Complex,
+    psi1_ef: []BandSet,
+) ![]math.Complex {
+    const rho1_r = try alloc.alloc(math.Complex, grid.count());
+    @memset(rho1_r, math.complex.init(0.0, 0.0));
+
+    errdefer alloc.free(rho1_r);
+
+    for (kgs, 0..) |kg, ik| {
+        try updateEfieldKpoint(
+            alloc,
+            grid,
+            dfpt_cfg,
+            &kg,
+            psi1_ddk[ik][beta],
+            psi0_r_cache[ik],
+            v1_hxc_r,
+            psi1_ef[ik],
+            rho1_r,
+        );
+    }
+    return rho1_r;
+}
+
+fn updateEfieldKpoint(
+    alloc: std.mem.Allocator,
+    grid: plane_wave.Grid,
+    dfpt_cfg: DfptConfig,
+    kg: *const KPointGsData,
+    psi1_ddk_beta: BandSet,
+    psi0_r_k: BandSet,
+    v1_hxc_r: []const math.Complex,
+    psi1_ef_k: BandSet,
+    rho1_r: []math.Complex,
+) !void {
+    for (0..kg.n_occ) |n| {
+        const psi1 = try solveEfieldBand(
+            alloc,
+            grid,
+            dfpt_cfg,
+            kg,
+            psi1_ddk_beta[n],
+            psi0_r_k[n],
+            v1_hxc_r,
+            n,
+        );
+        defer alloc.free(psi1);
+
+        @memcpy(psi1_ef_k[n], psi1);
+    }
+
+    const psi1_const = try borrowConstBands(alloc, psi1_ef_k);
+    defer alloc.free(psi1_const);
+
+    const psi0_const = try borrowConstBands(alloc, psi0_r_k);
+    defer alloc.free(psi0_const);
+
+    const rho1_k_r = try phonon_q.computeRho1QCached(
+        alloc,
+        grid,
+        &kg.map_k,
+        psi0_const,
+        psi1_const,
+        kg.n_occ,
+        kg.weight,
+    );
+    defer alloc.free(rho1_k_r);
+
+    addDensityInPlace(rho1_r, rho1_k_r);
+}
+
+fn solveEfieldBand(
+    alloc: std.mem.Allocator,
+    grid: plane_wave.Grid,
+    dfpt_cfg: DfptConfig,
+    kg: *const KPointGsData,
+    psi1_ddk_beta: []const math.Complex,
+    psi0_r_band: []const math.Complex,
+    v1_hxc_r: []const math.Complex,
+    band_index: usize,
+) ![]math.Complex {
+    const rhs_ef = try alloc.alloc(math.Complex, kg.n_pw_k);
+    defer alloc.free(rhs_ef);
+
+    for (0..kg.n_pw_k) |g| {
+        rhs_ef[g] = math.complex.init(-psi1_ddk_beta[g].i, psi1_ddk_beta[g].r);
+    }
+
+    const v1psi = try phonon_q.applyV1PsiQCached(
+        alloc,
+        grid,
+        &kg.map_k,
+        v1_hxc_r,
+        psi0_r_band,
+        kg.n_pw_k,
+    );
+    defer alloc.free(v1psi);
+
+    for (0..kg.n_pw_k) |g| {
+        rhs_ef[g] = math.complex.scale(
+            math.complex.add(rhs_ef[g], v1psi[g]),
+            -1.0,
+        );
+    }
+    sternheimer.projectConduction(rhs_ef, kg.wavefunctions_k_const, kg.n_occ);
+
+    const ef_result = try sternheimer.solve(
+        alloc,
+        kg.apply_ctx_k,
+        rhs_ef,
+        kg.eigenvalues_k[band_index],
+        kg.wavefunctions_k_const,
+        kg.n_occ,
+        kg.basis_k.gvecs,
+        .{
+            .tol = dfpt_cfg.sternheimer_tol,
+            .max_iter = dfpt_cfg.sternheimer_max_iter,
+            .alpha_shift = dfpt_cfg.alpha_shift,
+        },
+    );
+    return ef_result.psi1;
+}
+
+fn borrowConstBands(
+    alloc: std.mem.Allocator,
+    bands: BandSet,
+) ![]const []const math.Complex {
+    const const_bands = try alloc.alloc([]const math.Complex, bands.len);
+    for (bands, 0..) |band, i| const_bands[i] = band;
+    return const_bands;
+}
+
+fn addDensityInPlace(
+    accum: []math.Complex,
+    delta: []const math.Complex,
+) void {
+    for (accum, 0..) |value, i| {
+        accum[i] = math.complex.add(value, delta[i]);
+    }
+}
+
+fn buildEfieldOutputPotential(
+    alloc: std.mem.Allocator,
+    grid: plane_wave.Grid,
+    gs: *const GroundState,
+    rho1_r: []const math.Complex,
+) ![]math.Complex {
+    const rho1_r_copy = try alloc.alloc(math.Complex, rho1_r.len);
+    defer alloc.free(rho1_r_copy);
+
+    @memcpy(rho1_r_copy, rho1_r);
+    const rho1_g = try alloc.alloc(math.Complex, rho1_r.len);
+    defer alloc.free(rho1_g);
+
+    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, rho1_r_copy, rho1_g, null);
+
+    const vh1_g = try perturbation.buildHartreePerturbation(alloc, grid, rho1_g);
+    defer alloc.free(vh1_g);
+
+    const rho1_real = try alloc.alloc(f64, rho1_r.len);
+    defer alloc.free(rho1_real);
+
+    for (0..rho1_r.len) |i| rho1_real[i] = rho1_r[i].r;
+    const vxc1_r = try perturbation.buildXcPerturbationFull(alloc, gs.*, rho1_real);
+    defer alloc.free(vxc1_r);
+
+    const vxc1_g = try scf_mod.realToReciprocal(alloc, grid, vxc1_r, false);
+    defer alloc.free(vxc1_g);
+
+    const v_out_g = try alloc.alloc(math.Complex, rho1_r.len);
+    for (0..rho1_r.len) |i| v_out_g[i] = math.complex.add(vh1_g[i], vxc1_g[i]);
+    return v_out_g;
+}
+
+fn mixEfieldPotential(
+    alloc: std.mem.Allocator,
+    beta: usize,
+    iter: usize,
+    dfpt_cfg: DfptConfig,
+    v1_hxc_g: []math.Complex,
+    v_out_g: []const math.Complex,
+    pulay: *scf_mod.ComplexPulayMixer,
+    mix_state: *EfieldMixState,
+) !EfieldMixOutcome {
+    var residual_norm: f64 = 0.0;
+    const residual = try alloc.alloc(math.Complex, v_out_g.len);
+    for (0..v_out_g.len) |i| {
+        residual[i] = math.complex.sub(v_out_g[i], v1_hxc_g[i]);
+        residual_norm += residual[i].r * residual[i].r + residual[i].i * residual[i].i;
+    }
+    residual_norm = @sqrt(residual_norm);
+    logDfpt("efield SCF β={d}: iter={d} vresid={e:.6}\n", .{ beta, iter, residual_norm });
+
+    const converged_strict = residual_norm < dfpt_cfg.scf_tol;
+    const converged_forced = mix_state.force_converge and residual_norm < 10.0 * dfpt_cfg.scf_tol;
+    if (converged_strict or converged_forced) {
+        alloc.free(residual);
+        logDfptInfo(
+            "efield SCF β={d}: converged at iter={d} vresid={e:.6}\n",
+            .{ beta, iter, residual_norm },
+        );
+        return .converged;
+    }
+
+    if (residual_norm < mix_state.best_vresid) {
+        mix_state.best_vresid = residual_norm;
+        if (mix_state.best_v1 == null) {
+            mix_state.best_v1 = try alloc.alloc(math.Complex, v1_hxc_g.len);
+        }
+        @memcpy(mix_state.best_v1.?, v1_hxc_g);
+    }
+
+    const restart_factor: f64 = 5.0;
+    const pulay_ready = iter >= mix_state.pulay_active_since;
+    const residual_blew_up = residual_norm > restart_factor * mix_state.best_vresid;
+    const best_is_good = mix_state.best_vresid < 1.0;
+    if (pulay_ready and residual_blew_up and best_is_good) {
+        if (mix_state.best_v1) |best| @memcpy(v1_hxc_g, best);
+        if (mix_state.best_vresid < 10.0 * dfpt_cfg.scf_tol) {
+            mix_state.force_converge = true;
+            logDfpt(
+                "efield SCF β={d}: Pulay restart (near-converged) iter={d}\n",
+                .{ beta, iter },
+            );
+            alloc.free(residual);
+            return .keep_iterating;
         }
         pulay.reset();
-        pulay_active_since = dfpt_cfg.pulay_start;
-        force_converge = false;
+        mix_state.pulay_active_since = iter + 1 + dfpt_cfg.pulay_start;
+        logDfpt(
+            "efield SCF β={d}: Pulay restart iter={d} vresid={e:.6} best={e:.6}\n",
+            .{ beta, iter, residual_norm, mix_state.best_vresid },
+        );
+        alloc.free(residual);
+        return .keep_iterating;
+    }
 
-        // ================================================================
-        // Accumulate ε_αβ from converged ψ¹_E for this β
-        // ε_αβ -= (16π/Ω) × occ × Σ_k w_k × Re[<+i du/dk_α | ψ¹_E_β>]
-        // ================================================================
-        const occ: f64 = 2.0;
-        for (kgs, 0..) |*kg, ik| {
-            const n_occ = kg.n_occ;
-            const n_pw = kg.n_pw_k;
-            for (0..n_occ) |n| {
-                for (0..3) |alpha| {
-                    var overlap: f64 = 0.0;
-                    for (0..n_pw) |g| {
-                        // +i × du/dk_α = (+i)(a+bi) = (-b+ai)
-                        const i_psi1_r = -psi1_ddk[ik][alpha][n][g].i;
-                        const i_psi1_i = psi1_ddk[ik][alpha][n][g].r;
-                        // Re[conj(+i psi1_α) × psi1_ef_β]
-                        overlap += i_psi1_r * psi1_ef[ik][n][g].r + i_psi1_i * psi1_ef[ik][n][g].i;
-                    }
-                    const prefactor = (16.0 * std.math.pi / volume) * occ * kg.weight;
-                    epsilon[alpha][beta] -= prefactor * overlap;
+    if (dfpt_cfg.pulay_history > 0 and iter >= mix_state.pulay_active_since) {
+        try pulay.mixWithResidual(v1_hxc_g, residual, dfpt_cfg.mixing_beta);
+        return .keep_iterating;
+    }
+
+    for (0..v_out_g.len) |i| {
+        const delta = math.complex.scale(residual[i], dfpt_cfg.mixing_beta);
+        v1_hxc_g[i] = math.complex.add(v1_hxc_g[i], delta);
+    }
+    alloc.free(residual);
+    return .keep_iterating;
+}
+
+fn accumulateDielectricColumn(
+    kgs: []const KPointGsData,
+    psi1_ddk: []const DirectionBandSet,
+    psi1_ef: []const BandSet,
+    volume: f64,
+) [3]f64 {
+    var column: [3]f64 = .{ 0.0, 0.0, 0.0 };
+    const occ: f64 = 2.0;
+    for (kgs, 0..) |kg, ik| {
+        for (0..kg.n_occ) |n| {
+            for (0..3) |alpha| {
+                var overlap: f64 = 0.0;
+                for (0..kg.n_pw_k) |g| {
+                    const i_psi1_r = -psi1_ddk[ik][alpha][n][g].i;
+                    const i_psi1_i = psi1_ddk[ik][alpha][n][g].r;
+                    overlap += i_psi1_r * psi1_ef[ik][n][g].r;
+                    overlap += i_psi1_i * psi1_ef[ik][n][g].i;
                 }
+                const prefactor = (16.0 * std.math.pi / volume) * occ * kg.weight;
+                column[alpha] -= prefactor * overlap;
+            }
+        }
+    }
+    return column;
+}
+
+fn symmetrizeDielectricTensor(
+    alloc: std.mem.Allocator,
+    epsilon: [3][3]f64,
+    cell_bohr: math.Mat3,
+    atoms: []const hamiltonian.AtomData,
+    recip: math.Mat3,
+) ![3][3]f64 {
+    const symmetry_mod = @import("../symmetry/symmetry.zig");
+    const symops_eps = symmetry_mod.getSymmetryOps(alloc, cell_bohr, atoms, 1e-5) catch null;
+    if (symops_eps == null) return epsilon;
+
+    const ops = symops_eps.?;
+    defer alloc.free(ops);
+
+    var eps_sym: [3][3]f64 = .{ .{ 0, 0, 0 }, .{ 0, 0, 0 }, .{ 0, 0, 0 } };
+    const inv2pi = 1.0 / (2.0 * std.math.pi);
+    for (ops) |op| {
+        var rc: [3][3]f64 = undefined;
+        for (0..3) |i| {
+            for (0..3) |j| {
+                var s: f64 = 0.0;
+                for (0..3) |k2| {
+                    for (0..3) |l2| {
+                        const rot_val = @as(f64, @floatFromInt(op.rot.m[k2][l2]));
+                        s += cell_bohr.m[k2][i] * rot_val * recip.m[l2][j] * inv2pi;
+                    }
+                }
+                rc[i][j] = s;
+            }
+        }
+        for (0..3) |i| {
+            for (0..3) |j| {
+                var val: f64 = 0.0;
+                for (0..3) |a2| {
+                    for (0..3) |b2| {
+                        val += rc[a2][i] * epsilon[a2][b2] * rc[b2][j];
+                    }
+                }
+                eps_sym[i][j] += val;
             }
         }
     }
 
-    for (0..3) |i| epsilon[i][i] += 1.0;
-
-    // Symmetrize ε tensor using crystal point group.
-    // Even with IBZ-expanded wavefunctions, the Sternheimer ddk perturbation
-    // can break point-group invariance due to finite-difference derivatives
-    // of the nonlocal potential. Symmetrize: ε_sym = (1/N) Σ_R R^T ε R.
-    {
-        const symmetry_mod = @import("../symmetry/symmetry.zig");
-        const symops_eps = symmetry_mod.getSymmetryOps(alloc, cell_bohr, atoms, 1e-5) catch null;
-
-        if (symops_eps) |ops| {
-            defer alloc.free(ops);
-            var eps_sym: [3][3]f64 = .{ .{ 0, 0, 0 }, .{ 0, 0, 0 }, .{ 0, 0, 0 } };
-            const inv2pi = 1.0 / (2.0 * std.math.pi);
-            for (ops) |op| {
-                var rc: [3][3]f64 = undefined;
-                for (0..3) |i| {
-                    for (0..3) |j| {
-                        var s: f64 = 0.0;
-                        for (0..3) |k2| {
-                            for (0..3) |l2| {
-                                const rot_val = @as(f64, @floatFromInt(op.rot.m[k2][l2]));
-                                s += cell_bohr.m[k2][i] * rot_val * recip.m[l2][j] * inv2pi;
-                            }
-                        }
-                        rc[i][j] = s;
-                    }
-                }
-                for (0..3) |i| {
-                    for (0..3) |j| {
-                        var val: f64 = 0.0;
-                        for (0..3) |a2| {
-                            for (0..3) |b2| {
-                                val += rc[a2][i] * epsilon[a2][b2] * rc[b2][j];
-                            }
-                        }
-                        eps_sym[i][j] += val;
-                    }
-                }
-            }
-            const nsym_f: f64 = @floatFromInt(ops.len);
-            for (0..3) |i| {
-                for (0..3) |j| {
-                    eps_sym[i][j] /= nsym_f;
-                }
-            }
-            epsilon = eps_sym;
-        }
+    const nsym_f: f64 = @floatFromInt(ops.len);
+    for (0..3) |i| {
+        for (0..3) |j| eps_sym[i][j] /= nsym_f;
     }
-
-    return .{ .epsilon = epsilon };
+    return eps_sym;
 }
 
 /// Compute nonlocal projector value: φ(q) = 4π f(|q|) Y_lm(q̂)
@@ -849,6 +1159,7 @@ pub fn writeElectricResults(
 ) !void {
     const file = try dir.createFile(io, "electric.dat", .{});
     defer file.close(io);
+
     var buf: [1024]u8 = undefined;
     var writer = file.writer(io, &buf);
     const out = &writer.interface;

@@ -23,6 +23,7 @@ pub fn buildDensityGridFromCenters(
 
     var orbitals = try alloc.alloc(local_orbital.Orbital, centers.len);
     defer alloc.free(orbitals);
+
     const alpha = 1.0 / (sigma * sigma);
     for (centers, 0..) |center, idx| {
         orbitals[idx] = .{ .center = center, .alpha = alpha, .cutoff = cutoff };
@@ -37,6 +38,7 @@ pub fn buildDensityGridFromCenters(
 
     var candidates: std.ArrayList(usize) = .empty;
     defer candidates.deinit(alloc);
+
     var phi_map = std.AutoHashMap(usize, f64).init(alloc);
     defer phi_map.deinit();
 
@@ -244,6 +246,7 @@ test "density grid integrates to one for normalized orbital" {
         grid,
     );
     defer alloc.free(rho);
+
     const dv = try grid.weight();
     var sum: f64 = 0.0;
     for (rho) |value| {

@@ -92,13 +92,16 @@ pub fn solve(
     // Allocate workspace
     const v = try alloc.alloc(math.Complex, op.n * max_subspace);
     defer alloc.free(v);
+
     const w = try alloc.alloc(math.Complex, op.n * max_subspace);
     defer alloc.free(w);
     // S·v workspace (only for generalized problem)
     const sv = if (has_overlap) try alloc.alloc(math.Complex, op.n * max_subspace) else null;
     defer if (sv) |s| alloc.free(s);
+
     const ritz = try alloc.alloc(math.Complex, op.n * nbands);
     defer alloc.free(ritz);
+
     const residuals = try alloc.alloc(math.Complex, op.n * nbands);
     defer alloc.free(residuals);
     // S·ritz workspace for residual computation
@@ -119,6 +122,7 @@ pub fn solve(
     if (opts.init_diagonal) {
         const order = try alloc.alloc(usize, op.n);
         defer alloc.free(order);
+
         for (order, 0..) |*idx, i| {
             idx.* = i;
         }
@@ -155,6 +159,7 @@ pub fn solve(
     else
         null;
     defer if (ts) |s| alloc.free(s);
+
     const last_values = try alloc.alloc(f64, nbands);
     defer alloc.free(last_values);
 

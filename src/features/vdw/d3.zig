@@ -186,6 +186,73 @@ pub fn computeEnergy(
     return energy * 2.0;
 }
 
+/// Accumulate the pair (ia, ib) contribution to forces over the lattice-image
+/// range defined by `lat_range_cutoff`. Writes to `forces` in Hartree/Bohr.
+fn accumulateForcesPair(
+    forces: []math.Vec3,
+    positions: []const math.Vec3,
+    cell: math.Mat3,
+    damping: params.DampingParams,
+    cutoff: f64,
+    lat_range_cutoff: [3]i32,
+    ia: usize,
+    ib: usize,
+    c6: f64,
+    c8: f64,
+    r0: f64,
+) void {
+    var la: i32 = -lat_range_cutoff[0];
+    while (la <= lat_range_cutoff[0]) : (la += 1) {
+        var lb: i32 = -lat_range_cutoff[1];
+        while (lb <= lat_range_cutoff[1]) : (lb += 1) {
+            var lc: i32 = -lat_range_cutoff[2];
+            while (lc <= lat_range_cutoff[2]) : (lc += 1) {
+                if (ia == ib and la == 0 and lb == 0 and lc == 0) continue;
+                const shift = latticeVector(cell, la, lb, lc);
+                const r_vec = math.Vec3.sub(
+                    math.Vec3.add(positions[ib], shift),
+                    positions[ia],
+                );
+                const r2 = math.Vec3.dot(r_vec, r_vec);
+                const r = @sqrt(r2);
+                if (r > cutoff or r < 1e-10) continue;
+
+                const r6 = r2 * r2 * r2;
+                const r8 = r6 * r2;
+                const f6 = r0 * r0 * r0 * r0 * r0 * r0;
+                const f8 = f6 * r0 * r0;
+
+                // dE/dR = s6 * 6*C6*R^4*R_vec / (R^6 + f^6)^2
+                //       + s8 * 8*C8*R^6*R_vec / (R^8 + f^8)^2
+                const denom6 = r6 + f6;
+                const denom8 = r8 + f8;
+                const grad_scale = damping.s6 * 6.0 * c6 * r2 * r2 / (denom6 * denom6) +
+                    damping.s8 * 8.0 * c8 * r6 / (denom8 * denom8);
+
+                const factor: f64 = if (ia == ib) 0.5 else 1.0;
+
+                // F_A = factor * grad_scale * r_vec (in direction from A to B)
+                // F_B = -F_A (Newton's third law)
+                const f_vec = math.Vec3{
+                    .x = factor * grad_scale * r_vec.x,
+                    .y = factor * grad_scale * r_vec.y,
+                    .z = factor * grad_scale * r_vec.z,
+                };
+
+                // Note: factor already accounts for double-counting
+                forces[ia].x -= f_vec.x;
+                forces[ia].y -= f_vec.y;
+                forces[ia].z -= f_vec.z;
+                if (ia != ib) {
+                    forces[ib].x += f_vec.x;
+                    forces[ib].y += f_vec.y;
+                    forces[ib].z += f_vec.z;
+                }
+            }
+        }
+    }
+}
+
 /// Compute DFT-D3(BJ) dispersion forces.
 /// Returns forces in Rydberg/Bohr.
 pub fn computeForces(
@@ -225,78 +292,19 @@ pub fn computeForces(
             const c8 = computeC8(c6, za, zb);
             const r0 = damping.a1 * @sqrt(c8 / c6) + damping.a2;
 
-            var la: i32 = -lat_range_cutoff[0];
-            while (la <= lat_range_cutoff[0]) : (la += 1) {
-                var lb: i32 = -lat_range_cutoff[1];
-                while (lb <= lat_range_cutoff[1]) : (lb += 1) {
-                    var lc: i32 = -lat_range_cutoff[2];
-                    while (lc <= lat_range_cutoff[2]) : (lc += 1) {
-                        if (ia == ib and la == 0 and lb == 0 and lc == 0) continue;
-                        const shift = latticeVector(cell, la, lb, lc);
-                        const r_vec = math.Vec3.sub(
-                            math.Vec3.add(positions[ib], shift),
-                            positions[ia],
-                        );
-                        const r2 = math.Vec3.dot(r_vec, r_vec);
-                        const r = @sqrt(r2);
-                        if (r > cutoff or r < 1e-10) continue;
-
-                        const r6 = r2 * r2 * r2;
-                        const r8 = r6 * r2;
-                        const f6 = r0 * r0 * r0 * r0 * r0 * r0;
-                        const f8 = f6 * r0 * r0;
-
-                        // dE/dR = s6 * 6*C6*R^4*R_vec / (R^6 + f^6)^2
-                        //       + s8 * 8*C8*R^6*R_vec / (R^8 + f^8)^2
-                        const denom6 = r6 + f6;
-                        const denom8 = r8 + f8;
-                        const grad_scale = damping.s6 * 6.0 * c6 * r2 * r2 / (denom6 * denom6) +
-                            damping.s8 * 8.0 * c8 * r6 / (denom8 * denom8);
-
-                        const factor: f64 = if (ia == ib) 0.5 else 1.0;
-
-                        // Force = -dE/dR_A, where dE/dR_A = -grad_scale * R_vec
-                        // (for attractive E = -C/R^n).
-                        // Actually: E = -C/(R^n + f^n),
-                        //   dE/dR = n*C*R^(n-2)*R_vec/(R^n+f^n)^2
-                        // F_A = -dE/dR_A = -dE/dR * dR/dR_A = dE/dR * R_vec/R
-                        // ... wait, let me be careful.
-                        // R_vec = R_B - R_A, so dR_vec/dR_A = -I, dR/dR_A = -R_vec/R
-                        // dE/dR_A = (dE/dR) * (dR/dR_A) = (dE/dR) * (-R_hat)
-                        // F_A = -dE/dR_A = (dE/dR) * R_hat = grad_scale * R_vec / R
-                        // But actually we need to be more careful:
-                        // E = -s6*C6/(R^6+f^6) => dE/d(R²) = s6*C6*3*R^4/(R^6+f^6)^2
-                        // ... let me use R_alpha
-                        // dE/dR_alpha = dE/dR * R_alpha/R
-                        // dE/dR = s6*6*C6*R^5/(R^6+f^6)^2 + s8*8*C8*R^7/(R^8+f^8)^2
-                        // So dE/dR * R_alpha/R
-                        //   = (s6*6*C6*R^4/(R^6+f^6)^2
-                        //      + s8*8*C8*R^6/(R^8+f^8)^2) * R_alpha
-                        // F_A_alpha = -dE/dR_A_alpha = (dE/dR) * R_alpha/R
-                        //           = grad_scale * r_vec_alpha
-                        // (since R_vec = R_B - R_A, dR/d(R_A_alpha) = -R_alpha/R)
-                        // Actually F_A = -dE/dR_A = -(dE/dR * (-R_hat)) = dE/dR * R_hat
-
-                        // F_A = factor * grad_scale * r_vec (in direction from A to B)
-                        // F_B = -F_A (Newton's third law)
-                        const f_vec = math.Vec3{
-                            .x = factor * grad_scale * r_vec.x,
-                            .y = factor * grad_scale * r_vec.y,
-                            .z = factor * grad_scale * r_vec.z,
-                        };
-
-                        // Note: factor already accounts for double-counting
-                        forces[ia].x -= f_vec.x;
-                        forces[ia].y -= f_vec.y;
-                        forces[ia].z -= f_vec.z;
-                        if (ia != ib) {
-                            forces[ib].x += f_vec.x;
-                            forces[ib].y += f_vec.y;
-                            forces[ib].z += f_vec.z;
-                        }
-                    }
-                }
-            }
+            accumulateForcesPair(
+                forces,
+                positions,
+                cell,
+                damping,
+                cutoff,
+                lat_range_cutoff,
+                ia,
+                ib,
+                c6,
+                c8,
+                r0,
+            );
         }
     }
 
@@ -308,6 +316,69 @@ pub fn computeForces(
     }
 
     return forces;
+}
+
+/// Accumulate off-diagonal (I != J) pair contribution to the real-space
+/// dynamical matrix, summed over lattice images within `lat_range_cutoff`.
+fn accumulateDynmatPair(
+    dyn: []f64,
+    dim: usize,
+    positions: []const math.Vec3,
+    cell: math.Mat3,
+    damping: params.DampingParams,
+    cutoff: f64,
+    lat_range_cutoff: [3]i32,
+    ia: usize,
+    ib: usize,
+    c6: f64,
+    c8: f64,
+    r0: f64,
+) void {
+    var la: i32 = -lat_range_cutoff[0];
+    while (la <= lat_range_cutoff[0]) : (la += 1) {
+        var lb: i32 = -lat_range_cutoff[1];
+        while (lb <= lat_range_cutoff[1]) : (lb += 1) {
+            var lc: i32 = -lat_range_cutoff[2];
+            while (lc <= lat_range_cutoff[2]) : (lc += 1) {
+                const shift = latticeVector(cell, la, lb, lc);
+                const r_vec = math.Vec3.sub(
+                    math.Vec3.add(positions[ib], shift),
+                    positions[ia],
+                );
+                const r2 = math.Vec3.dot(r_vec, r_vec);
+                const r = @sqrt(r2);
+                if (r > cutoff or r < 1e-10) continue;
+
+                // d²E/dR_Iα dR_Jβ for off-diagonal blocks (I≠J)
+                // with R_vec = R_J + L - R_I
+                const hess = pairwiseHessian(r_vec, r2, c6, c8, r0, damping);
+
+                // Fill D(Iα, Jβ) += hess(α,β) for the (ia, ib) block
+                for (0..3) |a| {
+                    for (0..3) |b| {
+                        dyn[(3 * ia + a) * dim + (3 * ib + b)] += hess[a][b];
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Apply the acoustic sum rule for Γ-point dynamical matrix:
+/// D(Iα, Iβ) = -Σ_{J≠I} D(Iα, Jβ).
+fn applyDynmatAsr(dyn: []f64, n_atoms: usize, dim: usize) void {
+    for (0..n_atoms) |ia| {
+        for (0..3) |a| {
+            for (0..3) |b| {
+                var sum: f64 = 0.0;
+                for (0..n_atoms) |jb| {
+                    if (jb == ia) continue;
+                    sum += dyn[(3 * ia + a) * dim + (3 * jb + b)];
+                }
+                dyn[(3 * ia + a) * dim + (3 * ia + b)] = -sum;
+            }
+        }
+    }
 }
 
 /// Compute D3(BJ) contribution to the dynamical matrix at Γ point.
@@ -347,50 +418,25 @@ pub fn computeDynmat(
             const c8 = computeC8(c6, za, zb);
             const r0 = damping.a1 * @sqrt(c8 / c6) + damping.a2;
 
-            var la: i32 = -lat_range_cutoff[0];
-            while (la <= lat_range_cutoff[0]) : (la += 1) {
-                var lb: i32 = -lat_range_cutoff[1];
-                while (lb <= lat_range_cutoff[1]) : (lb += 1) {
-                    var lc: i32 = -lat_range_cutoff[2];
-                    while (lc <= lat_range_cutoff[2]) : (lc += 1) {
-                        const shift = latticeVector(cell, la, lb, lc);
-                        const r_vec = math.Vec3.sub(
-                            math.Vec3.add(positions[ib], shift),
-                            positions[ia],
-                        );
-                        const r2 = math.Vec3.dot(r_vec, r_vec);
-                        const r = @sqrt(r2);
-                        if (r > cutoff or r < 1e-10) continue;
-
-                        // d²E/dR_Iα dR_Jβ for off-diagonal blocks (I≠J)
-                        // with R_vec = R_J + L - R_I
-                        const hess = pairwiseHessian(r_vec, r2, c6, c8, r0, damping);
-
-                        // Fill D(Iα, Jβ) += hess(α,β) for the (ia, ib) block
-                        for (0..3) |a| {
-                            for (0..3) |b| {
-                                dyn[(3 * ia + a) * dim + (3 * ib + b)] += hess[a][b];
-                            }
-                        }
-                    }
-                }
-            }
+            accumulateDynmatPair(
+                dyn,
+                dim,
+                positions,
+                cell,
+                damping,
+                cutoff,
+                lat_range_cutoff,
+                ia,
+                ib,
+                c6,
+                c8,
+                r0,
+            );
         }
     }
 
     // Diagonal blocks: ASR D(Iα, Iβ) = -Σ_{J≠I} D(Iα, Jβ)
-    for (0..n_atoms) |ia| {
-        for (0..3) |a| {
-            for (0..3) |b| {
-                var sum: f64 = 0.0;
-                for (0..n_atoms) |jb| {
-                    if (jb == ia) continue;
-                    sum += dyn[(3 * ia + a) * dim + (3 * jb + b)];
-                }
-                dyn[(3 * ia + a) * dim + (3 * ia + b)] = -sum;
-            }
-        }
-    }
+    applyDynmatAsr(dyn, n_atoms, dim);
 
     // Convert Hartree/Bohr² → Rydberg/Bohr² (×2)
     for (dyn) |*d| {
@@ -398,6 +444,107 @@ pub fn computeDynmat(
     }
 
     return dyn;
+}
+
+/// Accumulate the (ia, ib) pair contribution to the q-space dynamical matrix,
+/// including the phase factor exp(iq·r_vec) for each lattice image.
+fn accumulateDynmatQPair(
+    dyn_q: []math.Complex,
+    dim: usize,
+    positions: []const math.Vec3,
+    cell: math.Mat3,
+    damping: params.DampingParams,
+    cutoff: f64,
+    lat_range_cutoff: [3]i32,
+    q_cart: math.Vec3,
+    ia: usize,
+    ib: usize,
+    c6: f64,
+    c8: f64,
+    r0: f64,
+) void {
+    var la: i32 = -lat_range_cutoff[0];
+    while (la <= lat_range_cutoff[0]) : (la += 1) {
+        var lb: i32 = -lat_range_cutoff[1];
+        while (lb <= lat_range_cutoff[1]) : (lb += 1) {
+            var lc: i32 = -lat_range_cutoff[2];
+            while (lc <= lat_range_cutoff[2]) : (lc += 1) {
+                if (ia == ib and la == 0 and lb == 0 and lc == 0) continue;
+                const shift = latticeVector(cell, la, lb, lc);
+                const r_vec = math.Vec3.sub(
+                    math.Vec3.add(positions[ib], shift),
+                    positions[ia],
+                );
+                const r2 = math.Vec3.dot(r_vec, r_vec);
+                const r = @sqrt(r2);
+                if (r > cutoff or r < 1e-10) continue;
+
+                const hess = pairwiseHessian(r_vec, r2, c6, c8, r0, damping);
+
+                // Phase factor: exp(iq·(R_J+L - R_I)) = exp(iq·r_vec)
+                const phase_arg = math.Vec3.dot(q_cart, r_vec);
+                const phase = math.complex.init(@cos(phase_arg), @sin(phase_arg));
+
+                for (0..3) |a| {
+                    for (0..3) |b| {
+                        const val = math.complex.scale(phase, hess[a][b]);
+                        const idx = (3 * ia + a) * dim + (3 * ib + b);
+                        dyn_q[idx] = math.complex.add(dyn_q[idx], val);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Accumulate the self-Hessian of atom `ia` over all pairs (ia, ib) and
+/// lattice images (ib, L) != (ia, 0). Writes into `self_hess`.
+fn accumulateSelfHessian(
+    self_hess: *[3][3]f64,
+    atomic_numbers: []const usize,
+    positions: []const math.Vec3,
+    cell: math.Mat3,
+    damping: params.DampingParams,
+    cutoff: f64,
+    lat_range_cutoff: [3]i32,
+    cn: []const f64,
+    ia: usize,
+) void {
+    const za = atomic_numbers[ia];
+    for (0..atomic_numbers.len) |ib| {
+        const zb = atomic_numbers[ib];
+        if (zb == 0 or zb > params.max_z) continue;
+
+        const c6 = computeC6(za, zb, cn[ia], cn[ib]);
+        const c8 = computeC8(c6, za, zb);
+        const r0 = damping.a1 * @sqrt(c8 / c6) + damping.a2;
+
+        var la: i32 = -lat_range_cutoff[0];
+        while (la <= lat_range_cutoff[0]) : (la += 1) {
+            var lb: i32 = -lat_range_cutoff[1];
+            while (lb <= lat_range_cutoff[1]) : (lb += 1) {
+                var lc: i32 = -lat_range_cutoff[2];
+                while (lc <= lat_range_cutoff[2]) : (lc += 1) {
+                    if (ia == ib and la == 0 and lb == 0 and lc == 0) continue;
+                    const shift = latticeVector(cell, la, lb, lc);
+                    const r_vec = math.Vec3.sub(
+                        math.Vec3.add(positions[ib], shift),
+                        positions[ia],
+                    );
+                    const r2 = math.Vec3.dot(r_vec, r_vec);
+                    const r = @sqrt(r2);
+                    if (r > cutoff or r < 1e-10) continue;
+
+                    const hess = pairwiseHessian(r_vec, r2, c6, c8, r0, damping);
+                    for (0..3) |a| {
+                        for (0..3) |b| {
+                            self_hess[a][b] += hess[a][b];
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Compute D3(BJ) contribution to the dynamical matrix at arbitrary q-point.
@@ -426,99 +573,61 @@ pub fn computeDynmatQ(
     const lat_range_cutoff = latticeRange(cell, cutoff);
 
     // Compute off-diagonal blocks (sum over all J, L including J==I with L≠0)
-    for (0..n_atoms) |ia| {
-        const za = atomic_numbers[ia];
-        if (za == 0 or za > params.max_z) continue;
+    accumulateDynmatQOffDiag(
+        dyn_q,
+        dim,
+        atomic_numbers,
+        positions,
+        cell,
+        damping,
+        cutoff,
+        lat_range_cutoff,
+        cn,
+        q_cart,
+    );
 
-        for (0..n_atoms) |ib| {
-            const zb = atomic_numbers[ib];
-            if (zb == 0 or zb > params.max_z) continue;
+    // Diagonal blocks: ASR via on-site self-term (no phase factor).
+    //   D(Iα,Iβ;L=0) = -Σ_{(J,L')≠(I,0)} hess(I,J;L')
+    // We add this to dyn_q on top of the ib==ia, L≠0 contributions that are
+    // already accumulated above with their phase factors.
+    applyDynmatQSelfTerm(
+        dyn_q,
+        dim,
+        atomic_numbers,
+        positions,
+        cell,
+        damping,
+        cutoff,
+        lat_range_cutoff,
+        cn,
+    );
 
-            const c6 = computeC6(za, zb, cn[ia], cn[ib]);
-            const c8 = computeC8(c6, za, zb);
-            const r0 = damping.a1 * @sqrt(c8 / c6) + damping.a2;
-
-            var la: i32 = -lat_range_cutoff[0];
-            while (la <= lat_range_cutoff[0]) : (la += 1) {
-                var lb: i32 = -lat_range_cutoff[1];
-                while (lb <= lat_range_cutoff[1]) : (lb += 1) {
-                    var lc: i32 = -lat_range_cutoff[2];
-                    while (lc <= lat_range_cutoff[2]) : (lc += 1) {
-                        if (ia == ib and la == 0 and lb == 0 and lc == 0) continue;
-                        const shift = latticeVector(cell, la, lb, lc);
-                        const r_vec = math.Vec3.sub(
-                            math.Vec3.add(positions[ib], shift),
-                            positions[ia],
-                        );
-                        const r2 = math.Vec3.dot(r_vec, r_vec);
-                        const r = @sqrt(r2);
-                        if (r > cutoff or r < 1e-10) continue;
-
-                        const hess = pairwiseHessian(r_vec, r2, c6, c8, r0, damping);
-
-                        // Phase factor: exp(iq·(R_J+L - R_I)) = exp(iq·r_vec)
-                        const phase_arg = math.Vec3.dot(q_cart, r_vec);
-                        const phase = math.complex.init(@cos(phase_arg), @sin(phase_arg));
-
-                        for (0..3) |a| {
-                            for (0..3) |b| {
-                                const val = math.complex.scale(phase, hess[a][b]);
-                                const idx = (3 * ia + a) * dim + (3 * ib + b);
-                                dyn_q[idx] = math.complex.add(dyn_q[idx], val);
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    // Convert Hartree/Bohr² → Rydberg/Bohr² (×2)
+    for (dyn_q) |*d| {
+        d.* = math.complex.scale(d.*, 2.0);
     }
 
-    // Diagonal blocks: ASR
-    //   D_q(Iα, Iβ) = -Σ_{J,L≠(I,0)} D(Iα, Jβ; L)  (no phase for self-term)
-    // More precisely, we need the real-space sum for the diagonal:
-    // D_q(Iα,Iβ) = -Σ_{J,L≠(I,0)} D(Iα,Jβ;L) × exp(iq·L) ... wait, actually
-    // The standard approach: D_q(Iα,Iβ) is computed as sum over all (J,L)≠(I,0)
-    // just like off-diag.
-    // But for the Γ point limit, we enforce ASR.
-    // For q≠0, the off-diagonal already correctly represents the dynamical
-    // matrix via Fourier transform.
-    // We should NOT separately enforce ASR at q≠0; the lattice sum handles it
-    // naturally.
-    // However, the diagonal self-interaction at L=0 is excluded above.
-    // Actually, for q≠0, D_q(Iα,Iβ) receives contributions from D(Iα,Iβ;L) for
-    // L≠0 (which we computed)
-    // plus the "on-site" term which is the negative sum of all off-diagonal
-    // real-space force constants.
-    // This on-site term is:
-    // D(Iα,Iβ;L=0) = -Σ_{(J,L)≠(I,0)} D(Iα,Jβ;L)  (no phase factor here)
-    //
-    // So D_q(Iα,Iβ) = D(Iα,Iβ;L=0)*exp(iq·0) + Σ_{L≠0} D(Iα,Iβ;L)*exp(iq·L)
-    //   = [-Σ_{(J,L)≠(I,0)} D(Iα,Jβ;L)]
-    //     + [already accumulated from ib==ia, L≠0 above]
-    //
-    // The terms with ib==ia, L≠0 have already been added to the diagonal with
-    // their phase factors.
-    // We need to add the on-site self-term = -Σ_{(J,L)≠(I,0)} hess_real
-    // (no phase).
-    // But wait, we also need to subtract the ib==ia, L≠0 terms without phase that were
-    // implicitly part of the diagonal sum. Let me think again...
-    //
-    // Real-space: D(Iα,Iβ;L=0) = -Σ_{(J,L')≠(I,0)} hess(I,J;L')
-    // Fourier: D_q(Iα,Iβ) = D(Iα,Iβ;L=0)*1 + Σ_{L≠0} D(Iα,Iβ;L)*e^{iq·L}
-    // But D(Iα,Iβ;L) for L≠0 = hess(I,I;L) (pair Hessian between I and image of I at L)
-    // These are already accumulated in the loop above (ib==ia, L≠0) with phase.
-    //
-    // So we just need to add D(Iα,Iβ;L=0) to the diagonal.
-    // D(Iα,Iβ;L=0) = -Σ_{(J,L')≠(I,0)} hess(I,J;L')
-    // This means: sum all hess for all pairs involving atom I (as atom A), negate.
+    return dyn_q;
+}
 
-    // Compute the self-term for each atom
+/// Loop body that accumulates off-diagonal (J, L) contributions into the
+/// q-space dynamical matrix for every (I, J) atom pair.
+fn accumulateDynmatQOffDiag(
+    dyn_q: []math.Complex,
+    dim: usize,
+    atomic_numbers: []const usize,
+    positions: []const math.Vec3,
+    cell: math.Mat3,
+    damping: params.DampingParams,
+    cutoff: f64,
+    lat_range_cutoff: [3]i32,
+    cn: []const f64,
+    q_cart: math.Vec3,
+) void {
+    const n_atoms = atomic_numbers.len;
     for (0..n_atoms) |ia| {
         const za = atomic_numbers[ia];
         if (za == 0 or za > params.max_z) continue;
-
-        // Sum all hessians involving atom ia
-        var self_hess: [3][3]f64 = .{ .{ 0, 0, 0 }, .{ 0, 0, 0 }, .{ 0, 0, 0 } };
 
         for (0..n_atoms) |ib| {
             const zb = atomic_numbers[ib];
@@ -528,32 +637,54 @@ pub fn computeDynmatQ(
             const c8 = computeC8(c6, za, zb);
             const r0 = damping.a1 * @sqrt(c8 / c6) + damping.a2;
 
-            var la: i32 = -lat_range_cutoff[0];
-            while (la <= lat_range_cutoff[0]) : (la += 1) {
-                var lb: i32 = -lat_range_cutoff[1];
-                while (lb <= lat_range_cutoff[1]) : (lb += 1) {
-                    var lc: i32 = -lat_range_cutoff[2];
-                    while (lc <= lat_range_cutoff[2]) : (lc += 1) {
-                        if (ia == ib and la == 0 and lb == 0 and lc == 0) continue;
-                        const shift = latticeVector(cell, la, lb, lc);
-                        const r_vec = math.Vec3.sub(
-                            math.Vec3.add(positions[ib], shift),
-                            positions[ia],
-                        );
-                        const r2 = math.Vec3.dot(r_vec, r_vec);
-                        const r = @sqrt(r2);
-                        if (r > cutoff or r < 1e-10) continue;
-
-                        const hess = pairwiseHessian(r_vec, r2, c6, c8, r0, damping);
-                        for (0..3) |a| {
-                            for (0..3) |b| {
-                                self_hess[a][b] += hess[a][b];
-                            }
-                        }
-                    }
-                }
-            }
+            accumulateDynmatQPair(
+                dyn_q,
+                dim,
+                positions,
+                cell,
+                damping,
+                cutoff,
+                lat_range_cutoff,
+                q_cart,
+                ia,
+                ib,
+                c6,
+                c8,
+                r0,
+            );
         }
+    }
+}
+
+/// Add the on-site self-term D(Iα,Iβ;L=0) = -Σ_{(J,L)≠(I,0)} hess to dyn_q.
+fn applyDynmatQSelfTerm(
+    dyn_q: []math.Complex,
+    dim: usize,
+    atomic_numbers: []const usize,
+    positions: []const math.Vec3,
+    cell: math.Mat3,
+    damping: params.DampingParams,
+    cutoff: f64,
+    lat_range_cutoff: [3]i32,
+    cn: []const f64,
+) void {
+    const n_atoms = atomic_numbers.len;
+    for (0..n_atoms) |ia| {
+        const za = atomic_numbers[ia];
+        if (za == 0 or za > params.max_z) continue;
+
+        var self_hess: [3][3]f64 = .{ .{ 0, 0, 0 }, .{ 0, 0, 0 }, .{ 0, 0, 0 } };
+        accumulateSelfHessian(
+            &self_hess,
+            atomic_numbers,
+            positions,
+            cell,
+            damping,
+            cutoff,
+            lat_range_cutoff,
+            cn,
+            ia,
+        );
 
         // D(Iα,Iβ;L=0) = -self_hess
         for (0..3) |a| {
@@ -563,13 +694,6 @@ pub fn computeDynmatQ(
             }
         }
     }
-
-    // Convert Hartree/Bohr² → Rydberg/Bohr² (×2)
-    for (dyn_q) |*d| {
-        d.* = math.complex.scale(d.*, 2.0);
-    }
-
-    return dyn_q;
 }
 
 // ====================================================================

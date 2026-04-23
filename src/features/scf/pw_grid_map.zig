@@ -62,6 +62,7 @@ pub const PwGridMap = struct {
         // Build inverse map: recip_grid_pos -> fft_sequential_pos
         const inv_map = try alloc.alloc(usize, total);
         defer alloc.free(inv_map);
+
         for (fft_index_map, 0..) |recip_idx, fft_idx| {
             inv_map[recip_idx] = fft_idx;
         }

@@ -100,7 +100,6 @@ pub const GauntTable = struct {
     /// The Lebedev grid is chosen to exactly integrate the product of three
     /// spherical harmonics of combined degree lmax_proj + lmax_proj + lmax_aug.
     pub fn init(alloc: std.mem.Allocator, lmax_proj: usize, lmax_aug: usize) !GauntTable {
-        // realSphericalHarmonic supports up to l=4
         if (lmax_proj > 4) return error.LmaxTooLarge;
         if (lmax_aug > 4) return error.LmaxTooLarge;
 
@@ -110,65 +109,10 @@ pub const GauntTable = struct {
 
         const values = try alloc.alloc(f64, n_total);
         @memset(values, 0.0);
-
-        // Choose Lebedev grid large enough to integrate products of degree
-        // lmax_proj + lmax_proj + lmax_aug exactly.
-        // Max degree = 2*4 + 4 = 12. lebedev_194 integrates exactly up to degree 17.
-        // Use lebedev_302 for extra safety (exact to degree 23).
-        const grid = lebedev.getLebedevGrid(302);
-
-        // Pre-allocate Y_lm evaluation arrays.
-        // Max lm size: (4+1)^2 = 25
-        const max_lm = 25;
-
-        for (grid) |pt| {
-            const x = pt.x;
-            const y = pt.y;
-            const z = pt.z;
-            // Weights are normalized to sum=1 (surface average).
-            // Full sphere integral = 4*pi * surface_average.
-            const w = pt.w * 4.0 * std.math.pi;
-
-            // Evaluate all Y_lm at this quadrature point
-            var ylm_proj: [max_lm]f64 = undefined;
-            for (0..lmax_proj + 1) |l| {
-                const l_i32: i32 = @intCast(l);
-                var m: i32 = -l_i32;
-                while (m <= l_i32) : (m += 1) {
-                    ylm_proj[lmIndex(l, m)] = nonlocal.realSphericalHarmonic(l_i32, m, x, y, z);
-                }
-            }
-
-            var ylm_aug: [max_lm]f64 = undefined;
-            for (0..lmax_aug + 1) |l| {
-                const l_i32: i32 = @intCast(l);
-                var m: i32 = -l_i32;
-                while (m <= l_i32) : (m += 1) {
-                    ylm_aug[lmIndex(l, m)] = nonlocal.realSphericalHarmonic(l_i32, m, x, y, z);
-                }
-            }
-
-            // Accumulate G(lm1, lm2, LM) = sum_Omega w * Y_{l1,m1} * Y_{l2,m2} * Y_{L,M}
-            for (0..n_lm_proj) |lm1| {
-                const y1 = ylm_proj[lm1];
-                if (@abs(y1) < 1e-30) continue;
-                for (0..n_lm_proj) |lm2| {
-                    const y2 = ylm_proj[lm2];
-                    if (@abs(y2) < 1e-30) continue;
-                    const y12 = y1 * y2 * w;
-                    const base = (lm1 * n_lm_proj + lm2) * n_lm_aug;
-                    for (0..n_lm_aug) |lm3| {
-                        values[base + lm3] += y12 * ylm_aug[lm3];
-                    }
-                }
-            }
-        }
-
-        // Zero out tiny values (numerical noise from quadrature)
+        accumulateGauntOverSphere(values, lmax_proj, lmax_aug, n_lm_proj, n_lm_aug);
         for (values) |*v| {
             if (@abs(v.*) < 1e-14) v.* = 0.0;
         }
-
         return .{
             .values = values,
             .lmax_proj = lmax_proj,
@@ -182,6 +126,47 @@ pub const GauntTable = struct {
         if (self.values.len > 0) alloc.free(self.values);
     }
 };
+
+fn accumulateGauntOverSphere(
+    values: []f64,
+    lmax_proj: usize,
+    lmax_aug: usize,
+    n_lm_proj: usize,
+    n_lm_aug: usize,
+) void {
+    const max_lm = 25;
+    const grid = lebedev.getLebedevGrid(302);
+    for (grid) |pt| {
+        const w = pt.w * 4.0 * std.math.pi;
+        var ylm_proj: [max_lm]f64 = undefined;
+        evalAllRealYlm(lmax_proj, pt.x, pt.y, pt.z, &ylm_proj);
+        var ylm_aug: [max_lm]f64 = undefined;
+        evalAllRealYlm(lmax_aug, pt.x, pt.y, pt.z, &ylm_aug);
+        for (0..n_lm_proj) |lm1| {
+            const y1 = ylm_proj[lm1];
+            if (@abs(y1) < 1e-30) continue;
+            for (0..n_lm_proj) |lm2| {
+                const y2 = ylm_proj[lm2];
+                if (@abs(y2) < 1e-30) continue;
+                const y12 = y1 * y2 * w;
+                const base = (lm1 * n_lm_proj + lm2) * n_lm_aug;
+                for (0..n_lm_aug) |lm3| {
+                    values[base + lm3] += y12 * ylm_aug[lm3];
+                }
+            }
+        }
+    }
+}
+
+fn evalAllRealYlm(lmax: usize, x: f64, y: f64, z: f64, out: []f64) void {
+    for (0..lmax + 1) |l| {
+        const l_i32: i32 = @intCast(l);
+        var m: i32 = -l_i32;
+        while (m <= l_i32) : (m += 1) {
+            out[GauntTable.lmIndex(l, m)] = nonlocal.realSphericalHarmonic(l_i32, m, x, y, z);
+        }
+    }
+}
 
 // ============================================================================
 // Tests

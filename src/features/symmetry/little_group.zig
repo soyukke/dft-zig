@@ -189,45 +189,27 @@ pub const IrrepBlock = struct {
     }
 };
 
-/// Analyze basis symmetry for a Cs little group (single mirror).
-/// This is the relevant case for the M-Γ path in graphene.
-///
-/// For Cs symmetry:
-/// - Invariant G-vectors (σG = G): belong only to A'
-/// - Paired G-vectors (σG ≠ G): form |+⟩ = (|G⟩+|σG⟩)/√2 in A'
-///                               and |-⟩ = (|G⟩-|σG⟩)/√2 in A''
-pub fn analyzeCs(
+/// Find the mirror operation (det=-1) in the little group, if any.
+fn findMirrorOperation(little_grp: LittleGroup) ?symmetry.SymOp {
+    for (little_grp.ops) |op| {
+        if (op.rot.det() == -1) return op;
+    }
+    return null;
+}
+
+/// Classify G-vectors under a mirror into invariant indices and (G, σG) pairs.
+fn classifyGVectorsByMirrorFrac(
     alloc: std.mem.Allocator,
     gvecs: []const GVector,
-    little_grp: LittleGroup,
-) !BasisSymmetryInfo {
-    // Find the mirror operation
-    var mirror_op: ?symmetry.SymOp = null;
-    for (little_grp.ops) |op| {
-        if (op.rot.det() == -1) {
-            mirror_op = op;
-            break;
-        }
-    }
-
-    if (mirror_op == null) {
-        // No mirror found - return trivial classification
-        return trivialClassification(alloc, gvecs, little_grp);
-    }
-
-    const mirror = mirror_op.?;
-
-    // Lists to collect invariant G-vectors and pairs
-    var invariant_list: std.ArrayList(usize) = .empty;
-    errdefer invariant_list.deinit(alloc);
-    var pair_list: std.ArrayList(GVectorPair) = .empty;
-    errdefer pair_list.deinit(alloc);
-
+    mirror: symmetry.SymOp,
+    invariant_list: *std.ArrayList(usize),
+    pair_list: *std.ArrayList(GVectorPair),
+) !void {
     const processed = try alloc.alloc(bool, gvecs.len);
     defer alloc.free(processed);
+
     @memset(processed, false);
 
-    // Classify each G-vector
     var i: usize = 0;
     while (i < gvecs.len) : (i += 1) {
         if (processed[i]) continue;
@@ -282,16 +264,20 @@ pub fn analyzeCs(
             }
         }
     }
+}
 
-    // Build irrep blocks
+/// Build the A' and A'' irrep blocks from invariant G-vectors and mirror pairs.
+fn buildMirrorIrrepBlocks(
+    alloc: std.mem.Allocator,
+    little_grp: LittleGroup,
+    invariant_indices: []usize,
+    pairs: []GVectorPair,
+) !BasisSymmetryInfo {
     var blocks: std.ArrayList(IrrepBlock) = .empty;
     errdefer {
         for (blocks.items) |*b| b.deinit(alloc);
         blocks.deinit(alloc);
     }
-
-    const invariant_indices = try invariant_list.toOwnedSlice(alloc);
-    const pairs = try pair_list.toOwnedSlice(alloc);
 
     // A' block: contains invariant G-vectors and |+⟩ states from pairs
     // Block size = num_invariant + num_pairs
@@ -322,6 +308,40 @@ pub fn analyzeCs(
     };
 }
 
+/// Analyze basis symmetry for a Cs little group (single mirror).
+/// This is the relevant case for the M-Γ path in graphene.
+///
+/// For Cs symmetry:
+/// - Invariant G-vectors (σG = G): belong only to A'
+/// - Paired G-vectors (σG ≠ G): form |+⟩ = (|G⟩+|σG⟩)/√2 in A'
+///                               and |-⟩ = (|G⟩-|σG⟩)/√2 in A''
+pub fn analyzeCs(
+    alloc: std.mem.Allocator,
+    gvecs: []const GVector,
+    little_grp: LittleGroup,
+) !BasisSymmetryInfo {
+    const mirror_op = findMirrorOperation(little_grp);
+    if (mirror_op == null) {
+        // No mirror found - return trivial classification
+        return trivialClassification(alloc, gvecs, little_grp);
+    }
+    const mirror = mirror_op.?;
+
+    // Lists to collect invariant G-vectors and pairs
+    var invariant_list: std.ArrayList(usize) = .empty;
+    errdefer invariant_list.deinit(alloc);
+
+    var pair_list: std.ArrayList(GVectorPair) = .empty;
+    errdefer pair_list.deinit(alloc);
+
+    try classifyGVectorsByMirrorFrac(alloc, gvecs, mirror, &invariant_list, &pair_list);
+
+    const invariant_indices = try invariant_list.toOwnedSlice(alloc);
+    const pairs = try pair_list.toOwnedSlice(alloc);
+
+    return try buildMirrorIrrepBlocks(alloc, little_grp, invariant_indices, pairs);
+}
+
 /// Trivial classification when no useful symmetry is found.
 /// All basis functions are treated as invariant in a single A block.
 fn trivialClassification(
@@ -347,30 +367,19 @@ fn trivialClassification(
     };
 }
 
-/// Analyze basis symmetry using Cartesian y-mirror for 2D systems on M-Γ path.
-/// This is useful when the fractional-coordinate symmetry analysis fails to
-/// detect the relevant mirror for band crossings.
-///
-/// For 2D graphene on M-Γ path (Cartesian k_y = 0), the relevant mirror is σ_y:
-/// G_cart = (Gx, Gy, Gz) -> (Gx, -Gy, Gz)
-pub fn analyzeCartesianMirrorY(
+/// Classify G-vectors under the Cartesian σ_y mirror (Gy → -Gy).
+fn classifyGVectorsByCartesianY(
     alloc: std.mem.Allocator,
     gvecs: []const GVector,
-    little_grp: LittleGroup,
     tol: f64,
-) !BasisSymmetryInfo {
-
-    // Lists to collect invariant G-vectors and pairs
-    var invariant_list: std.ArrayList(usize) = .empty;
-    errdefer invariant_list.deinit(alloc);
-    var pair_list: std.ArrayList(GVectorPair) = .empty;
-    errdefer pair_list.deinit(alloc);
-
+    invariant_list: *std.ArrayList(usize),
+    pair_list: *std.ArrayList(GVectorPair),
+) !void {
     const processed = try alloc.alloc(bool, gvecs.len);
     defer alloc.free(processed);
+
     @memset(processed, false);
 
-    // Classify each G-vector using Cartesian σ_y mirror
     var i: usize = 0;
     while (i < gvecs.len) : (i += 1) {
         if (processed[i]) continue;
@@ -415,85 +424,58 @@ pub fn analyzeCartesianMirrorY(
             }
         }
     }
+}
 
-    // Build irrep blocks
-    var blocks: std.ArrayList(IrrepBlock) = .empty;
-    errdefer {
-        for (blocks.items) |*b| b.deinit(alloc);
-        blocks.deinit(alloc);
-    }
+/// Analyze basis symmetry using Cartesian y-mirror for 2D systems on M-Γ path.
+/// This is useful when the fractional-coordinate symmetry analysis fails to
+/// detect the relevant mirror for band crossings.
+///
+/// For 2D graphene on M-Γ path (Cartesian k_y = 0), the relevant mirror is σ_y:
+/// G_cart = (Gx, Gy, Gz) -> (Gx, -Gy, Gz)
+pub fn analyzeCartesianMirrorY(
+    alloc: std.mem.Allocator,
+    gvecs: []const GVector,
+    little_grp: LittleGroup,
+    tol: f64,
+) !BasisSymmetryInfo {
+    // Lists to collect invariant G-vectors and pairs
+    var invariant_list: std.ArrayList(usize) = .empty;
+    errdefer invariant_list.deinit(alloc);
+
+    var pair_list: std.ArrayList(GVectorPair) = .empty;
+    errdefer pair_list.deinit(alloc);
+
+    try classifyGVectorsByCartesianY(alloc, gvecs, tol, &invariant_list, &pair_list);
 
     const invariant_indices = try invariant_list.toOwnedSlice(alloc);
     const pairs = try pair_list.toOwnedSlice(alloc);
 
-    // A' block
-    try blocks.append(alloc, .{
-        .irrep = .a_prime,
-        .invariant_indices = invariant_indices,
-        .pairs = pairs,
-        .triplets = try alloc.alloc(GVectorTriplet, 0),
-    });
-
-    // A'' block
-    if (pairs.len > 0) {
-        const pairs_copy = try alloc.alloc(GVectorPair, pairs.len);
-        @memcpy(pairs_copy, pairs);
-        try blocks.append(alloc, .{
-            .irrep = .a_double_prime,
-            .invariant_indices = try alloc.alloc(usize, 0),
-            .pairs = pairs_copy,
-            .triplets = try alloc.alloc(GVectorTriplet, 0),
-        });
-    }
-
-    return BasisSymmetryInfo{
-        .little_group = little_grp,
-        .irrep_blocks = try blocks.toOwnedSlice(alloc),
-    };
+    return try buildMirrorIrrepBlocks(alloc, little_grp, invariant_indices, pairs);
 }
 
-/// Analyze basis symmetry for a C3v little group (3-fold rotation + 3 mirrors).
-/// This is the relevant case for the K point in graphene.
-///
-/// For C3v symmetry:
-/// - Invariant G-vectors (C3*G = G): belong to A1
-/// - G-vector triplets (orbit size 3): contribute 1 state to A1 and 2 states to E
-///
-/// The E representation is 2-dimensional, causing degeneracy at K point (Dirac cone).
-pub fn analyzeC3v(
-    alloc: std.mem.Allocator,
-    gvecs: []const GVector,
-    little_grp: LittleGroup,
-) !BasisSymmetryInfo {
-    // Find the C3 rotation operation (det=1, trace=0)
-    var c3_op: ?symmetry.SymOp = null;
+/// Find the C3 rotation operation (det=1, trace=0) in the little group.
+fn findC3Operation(little_grp: LittleGroup) ?symmetry.SymOp {
     for (little_grp.ops) |op| {
         const det = op.rot.det();
         const trace = op.rot.trace();
-        if (det == 1 and trace == 0) {
-            c3_op = op;
-            break;
-        }
+        if (det == 1 and trace == 0) return op;
     }
+    return null;
+}
 
-    if (c3_op == null) {
-        // No C3 found - return trivial classification
-        return trivialClassification(alloc, gvecs, little_grp);
-    }
-
-    const c3 = c3_op.?;
-
-    // Lists to collect invariant G-vectors and triplets
-    var invariant_list: std.ArrayList(usize) = .empty;
-    errdefer invariant_list.deinit(alloc);
-    var triplet_list: std.ArrayList(GVectorTriplet) = .empty;
-    errdefer triplet_list.deinit(alloc);
-
+/// Classify G-vectors under a C3 rotation into invariants and orbit-3 triplets.
+fn classifyGVectorsByC3(
+    alloc: std.mem.Allocator,
+    gvecs: []const GVector,
+    c3: symmetry.SymOp,
+    invariant_list: *std.ArrayList(usize),
+    triplet_list: *std.ArrayList(GVectorTriplet),
+) !void {
     const processed = try alloc.alloc(bool, gvecs.len);
     defer alloc.free(processed);
+
     @memset(processed, false);
 
-    // Classify each G-vector
     var i: usize = 0;
     while (i < gvecs.len) : (i += 1) {
         if (processed[i]) continue;
@@ -546,16 +528,20 @@ pub fn analyzeC3v(
             }
         }
     }
+}
 
-    // Build irrep blocks
+/// Build the A1 and E irrep blocks from invariant G-vectors and C3 triplets.
+fn buildC3vIrrepBlocks(
+    alloc: std.mem.Allocator,
+    little_grp: LittleGroup,
+    invariant_indices: []usize,
+    triplets: []GVectorTriplet,
+) !BasisSymmetryInfo {
     var blocks: std.ArrayList(IrrepBlock) = .empty;
     errdefer {
         for (blocks.items) |*b| b.deinit(alloc);
         blocks.deinit(alloc);
     }
-
-    const invariant_indices = try invariant_list.toOwnedSlice(alloc);
-    const triplets = try triplet_list.toOwnedSlice(alloc);
 
     // A1 block: invariant G-vectors + symmetric combination from triplets
     // |A1_i⟩ = (|G1_i⟩ + |G2_i⟩ + |G3_i⟩)/√3
@@ -585,6 +571,41 @@ pub fn analyzeC3v(
         .little_group = little_grp,
         .irrep_blocks = try blocks.toOwnedSlice(alloc),
     };
+}
+
+/// Analyze basis symmetry for a C3v little group (3-fold rotation + 3 mirrors).
+/// This is the relevant case for the K point in graphene.
+///
+/// For C3v symmetry:
+/// - Invariant G-vectors (C3*G = G): belong to A1
+/// - G-vector triplets (orbit size 3): contribute 1 state to A1 and 2 states to E
+///
+/// The E representation is 2-dimensional, causing degeneracy at K point (Dirac cone).
+pub fn analyzeC3v(
+    alloc: std.mem.Allocator,
+    gvecs: []const GVector,
+    little_grp: LittleGroup,
+) !BasisSymmetryInfo {
+    const c3_op = findC3Operation(little_grp);
+    if (c3_op == null) {
+        // No C3 found - return trivial classification
+        return trivialClassification(alloc, gvecs, little_grp);
+    }
+    const c3 = c3_op.?;
+
+    // Lists to collect invariant G-vectors and triplets
+    var invariant_list: std.ArrayList(usize) = .empty;
+    errdefer invariant_list.deinit(alloc);
+
+    var triplet_list: std.ArrayList(GVectorTriplet) = .empty;
+    errdefer triplet_list.deinit(alloc);
+
+    try classifyGVectorsByC3(alloc, gvecs, c3, &invariant_list, &triplet_list);
+
+    const invariant_indices = try invariant_list.toOwnedSlice(alloc);
+    const triplets = try triplet_list.toOwnedSlice(alloc);
+
+    return try buildC3vIrrepBlocks(alloc, little_grp, invariant_indices, triplets);
 }
 
 /// Apply rotation matrix to integer G-vector.

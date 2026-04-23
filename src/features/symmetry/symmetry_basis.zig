@@ -35,6 +35,40 @@ pub const BlockDiagResult = struct {
 ///
 /// This approach properly handles band crossings at high-symmetry points
 /// by preventing spurious mixing between states of different symmetry.
+/// Iterate irrep blocks, diagonalize each sub-Hamiltonian, and accumulate eigenvalues + counts.
+fn accumulateBlockEigenvalues(
+    alloc: std.mem.Allocator,
+    backend: linalg.Backend,
+    full_h: []math.Complex,
+    n: usize,
+    irrep_blocks: []const little_group.IrrepBlock,
+    all_values: *std.ArrayList(f64),
+    counts: *std.ArrayList(BlockDiagResult.IrrepCount),
+) !void {
+    for (irrep_blocks) |block| {
+        const block_size = block.size();
+        if (block_size == 0) continue;
+
+        // Build sub-Hamiltonian for this irrep block
+        const h_block = try buildBlockHamiltonian(alloc, full_h, n, block);
+        defer alloc.free(h_block);
+
+        // Diagonalize
+        const block_values = try linalg.hermitianEigenvalues(alloc, backend, block_size, h_block);
+        defer alloc.free(block_values);
+
+        // Add to results
+        for (block_values) |val| {
+            try all_values.append(alloc, val);
+        }
+
+        try counts.append(alloc, .{
+            .irrep = block.irrep,
+            .count = block_size,
+        });
+    }
+}
+
 pub fn symmetryBlockDiagEigenvalues(
     alloc: std.mem.Allocator,
     backend: linalg.Backend,
@@ -75,28 +109,15 @@ pub fn symmetryBlockDiagEigenvalues(
     var counts: std.ArrayList(BlockDiagResult.IrrepCount) = .empty;
     errdefer counts.deinit(alloc);
 
-    for (sym_info.irrep_blocks) |block| {
-        const block_size = block.size();
-        if (block_size == 0) continue;
-
-        // Build sub-Hamiltonian for this irrep block
-        const h_block = try buildBlockHamiltonian(alloc, full_h, n, block);
-        defer alloc.free(h_block);
-
-        // Diagonalize
-        const block_values = try linalg.hermitianEigenvalues(alloc, backend, block_size, h_block);
-        defer alloc.free(block_values);
-
-        // Add to results
-        for (block_values) |val| {
-            try all_values.append(alloc, val);
-        }
-
-        try counts.append(alloc, .{
-            .irrep = block.irrep,
-            .count = block_size,
-        });
-    }
+    try accumulateBlockEigenvalues(
+        alloc,
+        backend,
+        full_h,
+        n,
+        sym_info.irrep_blocks,
+        &all_values,
+        &counts,
+    );
 
     // Sort all eigenvalues
     const merged = try all_values.toOwnedSlice(alloc);
@@ -363,6 +384,106 @@ fn computeA1BlockElement(
     }
 }
 
+/// Invariant-invariant element: H'(I_a, I_b) = H(I_a, I_b).
+fn blockElementInvInv(
+    full_h: []const math.Complex,
+    n: usize,
+    block: little_group.IrrepBlock,
+    row: usize,
+    col: usize,
+) math.Complex {
+    const i_a = block.invariant_indices[row];
+    const i_b = block.invariant_indices[col];
+    return full_h[i_a + i_b * n];
+}
+
+/// Invariant-pair element: H'(I_a, ±_b) = (H(I_a, G_b) ± H(I_a, σG_b)) / √2.
+fn blockElementInvPair(
+    full_h: []const math.Complex,
+    n: usize,
+    block: little_group.IrrepBlock,
+    row: usize,
+    col: usize,
+    num_inv: usize,
+    is_even: bool,
+    inv_sqrt2: f64,
+) math.Complex {
+    const i_a = block.invariant_indices[row];
+    const pair_idx = col - num_inv;
+    const g_b = block.pairs[pair_idx].g_index;
+    const sg_b = block.pairs[pair_idx].partner_index;
+
+    const h_ag = full_h[i_a + g_b * n];
+    const h_asg = full_h[i_a + sg_b * n];
+
+    if (is_even) {
+        return math.complex.scale(math.complex.add(h_ag, h_asg), inv_sqrt2);
+    } else {
+        return math.complex.scale(math.complex.sub(h_ag, h_asg), inv_sqrt2);
+    }
+}
+
+/// Pair-invariant element: H'(±_a, I_b) = (H(G_a, I_b) ± H(σG_a, I_b)) / √2.
+fn blockElementPairInv(
+    full_h: []const math.Complex,
+    n: usize,
+    block: little_group.IrrepBlock,
+    row: usize,
+    col: usize,
+    num_inv: usize,
+    is_even: bool,
+    inv_sqrt2: f64,
+) math.Complex {
+    const pair_idx = row - num_inv;
+    const g_a = block.pairs[pair_idx].g_index;
+    const sg_a = block.pairs[pair_idx].partner_index;
+    const i_b = block.invariant_indices[col];
+
+    const h_gi = full_h[g_a + i_b * n];
+    const h_sgi = full_h[sg_a + i_b * n];
+
+    if (is_even) {
+        return math.complex.scale(math.complex.add(h_gi, h_sgi), inv_sqrt2);
+    } else {
+        return math.complex.scale(math.complex.sub(h_gi, h_sgi), inv_sqrt2);
+    }
+}
+
+/// Pair-pair element: H'(±_a, ±_b) = (H_gg ± H_gsg ± H_sgg + H_sgsg) / 2.
+fn blockElementPairPair(
+    full_h: []const math.Complex,
+    n: usize,
+    block: little_group.IrrepBlock,
+    row: usize,
+    col: usize,
+    num_inv: usize,
+    is_even: bool,
+) math.Complex {
+    const pair_a = row - num_inv;
+    const pair_b = col - num_inv;
+    const g_a = block.pairs[pair_a].g_index;
+    const sg_a = block.pairs[pair_a].partner_index;
+    const g_b = block.pairs[pair_b].g_index;
+    const sg_b = block.pairs[pair_b].partner_index;
+
+    const h_gg = full_h[g_a + g_b * n]; // H(G_a, G_b)
+    const h_gsg = full_h[g_a + sg_b * n]; // H(G_a, σG_b)
+    const h_sgg = full_h[sg_a + g_b * n]; // H(σG_a, G_b)
+    const h_sgsg = full_h[sg_a + sg_b * n]; // H(σG_a, σG_b)
+
+    if (is_even) {
+        // ⟨+_a|H|+_b⟩ = (H_gg + H_gsg + H_sgg + H_sgsg) / 2
+        const sum1 = math.complex.add(h_gg, h_sgsg);
+        const sum2 = math.complex.add(h_gsg, h_sgg);
+        return math.complex.scale(math.complex.add(sum1, sum2), 0.5);
+    } else {
+        // ⟨-_a|H|-_b⟩ = (H_gg - H_gsg - H_sgg + H_sgsg) / 2
+        const sum1 = math.complex.add(h_gg, h_sgsg);
+        const sum2 = math.complex.add(h_gsg, h_sgg);
+        return math.complex.scale(math.complex.sub(sum1, sum2), 0.5);
+    }
+}
+
 /// Compute a single element of the block Hamiltonian.
 fn computeBlockElement(
     full_h: []const math.Complex,
@@ -378,70 +499,13 @@ fn computeBlockElement(
     const col_is_inv = col < num_inv;
 
     if (row_is_inv and col_is_inv) {
-        // Both are invariant: H'(I_a, I_b) = H(I_a, I_b)
-        const i_a = block.invariant_indices[row];
-        const i_b = block.invariant_indices[col];
-        return full_h[i_a + i_b * n];
+        return blockElementInvInv(full_h, n, block, row, col);
     } else if (row_is_inv and !col_is_inv) {
-        // Row is invariant, column is paired
-        // H'(I_a, ±_b) = (H(I_a, G_b) ± H(I_a, σG_b)) / √2
-        const i_a = block.invariant_indices[row];
-        const pair_idx = col - num_inv;
-        const g_b = block.pairs[pair_idx].g_index;
-        const sg_b = block.pairs[pair_idx].partner_index;
-
-        const h_ag = full_h[i_a + g_b * n];
-        const h_asg = full_h[i_a + sg_b * n];
-
-        if (is_even) {
-            // (H(I_a, G_b) + H(I_a, σG_b)) / √2
-            return math.complex.scale(math.complex.add(h_ag, h_asg), inv_sqrt2);
-        } else {
-            // (H(I_a, G_b) - H(I_a, σG_b)) / √2
-            return math.complex.scale(math.complex.sub(h_ag, h_asg), inv_sqrt2);
-        }
+        return blockElementInvPair(full_h, n, block, row, col, num_inv, is_even, inv_sqrt2);
     } else if (!row_is_inv and col_is_inv) {
-        // Row is paired, column is invariant
-        // H'(±_a, I_b) = (H(G_a, I_b) ± H(σG_a, I_b)) / √2
-        const pair_idx = row - num_inv;
-        const g_a = block.pairs[pair_idx].g_index;
-        const sg_a = block.pairs[pair_idx].partner_index;
-        const i_b = block.invariant_indices[col];
-
-        const h_gi = full_h[g_a + i_b * n];
-        const h_sgi = full_h[sg_a + i_b * n];
-
-        if (is_even) {
-            return math.complex.scale(math.complex.add(h_gi, h_sgi), inv_sqrt2);
-        } else {
-            return math.complex.scale(math.complex.sub(h_gi, h_sgi), inv_sqrt2);
-        }
+        return blockElementPairInv(full_h, n, block, row, col, num_inv, is_even, inv_sqrt2);
     } else {
-        // Both are paired
-        // H'(±_a, ±_b) = (H(G_a,G_b) ± H(G_a,σG_b) ± H(σG_a,G_b) + H(σG_a,σG_b)) / 2
-        const pair_a = row - num_inv;
-        const pair_b = col - num_inv;
-        const g_a = block.pairs[pair_a].g_index;
-        const sg_a = block.pairs[pair_a].partner_index;
-        const g_b = block.pairs[pair_b].g_index;
-        const sg_b = block.pairs[pair_b].partner_index;
-
-        const h_gg = full_h[g_a + g_b * n]; // H(G_a, G_b)
-        const h_gsg = full_h[g_a + sg_b * n]; // H(G_a, σG_b)
-        const h_sgg = full_h[sg_a + g_b * n]; // H(σG_a, G_b)
-        const h_sgsg = full_h[sg_a + sg_b * n]; // H(σG_a, σG_b)
-
-        if (is_even) {
-            // ⟨+_a|H|+_b⟩ = (H_gg + H_gsg + H_sgg + H_sgsg) / 2
-            const sum1 = math.complex.add(h_gg, h_sgsg);
-            const sum2 = math.complex.add(h_gsg, h_sgg);
-            return math.complex.scale(math.complex.add(sum1, sum2), 0.5);
-        } else {
-            // ⟨-_a|H|-_b⟩ = (H_gg - H_gsg - H_sgg + H_sgsg) / 2
-            const sum1 = math.complex.add(h_gg, h_sgsg);
-            const sum2 = math.complex.add(h_gsg, h_sgg);
-            return math.complex.scale(math.complex.sub(sum1, sum2), 0.5);
-        }
+        return blockElementPairPair(full_h, n, block, row, col, num_inv, is_even);
     }
 }
 

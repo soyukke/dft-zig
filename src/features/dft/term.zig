@@ -162,6 +162,7 @@ fn xcEnergy(term: TermXc, input: EvalInput) !f64 {
             input.alloc.free(fields.vxc_down);
             input.alloc.free(fields.exc);
         }
+
         var sum: f64 = 0.0;
         for (fields.exc) |e| sum += e * dv;
         return sum;
@@ -223,8 +224,10 @@ fn ewaldEnergy(term: TermEwald, input: EvalInput) !f64 {
     if (count == 0) return 0.0;
     const charges = try input.alloc.alloc(f64, count);
     defer input.alloc.free(charges);
+
     const positions = try input.alloc.alloc(math.Vec3, count);
     defer input.alloc.free(positions);
+
     for (atoms, 0..) |atom, i| {
         charges[i] = input.model.species[atom.species_index].z_valence;
         positions[i] = atom.position;
@@ -276,6 +279,7 @@ test "termEnergy(.hartree) returns zero for uniform periodic density" {
     const n_points = grid.count();
     const rho = try alloc.alloc(f64, n_points);
     defer alloc.free(rho);
+
     @memset(rho, 1.0 / volume);
 
     const model = Model{
@@ -329,6 +333,7 @@ test "termEnergy(.hartree) is positive and deterministic for cosine density" {
     const n_points = grid.count();
     const rho = try alloc.alloc(f64, n_points);
     defer alloc.free(rho);
+
     const twopi_L = 2.0 * std.math.pi / L;
     const rho0 = 1.0 / volume;
     const amp = 0.3 * rho0;
@@ -393,6 +398,7 @@ test "termEnergy(.atomic_local) is zero with no atoms" {
 
     const rho = try alloc.alloc(f64, grid.count());
     defer alloc.free(rho);
+
     @memset(rho, 1.0 / volume);
 
     const model = Model{
@@ -444,6 +450,7 @@ test "termEnergy(.xc) matches computeXcFields integral (LDA)" {
     const n_points = grid.count();
     const rho = try alloc.alloc(f64, n_points);
     defer alloc.free(rho);
+
     @memset(rho, 0.5 / volume);
 
     const model = Model{
@@ -466,6 +473,7 @@ test "termEnergy(.xc) matches computeXcFields integral (LDA)" {
         alloc.free(fields.vxc);
         alloc.free(fields.exc);
     }
+
     const dv = volume / @as(f64, @floatFromInt(n_points));
     var expected: f64 = 0.0;
     for (fields.exc) |e| expected += e * dv;

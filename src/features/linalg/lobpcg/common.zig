@@ -448,6 +448,7 @@ pub fn hermitianGeneralizedEigenDecompSmall(
 
     const b_copy = try alloc.alloc(math.Complex, n * n);
     defer alloc.free(b_copy);
+
     @memcpy(b_copy, b[0 .. n * n]);
 
     const values = try alloc.alloc(f64, n);
@@ -488,8 +489,7 @@ pub fn hermitianGeneralizedEigenDecompSmall(
     );
     if (info != 0) return error.LapackFailure;
 
-    lwork = @intFromFloat(work_query.r);
-    if (lwork < 1) lwork = 1;
+    lwork = @max(@as(c_int, 1), @as(c_int, @intFromFloat(work_query.r)));
 
     var work_stack: [2 * 128 * 128]math.Complex = undefined;
     var work_heap: ?[]math.Complex = null;

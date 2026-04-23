@@ -44,6 +44,7 @@ pub fn computePhononDos(
     // Collect all frequencies from the dense q-mesh
     const all_freqs = try alloc.alloc(f64, n_q_total * dim);
     defer alloc.free(all_freqs);
+
     var freq_idx: usize = 0;
 
     var f_min: f64 = std.math.inf(f64);
@@ -124,6 +125,7 @@ pub fn computePhononDos(
 pub fn writePhononDosCsv(io: std.Io, dir: std.Io.Dir, result: PhononDosResult) !void {
     const file = try dir.createFile(io, "phonon_dos.csv", .{});
     defer file.close(io);
+
     var buf: [256]u8 = undefined;
     var writer = file.writer(io, &buf);
     const out = &writer.interface;

@@ -77,5 +77,6 @@ test "diamond supercell count" {
     const reps = [3]usize{ 2, 2, 2 };
     const positions = try diamondConventionalSupercell(alloc, a, reps);
     defer alloc.free(positions);
+
     try std.testing.expectEqual(@as(usize, 8 * 8), positions.len);
 }

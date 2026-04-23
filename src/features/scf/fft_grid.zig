@@ -185,6 +185,7 @@ fn fftRealToReciprocal(alloc: std.mem.Allocator, grid: Grid, values: []const f64
 
     const data = try alloc.alloc(math.Complex, total);
     defer alloc.free(data);
+
     for (values, 0..) |v, i| {
         data[i] = math.complex.init(v, 0.0);
     }

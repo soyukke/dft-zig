@@ -311,6 +311,7 @@ test "radix2_simd large size" {
 
     const original = try allocator.alloc(Complex, 1024);
     defer allocator.free(original);
+
     @memcpy(original, data);
 
     plan.forward(data);

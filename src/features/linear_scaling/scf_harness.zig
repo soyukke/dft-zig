@@ -71,6 +71,7 @@ pub fn buildSiliconSupercellAtoms(
 ) ![]xyz.Atom {
     const positions = try structures.diamondConventionalSupercell(alloc, a, reps);
     defer alloc.free(positions);
+
     const atoms = try alloc.alloc(xyz.Atom, positions.len);
     errdefer {
         for (atoms) |atom| {
@@ -103,6 +104,7 @@ test "silicon supercell atoms and cell" {
     const cell = siliconConventional2x2x2Cell(a);
     const atoms = try buildSiliconConventional2x2x2Atoms(alloc, a);
     defer deinitAtoms(alloc, atoms);
+
     try std.testing.expectEqual(@as(usize, 64), atoms.len);
     try std.testing.expectApproxEqAbs(@as(f64, 10.0), cell.row(0).x, 1e-12);
     try xyz.validateInCell(atoms, cell);

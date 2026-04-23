@@ -70,8 +70,10 @@ pub fn readReferenceJson(
 ) !ScfReferenceOwned {
     const content = try dir.readFileAlloc(io, path, alloc, .limited(64 * 1024 * 1024));
     defer alloc.free(content);
+
     var parsed = try std.json.parseFromSlice(ScfReferenceJson, alloc, content, .{});
     defer parsed.deinit();
+
     if (parsed.value.schema_version != 1) return error.UnsupportedSchemaVersion;
 
     const density = try alloc.alloc(f64, parsed.value.density.len);
@@ -153,6 +155,7 @@ test "scf reference json round trip" {
 
     var loaded = try readReferenceJson(io, alloc, tmp.dir, "ref.json");
     defer loaded.deinit(alloc);
+
     try std.testing.expectEqual(@as(usize, density.len), loaded.density.len);
     try std.testing.expectApproxEqAbs(@as(f64, -10.0), loaded.energy_terms.total, 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), loaded.density[1], 1e-12);
@@ -192,8 +195,10 @@ test "scf comparison json parses" {
 
     const content = try tmp.dir.readFileAlloc(io, "compare.json", alloc, .limited(1024 * 1024));
     defer alloc.free(content);
+
     var parsed = try std.json.parseFromSlice(ScfComparisonJson, alloc, content, .{});
     defer parsed.deinit();
+
     try std.testing.expectApproxEqAbs(@as(f64, 0.1), parsed.value.total.energy.abs, 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.5), parsed.value.energy_terms.xc.abs, 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.12), parsed.value.total.density.rms, 1e-12);

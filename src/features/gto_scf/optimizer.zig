@@ -207,6 +207,7 @@ fn bfgsUpdate(
     // Compute H_inv * y
     const hy = try alloc.alloc(f64, n);
     defer alloc.free(hy);
+
     for (0..n) |i| {
         var sum: f64 = 0.0;
         for (0..n) |j| {
@@ -244,177 +245,99 @@ fn matVecMul(alloc: std.mem.Allocator, mat: []const f64, vec: []const f64, n: us
     return result;
 }
 
-/// Run BFGS geometry optimization.
-///
-/// Takes the initial geometry (shells, nuclear positions/charges),
-/// the number of electrons, and optimization parameters.
-/// Returns the optimized geometry and energy.
-///
-/// The `shells` array is modified in-place during optimization
-/// (centers are updated). The caller should provide a mutable copy
-/// if they need to preserve the original.
-pub fn optimizeGeometry(
-    alloc: std.mem.Allocator,
-    shells: []ContractedShell,
+/// Apply positions from flat `coords` to `nuc_positions` and update shell centers.
+fn applyCoordsToPositions(
+    coords: []const f64,
     nuc_positions: []Vec3,
-    nuc_charges: []const f64,
-    n_electrons: usize,
-    params: OptParams,
-) !OptResult {
+    shells: []ContractedShell,
+    shell_to_atom: []const usize,
+) void {
     const n_atoms = nuc_positions.len;
-    const n3 = n_atoms * 3;
-    const n_occ = n_electrons / 2;
+    for (0..n_atoms) |i| {
+        nuc_positions[i] = .{
+            .x = coords[i * 3 + 0],
+            .y = coords[i * 3 + 1],
+            .z = coords[i * 3 + 2],
+        };
+    }
+    updateShellCenters(shells, shell_to_atom, nuc_positions);
+}
 
-    // Build shell-to-atom map
-    const shell_to_atom = try buildShellToAtomMap(alloc, shells, nuc_positions);
-    defer alloc.free(shell_to_atom);
+/// Flatten gradient Vec3 array into the provided `out` buffer.
+fn flattenGradientInto(grad: []const Vec3, out: []f64) void {
+    for (grad, 0..) |g, i| {
+        out[i * 3 + 0] = g.x;
+        out[i * 3 + 1] = g.y;
+        out[i * 3 + 2] = g.z;
+    }
+}
 
-    // Flatten current positions
-    var coords = try flattenVec3(alloc, nuc_positions);
-    defer alloc.free(coords);
+/// Apply BFGS update, compute search direction, save history, and update coords.
+fn applyBfgsStep(
+    alloc: std.mem.Allocator,
+    h_inv: []f64,
+    coords: []f64,
+    current_grad_flat: []const f64,
+    prev_grad: *?[]f64,
+    prev_step: *?[]f64,
+    n3: usize,
+    max_step_size: f64,
+) !void {
+    // BFGS update of inverse Hessian (requires both previous gradient and step)
+    if (prev_grad.*) |pg| {
+        if (prev_step.*) |ps| {
+            // y = g_{k} - g_{k-1}
+            const y_vec = try alloc.alloc(f64, n3);
+            defer alloc.free(y_vec);
 
-    // Initialize inverse Hessian (scaled identity)
-    const h_inv = try initInverseHessian(alloc, n3);
-    defer alloc.free(h_inv);
-
-    // Energy history
-    var energy_history: std.ArrayList(f64) = .empty;
-    defer energy_history.deinit(alloc);
-
-    // Previous gradient and step vectors for BFGS update
-    var prev_grad: ?[]f64 = null;
-    defer if (prev_grad) |pg| alloc.free(pg);
-    var prev_step: ?[]f64 = null;
-    defer if (prev_step) |ps| alloc.free(ps);
-
-    var converged = false;
-    var steps: usize = 0;
-    var current_energy: f64 = 0.0;
-    const current_grad_flat = try alloc.alloc(f64, n3);
-    defer alloc.free(current_grad_flat);
-
-    // SCF params — enable density matrix reuse after first iteration
-    var scf_params = params.scf_params;
-    var prev_density: ?[]f64 = null;
-    defer if (prev_density) |pd| alloc.free(pd);
-
-    for (0..params.max_steps) |step| {
-        steps = step + 1;
-
-        // Update nuclear positions and shell centers from flat coords
-        for (0..n_atoms) |i| {
-            nuc_positions[i] = .{
-                .x = coords[i * 3 + 0],
-                .y = coords[i * 3 + 1],
-                .z = coords[i * 3 + 2],
-            };
-        }
-        updateShellCenters(shells, shell_to_atom, nuc_positions);
-
-        // Seed SCF from previous density if available
-        if (prev_density) |pd| {
-            scf_params.initial_density = pd;
-        }
-
-        // Run SCF
-        var scf_result = try gto_scf.runGeneralRhfScf(
-            alloc,
-            shells,
-            nuc_positions,
-            nuc_charges,
-            n_electrons,
-            scf_params,
-        );
-        defer scf_result.deinit(alloc);
-
-        current_energy = scf_result.total_energy;
-        try energy_history.append(alloc, current_energy);
-
-        // Save density matrix for next SCF
-        if (prev_density) |pd| alloc.free(pd);
-        const n_basis = scf_result.density_matrix.len;
-        prev_density = try alloc.alloc(f64, n_basis);
-        @memcpy(prev_density.?, scf_result.density_matrix);
-
-        // Compute gradient
-        var grad_result = try gradient_mod.computeRhfGradient(
-            alloc,
-            shells,
-            nuc_positions,
-            nuc_charges,
-            scf_result.density_matrix,
-            scf_result.orbital_energies,
-            scf_result.mo_coefficients,
-            n_occ,
-        );
-        defer grad_result.deinit(alloc);
-
-        // Flatten gradient
-        for (0..n_atoms) |i| {
-            current_grad_flat[i * 3 + 0] = grad_result.gradients[i].x;
-            current_grad_flat[i * 3 + 1] = grad_result.gradients[i].y;
-            current_grad_flat[i * 3 + 2] = grad_result.gradients[i].z;
-        }
-
-        // Compute convergence metrics
-        const grad_rms = vecRms(current_grad_flat);
-        const grad_max = vecMaxAbs(current_grad_flat);
-
-        logging.progress(
-            params.print_progress,
-            "  Opt step {d}: E = {d:.12} Ha, grad_rms = {e:10.3}, grad_max = {e:10.3}\n",
-            .{ steps, current_energy, grad_rms, grad_max },
-        );
-
-        // Check gradient convergence
-        if (grad_rms < params.grad_rms_threshold and grad_max < params.grad_max_threshold) {
-            converged = true;
-            break;
-        }
-
-        // BFGS update of inverse Hessian (requires both previous gradient and step)
-        if (prev_grad) |pg| {
-            if (prev_step) |ps| {
-                // y = g_{k} - g_{k-1}
-                const y_vec = try alloc.alloc(f64, n3);
-                defer alloc.free(y_vec);
-                for (0..n3) |i| {
-                    y_vec[i] = current_grad_flat[i] - pg[i];
-                }
-                // s = step taken in previous iteration (already saved)
-                try bfgsUpdate(alloc, h_inv, ps, y_vec, n3);
+            for (0..n3) |i| {
+                y_vec[i] = current_grad_flat[i] - pg[i];
             }
-        }
-
-        // Compute search direction: p = -H_inv * grad
-        const search_dir = try matVecMul(alloc, h_inv, current_grad_flat, n3);
-        defer alloc.free(search_dir);
-        for (search_dir) |*d| {
-            d.* = -d.*;
-        }
-
-        // Apply trust region scaling
-        trustRegionScale(search_dir, params.max_step_size);
-
-        // Save gradient for BFGS update in next iteration
-        if (prev_grad == null) {
-            prev_grad = try alloc.alloc(f64, n3);
-        }
-        @memcpy(prev_grad.?, current_grad_flat);
-
-        // Save step for BFGS update in next iteration
-        if (prev_step == null) {
-            prev_step = try alloc.alloc(f64, n3);
-        }
-        @memcpy(prev_step.?, search_dir);
-
-        // Take step: x_{k+1} = x_k + p_k
-        for (0..n3) |i| {
-            coords[i] += search_dir[i];
+            // s = step taken in previous iteration (already saved)
+            try bfgsUpdate(alloc, h_inv, ps, y_vec, n3);
         }
     }
 
-    // Build final result
+    // Compute search direction: p = -H_inv * grad
+    const search_dir = try matVecMul(alloc, h_inv, current_grad_flat, n3);
+    defer alloc.free(search_dir);
+
+    for (search_dir) |*d| {
+        d.* = -d.*;
+    }
+
+    // Apply trust region scaling
+    trustRegionScale(search_dir, max_step_size);
+
+    // Save gradient for BFGS update in next iteration
+    if (prev_grad.* == null) {
+        prev_grad.* = try alloc.alloc(f64, n3);
+    }
+    @memcpy(prev_grad.*.?, current_grad_flat);
+
+    // Save step for BFGS update in next iteration
+    if (prev_step.* == null) {
+        prev_step.* = try alloc.alloc(f64, n3);
+    }
+    @memcpy(prev_step.*.?, search_dir);
+
+    // Take step: x_{k+1} = x_k + p_k
+    for (0..n3) |i| {
+        coords[i] += search_dir[i];
+    }
+}
+
+/// Package the final optimization result from loop state.
+fn packageOptResult(
+    alloc: std.mem.Allocator,
+    nuc_positions: []const Vec3,
+    current_grad_flat: []const f64,
+    current_energy: f64,
+    steps: usize,
+    converged: bool,
+    energy_history: *std.ArrayList(f64),
+) !OptResult {
+    const n_atoms = nuc_positions.len;
     const final_positions = try alloc.alloc(Vec3, n_atoms);
     for (0..n_atoms) |i| {
         final_positions[i] = nuc_positions[i];
@@ -439,6 +362,249 @@ pub fn optimizeGeometry(
         .converged = converged,
         .energy_history = energy_hist,
     };
+}
+
+/// Run BFGS geometry optimization.
+///
+/// Takes the initial geometry (shells, nuclear positions/charges),
+/// the number of electrons, and optimization parameters.
+/// Returns the optimized geometry and energy.
+///
+/// The `shells` array is modified in-place during optimization
+/// (centers are updated). The caller should provide a mutable copy
+/// if they need to preserve the original.
+fn runRhfScfAndGradient(
+    alloc: std.mem.Allocator,
+    shells: []ContractedShell,
+    nuc_positions: []Vec3,
+    nuc_charges: []const f64,
+    n_electrons: usize,
+    n_occ: usize,
+    scf_params: *ScfParams,
+    prev_density: *?[]f64,
+    current_grad_flat: []f64,
+    current_energy_out: *f64,
+) !void {
+    // Seed SCF from previous density if available
+    if (prev_density.*) |pd| {
+        scf_params.initial_density = pd;
+    }
+
+    var scf_result = try gto_scf.runGeneralRhfScf(
+        alloc,
+        shells,
+        nuc_positions,
+        nuc_charges,
+        n_electrons,
+        scf_params.*,
+    );
+    defer scf_result.deinit(alloc);
+
+    current_energy_out.* = scf_result.total_energy;
+
+    // Save density matrix for next SCF
+    if (prev_density.*) |pd| alloc.free(pd);
+    const n_basis = scf_result.density_matrix.len;
+    prev_density.* = try alloc.alloc(f64, n_basis);
+    @memcpy(prev_density.*.?, scf_result.density_matrix);
+
+    // Compute gradient
+    var grad_result = try gradient_mod.computeRhfGradient(
+        alloc,
+        shells,
+        nuc_positions,
+        nuc_charges,
+        scf_result.density_matrix,
+        scf_result.orbital_energies,
+        scf_result.mo_coefficients,
+        n_occ,
+    );
+    defer grad_result.deinit(alloc);
+
+    flattenGradientInto(grad_result.gradients, current_grad_flat);
+}
+
+/// Shared state owned by the BFGS loop. Callers must call `deinit`.
+const BfgsLoopState = struct {
+    shell_to_atom: []usize,
+    coords: []f64,
+    h_inv: []f64,
+    energy_history: std.ArrayList(f64),
+    prev_grad: ?[]f64,
+    prev_step: ?[]f64,
+    current_grad_flat: []f64,
+
+    fn init(
+        alloc: std.mem.Allocator,
+        shells: []ContractedShell,
+        nuc_positions: []const Vec3,
+        n3: usize,
+    ) !BfgsLoopState {
+        const shell_to_atom = try buildShellToAtomMap(alloc, shells, nuc_positions);
+        errdefer alloc.free(shell_to_atom);
+
+        const coords = try flattenVec3(alloc, nuc_positions);
+        errdefer alloc.free(coords);
+
+        const h_inv = try initInverseHessian(alloc, n3);
+        errdefer alloc.free(h_inv);
+
+        const current_grad_flat = try alloc.alloc(f64, n3);
+        errdefer alloc.free(current_grad_flat);
+
+        return .{
+            .shell_to_atom = shell_to_atom,
+            .coords = coords,
+            .h_inv = h_inv,
+            .energy_history = .empty,
+            .prev_grad = null,
+            .prev_step = null,
+            .current_grad_flat = current_grad_flat,
+        };
+    }
+
+    fn deinit(self: *BfgsLoopState, alloc: std.mem.Allocator) void {
+        alloc.free(self.shell_to_atom);
+        alloc.free(self.coords);
+        alloc.free(self.h_inv);
+        self.energy_history.deinit(alloc);
+        if (self.prev_grad) |pg| alloc.free(pg);
+        if (self.prev_step) |ps| alloc.free(ps);
+        alloc.free(self.current_grad_flat);
+    }
+};
+
+const RhfOptContext = struct {
+    alloc: std.mem.Allocator,
+    shells: []ContractedShell,
+    nuc_positions: []Vec3,
+    nuc_charges: []const f64,
+    n_electrons: usize,
+    n_occ: usize,
+    shell_to_atom: []const usize,
+    coords: []f64,
+    h_inv: []f64,
+    current_grad_flat: []f64,
+    n3: usize,
+    params: OptParams,
+};
+
+fn runRhfOptStep(
+    ctx: RhfOptContext,
+    scf_params: *ScfParams,
+    prev_density: *?[]f64,
+    prev_grad: *?[]f64,
+    prev_step: *?[]f64,
+    current_energy: *f64,
+    energy_history: *std.ArrayList(f64),
+    steps: usize,
+) !bool {
+    applyCoordsToPositions(ctx.coords, ctx.nuc_positions, ctx.shells, ctx.shell_to_atom);
+
+    try runRhfScfAndGradient(
+        ctx.alloc,
+        ctx.shells,
+        ctx.nuc_positions,
+        ctx.nuc_charges,
+        ctx.n_electrons,
+        ctx.n_occ,
+        scf_params,
+        prev_density,
+        ctx.current_grad_flat,
+        current_energy,
+    );
+    try energy_history.append(ctx.alloc, current_energy.*);
+
+    const grad_rms = vecRms(ctx.current_grad_flat);
+    const grad_max = vecMaxAbs(ctx.current_grad_flat);
+
+    logging.progress(
+        ctx.params.print_progress,
+        "  Opt step {d}: E = {d:.12} Ha, grad_rms = {e:10.3}, grad_max = {e:10.3}\n",
+        .{ steps, current_energy.*, grad_rms, grad_max },
+    );
+
+    if (grad_rms < ctx.params.grad_rms_threshold and grad_max < ctx.params.grad_max_threshold) {
+        return true;
+    }
+
+    try applyBfgsStep(
+        ctx.alloc,
+        ctx.h_inv,
+        ctx.coords,
+        ctx.current_grad_flat,
+        prev_grad,
+        prev_step,
+        ctx.n3,
+        ctx.params.max_step_size,
+    );
+    return false;
+}
+
+pub fn optimizeGeometry(
+    alloc: std.mem.Allocator,
+    shells: []ContractedShell,
+    nuc_positions: []Vec3,
+    nuc_charges: []const f64,
+    n_electrons: usize,
+    params: OptParams,
+) !OptResult {
+    const n_atoms = nuc_positions.len;
+    const n3 = n_atoms * 3;
+    const n_occ = n_electrons / 2;
+
+    var state = try BfgsLoopState.init(alloc, shells, nuc_positions, n3);
+    defer state.deinit(alloc);
+
+    // SCF params — enable density matrix reuse after first iteration
+    var scf_params = params.scf_params;
+    var prev_density: ?[]f64 = null;
+    defer if (prev_density) |pd| alloc.free(pd);
+
+    const ctx = RhfOptContext{
+        .alloc = alloc,
+        .shells = shells,
+        .nuc_positions = nuc_positions,
+        .nuc_charges = nuc_charges,
+        .n_electrons = n_electrons,
+        .n_occ = n_occ,
+        .shell_to_atom = state.shell_to_atom,
+        .coords = state.coords,
+        .h_inv = state.h_inv,
+        .current_grad_flat = state.current_grad_flat,
+        .n3 = n3,
+        .params = params,
+    };
+
+    var converged = false;
+    var steps: usize = 0;
+    var current_energy: f64 = 0.0;
+    for (0..params.max_steps) |step| {
+        steps = step + 1;
+        if (try runRhfOptStep(
+            ctx,
+            &scf_params,
+            &prev_density,
+            &state.prev_grad,
+            &state.prev_step,
+            &current_energy,
+            &state.energy_history,
+            steps,
+        )) {
+            converged = true;
+            break;
+        }
+    }
+
+    return packageOptResult(
+        alloc,
+        nuc_positions,
+        state.current_grad_flat,
+        current_energy,
+        steps,
+        converged,
+        &state.energy_history,
+    );
 }
 
 /// Parameters controlling KS-DFT geometry optimization.
@@ -472,6 +638,140 @@ pub const KsOptParams = struct {
 /// The `shells` array is modified in-place during optimization
 /// (centers are updated). The caller should provide a mutable copy
 /// if they need to preserve the original.
+fn runKsDftAndGradient(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    shells: []ContractedShell,
+    nuc_positions: []Vec3,
+    nuc_charges: []const f64,
+    n_electrons: usize,
+    n_occ: usize,
+    params: KsOptParams,
+    grid_config: becke.GridConfig,
+    current_grad_flat: []f64,
+    current_energy_out: *f64,
+) !void {
+    const n_atoms = nuc_positions.len;
+
+    // Run KS-DFT SCF
+    var ks_result = try kohn_sham.runKohnShamScf(
+        alloc,
+        io,
+        shells,
+        nuc_positions,
+        nuc_charges,
+        n_electrons,
+        params.ks_params,
+    );
+    defer ks_result.deinit(alloc);
+
+    current_energy_out.* = ks_result.total_energy;
+
+    // Build molecular grid for gradient calculation
+    // (must rebuild each step because atomic positions change)
+    const becke_atoms = try alloc.alloc(becke.Atom, n_atoms);
+    defer alloc.free(becke_atoms);
+
+    for (0..n_atoms) |i| {
+        becke_atoms[i] = .{
+            .x = nuc_positions[i].x,
+            .y = nuc_positions[i].y,
+            .z = nuc_positions[i].z,
+            .z_number = if (params.atomic_numbers.len > 0)
+                @intCast(params.atomic_numbers[i])
+            else
+                @intFromFloat(nuc_charges[i]),
+        };
+    }
+    const grid_points = try becke.buildMolecularGrid(alloc, becke_atoms, grid_config);
+    defer alloc.free(grid_points);
+
+    // Compute KS-DFT gradient
+    var grad_result = try gradient_mod.computeKsDftGradient(
+        alloc,
+        shells,
+        nuc_positions,
+        nuc_charges,
+        ks_result.density_matrix_result,
+        ks_result.orbital_energies,
+        ks_result.mo_coefficients,
+        n_occ,
+        grid_points,
+        params.ks_params.xc_functional,
+    );
+    defer grad_result.deinit(alloc);
+
+    flattenGradientInto(grad_result.gradients, current_grad_flat);
+}
+
+const KsOptContext = struct {
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    shells: []ContractedShell,
+    nuc_positions: []Vec3,
+    nuc_charges: []const f64,
+    n_electrons: usize,
+    n_occ: usize,
+    shell_to_atom: []const usize,
+    coords: []f64,
+    h_inv: []f64,
+    current_grad_flat: []f64,
+    n3: usize,
+    params: KsOptParams,
+    grid_config: becke.GridConfig,
+};
+
+fn runKsOptStep(
+    ctx: KsOptContext,
+    prev_grad: *?[]f64,
+    prev_step: *?[]f64,
+    current_energy: *f64,
+    energy_history: *std.ArrayList(f64),
+    steps: usize,
+) !bool {
+    applyCoordsToPositions(ctx.coords, ctx.nuc_positions, ctx.shells, ctx.shell_to_atom);
+
+    try runKsDftAndGradient(
+        ctx.alloc,
+        ctx.io,
+        ctx.shells,
+        ctx.nuc_positions,
+        ctx.nuc_charges,
+        ctx.n_electrons,
+        ctx.n_occ,
+        ctx.params,
+        ctx.grid_config,
+        ctx.current_grad_flat,
+        current_energy,
+    );
+    try energy_history.append(ctx.alloc, current_energy.*);
+
+    const grad_rms = vecRms(ctx.current_grad_flat);
+    const grad_max = vecMaxAbs(ctx.current_grad_flat);
+
+    logging.progress(
+        ctx.params.print_progress,
+        "  KS-DFT opt step {d}: E = {d:.12} Ha, grad_rms = {e:10.3}, grad_max = {e:10.3}\n",
+        .{ steps, current_energy.*, grad_rms, grad_max },
+    );
+
+    if (grad_rms < ctx.params.grad_rms_threshold and grad_max < ctx.params.grad_max_threshold) {
+        return true;
+    }
+
+    try applyBfgsStep(
+        ctx.alloc,
+        ctx.h_inv,
+        ctx.coords,
+        ctx.current_grad_flat,
+        prev_grad,
+        prev_step,
+        ctx.n3,
+        ctx.params.max_step_size,
+    );
+    return false;
+}
+
 pub fn optimizeKsDftGeometry(
     alloc: std.mem.Allocator,
     io: std.Io,
@@ -485,190 +785,59 @@ pub fn optimizeKsDftGeometry(
     const n3 = n_atoms * 3;
     const n_occ = n_electrons / 2;
 
-    // Build shell-to-atom map
-    const shell_to_atom = try buildShellToAtomMap(alloc, shells, nuc_positions);
-    defer alloc.free(shell_to_atom);
+    var state = try BfgsLoopState.init(alloc, shells, nuc_positions, n3);
+    defer state.deinit(alloc);
 
-    // Flatten current positions
-    var coords = try flattenVec3(alloc, nuc_positions);
-    defer alloc.free(coords);
-
-    // Initialize inverse Hessian (scaled identity)
-    const h_inv = try initInverseHessian(alloc, n3);
-    defer alloc.free(h_inv);
-
-    // Energy history
-    var energy_history: std.ArrayList(f64) = .empty;
-    defer energy_history.deinit(alloc);
-
-    // Previous gradient and step vectors for BFGS update
-    var prev_grad: ?[]f64 = null;
-    defer if (prev_grad) |pg| alloc.free(pg);
-    var prev_step: ?[]f64 = null;
-    defer if (prev_step) |ps| alloc.free(ps);
-
-    var converged = false;
-    var steps: usize = 0;
-    var current_energy: f64 = 0.0;
-    const current_grad_flat = try alloc.alloc(f64, n3);
-    defer alloc.free(current_grad_flat);
-
-    // Grid config for Becke grid
     const grid_config = becke.GridConfig{
         .n_radial = params.ks_params.n_radial,
         .n_angular = params.ks_params.n_angular,
         .prune = params.ks_params.prune,
     };
 
+    const ctx = KsOptContext{
+        .alloc = alloc,
+        .io = io,
+        .shells = shells,
+        .nuc_positions = nuc_positions,
+        .nuc_charges = nuc_charges,
+        .n_electrons = n_electrons,
+        .n_occ = n_occ,
+        .shell_to_atom = state.shell_to_atom,
+        .coords = state.coords,
+        .h_inv = state.h_inv,
+        .current_grad_flat = state.current_grad_flat,
+        .n3 = n3,
+        .params = params,
+        .grid_config = grid_config,
+    };
+
+    var converged = false;
+    var steps: usize = 0;
+    var current_energy: f64 = 0.0;
     for (0..params.max_steps) |step| {
         steps = step + 1;
-
-        // Update nuclear positions and shell centers from flat coords
-        for (0..n_atoms) |i| {
-            nuc_positions[i] = .{
-                .x = coords[i * 3 + 0],
-                .y = coords[i * 3 + 1],
-                .z = coords[i * 3 + 2],
-            };
-        }
-        updateShellCenters(shells, shell_to_atom, nuc_positions);
-
-        // Run KS-DFT SCF
-        var ks_result = try kohn_sham.runKohnShamScf(
-            alloc,
-            io,
-            shells,
-            nuc_positions,
-            nuc_charges,
-            n_electrons,
-            params.ks_params,
-        );
-        defer ks_result.deinit(alloc);
-
-        current_energy = ks_result.total_energy;
-        try energy_history.append(alloc, current_energy);
-
-        // Build molecular grid for gradient calculation
-        // (must rebuild each step because atomic positions change)
-        const becke_atoms = try alloc.alloc(becke.Atom, n_atoms);
-        defer alloc.free(becke_atoms);
-        for (0..n_atoms) |i| {
-            becke_atoms[i] = .{
-                .x = nuc_positions[i].x,
-                .y = nuc_positions[i].y,
-                .z = nuc_positions[i].z,
-                .z_number = if (params.atomic_numbers.len > 0)
-                    @intCast(params.atomic_numbers[i])
-                else
-                    @intFromFloat(nuc_charges[i]),
-            };
-        }
-        const grid_points = try becke.buildMolecularGrid(alloc, becke_atoms, grid_config);
-        defer alloc.free(grid_points);
-
-        // Compute KS-DFT gradient
-        var grad_result = try gradient_mod.computeKsDftGradient(
-            alloc,
-            shells,
-            nuc_positions,
-            nuc_charges,
-            ks_result.density_matrix_result,
-            ks_result.orbital_energies,
-            ks_result.mo_coefficients,
-            n_occ,
-            grid_points,
-            params.ks_params.xc_functional,
-        );
-        defer grad_result.deinit(alloc);
-
-        // Flatten gradient
-        for (0..n_atoms) |i| {
-            current_grad_flat[i * 3 + 0] = grad_result.gradients[i].x;
-            current_grad_flat[i * 3 + 1] = grad_result.gradients[i].y;
-            current_grad_flat[i * 3 + 2] = grad_result.gradients[i].z;
-        }
-
-        // Compute convergence metrics
-        const grad_rms = vecRms(current_grad_flat);
-        const grad_max = vecMaxAbs(current_grad_flat);
-
-        logging.progress(
-            params.print_progress,
-            "  KS-DFT opt step {d}: E = {d:.12} Ha, grad_rms = {e:10.3}, grad_max = {e:10.3}\n",
-            .{ steps, current_energy, grad_rms, grad_max },
-        );
-
-        // Check gradient convergence
-        if (grad_rms < params.grad_rms_threshold and grad_max < params.grad_max_threshold) {
+        if (try runKsOptStep(
+            ctx,
+            &state.prev_grad,
+            &state.prev_step,
+            &current_energy,
+            &state.energy_history,
+            steps,
+        )) {
             converged = true;
             break;
         }
-
-        // BFGS update of inverse Hessian
-        if (prev_grad) |pg| {
-            if (prev_step) |ps| {
-                const y_vec = try alloc.alloc(f64, n3);
-                defer alloc.free(y_vec);
-                for (0..n3) |i| {
-                    y_vec[i] = current_grad_flat[i] - pg[i];
-                }
-                try bfgsUpdate(alloc, h_inv, ps, y_vec, n3);
-            }
-        }
-
-        // Compute search direction: p = -H_inv * grad
-        const search_dir = try matVecMul(alloc, h_inv, current_grad_flat, n3);
-        defer alloc.free(search_dir);
-        for (search_dir) |*d| {
-            d.* = -d.*;
-        }
-
-        // Apply trust region scaling
-        trustRegionScale(search_dir, params.max_step_size);
-
-        // Save gradient for BFGS update
-        if (prev_grad == null) {
-            prev_grad = try alloc.alloc(f64, n3);
-        }
-        @memcpy(prev_grad.?, current_grad_flat);
-
-        // Save step for BFGS update
-        if (prev_step == null) {
-            prev_step = try alloc.alloc(f64, n3);
-        }
-        @memcpy(prev_step.?, search_dir);
-
-        // Take step: x_{k+1} = x_k + p_k
-        for (0..n3) |i| {
-            coords[i] += search_dir[i];
-        }
     }
 
-    // Build final result
-    const final_positions = try alloc.alloc(Vec3, n_atoms);
-    for (0..n_atoms) |i| {
-        final_positions[i] = nuc_positions[i];
-    }
-
-    const final_gradient = try alloc.alloc(Vec3, n_atoms);
-    for (0..n_atoms) |i| {
-        final_gradient[i] = .{
-            .x = current_grad_flat[i * 3 + 0],
-            .y = current_grad_flat[i * 3 + 1],
-            .z = current_grad_flat[i * 3 + 2],
-        };
-    }
-
-    const energy_hist = try energy_history.toOwnedSlice(alloc);
-
-    return .{
-        .positions = final_positions,
-        .energy = current_energy,
-        .final_gradient = final_gradient,
-        .steps = steps,
-        .converged = converged,
-        .energy_history = energy_hist,
-    };
+    return packageOptResult(
+        alloc,
+        nuc_positions,
+        state.current_grad_flat,
+        current_energy,
+        steps,
+        converged,
+        &state.energy_history,
+    );
 }
 
 // Slow geometry optimization regression coverage lives in `regression_tests.zig`.

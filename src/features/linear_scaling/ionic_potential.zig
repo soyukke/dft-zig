@@ -90,14 +90,17 @@ test "ionic potential constant matches upf values" {
     const alloc = std.testing.allocator;
     var r = try alloc.alloc(f64, 2);
     defer alloc.free(r);
+
     r[0] = 0.0;
     r[1] = 1.0;
     var rab = try alloc.alloc(f64, 2);
     defer alloc.free(rab);
+
     rab[0] = 0.0;
     rab[1] = 1.0;
     var v_local = try alloc.alloc(f64, 2);
     defer alloc.free(v_local);
+
     v_local[0] = 1.2;
     v_local[1] = 1.2;
     const upf = pseudo.UpfData{
@@ -125,5 +128,6 @@ test "ionic potential constant matches upf values" {
     const pbc = neighbor_list.Pbc{ .x = false, .y = false, .z = false };
     const values = try buildIonicPotentialGrid(alloc, grid, sites[0..], pbc);
     defer alloc.free(values);
+
     try std.testing.expectApproxEqAbs(@as(f64, 1.2), values[0], 1e-12);
 }

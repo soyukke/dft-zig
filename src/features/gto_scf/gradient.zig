@@ -243,6 +243,313 @@ pub fn buildEnergyWeightedDensity(
 // momentum, so we can evaluate the augmented integrals by constructing
 // temporary shells with shifted angular momentum.
 
+const Axis = enum { x, y, z };
+
+fn incrementAngular(ang: AngularMomentum, axis: Axis) AngularMomentum {
+    var next = ang;
+    switch (axis) {
+        .x => next.x += 1,
+        .y => next.y += 1,
+        .z => next.z += 1,
+    }
+    return next;
+}
+
+fn angularComponent(ang: AngularMomentum, axis: Axis) u32 {
+    return switch (axis) {
+        .x => ang.x,
+        .y => ang.y,
+        .z => ang.z,
+    };
+}
+
+fn decrementAngular(ang: AngularMomentum, axis: Axis) AngularMomentum {
+    var prev = ang;
+    switch (axis) {
+        .x => prev.x -= 1,
+        .y => prev.y -= 1,
+        .z => prev.z -= 1,
+    }
+    return prev;
+}
+
+fn derivativeTwoCenterAxis(
+    comptime integral_fn: anytype,
+    axis: Axis,
+    alpha_a: f64,
+    center_a: Vec3,
+    ang_a: AngularMomentum,
+    alpha_b: f64,
+    center_b: Vec3,
+    ang_b: AngularMomentum,
+) f64 {
+    const plus = integral_fn(
+        alpha_a,
+        center_a,
+        incrementAngular(ang_a, axis),
+        alpha_b,
+        center_b,
+        ang_b,
+    );
+    var deriv = 2.0 * alpha_a * plus;
+    const component = angularComponent(ang_a, axis);
+    if (component > 0) {
+        const minus = integral_fn(
+            alpha_a,
+            center_a,
+            decrementAngular(ang_a, axis),
+            alpha_b,
+            center_b,
+            ang_b,
+        );
+        deriv -= @as(f64, @floatFromInt(component)) * minus;
+    }
+    return deriv;
+}
+
+fn primitiveTwoCenterDerivative(
+    comptime integral_fn: anytype,
+    alpha_a: f64,
+    center_a: Vec3,
+    ang_a: AngularMomentum,
+    alpha_b: f64,
+    center_b: Vec3,
+    ang_b: AngularMomentum,
+) [3]f64 {
+    return .{
+        derivativeTwoCenterAxis(
+            integral_fn,
+            .x,
+            alpha_a,
+            center_a,
+            ang_a,
+            alpha_b,
+            center_b,
+            ang_b,
+        ),
+        derivativeTwoCenterAxis(
+            integral_fn,
+            .y,
+            alpha_a,
+            center_a,
+            ang_a,
+            alpha_b,
+            center_b,
+            ang_b,
+        ),
+        derivativeTwoCenterAxis(
+            integral_fn,
+            .z,
+            alpha_a,
+            center_a,
+            ang_a,
+            alpha_b,
+            center_b,
+            ang_b,
+        ),
+    };
+}
+
+fn derivativeNuclearAxis(
+    axis: Axis,
+    alpha_a: f64,
+    center_a: Vec3,
+    ang_a: AngularMomentum,
+    alpha_b: f64,
+    center_b: Vec3,
+    ang_b: AngularMomentum,
+    nuc_pos: Vec3,
+    nuc_charge: f64,
+) f64 {
+    const plus = obara_saika.primitiveNuclearAttraction(
+        alpha_a,
+        center_a,
+        incrementAngular(ang_a, axis),
+        alpha_b,
+        center_b,
+        ang_b,
+        nuc_pos,
+        nuc_charge,
+    );
+    var deriv = 2.0 * alpha_a * plus;
+    const component = angularComponent(ang_a, axis);
+    if (component > 0) {
+        const minus = obara_saika.primitiveNuclearAttraction(
+            alpha_a,
+            center_a,
+            decrementAngular(ang_a, axis),
+            alpha_b,
+            center_b,
+            ang_b,
+            nuc_pos,
+            nuc_charge,
+        );
+        deriv -= @as(f64, @floatFromInt(component)) * minus;
+    }
+    return deriv;
+}
+
+fn primitiveNuclearDerivative(
+    alpha_a: f64,
+    center_a: Vec3,
+    ang_a: AngularMomentum,
+    alpha_b: f64,
+    center_b: Vec3,
+    ang_b: AngularMomentum,
+    nuc_pos: Vec3,
+    nuc_charge: f64,
+) [3]f64 {
+    return .{
+        derivativeNuclearAxis(
+            .x,
+            alpha_a,
+            center_a,
+            ang_a,
+            alpha_b,
+            center_b,
+            ang_b,
+            nuc_pos,
+            nuc_charge,
+        ),
+        derivativeNuclearAxis(
+            .y,
+            alpha_a,
+            center_a,
+            ang_a,
+            alpha_b,
+            center_b,
+            ang_b,
+            nuc_pos,
+            nuc_charge,
+        ),
+        derivativeNuclearAxis(
+            .z,
+            alpha_a,
+            center_a,
+            ang_a,
+            alpha_b,
+            center_b,
+            ang_b,
+            nuc_pos,
+            nuc_charge,
+        ),
+    };
+}
+
+fn derivativeEriAxis(
+    axis: Axis,
+    alpha_a: f64,
+    center_a: Vec3,
+    ang_a: AngularMomentum,
+    alpha_b: f64,
+    center_b: Vec3,
+    ang_b: AngularMomentum,
+    alpha_c: f64,
+    center_c: Vec3,
+    ang_c: AngularMomentum,
+    alpha_d: f64,
+    center_d: Vec3,
+    ang_d: AngularMomentum,
+) f64 {
+    const plus = obara_saika.primitiveERI(
+        alpha_a,
+        center_a,
+        incrementAngular(ang_a, axis),
+        alpha_b,
+        center_b,
+        ang_b,
+        alpha_c,
+        center_c,
+        ang_c,
+        alpha_d,
+        center_d,
+        ang_d,
+    );
+    var deriv = 2.0 * alpha_a * plus;
+    const component = angularComponent(ang_a, axis);
+    if (component > 0) {
+        const minus = obara_saika.primitiveERI(
+            alpha_a,
+            center_a,
+            decrementAngular(ang_a, axis),
+            alpha_b,
+            center_b,
+            ang_b,
+            alpha_c,
+            center_c,
+            ang_c,
+            alpha_d,
+            center_d,
+            ang_d,
+        );
+        deriv -= @as(f64, @floatFromInt(component)) * minus;
+    }
+    return deriv;
+}
+
+fn primitiveEriDerivative(
+    alpha_a: f64,
+    center_a: Vec3,
+    ang_a: AngularMomentum,
+    alpha_b: f64,
+    center_b: Vec3,
+    ang_b: AngularMomentum,
+    alpha_c: f64,
+    center_c: Vec3,
+    ang_c: AngularMomentum,
+    alpha_d: f64,
+    center_d: Vec3,
+    ang_d: AngularMomentum,
+) [3]f64 {
+    return .{
+        derivativeEriAxis(
+            .x,
+            alpha_a,
+            center_a,
+            ang_a,
+            alpha_b,
+            center_b,
+            ang_b,
+            alpha_c,
+            center_c,
+            ang_c,
+            alpha_d,
+            center_d,
+            ang_d,
+        ),
+        derivativeEriAxis(
+            .y,
+            alpha_a,
+            center_a,
+            ang_a,
+            alpha_b,
+            center_b,
+            ang_b,
+            alpha_c,
+            center_c,
+            ang_c,
+            alpha_d,
+            center_d,
+            ang_d,
+        ),
+        derivativeEriAxis(
+            .z,
+            alpha_a,
+            center_a,
+            ang_a,
+            alpha_b,
+            center_b,
+            ang_b,
+            alpha_c,
+            center_c,
+            ang_c,
+            alpha_d,
+            center_d,
+            ang_d,
+        ),
+    };
+}
+
 /// Compute the 3x3 matrix of overlap integral derivatives d<mu|nu>/dA_x, dA_y, dA_z
 /// for contracted shells, returning contributions per basis function pair.
 ///
@@ -267,87 +574,15 @@ fn primOverlapDeriv(
     center_b: Vec3,
     ang_b: AngularMomentum,
 ) [3]f64 {
-    var result: [3]f64 = .{ 0.0, 0.0, 0.0 };
-
-    // x-derivative
-    {
-        const a_plus = AngularMomentum{ .x = ang_a.x + 1, .y = ang_a.y, .z = ang_a.z };
-        const s_plus = obara_saika.primitiveOverlap(
-            alpha_a,
-            center_a,
-            a_plus,
-            alpha_b,
-            center_b,
-            ang_b,
-        );
-        result[0] = 2.0 * alpha_a * s_plus;
-        if (ang_a.x > 0) {
-            const a_minus = AngularMomentum{ .x = ang_a.x - 1, .y = ang_a.y, .z = ang_a.z };
-            const s_minus = obara_saika.primitiveOverlap(
-                alpha_a,
-                center_a,
-                a_minus,
-                alpha_b,
-                center_b,
-                ang_b,
-            );
-            result[0] -= @as(f64, @floatFromInt(ang_a.x)) * s_minus;
-        }
-    }
-
-    // y-derivative
-    {
-        const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y + 1, .z = ang_a.z };
-        const s_plus = obara_saika.primitiveOverlap(
-            alpha_a,
-            center_a,
-            a_plus,
-            alpha_b,
-            center_b,
-            ang_b,
-        );
-        result[1] = 2.0 * alpha_a * s_plus;
-        if (ang_a.y > 0) {
-            const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y - 1, .z = ang_a.z };
-            const s_minus = obara_saika.primitiveOverlap(
-                alpha_a,
-                center_a,
-                a_minus,
-                alpha_b,
-                center_b,
-                ang_b,
-            );
-            result[1] -= @as(f64, @floatFromInt(ang_a.y)) * s_minus;
-        }
-    }
-
-    // z-derivative
-    {
-        const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z + 1 };
-        const s_plus = obara_saika.primitiveOverlap(
-            alpha_a,
-            center_a,
-            a_plus,
-            alpha_b,
-            center_b,
-            ang_b,
-        );
-        result[2] = 2.0 * alpha_a * s_plus;
-        if (ang_a.z > 0) {
-            const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z - 1 };
-            const s_minus = obara_saika.primitiveOverlap(
-                alpha_a,
-                center_a,
-                a_minus,
-                alpha_b,
-                center_b,
-                ang_b,
-            );
-            result[2] -= @as(f64, @floatFromInt(ang_a.z)) * s_minus;
-        }
-    }
-
-    return result;
+    return primitiveTwoCenterDerivative(
+        obara_saika.primitiveOverlap,
+        alpha_a,
+        center_a,
+        ang_a,
+        alpha_b,
+        center_b,
+        ang_b,
+    );
 }
 
 /// Compute dT_{mu,nu}/dA for a pair of *primitives*.
@@ -360,87 +595,15 @@ fn primKineticDeriv(
     center_b: Vec3,
     ang_b: AngularMomentum,
 ) [3]f64 {
-    var result: [3]f64 = .{ 0.0, 0.0, 0.0 };
-
-    // x-derivative
-    {
-        const a_plus = AngularMomentum{ .x = ang_a.x + 1, .y = ang_a.y, .z = ang_a.z };
-        const t_plus = obara_saika.primitiveKinetic(
-            alpha_a,
-            center_a,
-            a_plus,
-            alpha_b,
-            center_b,
-            ang_b,
-        );
-        result[0] = 2.0 * alpha_a * t_plus;
-        if (ang_a.x > 0) {
-            const a_minus = AngularMomentum{ .x = ang_a.x - 1, .y = ang_a.y, .z = ang_a.z };
-            const t_minus = obara_saika.primitiveKinetic(
-                alpha_a,
-                center_a,
-                a_minus,
-                alpha_b,
-                center_b,
-                ang_b,
-            );
-            result[0] -= @as(f64, @floatFromInt(ang_a.x)) * t_minus;
-        }
-    }
-
-    // y-derivative
-    {
-        const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y + 1, .z = ang_a.z };
-        const t_plus = obara_saika.primitiveKinetic(
-            alpha_a,
-            center_a,
-            a_plus,
-            alpha_b,
-            center_b,
-            ang_b,
-        );
-        result[1] = 2.0 * alpha_a * t_plus;
-        if (ang_a.y > 0) {
-            const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y - 1, .z = ang_a.z };
-            const t_minus = obara_saika.primitiveKinetic(
-                alpha_a,
-                center_a,
-                a_minus,
-                alpha_b,
-                center_b,
-                ang_b,
-            );
-            result[1] -= @as(f64, @floatFromInt(ang_a.y)) * t_minus;
-        }
-    }
-
-    // z-derivative
-    {
-        const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z + 1 };
-        const t_plus = obara_saika.primitiveKinetic(
-            alpha_a,
-            center_a,
-            a_plus,
-            alpha_b,
-            center_b,
-            ang_b,
-        );
-        result[2] = 2.0 * alpha_a * t_plus;
-        if (ang_a.z > 0) {
-            const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z - 1 };
-            const t_minus = obara_saika.primitiveKinetic(
-                alpha_a,
-                center_a,
-                a_minus,
-                alpha_b,
-                center_b,
-                ang_b,
-            );
-            result[2] -= @as(f64, @floatFromInt(ang_a.z)) * t_minus;
-        }
-    }
-
-    return result;
+    return primitiveTwoCenterDerivative(
+        obara_saika.primitiveKinetic,
+        alpha_a,
+        center_a,
+        ang_a,
+        alpha_b,
+        center_b,
+        ang_b,
+    );
 }
 
 /// Compute dV_{mu,nu}/dA for a pair of *primitives* and a single nucleus.
@@ -455,99 +618,16 @@ fn primNuclearDeriv(
     nuc_pos: Vec3,
     nuc_charge: f64,
 ) [3]f64 {
-    var result: [3]f64 = .{ 0.0, 0.0, 0.0 };
-
-    // x-derivative
-    {
-        const a_plus = AngularMomentum{ .x = ang_a.x + 1, .y = ang_a.y, .z = ang_a.z };
-        const v_plus = obara_saika.primitiveNuclearAttraction(
-            alpha_a,
-            center_a,
-            a_plus,
-            alpha_b,
-            center_b,
-            ang_b,
-            nuc_pos,
-            nuc_charge,
-        );
-        result[0] = 2.0 * alpha_a * v_plus;
-        if (ang_a.x > 0) {
-            const a_minus = AngularMomentum{ .x = ang_a.x - 1, .y = ang_a.y, .z = ang_a.z };
-            const v_minus = obara_saika.primitiveNuclearAttraction(
-                alpha_a,
-                center_a,
-                a_minus,
-                alpha_b,
-                center_b,
-                ang_b,
-                nuc_pos,
-                nuc_charge,
-            );
-            result[0] -= @as(f64, @floatFromInt(ang_a.x)) * v_minus;
-        }
-    }
-
-    // y-derivative
-    {
-        const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y + 1, .z = ang_a.z };
-        const v_plus = obara_saika.primitiveNuclearAttraction(
-            alpha_a,
-            center_a,
-            a_plus,
-            alpha_b,
-            center_b,
-            ang_b,
-            nuc_pos,
-            nuc_charge,
-        );
-        result[1] = 2.0 * alpha_a * v_plus;
-        if (ang_a.y > 0) {
-            const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y - 1, .z = ang_a.z };
-            const v_minus = obara_saika.primitiveNuclearAttraction(
-                alpha_a,
-                center_a,
-                a_minus,
-                alpha_b,
-                center_b,
-                ang_b,
-                nuc_pos,
-                nuc_charge,
-            );
-            result[1] -= @as(f64, @floatFromInt(ang_a.y)) * v_minus;
-        }
-    }
-
-    // z-derivative
-    {
-        const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z + 1 };
-        const v_plus = obara_saika.primitiveNuclearAttraction(
-            alpha_a,
-            center_a,
-            a_plus,
-            alpha_b,
-            center_b,
-            ang_b,
-            nuc_pos,
-            nuc_charge,
-        );
-        result[2] = 2.0 * alpha_a * v_plus;
-        if (ang_a.z > 0) {
-            const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z - 1 };
-            const v_minus = obara_saika.primitiveNuclearAttraction(
-                alpha_a,
-                center_a,
-                a_minus,
-                alpha_b,
-                center_b,
-                ang_b,
-                nuc_pos,
-                nuc_charge,
-            );
-            result[2] -= @as(f64, @floatFromInt(ang_a.z)) * v_minus;
-        }
-    }
-
-    return result;
+    return primitiveNuclearDerivative(
+        alpha_a,
+        center_a,
+        ang_a,
+        alpha_b,
+        center_b,
+        ang_b,
+        nuc_pos,
+        nuc_charge,
+    );
 }
 
 /// Compute d(ab|cd)/dA for a pair of primitives a (centered on A) and b, c, d.
@@ -568,123 +648,20 @@ fn primEriDeriv(
     center_d: Vec3,
     ang_d: AngularMomentum,
 ) [3]f64 {
-    var result: [3]f64 = .{ 0.0, 0.0, 0.0 };
-
-    // x-derivative
-    {
-        const a_plus = AngularMomentum{ .x = ang_a.x + 1, .y = ang_a.y, .z = ang_a.z };
-        const eri_plus = obara_saika.primitiveERI(
-            alpha_a,
-            center_a,
-            a_plus,
-            alpha_b,
-            center_b,
-            ang_b,
-            alpha_c,
-            center_c,
-            ang_c,
-            alpha_d,
-            center_d,
-            ang_d,
-        );
-        result[0] = 2.0 * alpha_a * eri_plus;
-        if (ang_a.x > 0) {
-            const a_minus = AngularMomentum{ .x = ang_a.x - 1, .y = ang_a.y, .z = ang_a.z };
-            const eri_minus = obara_saika.primitiveERI(
-                alpha_a,
-                center_a,
-                a_minus,
-                alpha_b,
-                center_b,
-                ang_b,
-                alpha_c,
-                center_c,
-                ang_c,
-                alpha_d,
-                center_d,
-                ang_d,
-            );
-            result[0] -= @as(f64, @floatFromInt(ang_a.x)) * eri_minus;
-        }
-    }
-
-    // y-derivative
-    {
-        const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y + 1, .z = ang_a.z };
-        const eri_plus = obara_saika.primitiveERI(
-            alpha_a,
-            center_a,
-            a_plus,
-            alpha_b,
-            center_b,
-            ang_b,
-            alpha_c,
-            center_c,
-            ang_c,
-            alpha_d,
-            center_d,
-            ang_d,
-        );
-        result[1] = 2.0 * alpha_a * eri_plus;
-        if (ang_a.y > 0) {
-            const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y - 1, .z = ang_a.z };
-            const eri_minus = obara_saika.primitiveERI(
-                alpha_a,
-                center_a,
-                a_minus,
-                alpha_b,
-                center_b,
-                ang_b,
-                alpha_c,
-                center_c,
-                ang_c,
-                alpha_d,
-                center_d,
-                ang_d,
-            );
-            result[1] -= @as(f64, @floatFromInt(ang_a.y)) * eri_minus;
-        }
-    }
-
-    // z-derivative
-    {
-        const a_plus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z + 1 };
-        const eri_plus = obara_saika.primitiveERI(
-            alpha_a,
-            center_a,
-            a_plus,
-            alpha_b,
-            center_b,
-            ang_b,
-            alpha_c,
-            center_c,
-            ang_c,
-            alpha_d,
-            center_d,
-            ang_d,
-        );
-        result[2] = 2.0 * alpha_a * eri_plus;
-        if (ang_a.z > 0) {
-            const a_minus = AngularMomentum{ .x = ang_a.x, .y = ang_a.y, .z = ang_a.z - 1 };
-            const eri_minus = obara_saika.primitiveERI(
-                alpha_a,
-                center_a,
-                a_minus,
-                alpha_b,
-                center_b,
-                ang_b,
-                alpha_c,
-                center_c,
-                ang_c,
-                alpha_d,
-                center_d,
-                ang_d,
-            );
-            result[2] -= @as(f64, @floatFromInt(ang_a.z)) * eri_minus;
-        }
-    }
-
-    return result;
+    return primitiveEriDerivative(
+        alpha_a,
+        center_a,
+        ang_a,
+        alpha_b,
+        center_b,
+        ang_b,
+        alpha_c,
+        center_c,
+        ang_c,
+        alpha_d,
+        center_d,
+        ang_d,
+    );
 }
 
 // ============================================================================
@@ -895,6 +872,569 @@ pub const GradientResult = struct {
     }
 };
 
+const GradientWorkspace = struct {
+    basis_map: []BasisInfo,
+    shell_atom_map: []usize,
+    w_mat: []f64,
+
+    pub fn deinit(self: GradientWorkspace, alloc: std.mem.Allocator) void {
+        alloc.free(self.basis_map);
+        alloc.free(self.shell_atom_map);
+        alloc.free(self.w_mat);
+    }
+};
+
+const OneElectronGradientCtx = struct {
+    grad: []Vec3,
+    shells: []const ContractedShell,
+    basis_map: []const BasisInfo,
+    shell_atom_map: []const usize,
+    nuc_positions: []const Vec3,
+    nuc_charges: []const f64,
+    p_mat: []const f64,
+    w_mat: []const f64,
+    n: usize,
+};
+
+const TwoElectronGradientCtx = struct {
+    grad: []Vec3,
+    shells: []const ContractedShell,
+    shell_atom_map: []const usize,
+    p_mat: []const f64,
+    n: usize,
+    hf_frac: f64,
+};
+
+const ShellQuartetInfo = struct {
+    atom_sa: usize,
+    off_a: usize,
+    off_b: usize,
+    off_c: usize,
+    off_d: usize,
+    na_s: usize,
+    nb_s: usize,
+    nc_s: usize,
+    nd_s: usize,
+};
+
+const XcPotentialData = struct {
+    v_xc: []f64,
+    v_sigma: []f64,
+
+    pub fn deinit(self: XcPotentialData, alloc: std.mem.Allocator) void {
+        alloc.free(self.v_xc);
+        alloc.free(self.v_sigma);
+    }
+};
+
+const ProjectedDerivativeData = struct {
+    x: ?[]f64 = null,
+    y: ?[]f64 = null,
+    z: ?[]f64 = null,
+
+    pub fn deinit(self: ProjectedDerivativeData, alloc: std.mem.Allocator) void {
+        if (self.x) |arr| alloc.free(arr);
+        if (self.y) |arr| alloc.free(arr);
+        if (self.z) |arr| alloc.free(arr);
+    }
+};
+
+fn initGradientWorkspace(
+    alloc: std.mem.Allocator,
+    n: usize,
+    shells: []const ContractedShell,
+    nuc_positions: []const Vec3,
+    orbital_energies: []const f64,
+    mo_coefficients: []const f64,
+    n_occ: usize,
+) !GradientWorkspace {
+    const basis_map = try buildBasisMap(alloc, shells);
+    errdefer alloc.free(basis_map);
+    const shell_atom_map = try buildShellToAtomMap(alloc, shells, nuc_positions);
+    errdefer alloc.free(shell_atom_map);
+    const w_mat = try buildEnergyWeightedDensity(
+        alloc,
+        n,
+        n_occ,
+        orbital_energies,
+        mo_coefficients,
+    );
+    errdefer alloc.free(w_mat);
+    return .{
+        .basis_map = basis_map,
+        .shell_atom_map = shell_atom_map,
+        .w_mat = w_mat,
+    };
+}
+
+fn initGradientVector(
+    alloc: std.mem.Allocator,
+    nuc_positions: []const Vec3,
+    nuc_charges: []const f64,
+) ![]Vec3 {
+    const grad_vnn = try nuclearRepulsionGradient(alloc, nuc_positions, nuc_charges);
+    defer alloc.free(grad_vnn);
+
+    const grad = try alloc.alloc(Vec3, nuc_positions.len);
+    @memcpy(grad, grad_vnn);
+    return grad;
+}
+
+fn addScaledDerivative(target: *Vec3, scale: f64, deriv: [3]f64) void {
+    target.x += scale * deriv[0];
+    target.y += scale * deriv[1];
+    target.z += scale * deriv[2];
+}
+
+fn subtractDerivativePair(target: *Vec3, scale: f64, lhs: [3]f64, rhs: [3]f64) void {
+    target.x -= scale * (lhs[0] + rhs[0]);
+    target.y -= scale * (lhs[1] + rhs[1]);
+    target.z -= scale * (lhs[2] + rhs[2]);
+}
+
+fn accumulateOneElectronPair(ctx: *const OneElectronGradientCtx, mu: usize, nu: usize) void {
+    const mu_info = ctx.basis_map[mu];
+    const nu_info = ctx.basis_map[nu];
+    const mu_shell = ctx.shells[mu_info.shell_idx];
+    const nu_shell = ctx.shells[nu_info.shell_idx];
+    const atom_a = ctx.shell_atom_map[mu_info.shell_idx];
+    const p_val = ctx.p_mat[mu * ctx.n + nu];
+    const w_val = ctx.w_mat[mu * ctx.n + nu];
+
+    addScaledDerivative(
+        &ctx.grad[atom_a],
+        -2.0 * w_val,
+        contractedOverlapDeriv(mu_shell, mu_info.ang, nu_shell, nu_info.ang),
+    );
+    addScaledDerivative(
+        &ctx.grad[atom_a],
+        2.0 * p_val,
+        contractedKineticDeriv(mu_shell, mu_info.ang, nu_shell, nu_info.ang),
+    );
+
+    for (ctx.nuc_positions, ctx.nuc_charges, 0..) |nuc_pos, nuc_charge, c| {
+        const dv_da = contractedNuclearDeriv(
+            mu_shell,
+            mu_info.ang,
+            nu_shell,
+            nu_info.ang,
+            nuc_pos,
+            nuc_charge,
+        );
+        const dv_db = contractedNuclearDeriv(
+            nu_shell,
+            nu_info.ang,
+            mu_shell,
+            mu_info.ang,
+            nuc_pos,
+            nuc_charge,
+        );
+        addScaledDerivative(&ctx.grad[atom_a], 2.0 * p_val, dv_da);
+        subtractDerivativePair(&ctx.grad[c], p_val, dv_da, dv_db);
+    }
+}
+
+fn accumulateOneElectronGradient(ctx: *const OneElectronGradientCtx) void {
+    for (0..ctx.n) |mu| {
+        for (0..ctx.n) |nu| {
+            accumulateOneElectronPair(ctx, mu, nu);
+        }
+    }
+}
+
+fn buildMaxShellDensity(
+    alloc: std.mem.Allocator,
+    p_mat: []const f64,
+    n: usize,
+    schwarz: anytype,
+) ![]f64 {
+    const n_shells = schwarz.shell_sizes.len;
+    const max_p_shell = try alloc.alloc(f64, n_shells * n_shells);
+    for (0..n_shells) |si| {
+        const ni = schwarz.shell_sizes[si];
+        const off_i = schwarz.shell_offsets[si];
+        for (0..n_shells) |sj| {
+            const nj = schwarz.shell_sizes[sj];
+            const off_j = schwarz.shell_offsets[sj];
+            var mx: f64 = 0.0;
+            for (0..ni) |ii| {
+                for (0..nj) |jj| {
+                    const v = @abs(p_mat[(off_i + ii) * n + (off_j + jj)]);
+                    if (v > mx) mx = v;
+                }
+            }
+            max_p_shell[si * n_shells + sj] = mx;
+        }
+    }
+    return max_p_shell;
+}
+
+fn shellQuartetPassesDensityScreen(
+    ctx: *const TwoElectronGradientCtx,
+    max_p_shell: []const f64,
+    n_shells: usize,
+    sa: usize,
+    sb: usize,
+    sc: usize,
+    sd: usize,
+    q_ab: f64,
+    q_cd: f64,
+    threshold: f64,
+) bool {
+    if (q_ab * q_cd < threshold) return false;
+    const max_p_ab = max_p_shell[sa * n_shells + sb];
+    const max_p_cd = max_p_shell[sc * n_shells + sd];
+    const max_p_ac = max_p_shell[sa * n_shells + sc];
+    const max_p_bd = max_p_shell[sb * n_shells + sd];
+    const max_gamma_est = max_p_ab * max_p_cd + ctx.hf_frac * 0.5 * max_p_ac * max_p_bd;
+    return max_gamma_est * q_ab * q_cd >= threshold;
+}
+
+fn accumulateShellQuartetGradient(
+    ctx: *const TwoElectronGradientCtx,
+    info: ShellQuartetInfo,
+    batch_dx: []const f64,
+    batch_dy: []const f64,
+    batch_dz: []const f64,
+) void {
+    for (0..info.na_s) |ia| {
+        const mu = info.off_a + ia;
+        for (0..info.nb_s) |ib| {
+            const nu = info.off_b + ib;
+            const p_mu_nu = ctx.p_mat[mu * ctx.n + nu];
+            for (0..info.nc_s) |ic| {
+                const lam = info.off_c + ic;
+                const p_mu_lam = ctx.p_mat[mu * ctx.n + lam];
+                const p_lam_sig_base = lam * ctx.n;
+                for (0..info.nd_s) |id_d| {
+                    const sig = info.off_d + id_d;
+                    const coulomb_term = p_mu_nu * ctx.p_mat[p_lam_sig_base + sig];
+                    const exchange_term =
+                        ctx.hf_frac * 0.5 * p_mu_lam * ctx.p_mat[nu * ctx.n + sig];
+                    const gamma = coulomb_term - exchange_term;
+                    if (@abs(gamma) < 1e-15) continue;
+
+                    const idx = ia * info.nb_s * info.nc_s * info.nd_s +
+                        ib * info.nc_s * info.nd_s +
+                        ic * info.nd_s +
+                        id_d;
+                    addScaledDerivative(&ctx.grad[info.atom_sa], 2.0 * gamma, .{
+                        batch_dx[idx],
+                        batch_dy[idx],
+                        batch_dz[idx],
+                    });
+                }
+            }
+        }
+    }
+}
+
+fn accumulateTwoElectronGradient(
+    alloc: std.mem.Allocator,
+    ctx: *const TwoElectronGradientCtx,
+) !void {
+    const threshold: f64 = 1e-12;
+    var schwarz = try fock_mod.buildSchwarzTable(alloc, ctx.shells);
+    defer schwarz.deinit(alloc);
+
+    const max_p_shell = try buildMaxShellDensity(alloc, ctx.p_mat, ctx.n, schwarz);
+    defer alloc.free(max_p_shell);
+
+    const n_shells = ctx.shells.len;
+    const max_cart = basis_mod.MAX_CART;
+    const max_batch = max_cart * max_cart * max_cart * max_cart;
+    var batch_dx: [max_batch]f64 = undefined;
+    var batch_dy: [max_batch]f64 = undefined;
+    var batch_dz: [max_batch]f64 = undefined;
+
+    for (0..n_shells) |sa| {
+        for (0..n_shells) |sb| {
+            const q_ab = schwarz.get(sa, sb);
+            for (0..n_shells) |sc| {
+                for (0..n_shells) |sd| {
+                    const q_cd = schwarz.get(sc, sd);
+                    if (!shellQuartetPassesDensityScreen(
+                        ctx,
+                        max_p_shell,
+                        n_shells,
+                        sa,
+                        sb,
+                        sc,
+                        sd,
+                        q_ab,
+                        q_cd,
+                        threshold,
+                    )) continue;
+
+                    _ = rys_eri.contractedShellQuartetEriDeriv(
+                        ctx.shells[sa],
+                        ctx.shells[sb],
+                        ctx.shells[sc],
+                        ctx.shells[sd],
+                        &batch_dx,
+                        &batch_dy,
+                        &batch_dz,
+                    );
+                    accumulateShellQuartetGradient(ctx, .{
+                        .atom_sa = ctx.shell_atom_map[sa],
+                        .off_a = schwarz.shell_offsets[sa],
+                        .off_b = schwarz.shell_offsets[sb],
+                        .off_c = schwarz.shell_offsets[sc],
+                        .off_d = schwarz.shell_offsets[sd],
+                        .na_s = schwarz.shell_sizes[sa],
+                        .nb_s = schwarz.shell_sizes[sb],
+                        .nc_s = schwarz.shell_sizes[sc],
+                        .nd_s = schwarz.shell_sizes[sd],
+                    }, batch_dx[0..], batch_dy[0..], batch_dz[0..]);
+                }
+            }
+        }
+    }
+}
+
+fn freeDensityGridData(alloc: std.mem.Allocator, density_data: anytype) void {
+    alloc.free(density_data.rho);
+    alloc.free(density_data.grad_x);
+    alloc.free(density_data.grad_y);
+    alloc.free(density_data.grad_z);
+}
+
+fn buildXcPotentialData(
+    alloc: std.mem.Allocator,
+    density_data: anytype,
+    xc_func: XcFunctional,
+) !XcPotentialData {
+    const n_grid = density_data.rho.len;
+    const v_xc = try alloc.alloc(f64, n_grid);
+    errdefer alloc.free(v_xc);
+    const v_sigma = try alloc.alloc(f64, n_grid);
+    errdefer alloc.free(v_sigma);
+    for (0..n_grid) |ig| {
+        const rho_g = density_data.rho[ig];
+        if (rho_g < 1e-20) {
+            v_xc[ig] = 0.0;
+            v_sigma[ig] = 0.0;
+            continue;
+        }
+        switch (xc_func) {
+            .lda_svwn => {
+                const xc_eval = xc_functionals.ldaSvwn(rho_g);
+                v_xc[ig] = xc_eval.v_xc;
+                v_sigma[ig] = 0.0;
+            },
+            .b3lyp => {
+                const sigma = density_data.grad_x[ig] * density_data.grad_x[ig] +
+                    density_data.grad_y[ig] * density_data.grad_y[ig] +
+                    density_data.grad_z[ig] * density_data.grad_z[ig];
+                const xc_eval = xc_functionals.b3lyp(rho_g, sigma);
+                v_xc[ig] = xc_eval.v_xc;
+                v_sigma[ig] = xc_eval.v_sigma;
+            },
+        }
+    }
+    return .{ .v_xc = v_xc, .v_sigma = v_sigma };
+}
+
+fn buildProjectedPhi(
+    alloc: std.mem.Allocator,
+    p_mat: []const f64,
+    bog: BasisOnGrid,
+    n_grid: usize,
+    n: usize,
+) ![]f64 {
+    const p_phi = try alloc.alloc(f64, n_grid * n);
+    for (0..n_grid) |ig| {
+        const g_off = ig * n;
+        for (0..n) |mu| {
+            var sum: f64 = 0.0;
+            for (0..n) |nu| {
+                sum += p_mat[mu * n + nu] * bog.phi[g_off + nu];
+            }
+            p_phi[g_off + mu] = sum;
+        }
+    }
+    return p_phi;
+}
+
+fn buildProjectedDerivatives(
+    alloc: std.mem.Allocator,
+    p_mat: []const f64,
+    bog: BasisOnGrid,
+    n_grid: usize,
+    n: usize,
+    has_gga: bool,
+) !ProjectedDerivativeData {
+    if (!has_gga) return .{};
+
+    const p_dphi_x = try alloc.alloc(f64, n_grid * n);
+    errdefer alloc.free(p_dphi_x);
+    const p_dphi_y = try alloc.alloc(f64, n_grid * n);
+    errdefer alloc.free(p_dphi_y);
+    const p_dphi_z = try alloc.alloc(f64, n_grid * n);
+    errdefer alloc.free(p_dphi_z);
+    for (0..n_grid) |ig| {
+        const g_off = ig * n;
+        for (0..n) |mu| {
+            var sx: f64 = 0.0;
+            var sy: f64 = 0.0;
+            var sz: f64 = 0.0;
+            for (0..n) |nu| {
+                const p_mn = p_mat[mu * n + nu];
+                sx += p_mn * bog.dphi_x[g_off + nu];
+                sy += p_mn * bog.dphi_y[g_off + nu];
+                sz += p_mn * bog.dphi_z[g_off + nu];
+            }
+            p_dphi_x[g_off + mu] = sx;
+            p_dphi_y[g_off + mu] = sy;
+            p_dphi_z[g_off + mu] = sz;
+        }
+    }
+    return .{
+        .x = p_dphi_x,
+        .y = p_dphi_y,
+        .z = p_dphi_z,
+    };
+}
+
+fn accumulateGgaBasisPointContribution(
+    shells: []const ContractedShell,
+    mu_info: BasisInfo,
+    grid_point: GridPoint,
+    density_data: anytype,
+    p_dphi: *const ProjectedDerivativeData,
+    pp_mu: f64,
+    dphi_mu: [3]f64,
+    g_off: usize,
+    mu: usize,
+    ig: usize,
+    w: f64,
+    v_sig: f64,
+) [3]f64 {
+    const grx = density_data.grad_x[ig];
+    const gry = density_data.grad_y[ig];
+    const grz = density_data.grad_z[ig];
+    const f_mu = grx * p_dphi.x.?[g_off + mu] +
+        gry * p_dphi.y.?[g_off + mu] +
+        grz * p_dphi.z.?[g_off + mu];
+    const gga1_factor = 2.0 * w * v_sig * f_mu;
+    const hess = kohn_sham.evalBasisFunctionWithHessian(
+        shells[mu_info.shell_idx],
+        mu_info.ang,
+        grid_point.x,
+        grid_point.y,
+        grid_point.z,
+    );
+    const gga2_factor = 2.0 * w * v_sig * pp_mu;
+    return .{
+        gga1_factor * dphi_mu[0] + gga2_factor * (grx * hess.dxx + gry * hess.dxy + grz * hess.dxz),
+        gga1_factor * dphi_mu[1] + gga2_factor * (grx * hess.dxy + gry * hess.dyy + grz * hess.dyz),
+        gga1_factor * dphi_mu[2] + gga2_factor * (grx * hess.dxz + gry * hess.dyz + grz * hess.dzz),
+    };
+}
+
+fn accumulateSingleBasisXcGradient(
+    shells: []const ContractedShell,
+    basis_map: []const BasisInfo,
+    bog: BasisOnGrid,
+    density_data: anytype,
+    grid_points: []const GridPoint,
+    xc_data: *const XcPotentialData,
+    p_phi: []const f64,
+    p_dphi: *const ProjectedDerivativeData,
+    mu: usize,
+    n: usize,
+) [3]f64 {
+    var xc_grad: [3]f64 = .{ 0.0, 0.0, 0.0 };
+    const mu_info = basis_map[mu];
+    const has_gga = p_dphi.x != null;
+    for (0..grid_points.len) |ig| {
+        if (density_data.rho[ig] < 1e-20) continue;
+        const g_off = ig * n;
+        const w = grid_points[ig].w;
+        const pp_mu = p_phi[g_off + mu];
+        const dphi_mu = [3]f64{
+            bog.dphi_x[g_off + mu],
+            bog.dphi_y[g_off + mu],
+            bog.dphi_z[g_off + mu],
+        };
+        const lda_factor = w * xc_data.v_xc[ig] * pp_mu;
+        xc_grad[0] += lda_factor * dphi_mu[0];
+        xc_grad[1] += lda_factor * dphi_mu[1];
+        xc_grad[2] += lda_factor * dphi_mu[2];
+        if (has_gga and @abs(xc_data.v_sigma[ig]) > 1e-30) {
+            const gga = accumulateGgaBasisPointContribution(
+                shells,
+                mu_info,
+                grid_points[ig],
+                density_data,
+                p_dphi,
+                pp_mu,
+                dphi_mu,
+                g_off,
+                mu,
+                ig,
+                w,
+                xc_data.v_sigma[ig],
+            );
+            xc_grad[0] += gga[0];
+            xc_grad[1] += gga[1];
+            xc_grad[2] += gga[2];
+        }
+    }
+    return xc_grad;
+}
+
+fn accumulateXcGradient(
+    alloc: std.mem.Allocator,
+    grad: []Vec3,
+    shells: []const ContractedShell,
+    basis_map: []const BasisInfo,
+    shell_atom_map: []const usize,
+    p_mat: []const f64,
+    grid_points: []const GridPoint,
+    xc_func: XcFunctional,
+    n: usize,
+) !void {
+    if (grid_points.len == 0) return;
+    var bog = try kohn_sham.evaluateBasisOnGrid(alloc, shells, grid_points);
+    defer bog.deinit(alloc);
+
+    const density_data = try kohn_sham.computeDensityOnGrid(alloc, n, grid_points.len, p_mat, bog);
+    defer freeDensityGridData(alloc, density_data);
+
+    const xc_data = try buildXcPotentialData(alloc, density_data, xc_func);
+    defer xc_data.deinit(alloc);
+
+    const p_phi = try buildProjectedPhi(alloc, p_mat, bog, grid_points.len, n);
+    defer alloc.free(p_phi);
+
+    const p_dphi = try buildProjectedDerivatives(
+        alloc,
+        p_mat,
+        bog,
+        grid_points.len,
+        n,
+        xc_func == .b3lyp,
+    );
+    defer p_dphi.deinit(alloc);
+
+    for (0..n) |mu| {
+        const xc_grad = accumulateSingleBasisXcGradient(
+            shells,
+            basis_map,
+            bog,
+            density_data,
+            grid_points,
+            &xc_data,
+            p_phi,
+            &p_dphi,
+            mu,
+            n,
+        );
+        addScaledDerivative(&grad[shell_atom_map[basis_map[mu].shell_idx]], -2.0, xc_grad);
+    }
+}
+
 /// Compute the RHF analytical gradient.
 ///
 /// Requires a converged RHF calculation (density matrix, orbital energies, MO coefficients).
@@ -920,238 +1460,44 @@ pub fn computeRhfGradient(
     n_occ: usize,
 ) !GradientResult {
     const n = obara_saika.totalBasisFunctions(shells);
-    const n_atoms = nuc_positions.len;
-
-    // Build maps
-    const basis_map = try buildBasisMap(alloc, shells);
-    defer alloc.free(basis_map);
-
-    const shell_atom_map = try buildShellToAtomMap(alloc, shells, nuc_positions);
-    defer alloc.free(shell_atom_map);
-
-    // Build energy-weighted density matrix
-    const w_mat = try buildEnergyWeightedDensity(
+    const workspace = try initGradientWorkspace(
         alloc,
         n,
-        n_occ,
+        shells,
+        nuc_positions,
         orbital_energies,
         mo_coefficients,
+        n_occ,
     );
-    defer alloc.free(w_mat);
+    defer workspace.deinit(alloc);
 
-    // Nuclear repulsion gradient
-    const grad_vnn = try nuclearRepulsionGradient(alloc, nuc_positions, nuc_charges);
-    defer alloc.free(grad_vnn);
+    const grad = try initGradientVector(alloc, nuc_positions, nuc_charges);
+    errdefer alloc.free(grad);
 
-    // Initialize total gradient with nuclear repulsion
-    const grad = try alloc.alloc(Vec3, n_atoms);
+    const one_electron = OneElectronGradientCtx{
+        .grad = grad,
+        .shells = shells,
+        .basis_map = workspace.basis_map,
+        .shell_atom_map = workspace.shell_atom_map,
+        .nuc_positions = nuc_positions,
+        .nuc_charges = nuc_charges,
+        .p_mat = p_mat,
+        .w_mat = workspace.w_mat,
+        .n = n,
+    };
+    accumulateOneElectronGradient(&one_electron);
 
-    for (0..n_atoms) |a| {
-        grad[a] = grad_vnn[a];
-    }
+    const two_electron = TwoElectronGradientCtx{
+        .grad = grad,
+        .shells = shells,
+        .shell_atom_map = workspace.shell_atom_map,
+        .p_mat = p_mat,
+        .n = n,
+        .hf_frac = 1.0,
+    };
+    try accumulateTwoElectronGradient(alloc, &two_electron);
 
-    // ========================================================================
-    // One-electron terms: overlap, kinetic, nuclear attraction (basis + HF)
-    // ========================================================================
-    //
-    // Strategy: "first-center × 2" for all basis-center derivatives.
-    //
-    // For a 2-center integral I(mu,nu), translational invariance gives
-    //   dI/d(center_mu) + dI/d(center_nu) = 0
-    // so first-center × 2 correctly accounts for both centers.
-    //
-    // For the 3-center nuclear attraction integral V_C(mu,nu), translational
-    // invariance is d/d(center_mu) + d/d(center_nu) + d/dR_C = 0.
-    // Therefore d/d(center_nu) ≠ -d/d(center_mu) — we CANNOT use 2-center TI!
-    // Instead we use first-center × 2 for the basis derivative part, and a
-    // separate Hellmann-Feynman (HF) term for the nuclear-position derivative:
-    //   dV_C/dR_C = -(dV_C/d(center_mu) + dV_C/d(center_nu))
-    //
-    // For each atom A, the one-electron gradient is:
-    //   grad_1e[A] = sum_{mu on A, all nu} 2 * P * dT/d(center_mu)       [kinetic]
-    //              - sum_{mu on A, all nu} 2 * W * dS/d(center_mu)       [overlap/Pulay]
-    //              + sum_{mu on A, all nu, C} 2 * P * dV_C/d(center_mu)  [nuc. att. basis]
-    //              + sum_{mu, nu} P * dV_A/dR_A                          [Hellmann-Feynman]
-    //
-    // The HF term uses: dV_A/dR_A = -(dV_A/d(center_mu) + dV_A/d(center_nu))
-    // where dV_A/d(center_nu) is obtained by swapping mu↔nu in the derivative.
-    // ========================================================================
-
-    for (0..n) |mu| {
-        const mu_info = basis_map[mu];
-        const mu_shell = shells[mu_info.shell_idx];
-        const atom_a = shell_atom_map[mu_info.shell_idx];
-
-        for (0..n) |nu| {
-            const nu_info = basis_map[nu];
-            const nu_shell = shells[nu_info.shell_idx];
-
-            const p_val = p_mat[mu * n + nu];
-            const w_val = w_mat[mu * n + nu];
-
-            // --- Overlap derivative: -2 * W * dS/d(center_mu) to atom_a ---
-            const ds_dA = contractedOverlapDeriv(mu_shell, mu_info.ang, nu_shell, nu_info.ang);
-            grad[atom_a].x -= 2.0 * w_val * ds_dA[0];
-            grad[atom_a].y -= 2.0 * w_val * ds_dA[1];
-            grad[atom_a].z -= 2.0 * w_val * ds_dA[2];
-
-            // --- Kinetic energy derivative: 2 * P * dT/d(center_mu) to atom_a ---
-            const dt_dA = contractedKineticDeriv(mu_shell, mu_info.ang, nu_shell, nu_info.ang);
-            grad[atom_a].x += 2.0 * p_val * dt_dA[0];
-            grad[atom_a].y += 2.0 * p_val * dt_dA[1];
-            grad[atom_a].z += 2.0 * p_val * dt_dA[2];
-
-            // --- Nuclear attraction derivative ---
-            for (0..n_atoms) |c| {
-                // Basis derivative: 2 * P * dV_C/d(center_mu) to atom_a
-                const dv_dA = contractedNuclearDeriv(
-                    mu_shell,
-                    mu_info.ang,
-                    nu_shell,
-                    nu_info.ang,
-                    nuc_positions[c],
-                    nuc_charges[c],
-                );
-                grad[atom_a].x += 2.0 * p_val * dv_dA[0];
-                grad[atom_a].y += 2.0 * p_val * dv_dA[1];
-                grad[atom_a].z += 2.0 * p_val * dv_dA[2];
-
-                // Hellmann-Feynman: dV_C/dR_C = -(dV_C/d(center_mu) + dV_C/d(center_nu))
-                // dV_C/d(center_nu) is obtained by swapping mu and nu:
-                const dv_dB = contractedNuclearDeriv(
-                    nu_shell,
-                    nu_info.ang,
-                    mu_shell,
-                    mu_info.ang,
-                    nuc_positions[c],
-                    nuc_charges[c],
-                );
-                grad[c].x -= p_val * (dv_dA[0] + dv_dB[0]);
-                grad[c].y -= p_val * (dv_dA[1] + dv_dB[1]);
-                grad[c].z -= p_val * (dv_dA[2] + dv_dB[2]);
-            }
-        }
-    }
-
-    // ========================================================================
-    // Two-electron terms: first-center × 2 (shell-based batch Rys derivatives)
-    // ========================================================================
-    //
-    // The ERI is a 4-center integral. In a full n^4 loop, computing only the
-    // first-center derivative d(mu nu|lam sig)/d(center_mu) covers 1 of 4 centers.
-    // Multiplying by 2 gives the correct result because:
-    //   (J - 0.5*K) contracted with P, first-center × 2
-    // is equivalent to the full 4-center derivative × 0.5 prefactor.
-
-    // Build Schwarz table for screening
-    var schwarz_rhf = try fock_mod.buildSchwarzTable(alloc, shells);
-    defer schwarz_rhf.deinit(alloc);
-
-    const n_shells_rhf = shells.len;
-    const schwarz_threshold_rhf: f64 = 1e-12;
-
-    // Pre-compute max |P| per shell pair for additional screening
-    const max_p_shell_rhf = try alloc.alloc(f64, n_shells_rhf * n_shells_rhf);
-    defer alloc.free(max_p_shell_rhf);
-    for (0..n_shells_rhf) |si| {
-        const ni = schwarz_rhf.shell_sizes[si];
-        const off_i = schwarz_rhf.shell_offsets[si];
-        for (0..n_shells_rhf) |sj| {
-            const nj = schwarz_rhf.shell_sizes[sj];
-            const off_j = schwarz_rhf.shell_offsets[sj];
-            var mx: f64 = 0.0;
-            for (0..ni) |ii| {
-                for (0..nj) |jj| {
-                    const v = @abs(p_mat[(off_i + ii) * n + (off_j + jj)]);
-                    if (v > mx) mx = v;
-                }
-            }
-            max_p_shell_rhf[si * n_shells_rhf + sj] = mx;
-        }
-    }
-
-    const MAX_CART_RHF = basis_mod.MAX_CART;
-    const MAX_BATCH_RHF = MAX_CART_RHF * MAX_CART_RHF * MAX_CART_RHF * MAX_CART_RHF;
-    var batch_dx_rhf: [MAX_BATCH_RHF]f64 = undefined;
-    var batch_dy_rhf: [MAX_BATCH_RHF]f64 = undefined;
-    var batch_dz_rhf: [MAX_BATCH_RHF]f64 = undefined;
-
-    for (0..n_shells_rhf) |sa| {
-        const na_s = schwarz_rhf.shell_sizes[sa];
-        const off_a = schwarz_rhf.shell_offsets[sa];
-        const atom_sa = shell_atom_map[sa];
-
-        for (0..n_shells_rhf) |sb| {
-            const nb_s = schwarz_rhf.shell_sizes[sb];
-            const off_b = schwarz_rhf.shell_offsets[sb];
-            const q_ab = schwarz_rhf.get(sa, sb);
-
-            for (0..n_shells_rhf) |sc| {
-                const nc_s = schwarz_rhf.shell_sizes[sc];
-                const off_c = schwarz_rhf.shell_offsets[sc];
-
-                for (0..n_shells_rhf) |sd| {
-                    const nd_s = schwarz_rhf.shell_sizes[sd];
-                    const off_d = schwarz_rhf.shell_offsets[sd];
-                    const q_cd = schwarz_rhf.get(sc, sd);
-
-                    // Schwarz screening
-                    if (q_ab * q_cd < schwarz_threshold_rhf) continue;
-
-                    // Density screening
-                    const max_p_ab_r = max_p_shell_rhf[sa * n_shells_rhf + sb];
-                    const max_p_cd_r = max_p_shell_rhf[sc * n_shells_rhf + sd];
-                    const max_p_ac_r = max_p_shell_rhf[sa * n_shells_rhf + sc];
-                    const max_p_bd_r = max_p_shell_rhf[sb * n_shells_rhf + sd];
-                    const max_gamma_est_r = max_p_ab_r * max_p_cd_r + 0.5 * max_p_ac_r * max_p_bd_r;
-                    if (max_gamma_est_r * q_ab * q_cd < schwarz_threshold_rhf) continue;
-
-                    // Batch compute all derivative ERIs for this shell quartet
-                    _ = rys_eri.contractedShellQuartetEriDeriv(
-                        shells[sa],
-                        shells[sb],
-                        shells[sc],
-                        shells[sd],
-                        &batch_dx_rhf,
-                        &batch_dy_rhf,
-                        &batch_dz_rhf,
-                    );
-
-                    // Accumulate gradient from batch results
-                    for (0..na_s) |ia| {
-                        const mu = off_a + ia;
-                        for (0..nb_s) |ib| {
-                            const nu = off_b + ib;
-                            const p_mu_nu = p_mat[mu * n + nu];
-                            for (0..nc_s) |ic| {
-                                const lam = off_c + ic;
-                                const p_mu_lam = p_mat[mu * n + lam];
-                                const p_lam_sig_base = lam * n;
-                                for (0..nd_s) |id_d| {
-                                    const sig = off_d + id_d;
-
-                                    // RHF Gamma
-                                    const coulomb_term = p_mu_nu * p_mat[p_lam_sig_base + sig];
-                                    const exchange_term = 0.5 * p_mu_lam * p_mat[nu * n + sig];
-                                    const gamma_r = coulomb_term - exchange_term;
-                                    if (@abs(gamma_r) < 1e-15) continue;
-
-                                    const idx = ia * nb_s * nc_s * nd_s +
-                                        ib * nc_s * nd_s + ic * nd_s + id_d;
-                                    // First-center × 2 factor
-                                    grad[atom_sa].x += 2.0 * gamma_r * batch_dx_rhf[idx];
-                                    grad[atom_sa].y += 2.0 * gamma_r * batch_dy_rhf[idx];
-                                    grad[atom_sa].z += 2.0 * gamma_r * batch_dz_rhf[idx];
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    return GradientResult{ .gradients = grad };
+    return .{ .gradients = grad };
 }
 
 // ============================================================================
@@ -1186,436 +1532,59 @@ pub fn computeKsDftGradient(
     xc_func: XcFunctional,
 ) !GradientResult {
     const n = obara_saika.totalBasisFunctions(shells);
-    const n_atoms = nuc_positions.len;
-
-    // Determine HF exchange fraction from the XC functional type
     const hf_frac: f64 = switch (xc_func) {
         .lda_svwn => 0.0,
         .b3lyp => 0.20,
     };
-
-    // Build maps
-    const basis_map = try buildBasisMap(alloc, shells);
-    defer alloc.free(basis_map);
-
-    const shell_atom_map = try buildShellToAtomMap(alloc, shells, nuc_positions);
-    defer alloc.free(shell_atom_map);
-
-    // Build energy-weighted density matrix
-    const w_mat = try buildEnergyWeightedDensity(
+    const workspace = try initGradientWorkspace(
         alloc,
         n,
-        n_occ,
+        shells,
+        nuc_positions,
         orbital_energies,
         mo_coefficients,
+        n_occ,
     );
-    defer alloc.free(w_mat);
+    defer workspace.deinit(alloc);
 
-    // Nuclear repulsion gradient
-    const grad_vnn = try nuclearRepulsionGradient(alloc, nuc_positions, nuc_charges);
-    defer alloc.free(grad_vnn);
+    const grad = try initGradientVector(alloc, nuc_positions, nuc_charges);
+    errdefer alloc.free(grad);
 
-    // Initialize total gradient with nuclear repulsion
-    const grad = try alloc.alloc(Vec3, n_atoms);
+    const one_electron = OneElectronGradientCtx{
+        .grad = grad,
+        .shells = shells,
+        .basis_map = workspace.basis_map,
+        .shell_atom_map = workspace.shell_atom_map,
+        .nuc_positions = nuc_positions,
+        .nuc_charges = nuc_charges,
+        .p_mat = p_mat,
+        .w_mat = workspace.w_mat,
+        .n = n,
+    };
+    accumulateOneElectronGradient(&one_electron);
 
-    for (0..n_atoms) |a| {
-        grad[a] = grad_vnn[a];
-    }
+    const two_electron = TwoElectronGradientCtx{
+        .grad = grad,
+        .shells = shells,
+        .shell_atom_map = workspace.shell_atom_map,
+        .p_mat = p_mat,
+        .n = n,
+        .hf_frac = hf_frac,
+    };
+    try accumulateTwoElectronGradient(alloc, &two_electron);
+    try accumulateXcGradient(
+        alloc,
+        grad,
+        shells,
+        workspace.basis_map,
+        workspace.shell_atom_map,
+        p_mat,
+        grid_points,
+        xc_func,
+        n,
+    );
 
-    // ========================================================================
-    // One-electron terms: overlap, kinetic, nuclear attraction
-    // (identical to RHF)
-    // ========================================================================
-
-    for (0..n) |mu| {
-        const mu_info = basis_map[mu];
-        const mu_shell = shells[mu_info.shell_idx];
-        const atom_a = shell_atom_map[mu_info.shell_idx];
-
-        for (0..n) |nu| {
-            const nu_info = basis_map[nu];
-            const nu_shell = shells[nu_info.shell_idx];
-
-            const p_val = p_mat[mu * n + nu];
-            const w_val = w_mat[mu * n + nu];
-
-            // --- Overlap derivative: -2 * W * dS/d(center_mu) to atom_a ---
-            const ds_dA = contractedOverlapDeriv(mu_shell, mu_info.ang, nu_shell, nu_info.ang);
-            grad[atom_a].x -= 2.0 * w_val * ds_dA[0];
-            grad[atom_a].y -= 2.0 * w_val * ds_dA[1];
-            grad[atom_a].z -= 2.0 * w_val * ds_dA[2];
-
-            // --- Kinetic energy derivative: 2 * P * dT/d(center_mu) to atom_a ---
-            const dt_dA = contractedKineticDeriv(mu_shell, mu_info.ang, nu_shell, nu_info.ang);
-            grad[atom_a].x += 2.0 * p_val * dt_dA[0];
-            grad[atom_a].y += 2.0 * p_val * dt_dA[1];
-            grad[atom_a].z += 2.0 * p_val * dt_dA[2];
-
-            // --- Nuclear attraction derivative ---
-            for (0..n_atoms) |c| {
-                // Basis derivative: 2 * P * dV_C/d(center_mu) to atom_a
-                const dv_dA = contractedNuclearDeriv(
-                    mu_shell,
-                    mu_info.ang,
-                    nu_shell,
-                    nu_info.ang,
-                    nuc_positions[c],
-                    nuc_charges[c],
-                );
-                grad[atom_a].x += 2.0 * p_val * dv_dA[0];
-                grad[atom_a].y += 2.0 * p_val * dv_dA[1];
-                grad[atom_a].z += 2.0 * p_val * dv_dA[2];
-
-                // Hellmann-Feynman: dV_C/dR_C
-                const dv_dB = contractedNuclearDeriv(
-                    nu_shell,
-                    nu_info.ang,
-                    mu_shell,
-                    mu_info.ang,
-                    nuc_positions[c],
-                    nuc_charges[c],
-                );
-                grad[c].x -= p_val * (dv_dA[0] + dv_dB[0]);
-                grad[c].y -= p_val * (dv_dA[1] + dv_dB[1]);
-                grad[c].z -= p_val * (dv_dA[2] + dv_dB[2]);
-            }
-        }
-    }
-
-    // ========================================================================
-    // Two-electron terms: shell-based loop with Schwarz screening
-    // first-center x 2, with configurable HF exchange
-    // Gamma = P_{mu,nu} * P_{lam,sig} - hf_frac * 0.5 * P_{mu,lam} * P_{nu,sig}
-    // ========================================================================
-
-    // Build Schwarz table for screening
-    var schwarz = try fock_mod.buildSchwarzTable(alloc, shells);
-    defer schwarz.deinit(alloc);
-
-    const n_shells = shells.len;
-    const schwarz_threshold: f64 = 1e-12;
-
-    // Pre-compute max |P| per shell pair for additional screening
-    const max_p_shell = try alloc.alloc(f64, n_shells * n_shells);
-    defer alloc.free(max_p_shell);
-    for (0..n_shells) |si| {
-        const ni = schwarz.shell_sizes[si];
-        const off_i = schwarz.shell_offsets[si];
-        for (0..n_shells) |sj| {
-            const nj = schwarz.shell_sizes[sj];
-            const off_j = schwarz.shell_offsets[sj];
-            var mx: f64 = 0.0;
-            for (0..ni) |ii| {
-                for (0..nj) |jj| {
-                    const v = @abs(p_mat[(off_i + ii) * n + (off_j + jj)]);
-                    if (v > mx) mx = v;
-                }
-            }
-            max_p_shell[si * n_shells + sj] = mx;
-        }
-    }
-
-    // Shell-quartet loop: sa over all shells (first center)
-    // Uses batch Rys-based contractedShellQuartetEriDeriv for performance
-    const MAX_CART = basis_mod.MAX_CART;
-    const MAX_BATCH = MAX_CART * MAX_CART * MAX_CART * MAX_CART;
-    var batch_dx: [MAX_BATCH]f64 = undefined;
-    var batch_dy: [MAX_BATCH]f64 = undefined;
-    var batch_dz: [MAX_BATCH]f64 = undefined;
-
-    for (0..n_shells) |sa| {
-        const na_s = schwarz.shell_sizes[sa];
-        const off_a = schwarz.shell_offsets[sa];
-        const atom_sa = shell_atom_map[sa];
-
-        for (0..n_shells) |sb| {
-            const nb_s = schwarz.shell_sizes[sb];
-            const off_b = schwarz.shell_offsets[sb];
-            const q_ab = schwarz.get(sa, sb);
-
-            for (0..n_shells) |sc| {
-                const nc_s = schwarz.shell_sizes[sc];
-                const off_c = schwarz.shell_offsets[sc];
-
-                for (0..n_shells) |sd| {
-                    const nd_s = schwarz.shell_sizes[sd];
-                    const off_d = schwarz.shell_offsets[sd];
-                    const q_cd = schwarz.get(sc, sd);
-
-                    // Schwarz screening
-                    if (q_ab * q_cd < schwarz_threshold) continue;
-
-                    // Density screening: estimate max |Gamma|
-                    const max_p_ab = max_p_shell[sa * n_shells + sb];
-                    const max_p_cd = max_p_shell[sc * n_shells + sd];
-                    const max_p_ac = max_p_shell[sa * n_shells + sc];
-                    const max_p_bd = max_p_shell[sb * n_shells + sd];
-                    const max_gamma_est = max_p_ab * max_p_cd + hf_frac * 0.5 * max_p_ac * max_p_bd;
-                    if (max_gamma_est * q_ab * q_cd < schwarz_threshold) continue;
-
-                    // Batch compute all derivative ERIs for this shell quartet
-                    _ = rys_eri.contractedShellQuartetEriDeriv(
-                        shells[sa],
-                        shells[sb],
-                        shells[sc],
-                        shells[sd],
-                        &batch_dx,
-                        &batch_dy,
-                        &batch_dz,
-                    );
-
-                    // Accumulate gradient from batch results
-                    for (0..na_s) |ia| {
-                        const mu = off_a + ia;
-                        for (0..nb_s) |ib| {
-                            const nu = off_b + ib;
-                            const p_mu_nu = p_mat[mu * n + nu];
-                            for (0..nc_s) |ic| {
-                                const lam = off_c + ic;
-                                const p_mu_lam = p_mat[mu * n + lam];
-                                const p_lam_sig_base = lam * n;
-                                for (0..nd_s) |id_d| {
-                                    const sig = off_d + id_d;
-
-                                    // KS-DFT Gamma
-                                    const coulomb_term = p_mu_nu * p_mat[p_lam_sig_base + sig];
-                                    const exchange_term =
-                                        hf_frac * 0.5 * p_mu_lam * p_mat[nu * n + sig];
-                                    const gamma = coulomb_term - exchange_term;
-                                    if (@abs(gamma) < 1e-15) continue;
-
-                                    const idx = ia * nb_s * nc_s * nd_s +
-                                        ib * nc_s * nd_s + ic * nd_s + id_d;
-                                    // First-center x 2 factor
-                                    grad[atom_sa].x += 2.0 * gamma * batch_dx[idx];
-                                    grad[atom_sa].y += 2.0 * gamma * batch_dy[idx];
-                                    grad[atom_sa].z += 2.0 * gamma * batch_dz[idx];
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // ========================================================================
-    // XC gradient: grid-based exchange-correlation gradient
-    // ========================================================================
-    //
-    // For LDA:
-    //   dE_xc/dR_A = sum_g w_g * v_xc(r_g) * d(rho)/dR_A(r_g)
-    //
-    // where d(rho)/dR_A = sum_{mu,nu} P_{mu,nu}
-    //   * [d(phi_mu)/dR_A * phi_nu + phi_mu * d(phi_nu)/dR_A]
-    //
-    // Since d(phi_mu)/dR_A = -d(phi_mu)/dr when mu is centered on atom A (else 0),
-    // we get (using "first-center" approach):
-    //   dE_xc/dR_A = -2 * sum_{mu on A} sum_nu P_{mu,nu}
-    //                    * sum_g w_g * v_xc(r_g) * grad(phi_mu(r_g)) . e_xyz * phi_nu(r_g)
-    //
-    // For GGA (B3LYP), there is an additional v_sigma term involving grad(rho):
-    //   Additional contribution: -4 * sum_{mu on A} sum_nu P_{mu,nu}
-    //       * sum_g w_g * v_sigma * [grad_rho . grad(phi_nu)] * grad(phi_mu)
-    //       + sum_g w_g * v_sigma * [grad_rho . grad(phi_mu)] * grad(phi_nu)]
-    //   using first-center x 2 to handle the phi_mu center derivative.
-    //
-    // The full GGA gradient also requires second derivatives of basis functions,
-    // which we avoid for now by using a simpler formulation that only needs first derivatives.
-
-    const n_grid = grid_points.len;
-
-    if (n_grid > 0) {
-        // Evaluate basis functions on the grid
-        var bog = try kohn_sham.evaluateBasisOnGrid(alloc, shells, grid_points);
-        defer bog.deinit(alloc);
-
-        // Compute density and density gradient on the grid
-        const density_data = try kohn_sham.computeDensityOnGrid(alloc, n, n_grid, p_mat, bog);
-        defer alloc.free(density_data.rho);
-        defer alloc.free(density_data.grad_x);
-        defer alloc.free(density_data.grad_y);
-        defer alloc.free(density_data.grad_z);
-
-        // Pre-compute v_xc (and v_sigma for GGA) at each grid point
-        const v_xc_arr = try alloc.alloc(f64, n_grid);
-        defer alloc.free(v_xc_arr);
-        const v_sigma_arr = try alloc.alloc(f64, n_grid);
-        defer alloc.free(v_sigma_arr);
-
-        for (0..n_grid) |ig| {
-            const rho_g = density_data.rho[ig];
-            if (rho_g < 1e-20) {
-                v_xc_arr[ig] = 0.0;
-                v_sigma_arr[ig] = 0.0;
-                continue;
-            }
-            switch (xc_func) {
-                .lda_svwn => {
-                    const xc = xc_functionals.ldaSvwn(rho_g);
-                    v_xc_arr[ig] = xc.v_xc;
-                    v_sigma_arr[ig] = 0.0;
-                },
-                .b3lyp => {
-                    const grx = density_data.grad_x[ig];
-                    const gry = density_data.grad_y[ig];
-                    const grz = density_data.grad_z[ig];
-                    const sigma = grx * grx + gry * gry + grz * grz;
-                    const xc = xc_functionals.b3lyp(rho_g, sigma);
-                    v_xc_arr[ig] = xc.v_xc;
-                    v_sigma_arr[ig] = xc.v_sigma;
-                },
-            }
-        }
-
-        // Pre-compute P * phi for each grid point:
-        //   p_phi[g * n + mu] = sum_nu P[mu,nu] * phi[g*n+nu]
-        const p_phi = try alloc.alloc(f64, n_grid * n);
-        defer alloc.free(p_phi);
-
-        for (0..n_grid) |ig| {
-            const g_off = ig * n;
-            for (0..n) |mu| {
-                var sum: f64 = 0.0;
-                for (0..n) |nu| {
-                    sum += p_mat[mu * n + nu] * bog.phi[g_off + nu];
-                }
-                p_phi[g_off + mu] = sum;
-            }
-        }
-
-        // Accumulate XC gradient using "first-center x 2" strategy.
-        //
-        // LDA term (exact):
-        //   dE_xc/dR_Ax = -2 * sum_{mu on A} sum_g w_g * v_xc(g) * (P*phi)_mu(g) * dphi_mu_x(g)
-        //
-        // GGA sigma term (complete):
-        //   d(sigma)/dR_Ax has two parts:
-        //     Part 1: from d(dphi_nu)/dR_A in grad_rho -- involves dphi_mu * (P*dphi_i)_mu
-        //     Part 2: from d²phi_mu/(dx dx_i) -- involves (P*phi)_mu * d²phi_mu/(dx dx_i)
-        //
-        //   Combined GGA contribution per mu on A, per grid point:
-        //     Part 1: -4 * w * v_sigma * [sum_i grad_rho_i * (P*dphi_i)_mu] * dphi_mu/dx
-        //     Part 2: -4 * w * v_sigma * [sum_i grad_rho_i * (P*phi)_mu] * d²phi_mu/(dx dx_i)
-
-        // Pre-compute P * dphi for GGA:
-        //   p_dphi_{x,y,z}[g * n + mu] = sum_nu P[mu,nu] * dphi_{x,y,z}[g*n+nu]
-        var p_dphi_x: ?[]f64 = null;
-        var p_dphi_y: ?[]f64 = null;
-        var p_dphi_z: ?[]f64 = null;
-        defer if (p_dphi_x) |arr| alloc.free(arr);
-        defer if (p_dphi_y) |arr| alloc.free(arr);
-        defer if (p_dphi_z) |arr| alloc.free(arr);
-
-        const has_gga = (xc_func == .b3lyp);
-        if (has_gga) {
-            p_dphi_x = try alloc.alloc(f64, n_grid * n);
-            p_dphi_y = try alloc.alloc(f64, n_grid * n);
-            p_dphi_z = try alloc.alloc(f64, n_grid * n);
-
-            for (0..n_grid) |ig| {
-                const g_off = ig * n;
-                for (0..n) |mu| {
-                    var sx: f64 = 0.0;
-                    var sy: f64 = 0.0;
-                    var sz: f64 = 0.0;
-                    for (0..n) |nu| {
-                        const p_mn = p_mat[mu * n + nu];
-                        sx += p_mn * bog.dphi_x[g_off + nu];
-                        sy += p_mn * bog.dphi_y[g_off + nu];
-                        sz += p_mn * bog.dphi_z[g_off + nu];
-                    }
-                    p_dphi_x.?[g_off + mu] = sx;
-                    p_dphi_y.?[g_off + mu] = sy;
-                    p_dphi_z.?[g_off + mu] = sz;
-                }
-            }
-        }
-
-        // Accumulate XC gradient per atom
-        for (0..n) |mu| {
-            const mu_info = basis_map[mu];
-            const atom_a = shell_atom_map[mu_info.shell_idx];
-
-            var xc_grad_x: f64 = 0.0;
-            var xc_grad_y: f64 = 0.0;
-            var xc_grad_z: f64 = 0.0;
-
-            for (0..n_grid) |ig| {
-                const rho_g = density_data.rho[ig];
-                if (rho_g < 1e-20) continue;
-
-                const g_off = ig * n;
-                const w = grid_points[ig].w;
-                const pp_mu = p_phi[g_off + mu]; // (P*phi)_mu at grid point g
-                const dphi_mu_x = bog.dphi_x[g_off + mu];
-                const dphi_mu_y = bog.dphi_y[g_off + mu];
-                const dphi_mu_z = bog.dphi_z[g_off + mu];
-
-                // LDA contribution: v_xc * (P*phi)_mu * dphi_mu/dr
-                const v_xc = v_xc_arr[ig];
-                const lda_factor = w * v_xc * pp_mu;
-                xc_grad_x += lda_factor * dphi_mu_x;
-                xc_grad_y += lda_factor * dphi_mu_y;
-                xc_grad_z += lda_factor * dphi_mu_z;
-
-                // GGA contribution (Part 1 + Part 2):
-                // Part 1: F_mu(g) = grad_rho . (P*dphi)_mu
-                //         gga1_factor = -4 * w * v_sigma * F_mu(g)
-                //         xc_grad += gga1_factor * dphi_mu
-                //
-                // Part 2: G_mu_x(g) = sum_i grad_rho_i * d²phi_mu/(dx dx_i)
-                //         gga2_factor = -4 * w * v_sigma * (P*phi)_mu
-                //         xc_grad_x += gga2_factor * G_mu_x
-
-                if (has_gga) {
-                    const v_sig = v_sigma_arr[ig];
-                    if (@abs(v_sig) > 1e-30) {
-                        const grx = density_data.grad_x[ig];
-                        const gry = density_data.grad_y[ig];
-                        const grz = density_data.grad_z[ig];
-
-                        // Part 1: F_mu(g) = grad_rho . (P*dphi)_mu
-                        const f_mu = grx * p_dphi_x.?[g_off + mu] +
-                            gry * p_dphi_y.?[g_off + mu] +
-                            grz * p_dphi_z.?[g_off + mu];
-
-                        const gga1_factor = 2.0 * w * v_sig * f_mu;
-                        xc_grad_x += gga1_factor * dphi_mu_x;
-                        xc_grad_y += gga1_factor * dphi_mu_y;
-                        xc_grad_z += gga1_factor * dphi_mu_z;
-
-                        // Part 2: basis function Hessian contribution
-                        // Evaluate d²phi_mu at this grid point on-the-fly
-                        const shell_mu = shells[mu_info.shell_idx];
-                        const hess = kohn_sham.evalBasisFunctionWithHessian(
-                            shell_mu,
-                            mu_info.ang,
-                            grid_points[ig].x,
-                            grid_points[ig].y,
-                            grid_points[ig].z,
-                        );
-                        // G_mu_x = sum_i grad_rho_i * d²phi_mu/(dx dx_i)
-                        const g_mu_x = grx * hess.dxx + gry * hess.dxy + grz * hess.dxz;
-                        const g_mu_y = grx * hess.dxy + gry * hess.dyy + grz * hess.dyz;
-                        const g_mu_z = grx * hess.dxz + gry * hess.dyz + grz * hess.dzz;
-
-                        const gga2_factor = 2.0 * w * v_sig * pp_mu;
-                        xc_grad_x += gga2_factor * g_mu_x;
-                        xc_grad_y += gga2_factor * g_mu_y;
-                        xc_grad_z += gga2_factor * g_mu_z;
-                    }
-                }
-            }
-
-            // Apply the -2 factor (first-center x 2) and add to total gradient
-            grad[atom_a].x -= 2.0 * xc_grad_x;
-            grad[atom_a].y -= 2.0 * xc_grad_y;
-            grad[atom_a].z -= 2.0 * xc_grad_z;
-        }
-    }
-
-    return GradientResult{ .gradients = grad };
+    return .{ .gradients = grad };
 }
 
 // ============================================================================
@@ -1682,6 +1651,7 @@ test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
         ks_params,
     );
     defer ks_result.deinit(alloc);
+
     try testing.expect(ks_result.converged);
 
     // Compute analytical gradient
@@ -1735,6 +1705,7 @@ test "KS-DFT LDA gradient H2 STO-3G vs finite difference" {
         ks_params,
     );
     defer ks_p.deinit(alloc);
+
     var ks_m = try kohn_sham.runKohnShamScf(
         alloc,
         io,
@@ -1830,6 +1801,7 @@ test "KS-DFT LDA gradient H2O STO-3G vs PySCF" {
         ks_params,
     );
     defer ks_result.deinit(alloc);
+
     try testing.expect(ks_result.converged);
 
     // Compute analytical gradient
@@ -1943,6 +1915,7 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
         ks_params,
     );
     defer ks_result.deinit(alloc);
+
     try testing.expect(ks_result.converged);
 
     // Compute analytical gradient
@@ -1993,6 +1966,7 @@ test "KS-DFT B3LYP gradient H2 STO-3G vs finite difference" {
         ks_params,
     );
     defer ks_p.deinit(alloc);
+
     var ks_m = try kohn_sham.runKohnShamScf(
         alloc,
         io,
@@ -2090,6 +2064,7 @@ test "KS-DFT B3LYP gradient H2O STO-3G vs PySCF" {
         ks_params,
     );
     defer ks_result.deinit(alloc);
+
     try testing.expect(ks_result.converged);
 
     // Compute analytical gradient
@@ -2334,6 +2309,7 @@ test "RHF gradient H2 STO-3G" {
 
     var scf_p = try gto_scf.runGeneralRhfScf(alloc, &shells_p, &pos_p, &nuc_charges, 2, .{});
     defer scf_p.deinit(alloc);
+
     var scf_m = try gto_scf.runGeneralRhfScf(alloc, &shells_m, &pos_m, &nuc_charges, 2, .{});
     defer scf_m.deinit(alloc);
 

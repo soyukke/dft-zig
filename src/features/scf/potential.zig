@@ -39,6 +39,7 @@ pub fn buildPotentialGrid(
     // operations are limited to |G|² < ecutrho.
     var rho_filtered: ?[]f64 = null;
     defer if (rho_filtered) |rf| alloc.free(rf);
+
     if (ecutrho) |ecut| {
         rho_filtered = try filterDensityToEcutrho(alloc, grid, rho, ecut, use_rfft);
     }
@@ -56,6 +57,7 @@ pub fn buildPotentialGrid(
         }
         alloc.free(xc_fields.exc);
     }
+
     const vxc_g = try realToReciprocal(alloc, grid, xc_fields.vxc, use_rfft);
     defer alloc.free(vxc_g);
 
@@ -124,6 +126,7 @@ pub fn buildPotentialGridSpin(
     // Compute rho_total for Hartree
     const rho_total = try alloc.alloc(f64, total);
     defer alloc.free(rho_total);
+
     for (0..total) |i| {
         rho_total[i] = rho_up[i] + rho_down[i];
     }
@@ -156,6 +159,7 @@ pub fn buildPotentialGridSpin(
 
     const vxc_up_g = try realToReciprocal(alloc, grid, xc_fields.vxc_up, use_rfft);
     defer alloc.free(vxc_up_g);
+
     const vxc_down_g = try realToReciprocal(alloc, grid, xc_fields.vxc_down, use_rfft);
     defer alloc.free(vxc_down_g);
 
@@ -253,6 +257,7 @@ pub fn buildLocalPotentialReal(
     const total = grid.count();
     const combined = try alloc.alloc(math.Complex, total);
     defer alloc.free(combined);
+
     for (combined, 0..) |*v, i| {
         v.* = math.complex.add(ionic.values[i], extra.values[i]);
     }

@@ -13,11 +13,19 @@ const forces = @import("features/forces/forces.zig");
 
 const verbose_tests = false;
 
+fn printStderr(comptime fmt: []const u8, args: anytype) !void {
+    var buffer: [256]u8 = undefined;
+    var writer = std.Io.File.stderr().writer(std.testing.io, &buffer);
+    const out = &writer.interface;
+    try out.print(fmt, args);
+    try out.flush();
+}
+
 /// Skip test if a required file does not exist (e.g. pseudo/ files in CI).
 fn requireFile(io: std.Io, path: []const u8) !void {
     std.Io.Dir.cwd().access(io, path, .{}) catch |err| {
         if (err == error.FileNotFound) {
-            std.debug.print("  [SKIP] file not found: {s}\n", .{path});
+            try printStderr("  [SKIP] file not found: {s}\n", .{path});
             return error.SkipZigTest;
         }
         return err;
@@ -25,7 +33,8 @@ fn requireFile(io: std.Io, path: []const u8) !void {
 }
 
 fn vprint(comptime fmt: []const u8, args: anytype) void {
-    if (verbose_tests) std.debug.print(fmt, args);
+    if (!verbose_tests) return;
+    printStderr(fmt, args) catch {};
 }
 
 fn expectVecApproxEqAbs(expected: math.Vec3, actual: math.Vec3, tol: f64) !void {
@@ -37,6 +46,7 @@ fn expectVecApproxEqAbs(expected: math.Vec3, actual: math.Vec3, tol: f64) !void 
 test "spacegroup silicon conventional" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
+
     const alloc = arena.allocator();
 
     const a = 5.431;
@@ -73,6 +83,7 @@ test "spacegroup silicon conventional" {
     try std.testing.expect(info_opt != null);
     var info = info_opt.?;
     defer info.deinit(alloc);
+
     try std.testing.expectEqual(@as(i32, 227), info.number);
     try std.testing.expect(std.mem.eql(u8, info.international_short, "Fd-3m"));
 }
@@ -80,6 +91,7 @@ test "spacegroup silicon conventional" {
 test "spacegroup silicon axis swap" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
+
     const alloc = arena.allocator();
 
     const a = 5.431;
@@ -116,6 +128,7 @@ test "spacegroup silicon axis swap" {
     try std.testing.expect(info_opt != null);
     var info = info_opt.?;
     defer info.deinit(alloc);
+
     try std.testing.expectEqual(@as(i32, 227), info.number);
     try std.testing.expect(std.mem.eql(u8, info.international_short, "Fd-3m"));
 }
@@ -250,6 +263,7 @@ test "compute forces assembles component forces" {
     const total = grid.nx * grid.ny * grid.nz;
     var rho_g = try alloc.alloc(math.Complex, total);
     defer alloc.free(rho_g);
+
     @memset(rho_g, math.complex.init(0.0, 0.0));
 
     const idx = struct {
@@ -275,18 +289,22 @@ test "compute forces assembles component forces" {
     const ecut_ry = 6.0;
     var basis = try plane_wave.generate(alloc, recip, ecut_ry, k_cart);
     defer basis.deinit(alloc);
+
     try testing.expect(basis.gvecs.len > 0);
 
     const eigenvalues = try alloc.alloc(f64, 1);
     defer alloc.free(eigenvalues);
+
     eigenvalues[0] = 0.0;
 
     const occupations = try alloc.alloc(f64, 1);
     defer alloc.free(occupations);
+
     occupations[0] = 1.0;
 
     const coefficients = try alloc.alloc(math.Complex, basis.gvecs.len);
     defer alloc.free(coefficients);
+
     for (coefficients, 0..) |*c_val, i| {
         const re = 0.05 * @as(f64, @floatFromInt(i + 1));
         const im = -0.03 * @as(f64, @floatFromInt(i + 2));
@@ -295,6 +313,7 @@ test "compute forces assembles component forces" {
 
     const kpoints = try alloc.alloc(scf.KpointWavefunction, 1);
     defer alloc.free(kpoints);
+
     kpoints[0] = .{
         .k_frac = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 },
         .k_cart = k_cart,
@@ -548,6 +567,7 @@ test "ewald force finite difference" {
         real_params,
     );
     defer alloc.free(real_forces);
+
     const fx_real_num = blk: {
         var positions_plus = positions;
         var positions_minus = positions;
@@ -864,6 +884,7 @@ test "apply local potential vs dense" {
     // V(G=0) = 0.5, V(G=(1,0,0)) = 0.1, V(G=(-1,0,0)) = 0.1
     const v_g = try allocator.alloc(math.Complex, total);
     defer allocator.free(v_g);
+
     @memset(v_g, math.complex.init(0.0, 0.0));
     v_g[0] = math.complex.init(0.5, 0.0); // G=0
     v_g[1] = math.complex.init(0.1, 0.0); // G=(1,0,0)
@@ -872,6 +893,7 @@ test "apply local potential vs dense" {
     // Build local_r = N * IFFT(V_G) (this is what buildLocalPotentialReal does)
     const local_r = try allocator.alloc(f64, total);
     defer allocator.free(local_r);
+
     {
         const temp = try allocator.alloc(math.Complex, total);
         defer allocator.free(temp);
@@ -894,6 +916,7 @@ test "apply local potential vs dense" {
     // Test psi = delta at G=0: psi_G = [1, 0, 0, ...]
     const psi_g = try allocator.alloc(math.Complex, total);
     defer allocator.free(psi_g);
+
     @memset(psi_g, math.complex.init(0.0, 0.0));
     psi_g[0] = math.complex.init(1.0, 0.0);
 
@@ -901,12 +924,14 @@ test "apply local potential vs dense" {
     // For psi = delta at G=0: (V*psi)_G = V_G
     const dense_result = try allocator.alloc(math.Complex, total);
     defer allocator.free(dense_result);
+
     @memcpy(dense_result, v_g); // (V*psi) = V for delta psi
 
     // Method 2: FFT-based (simulating applyLocalPotential)
     // Step 1: IFFT of psi with scale=N (like fftReciprocalToComplexInPlace)
     const psi_r = try allocator.alloc(math.Complex, total);
     defer allocator.free(psi_r);
+
     for (psi_g, 0..) |p, i| {
         psi_r[i] = math.complex.scale(p, @as(f64, @floatFromInt(total)));
     }
@@ -915,6 +940,7 @@ test "apply local potential vs dense" {
     // Step 2: Multiply in real space: local_r * psi_r
     const vpsi_r = try allocator.alloc(math.Complex, total);
     defer allocator.free(vpsi_r);
+
     for (vpsi_r, 0..) |*v, i| {
         v.* = math.complex.scale(psi_r[i], local_r[i]);
     }
@@ -922,6 +948,7 @@ test "apply local potential vs dense" {
     // Step 3: FFT with 1/N (like fftComplexToReciprocalInPlace)
     const fft_result = try allocator.alloc(math.Complex, total);
     defer allocator.free(fft_result);
+
     @memcpy(fft_result, vpsi_r);
     try fft_mod.fft3dForwardInPlace(allocator, fft_result, nx, ny, nz);
     for (fft_result) |*v| {
@@ -959,6 +986,7 @@ test "local potential FFT vs direct" {
     // Create a simple test potential in G-space (just a cosine)
     const v_g = try allocator.alloc(math.Complex, total);
     defer allocator.free(v_g);
+
     @memset(v_g, math.complex.init(0.0, 0.0));
     // Set V(G=0) = 1.0, V(G=(1,0,0)) = 0.5, V(G=(-1,0,0)) = 0.5
     v_g[0] = math.complex.init(1.0, 0.0); // G=0
@@ -968,12 +996,14 @@ test "local potential FFT vs direct" {
     // Create test wavefunction in G-space
     const psi_g = try allocator.alloc(math.Complex, total);
     defer allocator.free(psi_g);
+
     @memset(psi_g, math.complex.init(0.0, 0.0));
     psi_g[0] = math.complex.init(1.0, 0.0); // ψ(G=0) = 1
 
     // Method 1: Direct convolution (V*ψ)_G = Σ_G' V_{G-G'} * ψ_G'
     const direct_result = try allocator.alloc(math.Complex, total);
     defer allocator.free(direct_result);
+
     @memset(direct_result, math.complex.init(0.0, 0.0));
 
     var gz: usize = 0;
@@ -1014,18 +1044,21 @@ test "local potential FFT vs direct" {
     // Step 1: IFFT of V_G to get V_r (IFFT applies 1/N normalization)
     const v_temp = try allocator.alloc(math.Complex, total);
     defer allocator.free(v_temp);
+
     @memcpy(v_temp, v_g);
     try fft_mod.fft3dInverseInPlace(allocator, v_temp, nx, ny, nz);
 
     // Step 2: IFFT of ψ_G to get ψ_r
     const psi_temp = try allocator.alloc(math.Complex, total);
     defer allocator.free(psi_temp);
+
     @memcpy(psi_temp, psi_g);
     try fft_mod.fft3dInverseInPlace(allocator, psi_temp, nx, ny, nz);
 
     // Step 3: Pointwise multiply in real space: (V*ψ)_r
     const vpsi_r = try allocator.alloc(math.Complex, total);
     defer allocator.free(vpsi_r);
+
     for (vpsi_r, 0..) |*v, i| {
         v.* = math.complex.mul(v_temp[i], psi_temp[i]);
     }

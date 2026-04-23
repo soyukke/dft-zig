@@ -80,6 +80,7 @@ test "density pipeline preserves symmetry" {
     };
     var result = try buildDensityFromCenters(alloc, centers[0..], cell, pbc, opts);
     defer result.deinit(alloc);
+
     try std.testing.expectApproxEqAbs(
         result.density.valueAt(0, 1),
         result.density.valueAt(1, 0),

@@ -31,6 +31,7 @@ pub fn detectSpaceGroup(
 ) !?SpaceGroupInfo {
     const ops = try symmetry.getSymmetryOps(alloc, cell, atoms, symprec);
     defer alloc.free(ops);
+
     const hall_number = try matchHallNumber(alloc, ops, symprec);
     if (hall_number == 0) return null;
 
@@ -59,6 +60,7 @@ pub fn detectSpaceGroupFromAtoms(
 fn matchHallNumber(alloc: std.mem.Allocator, ops_in: []const symmetry.SymOp, tol: f64) !i32 {
     const bases = try orthogonalBasisTransforms(alloc);
     defer alloc.free(bases);
+
     const transformed = try alloc.alloc(symmetry.SymOp, ops_in.len);
     defer alloc.free(transformed);
 
@@ -66,6 +68,7 @@ fn matchHallNumber(alloc: std.mem.Allocator, ops_in: []const symmetry.SymOp, tol
     while (hall < data.spacegroup_types.len) : (hall += 1) {
         const db_ops = try getDatabaseOps(alloc, hall);
         defer alloc.free(db_ops);
+
         if (db_ops.len != ops_in.len) continue;
         var matched = false;
         for (bases) |basis| {
@@ -96,6 +99,7 @@ fn matchOperations(
     const grid: i32 = 24;
     var set = std.AutoHashMap(u64, void).init(alloc);
     defer set.deinit();
+
     for (ops_in) |op| {
         const key = encodeOp(op.rot, op.trans, grid);
         set.put(key, {}) catch return false;

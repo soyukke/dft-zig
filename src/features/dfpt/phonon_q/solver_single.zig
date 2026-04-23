@@ -22,6 +22,7 @@ const GroundState = dfpt.GroundState;
 const DfptConfig = dfpt.DfptConfig;
 const PerturbationResult = dfpt.PerturbationResult;
 const logDfpt = dfpt.logDfpt;
+const Grid = scf_mod.Grid;
 
 const cross_basis = @import("cross_basis.zig");
 const applyV1PsiQCached = cross_basis.applyV1PsiQCached;
@@ -31,6 +32,623 @@ const complexRealToReciprocal = cross_basis.complexRealToReciprocal;
 
 const dynmat_elem_q = @import("dynmat_elem_q.zig");
 const computeElecDynmatElementQ = dynmat_elem_q.computeElecDynmatElementQ;
+
+const SingleQSetup = struct {
+    vloc1_g: []math.Complex,
+    rho1_core_r: []math.Complex,
+    psi1: [][]math.Complex,
+    psi0_r_cache: [][]math.Complex,
+    psi0_r_const: []const []const math.Complex,
+    v_scf_g: []math.Complex,
+
+    fn deinit(self: *SingleQSetup, alloc: std.mem.Allocator) void {
+        if (self.vloc1_g.len > 0) alloc.free(self.vloc1_g);
+        if (self.rho1_core_r.len > 0) alloc.free(self.rho1_core_r);
+        for (self.psi1) |band| {
+            if (band.len > 0) alloc.free(band);
+        }
+        if (self.psi1.len > 0) alloc.free(self.psi1);
+        for (self.psi0_r_cache) |band| {
+            if (band.len > 0) alloc.free(band);
+        }
+        if (self.psi0_r_cache.len > 0) alloc.free(self.psi0_r_cache);
+        if (self.psi0_r_const.len > 0) alloc.free(self.psi0_r_const);
+        if (self.v_scf_g.len > 0) alloc.free(self.v_scf_g);
+    }
+};
+
+const SingleQMixState = struct {
+    pulay: scf_mod.ComplexPulayMixer,
+    best_vresid: f64 = std.math.inf(f64),
+    best_v_scf: ?[]math.Complex = null,
+    pulay_active_since: usize,
+    force_converge: bool = false,
+
+    fn init(alloc: std.mem.Allocator, cfg: DfptConfig) SingleQMixState {
+        return .{
+            .pulay = scf_mod.ComplexPulayMixer.init(alloc, cfg.pulay_history),
+            .pulay_active_since = cfg.pulay_start,
+        };
+    }
+
+    fn deinit(self: *SingleQMixState, alloc: std.mem.Allocator) void {
+        self.pulay.deinit();
+        if (self.best_v_scf) |v| alloc.free(v);
+    }
+};
+
+fn logLocalPerturbation(
+    vloc1_g: []const math.Complex,
+    atom_index: usize,
+    direction: usize,
+    grid: Grid,
+) void {
+    var vloc_norm: f64 = 0.0;
+    var vloc_sum_r: f64 = 0.0;
+    var vloc_sum_i: f64 = 0.0;
+    for (vloc1_g) |c| {
+        vloc_norm += c.r * c.r + c.i * c.i;
+        vloc_sum_r += c.r;
+        vloc_sum_i += c.i;
+    }
+    logDfpt(
+        "dfptQ_vloc1: atom={d} dir={d} |vloc1_g|={e:.6} sum=({e:.6},{e:.6})\n",
+        .{ atom_index, direction, @sqrt(vloc_norm), vloc_sum_r, vloc_sum_i },
+    );
+    const nshow = @min(vloc1_g.len, 5);
+    for (0..nshow) |gi| {
+        logDfpt("  vloc1_g[{d}]=({e:.8},{e:.8})\n", .{ gi, vloc1_g[gi].r, vloc1_g[gi].i });
+    }
+
+    const g0_h: usize = @intCast(-grid.min_h);
+    const g0_k: usize = @intCast(-grid.min_k);
+    const g0_l: usize = @intCast(-grid.min_l);
+    const g0_idx = g0_l * grid.ny * grid.nx + g0_k * grid.nx + g0_h;
+    logDfpt(
+        "  vloc1_g[G=0, idx={d}]=({e:.8},{e:.8})" ++
+            " grid=({d},{d},{d}) min=({d},{d},{d})\n",
+        .{
+            g0_idx,     vloc1_g[g0_idx].r, vloc1_g[g0_idx].i,
+            grid.nx,    grid.ny,           grid.nz,
+            grid.min_h, grid.min_k,        grid.min_l,
+        },
+    );
+}
+
+fn buildCorePerturbationRealSpace(
+    alloc: std.mem.Allocator,
+    gs: *const GroundState,
+    atom_index: usize,
+    direction: usize,
+    q_cart: math.Vec3,
+) ![]math.Complex {
+    const rho1_core_g = try perturbation.buildCorePerturbationQ(
+        alloc,
+        gs.grid,
+        gs.atoms[atom_index],
+        gs.species,
+        direction,
+        q_cart,
+        gs.rho_core_tables,
+    );
+    defer alloc.free(rho1_core_g);
+
+    const rho1_core_g_copy = try alloc.alloc(math.Complex, gs.grid.count());
+    defer alloc.free(rho1_core_g_copy);
+
+    @memcpy(rho1_core_g_copy, rho1_core_g);
+
+    const rho1_core_r = try alloc.alloc(math.Complex, gs.grid.count());
+    try scf_mod.fftReciprocalToComplexInPlace(
+        alloc,
+        gs.grid,
+        rho1_core_g_copy,
+        rho1_core_r,
+        null,
+    );
+    return rho1_core_r;
+}
+
+fn initPsi1Storage(
+    alloc: std.mem.Allocator,
+    n_occ: usize,
+    n_pw_kq: usize,
+) ![][]math.Complex {
+    const psi1 = try alloc.alloc([]math.Complex, n_occ);
+    var built: usize = 0;
+    errdefer {
+        for (0..built) |i| alloc.free(psi1[i]);
+        alloc.free(psi1);
+    }
+
+    for (0..n_occ) |n| {
+        psi1[n] = try alloc.alloc(math.Complex, n_pw_kq);
+        @memset(psi1[n], math.complex.init(0.0, 0.0));
+        built = n + 1;
+    }
+    return psi1;
+}
+
+fn cachePsi0RealSpace(
+    alloc: std.mem.Allocator,
+    gs: *const GroundState,
+) !struct {
+    psi0_r_cache: [][]math.Complex,
+    psi0_r_const: []const []const math.Complex,
+} {
+    const psi0_r_cache = try alloc.alloc([]math.Complex, gs.n_occ);
+    var built: usize = 0;
+    errdefer {
+        for (0..built) |i| alloc.free(psi0_r_cache[i]);
+        alloc.free(psi0_r_cache);
+    }
+
+    for (0..gs.n_occ) |n| {
+        psi0_r_cache[n] = try alloc.alloc(math.Complex, gs.grid.count());
+        const work = try alloc.alloc(math.Complex, gs.grid.count());
+        defer alloc.free(work);
+
+        @memset(work, math.complex.init(0.0, 0.0));
+        gs.apply_ctx.map.scatter(gs.wavefunctions[n], work);
+        try scf_mod.fftReciprocalToComplexInPlace(
+            alloc,
+            gs.grid,
+            work,
+            psi0_r_cache[n],
+            null,
+        );
+        built = n + 1;
+    }
+
+    const psi0_r_const = try alloc.alloc([]const math.Complex, gs.n_occ);
+    errdefer alloc.free(psi0_r_const);
+    for (0..gs.n_occ) |n| {
+        psi0_r_const[n] = psi0_r_cache[n];
+    }
+    return .{
+        .psi0_r_cache = psi0_r_cache,
+        .psi0_r_const = psi0_r_const,
+    };
+}
+
+fn initSingleQSetup(
+    alloc: std.mem.Allocator,
+    gs: *const GroundState,
+    atom_index: usize,
+    direction: usize,
+    q_cart: math.Vec3,
+    n_pw_kq: usize,
+) !SingleQSetup {
+    const vloc1_g = try perturbation.buildLocalPerturbationQ(
+        alloc,
+        gs.grid,
+        gs.atoms[atom_index],
+        gs.species,
+        direction,
+        q_cart,
+        gs.local_cfg,
+        gs.ff_tables,
+    );
+    errdefer alloc.free(vloc1_g);
+    logLocalPerturbation(vloc1_g, atom_index, direction, gs.grid);
+
+    const rho1_core_r = try buildCorePerturbationRealSpace(
+        alloc,
+        gs,
+        atom_index,
+        direction,
+        q_cart,
+    );
+    errdefer alloc.free(rho1_core_r);
+
+    const psi1 = try initPsi1Storage(alloc, gs.n_occ, n_pw_kq);
+    errdefer {
+        for (psi1) |band| alloc.free(band);
+        alloc.free(psi1);
+    }
+
+    const cache = try cachePsi0RealSpace(alloc, gs);
+    errdefer {
+        for (cache.psi0_r_cache) |band| alloc.free(band);
+        alloc.free(cache.psi0_r_cache);
+        alloc.free(cache.psi0_r_const);
+    }
+
+    const v_scf_g = try alloc.alloc(math.Complex, gs.grid.count());
+    errdefer alloc.free(v_scf_g);
+    @memcpy(v_scf_g, vloc1_g);
+
+    return .{
+        .vloc1_g = vloc1_g,
+        .rho1_core_r = rho1_core_r,
+        .psi1 = psi1,
+        .psi0_r_cache = cache.psi0_r_cache,
+        .psi0_r_const = cache.psi0_r_const,
+        .v_scf_g = v_scf_g,
+    };
+}
+
+fn reciprocalToComplexCopy(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    values_g: []const math.Complex,
+) ![]math.Complex {
+    const work = try alloc.alloc(math.Complex, values_g.len);
+    defer alloc.free(work);
+
+    @memcpy(work, values_g);
+
+    const values_r = try alloc.alloc(math.Complex, values_g.len);
+    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work, values_r, null);
+    return values_r;
+}
+
+fn logScfPotentialSample(
+    v_scf_r: []const math.Complex,
+    v_scf_g: []const math.Complex,
+    atom_index: usize,
+    direction: usize,
+    total: usize,
+) void {
+    const v_scf_r_100 = v_scf_r[@min(@as(usize, 100), total - 1)];
+    logDfpt(
+        "dfptQ_vscf: atom={d} dir={d} iter=0" ++
+            " v_scf_r[0]=({e:.8},{e:.8})" ++
+            " v_scf_r[1]=({e:.8},{e:.8})" ++
+            " v_scf_r[100]=({e:.8},{e:.8})\n",
+        .{
+            atom_index,    direction,
+            v_scf_r[0].r,  v_scf_r[0].i,
+            v_scf_r[1].r,  v_scf_r[1].i,
+            v_scf_r_100.r, v_scf_r_100.i,
+        },
+    );
+    logDfpt(
+        "dfptQ_vscf: v_scf_g[0]=({e:.8},{e:.8})" ++
+            " v_scf_g[1]=({e:.8},{e:.8})" ++
+            " v_scf_g[2]=({e:.8},{e:.8})\n",
+        .{
+            v_scf_g[0].r, v_scf_g[0].i,
+            v_scf_g[1].r, v_scf_g[1].i,
+            v_scf_g[2].r, v_scf_g[2].i,
+        },
+    );
+}
+
+fn solveSingleQBands(
+    alloc: std.mem.Allocator,
+    gs: *const GroundState,
+    atom_index: usize,
+    direction: usize,
+    cfg: DfptConfig,
+    gvecs_kq: []const plane_wave.GVector,
+    apply_ctx_kq: *scf_mod.ApplyContext,
+    map_kq: *const scf_mod.PwGridMap,
+    occ_kq: []const []const math.Complex,
+    n_occ_kq: usize,
+    v_scf_r: []const math.Complex,
+    psi0_r_cache: [][]math.Complex,
+    psi1: [][]math.Complex,
+) !void {
+    const nl_ctx_k_opt = gs.apply_ctx.nonlocal_ctx;
+    const nl_ctx_kq_opt = apply_ctx_kq.nonlocal_ctx;
+    for (0..gs.n_occ) |n| {
+        const rhs = try applyV1PsiQCached(
+            alloc,
+            gs.grid,
+            map_kq,
+            v_scf_r,
+            psi0_r_cache[n],
+            gvecs_kq.len,
+        );
+        defer alloc.free(rhs);
+
+        if (nl_ctx_k_opt != null and nl_ctx_kq_opt != null) {
+            const nl_out = try alloc.alloc(math.Complex, gvecs_kq.len);
+            defer alloc.free(nl_out);
+
+            try perturbation.applyNonlocalPerturbationQ(
+                alloc,
+                gs.gvecs,
+                gvecs_kq,
+                gs.atoms,
+                nl_ctx_k_opt.?,
+                nl_ctx_kq_opt.?,
+                atom_index,
+                direction,
+                1.0 / gs.grid.volume,
+                gs.wavefunctions[n],
+                nl_out,
+            );
+            for (0..gvecs_kq.len) |g| {
+                rhs[g] = math.complex.add(rhs[g], nl_out[g]);
+            }
+        }
+
+        for (0..gvecs_kq.len) |g| rhs[g] = math.complex.scale(rhs[g], -1.0);
+        sternheimer.projectConduction(rhs, occ_kq, n_occ_kq);
+
+        const result = try sternheimer.solve(
+            alloc,
+            apply_ctx_kq,
+            rhs,
+            gs.eigenvalues[n],
+            occ_kq,
+            n_occ_kq,
+            gvecs_kq,
+            .{
+                .tol = cfg.sternheimer_tol,
+                .max_iter = cfg.sternheimer_max_iter,
+                .alpha_shift = cfg.alpha_shift,
+            },
+        );
+        alloc.free(psi1[n]);
+        psi1[n] = result.psi1;
+    }
+}
+
+fn buildSingleQRho1G(
+    alloc: std.mem.Allocator,
+    gs: *const GroundState,
+    map_kq: *const scf_mod.PwGridMap,
+    psi0_r_const: []const []const math.Complex,
+    psi1: [][]math.Complex,
+) ![]math.Complex {
+    const psi1_const_view = try alloc.alloc([]const math.Complex, gs.n_occ);
+    defer alloc.free(psi1_const_view);
+
+    for (0..gs.n_occ) |n| psi1_const_view[n] = psi1[n];
+
+    const rho1_r = try computeRho1QCached(
+        alloc,
+        gs.grid,
+        map_kq,
+        psi0_r_const,
+        psi1_const_view,
+        gs.n_occ,
+        1.0,
+    );
+    defer alloc.free(rho1_r);
+
+    return complexRealToReciprocal(alloc, gs.grid, rho1_r);
+}
+
+fn logSingleQRhoDiagnostic(
+    iter: usize,
+    rho1_g: []const math.Complex,
+    vloc1_g: []const math.Complex,
+    volume: f64,
+) void {
+    var rho_norm: f64 = 0.0;
+    for (rho1_g) |rho| {
+        rho_norm += rho.r * rho.r + rho.i * rho.i;
+    }
+    rho_norm = @sqrt(rho_norm);
+    const d_elec_diag = computeElecDynmatElementQ(vloc1_g, rho1_g, volume);
+    logDfpt(
+        "dfptQ_diag: iter={d} |rho1|={e:.6} D_elec_bare(0)=({e:.6},{e:.6})\n",
+        .{ iter, rho_norm, d_elec_diag.r, d_elec_diag.i },
+    );
+}
+
+fn buildSingleQOutputPotential(
+    alloc: std.mem.Allocator,
+    gs: *const GroundState,
+    q_cart: math.Vec3,
+    vloc1_g: []const math.Complex,
+    rho1_g: []const math.Complex,
+    rho1_core_r: []const math.Complex,
+) ![]math.Complex {
+    const vh1_g = try perturbation.buildHartreePerturbationQ(alloc, gs.grid, rho1_g, q_cart);
+    defer alloc.free(vh1_g);
+
+    const rho1_val_r = try reciprocalToComplexCopy(alloc, gs.grid, rho1_g);
+    defer alloc.free(rho1_val_r);
+
+    const rho1_total_r = try alloc.alloc(math.Complex, gs.grid.count());
+    defer alloc.free(rho1_total_r);
+
+    for (0..gs.grid.count()) |i| {
+        rho1_total_r[i] = math.complex.add(rho1_val_r[i], rho1_core_r[i]);
+    }
+
+    const vxc1_r = try perturbation.buildXcPerturbationFullComplex(alloc, gs.*, rho1_total_r);
+    defer alloc.free(vxc1_r);
+
+    const vxc1_r_fft = try alloc.alloc(math.Complex, gs.grid.count());
+    defer alloc.free(vxc1_r_fft);
+
+    @memcpy(vxc1_r_fft, vxc1_r);
+
+    const vxc1_g = try alloc.alloc(math.Complex, gs.grid.count());
+    defer alloc.free(vxc1_g);
+
+    try scf_mod.fftComplexToReciprocalInPlace(alloc, gs.grid, vxc1_r_fft, vxc1_g, null);
+
+    const v_out_g = try alloc.alloc(math.Complex, gs.grid.count());
+    for (0..gs.grid.count()) |i| {
+        v_out_g[i] = math.complex.add(
+            math.complex.add(vloc1_g[i], vh1_g[i]),
+            vxc1_g[i],
+        );
+    }
+    return v_out_g;
+}
+
+fn mixSingleQPotential(
+    alloc: std.mem.Allocator,
+    cfg: DfptConfig,
+    iter: usize,
+    v_scf_g: []math.Complex,
+    v_out_g: []const math.Complex,
+    mix_state: *SingleQMixState,
+) !bool {
+    const residual = try alloc.alloc(math.Complex, v_out_g.len);
+    var residual_norm: f64 = 0.0;
+    for (0..v_out_g.len) |i| {
+        residual[i] = math.complex.sub(v_out_g[i], v_scf_g[i]);
+        residual_norm += residual[i].r * residual[i].r + residual[i].i * residual[i].i;
+    }
+    residual_norm = @sqrt(residual_norm);
+
+    logDfpt("dfptQ_scf: iter={d} vresid={e:.6}\n", .{ iter, residual_norm });
+    const converged_tight = residual_norm < cfg.scf_tol;
+    const converged_forced = mix_state.force_converge and residual_norm < 10.0 * cfg.scf_tol;
+    if (converged_tight or converged_forced) {
+        alloc.free(residual);
+        logDfpt("dfptQ_scf: converged at iter={d} vresid={e:.6}\n", .{ iter, residual_norm });
+        return true;
+    }
+
+    if (residual_norm < mix_state.best_vresid) {
+        mix_state.best_vresid = residual_norm;
+        if (mix_state.best_v_scf == null) {
+            mix_state.best_v_scf = try alloc.alloc(math.Complex, v_scf_g.len);
+        }
+        @memcpy(mix_state.best_v_scf.?, v_scf_g);
+    }
+
+    const restart_factor: f64 = 5.0;
+    const pulay_ready = iter >= mix_state.pulay_active_since;
+    const pulay_diverged = residual_norm > restart_factor * mix_state.best_vresid;
+    if (pulay_ready and pulay_diverged and mix_state.best_vresid < 1.0) {
+        if (mix_state.best_v_scf) |v| @memcpy(v_scf_g, v);
+        if (mix_state.best_vresid < 10.0 * cfg.scf_tol) {
+            mix_state.force_converge = true;
+            logDfpt(
+                "dfptQ_scf: Pulay restart (near-converged)" ++
+                    " at iter={d} vresid={e:.6} best={e:.6}\n",
+                .{ iter, residual_norm, mix_state.best_vresid },
+            );
+            alloc.free(residual);
+            return false;
+        }
+        mix_state.pulay.reset();
+        mix_state.pulay_active_since = iter + 1 + cfg.pulay_start;
+        logDfpt(
+            "dfptQ_scf: Pulay restart at iter={d} vresid={e:.6} best={e:.6}\n",
+            .{ iter, residual_norm, mix_state.best_vresid },
+        );
+        alloc.free(residual);
+        return false;
+    }
+
+    if (cfg.pulay_history > 0 and iter >= mix_state.pulay_active_since) {
+        try mix_state.pulay.mixWithResidual(v_scf_g, residual, cfg.mixing_beta);
+        return false;
+    }
+
+    for (0..v_out_g.len) |i| {
+        v_scf_g[i] = math.complex.add(
+            v_scf_g[i],
+            math.complex.scale(residual[i], cfg.mixing_beta),
+        );
+    }
+    alloc.free(residual);
+    return false;
+}
+
+fn runSingleQScf(
+    alloc: std.mem.Allocator,
+    gs: *const GroundState,
+    atom_index: usize,
+    direction: usize,
+    cfg: DfptConfig,
+    q_cart: math.Vec3,
+    gvecs_kq: []const plane_wave.GVector,
+    apply_ctx_kq: *scf_mod.ApplyContext,
+    map_kq: *const scf_mod.PwGridMap,
+    occ_kq: []const []const math.Complex,
+    n_occ_kq: usize,
+    setup: *SingleQSetup,
+    mix_state: *SingleQMixState,
+) !void {
+    var iter: usize = 0;
+    while (iter < cfg.scf_max_iter) : (iter += 1) {
+        const v_scf_r = try reciprocalToComplexCopy(alloc, gs.grid, setup.v_scf_g);
+        defer alloc.free(v_scf_r);
+
+        if (iter == 0) {
+            logScfPotentialSample(v_scf_r, setup.v_scf_g, atom_index, direction, gs.grid.count());
+        }
+
+        try solveSingleQBands(
+            alloc,
+            gs,
+            atom_index,
+            direction,
+            cfg,
+            gvecs_kq,
+            apply_ctx_kq,
+            map_kq,
+            occ_kq,
+            n_occ_kq,
+            v_scf_r,
+            setup.psi0_r_cache,
+            setup.psi1,
+        );
+
+        const rho1_g = try buildSingleQRho1G(
+            alloc,
+            gs,
+            map_kq,
+            setup.psi0_r_const,
+            setup.psi1,
+        );
+        defer alloc.free(rho1_g);
+
+        logSingleQRhoDiagnostic(iter, rho1_g, setup.vloc1_g, gs.grid.volume);
+
+        const v_out_g = try buildSingleQOutputPotential(
+            alloc,
+            gs,
+            q_cart,
+            setup.vloc1_g,
+            rho1_g,
+            setup.rho1_core_r,
+        );
+        defer alloc.free(v_out_g);
+
+        if (try mixSingleQPotential(
+            alloc,
+            cfg,
+            iter,
+            setup.v_scf_g,
+            v_out_g,
+            mix_state,
+        )) break;
+    }
+}
+
+fn finalizeSingleQResult(
+    alloc: std.mem.Allocator,
+    gs: *const GroundState,
+    map_kq: *const scf_mod.PwGridMap,
+    gvecs_kq: []const plane_wave.GVector,
+    setup: *SingleQSetup,
+) !PerturbationResult {
+    const final_rho1_r = try computeRho1Q(
+        alloc,
+        gs.grid,
+        &gs.apply_ctx.map,
+        map_kq,
+        gs.wavefunctions,
+        setup.psi1,
+        gs.n_occ,
+        gs.gvecs.len,
+        gvecs_kq.len,
+        1.0,
+    );
+    defer alloc.free(final_rho1_r);
+
+    const final_rho1_g = try complexRealToReciprocal(alloc, gs.grid, final_rho1_r);
+    const psi1 = setup.psi1;
+    setup.psi1 = &[_][]math.Complex{};
+    return .{
+        .rho1_g = final_rho1_g,
+        .psi1 = psi1,
+    };
+}
 
 /// Solve DFPT perturbation at q≠0 for a single perturbation (atom, direction).
 /// Uses **potential mixing** (mix V^(1)_SCF, not ρ^(1)) for stable convergence.
@@ -48,389 +666,26 @@ pub fn solvePerturbationQ(
     occ_kq: []const []const math.Complex,
     n_occ_kq: usize,
 ) !PerturbationResult {
-    const n_pw_k = gs.gvecs.len;
-    const n_pw_kq = gvecs_kq.len;
-    const total = gs.grid.count();
-    const n_occ = gs.n_occ;
-    const grid = gs.grid;
+    var setup = try initSingleQSetup(alloc, &gs, atom_index, direction, q_cart, gvecs_kq.len);
+    defer setup.deinit(alloc);
 
-    // Build V_ext^(1)_q(G) for this perturbation (bare, fixed)
-    const vloc1_g = try perturbation.buildLocalPerturbationQ(
+    var mix_state = SingleQMixState.init(alloc, cfg);
+    defer mix_state.deinit(alloc);
+
+    try runSingleQScf(
         alloc,
-        grid,
-        gs.atoms[atom_index],
-        gs.species,
+        &gs,
+        atom_index,
         direction,
+        cfg,
         q_cart,
-        gs.local_cfg,
-        gs.ff_tables,
-    );
-    defer alloc.free(vloc1_g);
-
-    // Debug: verify vloc1_g depends on direction
-    {
-        var vloc_norm: f64 = 0.0;
-        var vloc_sum_r: f64 = 0.0;
-        var vloc_sum_i: f64 = 0.0;
-        for (vloc1_g) |c| {
-            vloc_norm += c.r * c.r + c.i * c.i;
-            vloc_sum_r += c.r;
-            vloc_sum_i += c.i;
-        }
-        logDfpt(
-            "dfptQ_vloc1: atom={d} dir={d} |vloc1_g|={e:.6} sum=({e:.6},{e:.6})\n",
-            .{ atom_index, direction, @sqrt(vloc_norm), vloc_sum_r, vloc_sum_i },
-        );
-        // Print first few G-point values
-        const nshow = @min(vloc1_g.len, 5);
-        for (0..nshow) |gi| {
-            logDfpt("  vloc1_g[{d}]=({e:.8},{e:.8})\n", .{ gi, vloc1_g[gi].r, vloc1_g[gi].i });
-        }
-        // Print G=0 value (index where h=k=l=0)
-        {
-            const g0_h: usize = @intCast(-grid.min_h);
-            const g0_k: usize = @intCast(-grid.min_k);
-            const g0_l: usize = @intCast(-grid.min_l);
-            const g0_idx = g0_l * grid.ny * grid.nx + g0_k * grid.nx + g0_h;
-            logDfpt(
-                "  vloc1_g[G=0, idx={d}]=({e:.8},{e:.8})" ++
-                    " grid=({d},{d},{d}) min=({d},{d},{d})\n",
-                .{
-                    g0_idx,     vloc1_g[g0_idx].r, vloc1_g[g0_idx].i,
-                    grid.nx,    grid.ny,           grid.nz,
-                    grid.min_h, grid.min_k,        grid.min_l,
-                },
-            );
-        }
-    }
-
-    // Build ρ^(1)_core,q(G) (fixed, NLCC)
-    const rho1_core_g = try perturbation.buildCorePerturbationQ(
-        alloc,
-        grid,
-        gs.atoms[atom_index],
-        gs.species,
-        direction,
-        q_cart,
-        gs.rho_core_tables,
-    );
-    defer alloc.free(rho1_core_g);
-
-    // IFFT ρ^(1)_core,q → real space (complex)
-    const rho1_core_g_copy = try alloc.alloc(math.Complex, total);
-    defer alloc.free(rho1_core_g_copy);
-    @memcpy(rho1_core_g_copy, rho1_core_g);
-    const rho1_core_r = try alloc.alloc(math.Complex, total);
-    defer alloc.free(rho1_core_r);
-    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rho1_core_g_copy, rho1_core_r, null);
-
-    // Allocate first-order wavefunctions in k+q basis
-    var psi1 = try alloc.alloc([]math.Complex, n_occ);
-    for (0..n_occ) |n| {
-        psi1[n] = try alloc.alloc(math.Complex, n_pw_kq);
-        @memset(psi1[n], math.complex.init(0.0, 0.0));
-    }
-
-    // Map for k-basis
-    const map_k_ptr: *const scf_mod.PwGridMap = &gs.apply_ctx.map;
-
-    // Initialize V_SCF(G) = V_loc^(1)(G) [bare perturbation, no screening]
-    var v_scf_g = try alloc.alloc(math.Complex, total);
-    @memcpy(v_scf_g, vloc1_g);
-
-    // Pre-compute ψ^(0)(r) for all occupied bands (invariant during SCF)
-    const psi0_r_cache = try alloc.alloc([]math.Complex, n_occ);
-    defer {
-        for (psi0_r_cache) |band| alloc.free(band);
-        alloc.free(psi0_r_cache);
-    }
-    for (0..n_occ) |n| {
-        psi0_r_cache[n] = try alloc.alloc(math.Complex, total);
-        const work = try alloc.alloc(math.Complex, total);
-        defer alloc.free(work);
-        @memset(work, math.complex.init(0.0, 0.0));
-        map_k_ptr.scatter(gs.wavefunctions[n], work);
-        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work, psi0_r_cache[n], null);
-    }
-    const psi0_r_const: []const []const math.Complex = @ptrCast(psi0_r_cache);
-
-    // Pulay mixer for potential mixing
-    var pulay = scf_mod.ComplexPulayMixer.init(alloc, cfg.pulay_history);
-    defer pulay.deinit();
-
-    // Pulay restart state
-    var best_vresid: f64 = std.math.inf(f64);
-    var best_v_scf: ?[]math.Complex = null;
-    defer if (best_v_scf) |v| alloc.free(v);
-    var pulay_active_since: usize = cfg.pulay_start;
-    const restart_factor: f64 = 5.0;
-    var force_converge: bool = false;
-
-    // DFPT SCF loop — potential mixing
-    var iter: usize = 0;
-    while (iter < cfg.scf_max_iter) : (iter += 1) {
-        // IFFT V_SCF(G) → V_SCF(r) [complex]
-        const v_scf_g_copy = try alloc.alloc(math.Complex, total);
-        defer alloc.free(v_scf_g_copy);
-        @memcpy(v_scf_g_copy, v_scf_g);
-        const v_scf_r = try alloc.alloc(math.Complex, total);
-        defer alloc.free(v_scf_r);
-        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, v_scf_g_copy, v_scf_r, null);
-
-        // Debug: on first iteration, print some v_scf values
-        if (iter == 0) {
-            const v_scf_r_100 = v_scf_r[@min(@as(usize, 100), total - 1)];
-            logDfpt(
-                "dfptQ_vscf: atom={d} dir={d} iter=0" ++
-                    " v_scf_r[0]=({e:.8},{e:.8})" ++
-                    " v_scf_r[1]=({e:.8},{e:.8})" ++
-                    " v_scf_r[100]=({e:.8},{e:.8})\n",
-                .{
-                    atom_index,    direction,
-                    v_scf_r[0].r,  v_scf_r[0].i,
-                    v_scf_r[1].r,  v_scf_r[1].i,
-                    v_scf_r_100.r, v_scf_r_100.i,
-                },
-            );
-            logDfpt(
-                "dfptQ_vscf: v_scf_g[0]=({e:.8},{e:.8})" ++
-                    " v_scf_g[1]=({e:.8},{e:.8})" ++
-                    " v_scf_g[2]=({e:.8},{e:.8})\n",
-                .{
-                    v_scf_g[0].r, v_scf_g[0].i,
-                    v_scf_g[1].r, v_scf_g[1].i,
-                    v_scf_g[2].r, v_scf_g[2].i,
-                },
-            );
-        }
-
-        // Nonlocal contexts for V_nl^(1) (cross-basis: k → k+q)
-        const nl_ctx_k_opt = gs.apply_ctx.nonlocal_ctx;
-        const nl_ctx_kq_opt = apply_ctx_kq.nonlocal_ctx;
-
-        // Solve Sternheimer for each occupied band
-        for (0..n_occ) |n| {
-            // RHS: -P_c^{k+q} × H^(1)|ψ^(0)_{n,k}⟩
-            // H^(1)|ψ⟩ = V_SCF(r)|ψ(r)⟩ + V_nl^(1)|ψ⟩
-            const rhs = try applyV1PsiQCached(
-                alloc,
-                grid,
-                map_kq,
-                v_scf_r,
-                psi0_r_cache[n],
-                n_pw_kq,
-            );
-            defer alloc.free(rhs);
-
-            // Add nonlocal perturbation: V_nl^(1)_{q}|ψ_k⟩ (cross-basis: k → k+q)
-            if (nl_ctx_k_opt != null and nl_ctx_kq_opt != null) {
-                const nl_out = try alloc.alloc(math.Complex, n_pw_kq);
-                defer alloc.free(nl_out);
-                try perturbation.applyNonlocalPerturbationQ(
-                    alloc,
-                    gs.gvecs,
-                    gvecs_kq,
-                    gs.atoms,
-                    nl_ctx_k_opt.?,
-                    nl_ctx_kq_opt.?,
-                    atom_index,
-                    direction,
-                    1.0 / grid.volume,
-                    gs.wavefunctions[n],
-                    nl_out,
-                );
-                for (0..n_pw_kq) |g| {
-                    rhs[g] = math.complex.add(rhs[g], nl_out[g]);
-                }
-            }
-
-            // Negate: rhs = -H^(1)|ψ⟩
-            for (0..n_pw_kq) |g| {
-                rhs[g] = math.complex.scale(rhs[g], -1.0);
-            }
-
-            // Project onto conduction band in k+q space
-            sternheimer.projectConduction(rhs, occ_kq, n_occ_kq);
-
-            // Solve: (H_{k+q} - ε_{n,k} + α·P_v^{k+q})|ψ^(1)⟩ = rhs
-            const result = try sternheimer.solve(
-                alloc,
-                apply_ctx_kq,
-                rhs,
-                gs.eigenvalues[n],
-                occ_kq,
-                n_occ_kq,
-                gvecs_kq,
-                .{
-                    .tol = cfg.sternheimer_tol,
-                    .max_iter = cfg.sternheimer_max_iter,
-                    .alpha_shift = cfg.alpha_shift,
-                },
-            );
-
-            alloc.free(psi1[n]);
-            psi1[n] = result.psi1;
-        }
-
-        // Compute ρ^(1)_{+q}(r) from cross-basis wavefunctions [weight=4×wtk/Ω]
-        const psi1_const_view = try alloc.alloc([]const math.Complex, n_occ);
-        defer alloc.free(psi1_const_view);
-        for (0..n_occ) |n2| psi1_const_view[n2] = psi1[n2];
-        const rho1_r = try computeRho1QCached(
-            alloc,
-            grid,
-            map_kq,
-            psi0_r_const,
-            psi1_const_view,
-            n_occ,
-            1.0, // wtk=1.0 for single k-point backward compat
-        );
-        defer alloc.free(rho1_r);
-
-        // FFT ρ^(1)(r) → ρ^(1)(G)
-        const rho1_g = try complexRealToReciprocal(alloc, grid, rho1_r);
-        defer alloc.free(rho1_g);
-
-        // Diagnostic: ρ^(1) norm
-        {
-            var rho_norm: f64 = 0.0;
-            for (0..total) |di| {
-                rho_norm += rho1_g[di].r * rho1_g[di].r + rho1_g[di].i * rho1_g[di].i;
-            }
-            rho_norm = @sqrt(rho_norm);
-            // D_elec from bare V^(1) and current ρ^(1)
-            const d_elec_diag = computeElecDynmatElementQ(vloc1_g, rho1_g, grid.volume);
-            logDfpt(
-                "dfptQ_diag: iter={d} |rho1|={e:.6} D_elec_bare(0)=({e:.6},{e:.6})\n",
-                .{ iter, rho_norm, d_elec_diag.r, d_elec_diag.i },
-            );
-        }
-
-        // Build V_out(G) = V_loc^(1) + V_H^(1)[ρ] + V_xc^(1)[ρ]
-        const vh1_g = try perturbation.buildHartreePerturbationQ(alloc, grid, rho1_g, q_cart);
-        defer alloc.free(vh1_g);
-
-        // V_xc^(1)(r) = f_xc(r) × ρ^(1)_total(r)  where ρ_total = ρ_val + ρ_core
-        const rho1_g_copy2 = try alloc.alloc(math.Complex, total);
-        defer alloc.free(rho1_g_copy2);
-        @memcpy(rho1_g_copy2, rho1_g);
-        const rho1_val_r = try alloc.alloc(math.Complex, total);
-        defer alloc.free(rho1_val_r);
-        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rho1_g_copy2, rho1_val_r, null);
-
-        const rho1_total_r = try alloc.alloc(math.Complex, total);
-        defer alloc.free(rho1_total_r);
-        for (0..total) |i| {
-            rho1_total_r[i] = math.complex.add(rho1_val_r[i], rho1_core_r[i]);
-        }
-
-        const vxc1_r = try perturbation.buildXcPerturbationFullComplex(alloc, gs, rho1_total_r);
-        defer alloc.free(vxc1_r);
-
-        // FFT V_xc^(1)(r) → V_xc^(1)(G)
-        const vxc1_r_fft = try alloc.alloc(math.Complex, total);
-        defer alloc.free(vxc1_r_fft);
-        @memcpy(vxc1_r_fft, vxc1_r);
-        const vxc1_g = try alloc.alloc(math.Complex, total);
-        defer alloc.free(vxc1_g);
-        try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, vxc1_r_fft, vxc1_g, null);
-
-        // V_out(G) = V_loc + V_H + V_xc
-        const v_out_g = try alloc.alloc(math.Complex, total);
-        defer alloc.free(v_out_g);
-        for (0..total) |i| {
-            v_out_g[i] = math.complex.add(
-                math.complex.add(vloc1_g[i], vh1_g[i]),
-                vxc1_g[i],
-            );
-        }
-
-        // Compute residual = V_out - V_SCF
-        var residual_norm: f64 = 0.0;
-        const residual = try alloc.alloc(math.Complex, total);
-        for (0..total) |i| {
-            residual[i] = math.complex.sub(v_out_g[i], v_scf_g[i]);
-            residual_norm += residual[i].r * residual[i].r + residual[i].i * residual[i].i;
-        }
-        residual_norm = @sqrt(residual_norm);
-
-        logDfpt("dfptQ_scf: iter={d} vresid={e:.6}\n", .{ iter, residual_norm });
-
-        const converged_tight = residual_norm < cfg.scf_tol;
-        const converged_forced = force_converge and residual_norm < 10.0 * cfg.scf_tol;
-        if (converged_tight or converged_forced) {
-            alloc.free(residual);
-            logDfpt("dfptQ_scf: converged at iter={d} vresid={e:.6}\n", .{ iter, residual_norm });
-            break;
-        }
-
-        // Track best residual and save corresponding V_SCF
-        if (residual_norm < best_vresid) {
-            best_vresid = residual_norm;
-            if (best_v_scf == null) best_v_scf = try alloc.alloc(math.Complex, total);
-            @memcpy(best_v_scf.?, v_scf_g);
-        }
-
-        // Pulay restart: if residual exceeds restart_factor × best, reset and restore
-        const pulay_ready = iter >= pulay_active_since;
-        const pulay_diverged = residual_norm > restart_factor * best_vresid;
-        if (pulay_ready and pulay_diverged and best_vresid < 1.0) {
-            if (best_v_scf) |v| @memcpy(v_scf_g, v);
-            // If best is near convergence, force accept on next iteration
-            if (best_vresid < 10.0 * cfg.scf_tol) {
-                force_converge = true;
-                logDfpt(
-                    "dfptQ_scf: Pulay restart (near-converged)" ++
-                        " at iter={d} vresid={e:.6} best={e:.6}\n",
-                    .{ iter, residual_norm, best_vresid },
-                );
-                alloc.free(residual);
-                continue;
-            }
-            pulay.reset();
-            pulay_active_since = iter + 1 + cfg.pulay_start;
-            logDfpt(
-                "dfptQ_scf: Pulay restart at iter={d} vresid={e:.6} best={e:.6}\n",
-                .{ iter, residual_norm, best_vresid },
-            );
-            alloc.free(residual);
-            continue;
-        }
-
-        // Mix V_SCF using Pulay (delayed start) or simple linear mixing
-        if (cfg.pulay_history > 0 and iter >= pulay_active_since) {
-            // Pulay/DIIS: ownership of residual transfers to mixer
-            try pulay.mixWithResidual(v_scf_g, residual, cfg.mixing_beta);
-        } else {
-            // Simple linear mixing: V_SCF += β × residual
-            const beta = cfg.mixing_beta;
-            for (0..total) |i| {
-                v_scf_g[i] = math.complex.add(v_scf_g[i], math.complex.scale(residual[i], beta));
-            }
-            alloc.free(residual);
-        }
-    }
-
-    // Compute final ρ^(1)(G) from converged ψ^(1)
-    const final_rho1_r = try computeRho1Q(
-        alloc,
-        grid,
-        map_k_ptr,
+        gvecs_kq,
+        apply_ctx_kq,
         map_kq,
-        gs.wavefunctions,
-        psi1,
-        n_occ,
-        n_pw_k,
-        n_pw_kq,
-        1.0, // wtk=1.0 for single k-point backward compat
+        occ_kq,
+        n_occ_kq,
+        &setup,
+        &mix_state,
     );
-    const final_rho1_g = try complexRealToReciprocal(alloc, grid, final_rho1_r);
-    alloc.free(final_rho1_r);
-
-    alloc.free(v_scf_g);
-
-    return .{
-        .rho1_g = final_rho1_g,
-        .psi1 = psi1,
-    };
+    return finalizeSingleQResult(alloc, &gs, map_kq, gvecs_kq, &setup);
 }

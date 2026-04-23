@@ -161,6 +161,7 @@ fn buildSymmetryOps(
 
     var ops_list: std.ArrayList(SymOp) = .empty;
     errdefer ops_list.deinit(alloc);
+
     const matched = try alloc.alloc(bool, atom_fracs.len);
     defer alloc.free(matched);
 
@@ -223,6 +224,7 @@ fn tryAppendRotation(
     if (!latticeSymmetric(rot, metric, tol)) return;
     const translations = try findTranslations(alloc, rot, atom_fracs, matched, tol);
     defer alloc.free(translations);
+
     if (translations.len == 0) return;
     const inv = rot.inverse() orelse return;
     const k_rot = inv.transpose();
@@ -419,34 +421,16 @@ pub fn hasYMirrorSymmetry(k_frac: math.Vec3, tol: f64) bool {
     return @abs(ky) < tol or @abs(ky - 0.5) < tol or @abs(ky + 0.5) < tol;
 }
 
-/// Classify G-vectors by σ_y mirror symmetry for block-diagonalization.
-/// For a k-point on the M-Γ path (ky=0), G-vectors split into:
-/// - Invariant: G with k_index=0 (transform as χ=+1 under σ_y)
-/// - Pairs: (h,+k,l) and (h,-k,l) form even (+) and odd (-) combinations
-pub fn classifyGVectorsByMirror(
+/// Walk G-vectors and assign each to invariant or σ_y partner pair lists.
+fn partitionGVectorsByYMirror(
     alloc: std.mem.Allocator,
     gvecs: []const GVector,
-    k_frac: math.Vec3,
-    tol: f64,
-) !IrrepClassification {
-    const has_mirror = hasYMirrorSymmetry(k_frac, tol);
-
-    if (!has_mirror) {
-        // No mirror symmetry - no block-diagonalization possible
-        return IrrepClassification{
-            .invariant_indices = try alloc.alloc(usize, 0),
-            .pairs = try alloc.alloc(MirrorPair, 0),
-            .has_mirror = false,
-        };
-    }
-
-    var invariant_list: std.ArrayList(usize) = .empty;
-    errdefer invariant_list.deinit(alloc);
-    var pair_list: std.ArrayList(MirrorPair) = .empty;
-    errdefer pair_list.deinit(alloc);
-
+    invariant_list: *std.ArrayList(usize),
+    pair_list: *std.ArrayList(MirrorPair),
+) !void {
     const processed = try alloc.alloc(bool, gvecs.len);
     defer alloc.free(processed);
+
     @memset(processed, false);
 
     var i: usize = 0;
@@ -488,6 +472,36 @@ pub fn classifyGVectorsByMirror(
             }
         }
     }
+}
+
+/// Classify G-vectors by σ_y mirror symmetry for block-diagonalization.
+/// For a k-point on the M-Γ path (ky=0), G-vectors split into:
+/// - Invariant: G with k_index=0 (transform as χ=+1 under σ_y)
+/// - Pairs: (h,+k,l) and (h,-k,l) form even (+) and odd (-) combinations
+pub fn classifyGVectorsByMirror(
+    alloc: std.mem.Allocator,
+    gvecs: []const GVector,
+    k_frac: math.Vec3,
+    tol: f64,
+) !IrrepClassification {
+    const has_mirror = hasYMirrorSymmetry(k_frac, tol);
+
+    if (!has_mirror) {
+        // No mirror symmetry - no block-diagonalization possible
+        return IrrepClassification{
+            .invariant_indices = try alloc.alloc(usize, 0),
+            .pairs = try alloc.alloc(MirrorPair, 0),
+            .has_mirror = false,
+        };
+    }
+
+    var invariant_list: std.ArrayList(usize) = .empty;
+    errdefer invariant_list.deinit(alloc);
+
+    var pair_list: std.ArrayList(MirrorPair) = .empty;
+    errdefer pair_list.deinit(alloc);
+
+    try partitionGVectorsByYMirror(alloc, gvecs, &invariant_list, &pair_list);
 
     return IrrepClassification{
         .invariant_indices = try invariant_list.toOwnedSlice(alloc),
@@ -509,6 +523,89 @@ pub const BlockEigenResult = struct {
         if (self.eigenvalues.len > 0) alloc.free(self.eigenvalues);
     }
 };
+
+/// Build the even-irrep sub-Hamiltonian from invariant G-vectors and mirror pairs.
+fn buildEvenBlockH(
+    alloc: std.mem.Allocator,
+    full_h: []const math.Complex,
+    n: usize,
+    classification: IrrepClassification,
+    n_even: usize,
+    n_inv: usize,
+) ![]math.Complex {
+    const h_even = try alloc.alloc(math.Complex, n_even * n_even);
+    @memset(h_even, math.complex.init(0.0, 0.0));
+
+    // Invariant-invariant block
+    for (classification.invariant_indices, 0..) |idx_b, b| {
+        for (classification.invariant_indices, 0..) |idx_a, a| {
+            h_even[a + b * n_even] = full_h[idx_a + idx_b * n];
+        }
+    }
+
+    // Invariant-pair (even) coupling
+    for (classification.pairs, 0..) |pair, p| {
+        const col = n_inv + p;
+        for (classification.invariant_indices, 0..) |idx_inv, row| {
+            // ⟨inv|H|+⟩ = (⟨inv|H|G⟩ + ⟨inv|H|G'⟩) / √2
+            const h_i = full_h[idx_inv + pair.i * n];
+            const h_j = full_h[idx_inv + pair.j * n];
+            const h_sum = math.complex.add(h_i, h_j);
+            const val = math.complex.scale(h_sum, 1.0 / std.math.sqrt(2.0));
+            h_even[row + col * n_even] = val;
+            h_even[col + row * n_even] = math.complex.conj(val);
+        }
+    }
+
+    // Pair-pair (even-even) coupling
+    for (classification.pairs, 0..) |pair_b, b| {
+        const col = n_inv + b;
+        for (classification.pairs, 0..) |pair_a, a| {
+            const row = n_inv + a;
+            // ⟨+_a|H|+_b⟩ = (H_ii + H_jj + H_ij + H_ji) / 2
+            // where i,j are indices of pair_a and pair_b
+            const h_ii = full_h[pair_a.i + pair_b.i * n];
+            const h_jj = full_h[pair_a.j + pair_b.j * n];
+            const h_ij = full_h[pair_a.i + pair_b.j * n];
+            const h_ji = full_h[pair_a.j + pair_b.i * n];
+            const diag_sum = math.complex.add(h_ii, h_jj);
+            const off_sum = math.complex.add(h_ij, h_ji);
+            const sum = math.complex.add(diag_sum, off_sum);
+            h_even[row + col * n_even] = math.complex.scale(sum, 0.5);
+        }
+    }
+
+    return h_even;
+}
+
+/// Build the odd-irrep sub-Hamiltonian from mirror pairs only.
+fn buildOddBlockH(
+    alloc: std.mem.Allocator,
+    full_h: []const math.Complex,
+    n: usize,
+    classification: IrrepClassification,
+    n_odd: usize,
+) ![]math.Complex {
+    const h_odd = try alloc.alloc(math.Complex, n_odd * n_odd);
+    @memset(h_odd, math.complex.init(0.0, 0.0));
+
+    // Pair-pair (odd-odd) coupling
+    for (classification.pairs, 0..) |pair_b, b| {
+        for (classification.pairs, 0..) |pair_a, a| {
+            // ⟨-_a|H|-_b⟩ = (H_ii + H_jj - H_ij - H_ji) / 2
+            const h_ii = full_h[pair_a.i + pair_b.i * n];
+            const h_jj = full_h[pair_a.j + pair_b.j * n];
+            const h_ij = full_h[pair_a.i + pair_b.j * n];
+            const h_ji = full_h[pair_a.j + pair_b.i * n];
+            const diag_sum = math.complex.add(h_ii, h_jj);
+            const off_sum = math.complex.add(h_ij, h_ji);
+            const sum = math.complex.sub(diag_sum, off_sum);
+            h_odd[a + b * n_odd] = math.complex.scale(sum, 0.5);
+        }
+    }
+
+    return h_odd;
+}
 
 /// Build symmetry-adapted Hamiltonian blocks and solve eigenvalue problems separately.
 /// This properly handles band crossings at high-symmetry points by avoiding
@@ -548,48 +645,8 @@ pub fn blockDiagonalEigenvalues(
     // Build even block: invariant + even combinations of pairs
     var even_values: []f64 = &[_]f64{};
     if (n_even > 0) {
-        const h_even = try alloc.alloc(math.Complex, n_even * n_even);
+        const h_even = try buildEvenBlockH(alloc, full_h, n, classification, n_even, n_inv);
         defer alloc.free(h_even);
-        @memset(h_even, math.complex.init(0.0, 0.0));
-
-        // Invariant-invariant block
-        for (classification.invariant_indices, 0..) |idx_b, b| {
-            for (classification.invariant_indices, 0..) |idx_a, a| {
-                h_even[a + b * n_even] = full_h[idx_a + idx_b * n];
-            }
-        }
-
-        // Invariant-pair (even) coupling
-        for (classification.pairs, 0..) |pair, p| {
-            const col = n_inv + p;
-            for (classification.invariant_indices, 0..) |idx_inv, row| {
-                // ⟨inv|H|+⟩ = (⟨inv|H|G⟩ + ⟨inv|H|G'⟩) / √2
-                const h_i = full_h[idx_inv + pair.i * n];
-                const h_j = full_h[idx_inv + pair.j * n];
-                const h_sum = math.complex.add(h_i, h_j);
-                const val = math.complex.scale(h_sum, 1.0 / std.math.sqrt(2.0));
-                h_even[row + col * n_even] = val;
-                h_even[col + row * n_even] = math.complex.conj(val);
-            }
-        }
-
-        // Pair-pair (even-even) coupling
-        for (classification.pairs, 0..) |pair_b, b| {
-            const col = n_inv + b;
-            for (classification.pairs, 0..) |pair_a, a| {
-                const row = n_inv + a;
-                // ⟨+_a|H|+_b⟩ = (H_ii + H_jj + H_ij + H_ji) / 2
-                // where i,j are indices of pair_a and pair_b
-                const h_ii = full_h[pair_a.i + pair_b.i * n];
-                const h_jj = full_h[pair_a.j + pair_b.j * n];
-                const h_ij = full_h[pair_a.i + pair_b.j * n];
-                const h_ji = full_h[pair_a.j + pair_b.i * n];
-                const diag_sum = math.complex.add(h_ii, h_jj);
-                const off_sum = math.complex.add(h_ij, h_ji);
-                const sum = math.complex.add(diag_sum, off_sum);
-                h_even[row + col * n_even] = math.complex.scale(sum, 0.5);
-            }
-        }
 
         even_values = try linalg.hermitianEigenvalues(alloc, backend, n_even, h_even);
     }
@@ -598,24 +655,8 @@ pub fn blockDiagonalEigenvalues(
     // Build odd block: odd combinations of pairs only
     var odd_values: []f64 = &[_]f64{};
     if (n_odd > 0) {
-        const h_odd = try alloc.alloc(math.Complex, n_odd * n_odd);
+        const h_odd = try buildOddBlockH(alloc, full_h, n, classification, n_odd);
         defer alloc.free(h_odd);
-        @memset(h_odd, math.complex.init(0.0, 0.0));
-
-        // Pair-pair (odd-odd) coupling
-        for (classification.pairs, 0..) |pair_b, b| {
-            for (classification.pairs, 0..) |pair_a, a| {
-                // ⟨-_a|H|-_b⟩ = (H_ii + H_jj - H_ij - H_ji) / 2
-                const h_ii = full_h[pair_a.i + pair_b.i * n];
-                const h_jj = full_h[pair_a.j + pair_b.j * n];
-                const h_ij = full_h[pair_a.i + pair_b.j * n];
-                const h_ji = full_h[pair_a.j + pair_b.i * n];
-                const diag_sum = math.complex.add(h_ii, h_jj);
-                const off_sum = math.complex.add(h_ij, h_ji);
-                const sum = math.complex.sub(diag_sum, off_sum);
-                h_odd[a + b * n_odd] = math.complex.scale(sum, 0.5);
-            }
-        }
 
         odd_values = try linalg.hermitianEigenvalues(alloc, backend, n_odd, h_odd);
     }

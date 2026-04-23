@@ -299,6 +299,7 @@ pub fn buildOverlapCsrFromCenters(
 
     var orbitals = try alloc.alloc(Orbital, centers.len);
     defer alloc.free(orbitals);
+
     const alpha = 1.0 / (sigma * sigma);
     for (centers, 0..) |center, i| {
         orbitals[i] = .{ .center = center, .alpha = alpha, .cutoff = cutoff };
@@ -321,6 +322,7 @@ pub fn buildKineticCsrFromCenters(
 
     var orbitals = try alloc.alloc(Orbital, centers.len);
     defer alloc.free(orbitals);
+
     const alpha = 1.0 / (sigma * sigma);
     for (centers, 0..) |center, i| {
         orbitals[i] = .{ .center = center, .alpha = alpha, .cutoff = cutoff };
@@ -435,6 +437,7 @@ test "buildOverlapCsr uses neighbor list" {
     };
     var csr = try buildOverlapCsr(alloc, orbitals[0..], list);
     defer csr.deinit(alloc);
+
     const x = [_]f64{ 1.0, 1.0 };
     var out = [_]f64{ 0.0, 0.0 };
     try csr.mulVec(x[0..], out[0..]);
@@ -457,6 +460,7 @@ test "buildKineticCsrFromCenters uses neighbor list" {
     const pbc = neighbor_list.Pbc{ .x = false, .y = false, .z = false };
     var csr = try buildKineticCsrFromCenters(alloc, centers[0..], 0.5, 1.1, pbc, cell);
     defer csr.deinit(alloc);
+
     try std.testing.expect(csr.valueAt(0, 0) > 0.0);
     try std.testing.expect(csr.valueAt(0, 1) > 0.0);
 }
@@ -475,6 +479,7 @@ test "buildOverlapCsrFromCenters applies PBC" {
     const pbc = neighbor_list.Pbc{ .x = true, .y = false, .z = false };
     var csr = try buildOverlapCsrFromCenters(alloc, centers[0..], 0.1, 0.2, pbc, cell);
     defer csr.deinit(alloc);
+
     try std.testing.expect(csr.valueAt(0, 1) > 0.0);
 }
 

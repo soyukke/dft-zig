@@ -86,6 +86,7 @@ pub fn buildLocalPotentialCsrFromCenters(
 
     var orbitals = try alloc.alloc(local_orbital.Orbital, centers.len);
     defer alloc.free(orbitals);
+
     const alpha = 1.0 / (sigma * sigma);
     for (centers, 0..) |center, idx| {
         orbitals[idx] = .{ .center = center, .alpha = alpha, .cutoff = cutoff };
@@ -190,6 +191,7 @@ test "local potential constant matches overlap scaling" {
     const count = dims[0] * dims[1] * dims[2];
     const values = try alloc.alloc(f64, count);
     defer alloc.free(values);
+
     @memset(values, 0.7);
     const grid_full = PotentialGrid{ .cell = cell, .dims = dims, .values = values };
     const centers = [_]math.Vec3{

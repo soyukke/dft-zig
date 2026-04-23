@@ -241,9 +241,8 @@ plot-graphene:
 fmt:
     zig fmt src scripts
 
-# Path to the shared style checker in ~/dotfiles/zig-tools. Override with
-# ZIG_STYLE_CHECKER=/some/other/check_style.zig if needed.
-style_checker := env("ZIG_STYLE_CHECKER", env("HOME") + "/dotfiles/zig-tools/check_style.zig")
+# Path to the repo-local style checker. Override with ZIG_STYLE_CHECKER if needed.
+style_checker := env("ZIG_STYLE_CHECKER", "scripts/check_style.zig")
 
 # Check formatting without rewriting (reports diffs; not part of `lint`).
 fmt-check:
@@ -252,15 +251,15 @@ fmt-check:
 # Run the style checker against the ratcheting baseline.
 # Fails only when a file has *more* violations than scripts/style_baseline.txt.
 lint:
-    zig run {{style_checker}} -- --root src
+    ZIG_GLOBAL_CACHE_DIR=.zig-global-cache ZIG_LOCAL_CACHE_DIR=.zig-cache zig run {{style_checker}} -- --root src
 
 # Report every violation, ignoring the baseline (fails on any).
 lint-strict:
-    zig run {{style_checker}} -- --root src --strict
+    ZIG_GLOBAL_CACHE_DIR=.zig-global-cache ZIG_LOCAL_CACHE_DIR=.zig-cache zig run {{style_checker}} -- --root src --strict
 
 # Regenerate the style baseline from current violations (run after cleanup).
 lint-update-baseline:
-    zig run {{style_checker}} -- --root src --update-baseline
+    ZIG_GLOBAL_CACHE_DIR=.zig-global-cache ZIG_LOCAL_CACHE_DIR=.zig-cache zig run {{style_checker}} -- --root src --update-baseline
 
 # Install project git hooks (symlinks scripts/hooks/* into .git/hooks/).
 # Run once per clone. Currently installs: pre-commit (zig fmt --check).
@@ -282,7 +281,7 @@ install-hooks:
 
 # Clean build artifacts and caches
 clean:
-    rm -rf zig-out zig-cache .zig-cache
+    rm -rf zig-out zig-cache .zig-cache .zig-global-cache
     rm -f stderr.log stderr_paw.log stdout.log
 
 # Run DFT-Zig with a config file

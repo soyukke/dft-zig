@@ -21,6 +21,7 @@ pub fn kineticStress(
     for (wf.kpoints) |kp| {
         var basis = try plane_wave.generate(alloc, recip, wf.ecut_ry, kp.k_cart);
         defer basis.deinit(alloc);
+
         const gvecs = basis.gvecs;
         const n = gvecs.len;
         if (n != kp.basis_len) continue;

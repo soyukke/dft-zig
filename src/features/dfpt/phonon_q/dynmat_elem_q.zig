@@ -125,9 +125,11 @@ pub fn computeNlccCrossDynmatQ(
         // Get ρ^(1)_core,Iα(r) in complex form
         const rho1_core_i_copy = try alloc.alloc(math.Complex, total);
         defer alloc.free(rho1_core_i_copy);
+
         @memcpy(rho1_core_i_copy, rho1_core_gs[i]);
         const rho1_core_i_r = try alloc.alloc(math.Complex, total);
         defer alloc.free(rho1_core_i_r);
+
         const ri_in = rho1_core_i_copy;
         const ri_out = rho1_core_i_r;
         try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, ri_in, ri_out, null);
@@ -141,17 +143,21 @@ pub fn computeNlccCrossDynmatQ(
             // Get ρ^(1)_val,Jβ(r)
             const rho1_val_g_copy = try alloc.alloc(math.Complex, total);
             defer alloc.free(rho1_val_g_copy);
+
             @memcpy(rho1_val_g_copy, rho1_val_gs[j]);
             const work_r_j = try alloc.alloc(math.Complex, total);
             defer alloc.free(work_r_j);
+
             try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rho1_val_g_copy, work_r_j, null);
 
             // Get ρ^(1)_core,Jβ(r)
             const rho1_core_j_copy = try alloc.alloc(math.Complex, total);
             defer alloc.free(rho1_core_j_copy);
+
             @memcpy(rho1_core_j_copy, rho1_core_gs[j]);
             const rho1_core_j_r = try alloc.alloc(math.Complex, total);
             defer alloc.free(rho1_core_j_r);
+
             const rj_in = rho1_core_j_copy;
             const rj_out = rho1_core_j_r;
             try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rj_in, rj_out, null);

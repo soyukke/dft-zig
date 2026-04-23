@@ -9,6 +9,7 @@ pub fn main(init: std.process.Init) !void {
 
     var args_iter = try init.minimal.args.iterateAllocator(alloc);
     defer args_iter.deinit();
+
     _ = args_iter.next(); // program name
     const config_path_opt = args_iter.next();
     if (config_path_opt == null) {

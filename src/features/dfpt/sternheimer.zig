@@ -282,18 +282,23 @@ pub fn solve(
     errdefer alloc.free(x);
     const r = try alloc.alloc(math.Complex, n); // residual
     defer alloc.free(r);
+
     const z = try alloc.alloc(math.Complex, n); // preconditioned residual
     defer alloc.free(z);
+
     const d = try alloc.alloc(math.Complex, n); // search direction
     defer alloc.free(d);
+
     const ad = try alloc.alloc(math.Complex, n); // A × d
     defer alloc.free(ad);
+
     const temp = try alloc.alloc(math.Complex, n); // temporary
     defer alloc.free(temp);
 
     // Pack occupied wavefunctions into contiguous matrix for BLAS
     const psi_matrix = try alloc.alloc(math.Complex, n * n_occ);
     defer alloc.free(psi_matrix);
+
     if (n_occ > 0) {
         for (0..n_occ) |m| {
             @memcpy(psi_matrix[m * n .. (m + 1) * n], occupied[m][0..n]);

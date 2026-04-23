@@ -437,6 +437,7 @@ test "Plan3dParallel large size" {
 
     const original = try allocator.alloc(Complex, size);
     defer allocator.free(original);
+
     @memcpy(original, data);
 
     plan.forward(data);

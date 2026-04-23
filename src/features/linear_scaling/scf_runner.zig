@@ -104,6 +104,7 @@ pub fn runScfFromAtoms(
 
     const centers = try alloc.alloc(math.Vec3, atoms.len);
     defer alloc.free(centers);
+
     for (atoms, 0..) |atom, idx| {
         centers[idx] = math.Vec3.scale(atom.position, scale);
     }
@@ -150,8 +151,10 @@ pub fn runScfFromXyz(
 ) !local_orbital_scf.ScfGridResult {
     var atom_list = try xyz.load(alloc, io, xyz_path);
     defer atom_list.deinit(alloc);
+
     const pseudos = try loadPseudos(alloc, io, specs);
     defer deinitPseudos(alloc, pseudos);
+
     return runScfFromAtoms(alloc, atom_list.items, pseudos, cell, pbc, opts);
 }
 
@@ -181,14 +184,17 @@ test "buildIonSitesFromAtoms maps symbols" {
     };
     var r = try alloc.alloc(f64, 2);
     defer alloc.free(r);
+
     r[0] = 0.0;
     r[1] = 1.0;
     var rab = try alloc.alloc(f64, 2);
     defer alloc.free(rab);
+
     rab[0] = 0.0;
     rab[1] = 1.0;
     var v_local = try alloc.alloc(f64, 2);
     defer alloc.free(v_local);
+
     v_local[0] = 0.0;
     v_local[1] = 0.0;
     const upf = pseudo.UpfData{
@@ -212,6 +218,7 @@ test "buildIonSitesFromAtoms maps symbols" {
     const pseudos = [_]pseudo.Parsed{parsed};
     const sites = try buildIonSitesFromAtoms(alloc, atoms[0..], pseudos[0..], 2.0);
     defer alloc.free(sites);
+
     try std.testing.expectApproxEqAbs(@as(f64, 2.0), sites[0].position.x, 1e-12);
     try std.testing.expect(sites[0].upf == &upf);
 }

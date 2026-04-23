@@ -9,6 +9,43 @@ const Grid = local_force.Grid;
 const Vec3 = math.Vec3;
 const Complex = math.Complex;
 
+/// Accumulate the PAW D^hat force contribution from a single G-vector for one atom.
+fn accumulatePawDhatForceG(
+    g_vec: Vec3,
+    g_abs: f64,
+    prod_im: f64,
+    tab: *const paw_mod.PawTab,
+    atom_rij: []const f64,
+    nb: usize,
+    fx: *f64,
+    fy: *f64,
+    fz: *f64,
+) void {
+    // Sum over L=0 QIJL entries
+    for (0..tab.n_qijl_entries) |e| {
+        const qidx = tab.qijl_indices[e];
+        if (qidx.l != 0) continue;
+        const i = qidx.first;
+        const j = qidx.second;
+
+        const qijl_g = tab.evalQijlForm(e, g_abs);
+        if (@abs(qijl_g) < 1e-30) continue;
+
+        // Y_00 = 1/√(4π), Gaunt = 1/√(4π) for m-summed L=0
+        const ylm = 1.0 / @sqrt(4.0 * std.math.pi);
+        const gaunt = 1.0 / @sqrt(4.0 * std.math.pi);
+
+        // ρ_ij contribution (symmetric: count off-diagonal twice)
+        const rho_ij = atom_rij[i * nb + j];
+        const rho_factor = if (i != j) 2.0 * rho_ij else rho_ij;
+
+        const coeff = rho_factor * prod_im * qijl_g * ylm * gaunt;
+        fx.* += g_vec.x * coeff;
+        fy.* += g_vec.y * coeff;
+        fz.* += g_vec.z * coeff;
+    }
+}
+
 /// Compute PAW D^hat forces from the position-dependence of the compensation charge.
 ///
 /// D^hat_ij = Σ_G Re[V_eff(G) × exp(+iG·R_a)] × Q_form(|G|) × Y_00 × Gaunt
@@ -40,8 +77,9 @@ pub fn pawDhatForces(
     const n_atoms = atoms.len;
     if (n_atoms == 0) return &[_]Vec3{};
 
-    var forces = try alloc.alloc(Vec3, n_atoms);
+    const forces = try alloc.alloc(Vec3, n_atoms);
     errdefer alloc.free(forces);
+
     for (forces) |*f| {
         f.* = Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
     }
@@ -76,29 +114,7 @@ pub fn pawDhatForces(
             // Im[V_eff × exp(+iGR)] = V_eff.r × sf_im + V_eff.i × sf_re
             const prod_im = v_eff.r * sf_im + v_eff.i * sf_re;
 
-            // Sum over L=0 QIJL entries
-            for (0..tab.n_qijl_entries) |e| {
-                const qidx = tab.qijl_indices[e];
-                if (qidx.l != 0) continue;
-                const i = qidx.first;
-                const j = qidx.second;
-
-                const qijl_g = tab.evalQijlForm(e, g_abs);
-                if (@abs(qijl_g) < 1e-30) continue;
-
-                // Y_00 = 1/√(4π), Gaunt = 1/√(4π) for m-summed L=0
-                const ylm = 1.0 / @sqrt(4.0 * std.math.pi);
-                const gaunt = 1.0 / @sqrt(4.0 * std.math.pi);
-
-                // ρ_ij contribution (symmetric: count off-diagonal twice)
-                const rho_ij = atom_rij[i * nb + j];
-                const rho_factor = if (i != j) 2.0 * rho_ij else rho_ij;
-
-                const coeff = rho_factor * prod_im * qijl_g * ylm * gaunt;
-                fx += g.gvec.x * coeff;
-                fy += g.gvec.y * coeff;
-                fz += g.gvec.z * coeff;
-            }
+            accumulatePawDhatForceG(g.gvec, g_abs, prod_im, tab, atom_rij, nb, &fx, &fy, &fz);
         }
 
         forces[ai] = Vec3{ .x = fx, .y = fy, .z = fz };

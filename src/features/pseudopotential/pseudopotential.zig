@@ -144,8 +144,10 @@ pub fn load(alloc: std.mem.Allocator, io: std.Io, spec: Spec) !Parsed {
         .upf => {
             header = try parseUpfHeader(alloc, content);
             errdefer header.deinit(alloc);
+
             upf_data = try parseUpfData(alloc, content);
             errdefer if (upf_data) |*data| data.deinit(alloc);
+
             if (header.mesh_size) |mesh| {
                 const data = upf_data.?;
                 if (data.r.len != mesh or data.rab.len != mesh or data.v_local.len != mesh) {
@@ -212,29 +214,13 @@ fn parseUpfHeader(alloc: std.mem.Allocator, content: []const u8) !Header {
     return header;
 }
 
-/// Parse UPF body sections needed for DFT.
-fn parseUpfData(alloc: std.mem.Allocator, content: []const u8) !UpfData {
-    const r_tag = findTagByName(content, "PP_R") orelse return error.InvalidUpf;
-    const rab_tag = findTagByName(content, "PP_RAB") orelse return error.InvalidUpf;
-    const local_tag = findTagByName(content, "PP_LOCAL") orelse return error.InvalidUpf;
-    const nlcc_tag = findTagByName(content, "PP_NLCC");
-    const rho_atom_tag = findTagByName(content, "PP_RHOATOM");
-
-    const r = try parseFloatList(alloc, r_tag.body);
-    errdefer alloc.free(r);
-    const rab = try parseFloatList(alloc, rab_tag.body);
-    errdefer alloc.free(rab);
-    const v_local = try parseFloatList(alloc, local_tag.body);
-    errdefer alloc.free(v_local);
-
+/// Collect all PP_BETA entries from the UPF content into an allocated slice.
+fn collectBetaList(alloc: std.mem.Allocator, content: []const u8) ![]Beta {
     var beta_list: std.ArrayList(Beta) = .empty;
     errdefer {
-        for (beta_list.items) |*b| {
-            b.deinit(alloc);
-        }
+        for (beta_list.items) |*b| b.deinit(alloc);
         beta_list.deinit(alloc);
     }
-
     var pos: usize = 0;
     while (findNextTag(content, pos, "PP_BETA")) |tag| {
         const l = parseBetaL(tag.start_tag);
@@ -242,36 +228,24 @@ fn parseUpfData(alloc: std.mem.Allocator, content: []const u8) !UpfData {
         try beta_list.append(alloc, .{ .l = l, .values = values });
         pos = tag.end_pos;
     }
+    return beta_list.toOwnedSlice(alloc);
+}
 
-    const dij_tag = findTagByName(content, "PP_DIJ");
-    var dij = emptyF64Slice();
-    errdefer if (dij.len > 0) alloc.free(dij);
-    if (dij_tag) |tag| {
-        dij = try parseFloatList(alloc, tag.body);
+/// Parse the optional float list under the tag with `name`, returning an
+/// empty slice if the tag is absent.
+fn parseOptionalFloatTag(
+    alloc: std.mem.Allocator,
+    content: []const u8,
+    name: []const u8,
+) ![]f64 {
+    if (findTagByName(content, name)) |tag| {
+        return parseFloatList(alloc, tag.body);
     }
+    return emptyF64Slice();
+}
 
-    const qij_tag = findTagByName(content, "PP_QIJ");
-    var qij = emptyF64Slice();
-    errdefer if (qij.len > 0) alloc.free(qij);
-    if (qij_tag) |tag| {
-        qij = try parseFloatList(alloc, tag.body);
-    }
-
-    var nlcc = emptyF64Slice();
-    errdefer if (nlcc.len > 0) alloc.free(nlcc);
-    if (nlcc_tag) |tag| {
-        nlcc = try parseFloatList(alloc, tag.body);
-    }
-
-    var rho_atom = emptyF64Slice();
-    errdefer if (rho_atom.len > 0) alloc.free(rho_atom);
-    if (rho_atom_tag) |tag| {
-        rho_atom = try parseFloatList(alloc, tag.body);
-    }
-
-    const beta = try beta_list.toOwnedSlice(alloc);
-
-    // Parse PP_PSWFC > PP_CHI (atomic wavefunctions)
+/// Collect PP_CHI entries from the optional PP_PSWFC section.
+fn collectAtomicWfc(alloc: std.mem.Allocator, content: []const u8) ![]AtomicWfc {
     var chi_list: std.ArrayList(AtomicWfc) = .empty;
     errdefer {
         for (chi_list.items) |*w| w.deinit(alloc);
@@ -293,6 +267,7 @@ fn parseUpfData(alloc: std.mem.Allocator, content: []const u8) !UpfData {
             else
                 null;
             errdefer if (chi_label) |lbl| alloc.free(lbl);
+
             const chi_values = try parseFloatList(alloc, tag.body);
             try chi_list.append(alloc, .{
                 .l = chi_l,
@@ -303,7 +278,43 @@ fn parseUpfData(alloc: std.mem.Allocator, content: []const u8) !UpfData {
             chi_pos = tag.end_pos;
         }
     }
-    const atomic_wfc = try chi_list.toOwnedSlice(alloc);
+    return chi_list.toOwnedSlice(alloc);
+}
+
+/// Parse UPF body sections needed for DFT.
+fn parseUpfData(alloc: std.mem.Allocator, content: []const u8) !UpfData {
+    const r_tag = findTagByName(content, "PP_R") orelse return error.InvalidUpf;
+    const rab_tag = findTagByName(content, "PP_RAB") orelse return error.InvalidUpf;
+    const local_tag = findTagByName(content, "PP_LOCAL") orelse return error.InvalidUpf;
+
+    const r = try parseFloatList(alloc, r_tag.body);
+    errdefer alloc.free(r);
+
+    const rab = try parseFloatList(alloc, rab_tag.body);
+    errdefer alloc.free(rab);
+
+    const v_local = try parseFloatList(alloc, local_tag.body);
+    errdefer alloc.free(v_local);
+
+    const beta = try collectBetaList(alloc, content);
+    errdefer {
+        for (beta) |*b| b.deinit(alloc);
+        alloc.free(beta);
+    }
+
+    const dij = try parseOptionalFloatTag(alloc, content, "PP_DIJ");
+    errdefer if (dij.len > 0) alloc.free(dij);
+
+    const qij = try parseOptionalFloatTag(alloc, content, "PP_QIJ");
+    errdefer if (qij.len > 0) alloc.free(qij);
+
+    const nlcc = try parseOptionalFloatTag(alloc, content, "PP_NLCC");
+    errdefer if (nlcc.len > 0) alloc.free(nlcc);
+
+    const rho_atom = try parseOptionalFloatTag(alloc, content, "PP_RHOATOM");
+    errdefer if (rho_atom.len > 0) alloc.free(rho_atom);
+
+    const atomic_wfc = try collectAtomicWfc(alloc, content);
 
     // Parse PAW data if present
     const paw_result = try parsePawData(alloc, content);
@@ -322,6 +333,99 @@ fn parseUpfData(alloc: std.mem.Allocator, content: []const u8) !UpfData {
     };
 }
 
+/// Parsed PP_AUGMENTATION attribute block.
+const AugmentationAttrs = struct {
+    lmax_aug: usize,
+    cutoff_r: f64,
+    cutoff_r_index: usize,
+    q_with_l: bool,
+};
+
+fn parseAugmentationAttrs(alloc: std.mem.Allocator, content: []const u8) !AugmentationAttrs {
+    var out = AugmentationAttrs{
+        .lmax_aug = 0,
+        .cutoff_r = -1.0,
+        .cutoff_r_index = 0,
+        .q_with_l = false,
+    };
+    if (findTagByName(content, "PP_AUGMENTATION")) |aug_tag| {
+        if (findAttributeValue(aug_tag.start_tag, "l_max_aug")) |value| {
+            out.lmax_aug = try parseUsize(value);
+        }
+        if (findAttributeValue(aug_tag.start_tag, "cutoff_r")) |value| {
+            out.cutoff_r = try parseFloatToken(alloc, value);
+        }
+        if (findAttributeValue(aug_tag.start_tag, "cutoff_r_index")) |value| {
+            out.cutoff_r_index = try parseUsize(value);
+        }
+        if (findAttributeValue(aug_tag.start_tag, "q_with_l")) |value| {
+            const trimmed = std.mem.trim(u8, value, " \t\r\n");
+            out.q_with_l = std.mem.eql(u8, trimmed, "true") or std.mem.eql(u8, trimmed, "T");
+        }
+    }
+    return out;
+}
+
+/// Collect PP_QIJL entries into an owned slice.
+fn collectQijlEntries(alloc: std.mem.Allocator, content: []const u8) ![]paw_data.QijlEntry {
+    var qijl_list: std.ArrayList(paw_data.QijlEntry) = .empty;
+    errdefer {
+        for (qijl_list.items) |*q| q.deinit(alloc);
+        qijl_list.deinit(alloc);
+    }
+    var pos: usize = 0;
+    while (findNextTag(content, pos, "PP_QIJL")) |tag| {
+        const first = if (findAttributeValue(tag.start_tag, "first_index")) |v|
+            (try parseUsize(v)) - 1 // Convert 1-based to 0-based
+        else
+            0;
+        const second = if (findAttributeValue(tag.start_tag, "second_index")) |v|
+            (try parseUsize(v)) - 1
+        else
+            0;
+        const ang_mom = if (findAttributeValue(tag.start_tag, "angular_momentum")) |v|
+            try parseUsize(v)
+        else
+            0;
+        const values = try parseFloatList(alloc, tag.body);
+        try qijl_list.append(alloc, .{
+            .first_index = first,
+            .second_index = second,
+            .angular_momentum = ang_mom,
+            .values = values,
+        });
+        pos = tag.end_pos;
+    }
+    return qijl_list.toOwnedSlice(alloc);
+}
+
+/// Collect partial-wave entries for a given tag name (PP_AEWFC / PP_PSWFC) in
+/// the provided content scope.
+fn collectPartialWaves(
+    alloc: std.mem.Allocator,
+    content: []const u8,
+    tag_name: []const u8,
+) ![]paw_data.PawPartialWave {
+    var list: std.ArrayList(paw_data.PawPartialWave) = .empty;
+    errdefer {
+        for (list.items) |*w| w.deinit(alloc);
+        list.deinit(alloc);
+    }
+    var pos: usize = 0;
+    while (findNextTag(content, pos, tag_name)) |tag| {
+        const l = if (findAttributeValue(tag.start_tag, "l")) |v|
+            try parseI32(v)
+        else if (findAttributeValue(tag.start_tag, "angular_momentum")) |v|
+            try parseI32(v)
+        else
+            0;
+        const values = try parseFloatList(alloc, tag.body);
+        try list.append(alloc, .{ .l = l, .values = values });
+        pos = tag.end_pos;
+    }
+    return list.toOwnedSlice(alloc);
+}
+
 /// Parse PAW-specific sections from UPF content.
 /// Returns null if this is not a PAW pseudopotential.
 fn parsePawData(alloc: std.mem.Allocator, content: []const u8) !?PawData {
@@ -334,145 +438,61 @@ fn parsePawData(alloc: std.mem.Allocator, content: []const u8) !?PawData {
         core_energy = try parseFloatToken(alloc, value);
     }
 
-    // Parse PP_OCCUPATIONS
-    var occupations = emptyF64Slice();
+    // Parse PP_OCCUPATIONS, PP_AE_NLCC, PP_AE_VLOC (all inside PP_PAW body)
+    const occupations = try parseOptionalFloatTag(alloc, paw_tag.body, "PP_OCCUPATIONS");
     errdefer if (occupations.len > 0) alloc.free(occupations);
-    if (findTagByName(paw_tag.body, "PP_OCCUPATIONS")) |occ_tag| {
-        occupations = try parseFloatList(alloc, occ_tag.body);
-    }
 
-    // Parse PP_AE_NLCC (all-electron core density)
-    var ae_core_density = emptyF64Slice();
+    const ae_core_density = try parseOptionalFloatTag(alloc, paw_tag.body, "PP_AE_NLCC");
     errdefer if (ae_core_density.len > 0) alloc.free(ae_core_density);
-    if (findTagByName(paw_tag.body, "PP_AE_NLCC")) |tag| {
-        ae_core_density = try parseFloatList(alloc, tag.body);
-    }
 
-    // Parse PP_AE_VLOC (all-electron local potential)
-    var ae_local_potential = emptyF64Slice();
+    const ae_local_potential = try parseOptionalFloatTag(alloc, paw_tag.body, "PP_AE_VLOC");
     errdefer if (ae_local_potential.len > 0) alloc.free(ae_local_potential);
-    if (findTagByName(paw_tag.body, "PP_AE_VLOC")) |tag| {
-        ae_local_potential = try parseFloatList(alloc, tag.body);
-    }
 
     // Parse PP_AUGMENTATION attributes
-    var lmax_aug: usize = 0;
-    var cutoff_r: f64 = -1.0;
-    var cutoff_r_index: usize = 0;
-    var q_with_l: bool = false;
-    if (findTagByName(content, "PP_AUGMENTATION")) |aug_tag| {
-        if (findAttributeValue(aug_tag.start_tag, "l_max_aug")) |value| {
-            lmax_aug = try parseUsize(value);
-        }
-        if (findAttributeValue(aug_tag.start_tag, "cutoff_r")) |value| {
-            cutoff_r = try parseFloatToken(alloc, value);
-        }
-        if (findAttributeValue(aug_tag.start_tag, "cutoff_r_index")) |value| {
-            cutoff_r_index = try parseUsize(value);
-        }
-        if (findAttributeValue(aug_tag.start_tag, "q_with_l")) |value| {
-            const trimmed = std.mem.trim(u8, value, " \t\r\n");
-            q_with_l = std.mem.eql(u8, trimmed, "true") or std.mem.eql(u8, trimmed, "T");
-        }
-    }
+    const aug_attrs = try parseAugmentationAttrs(alloc, content);
 
     // Parse PP_QIJL entries
-    var qijl_list: std.ArrayList(paw_data.QijlEntry) = .empty;
+    const qijl = try collectQijlEntries(alloc, content);
     errdefer {
-        for (qijl_list.items) |*q| q.deinit(alloc);
-        qijl_list.deinit(alloc);
-    }
-    {
-        var pos: usize = 0;
-        while (findNextTag(content, pos, "PP_QIJL")) |tag| {
-            const first = if (findAttributeValue(tag.start_tag, "first_index")) |v|
-                (try parseUsize(v)) - 1 // Convert 1-based to 0-based
-            else
-                0;
-            const second = if (findAttributeValue(tag.start_tag, "second_index")) |v|
-                (try parseUsize(v)) - 1
-            else
-                0;
-            const ang_mom = if (findAttributeValue(tag.start_tag, "angular_momentum")) |v|
-                try parseUsize(v)
-            else
-                0;
-            const values = try parseFloatList(alloc, tag.body);
-            try qijl_list.append(alloc, .{
-                .first_index = first,
-                .second_index = second,
-                .angular_momentum = ang_mom,
-                .values = values,
-            });
-            pos = tag.end_pos;
-        }
+        for (qijl) |*q| q.deinit(alloc);
+        alloc.free(qijl);
     }
 
-    // Parse PP_FULL_WFC > PP_AEWFC (all-electron partial waves)
-    var ae_wfc_list: std.ArrayList(paw_data.PawPartialWave) = .empty;
+    // Parse PP_FULL_WFC > PP_AEWFC
+    // (all-electron partial waves)
+    const ae_wfc = try collectPartialWaves(alloc, content, "PP_AEWFC");
     errdefer {
-        for (ae_wfc_list.items) |*w| w.deinit(alloc);
-        ae_wfc_list.deinit(alloc);
-    }
-    {
-        var pos: usize = 0;
-        while (findNextTag(content, pos, "PP_AEWFC")) |tag| {
-            const l = if (findAttributeValue(tag.start_tag, "l")) |v|
-                try parseI32(v)
-            else if (findAttributeValue(tag.start_tag, "angular_momentum")) |v|
-                try parseI32(v)
-            else
-                0;
-            const values = try parseFloatList(alloc, tag.body);
-            try ae_wfc_list.append(alloc, .{ .l = l, .values = values });
-            pos = tag.end_pos;
-        }
+        for (ae_wfc) |*w| w.deinit(alloc);
+        alloc.free(ae_wfc);
     }
 
     // Parse PP_FULL_WFC > PP_PSWFC (pseudo partial waves)
     // These are inside PP_FULL_WFC, distinct from PP_PSWFC > PP_CHI
-    var ps_wfc_list: std.ArrayList(paw_data.PawPartialWave) = .empty;
+    const ps_wfc: []paw_data.PawPartialWave =
+        if (findTagByName(content, "PP_FULL_WFC")) |full_wfc_tag|
+            try collectPartialWaves(alloc, full_wfc_tag.body, "PP_PSWFC")
+        else
+            &[_]paw_data.PawPartialWave{};
     errdefer {
-        for (ps_wfc_list.items) |*w| w.deinit(alloc);
-        ps_wfc_list.deinit(alloc);
-    }
-    {
-        // Find PP_FULL_WFC section first to search within it
-        if (findTagByName(content, "PP_FULL_WFC")) |full_wfc_tag| {
-            var pos: usize = 0;
-            while (findNextTag(full_wfc_tag.body, pos, "PP_PSWFC")) |tag| {
-                const l = if (findAttributeValue(tag.start_tag, "l")) |v|
-                    try parseI32(v)
-                else if (findAttributeValue(tag.start_tag, "angular_momentum")) |v|
-                    try parseI32(v)
-                else
-                    0;
-                const values = try parseFloatList(alloc, tag.body);
-                try ps_wfc_list.append(alloc, .{ .l = l, .values = values });
-                pos = tag.end_pos;
-            }
-        }
+        for (ps_wfc) |*w| w.deinit(alloc);
+        if (ps_wfc.len > 0) alloc.free(ps_wfc);
     }
 
     // D^0_ij: use PP_DIJ values as the initial reference (these are D^0 for PAW)
     // The actual D^0_ij from PP_PAW is stored in PP_DIJ for PAW UPF files
-    const dij_tag = findTagByName(content, "PP_DIJ");
-    var dij0 = emptyF64Slice();
+    const dij0 = try parseOptionalFloatTag(alloc, content, "PP_DIJ");
     errdefer if (dij0.len > 0) alloc.free(dij0);
-    if (dij_tag) |tag| {
-        dij0 = try parseFloatList(alloc, tag.body);
-    }
 
-    const number_of_proj = ae_wfc_list.items.len;
+    const number_of_proj = ae_wfc.len;
 
     return PawData{
-        .ae_wfc = try ae_wfc_list.toOwnedSlice(alloc),
-        .ps_wfc = try ps_wfc_list.toOwnedSlice(alloc),
-        .qijl = try qijl_list.toOwnedSlice(alloc),
-        .lmax_aug = lmax_aug,
-        .cutoff_r = cutoff_r,
-        .cutoff_r_index = cutoff_r_index,
-        .q_with_l = q_with_l,
+        .ae_wfc = ae_wfc,
+        .ps_wfc = ps_wfc,
+        .qijl = qijl,
+        .lmax_aug = aug_attrs.lmax_aug,
+        .cutoff_r = aug_attrs.cutoff_r,
+        .cutoff_r_index = aug_attrs.cutoff_r_index,
+        .q_with_l = aug_attrs.q_with_l,
         .dij0 = dij0,
         .ae_core_density = ae_core_density,
         .ae_local_potential = ae_local_potential,
@@ -588,6 +608,7 @@ fn parseFloatToken(alloc: std.mem.Allocator, token: []const u8) !f64 {
     }
     const buf = try alloc.alloc(u8, trimmed.len);
     defer alloc.free(buf);
+
     @memcpy(buf, trimmed);
     for (buf) |*c| {
         if (c.* == 'D' or c.* == 'd') c.* = 'E';

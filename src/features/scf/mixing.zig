@@ -30,6 +30,7 @@ pub fn mixDensityKerker(
     // Compute density difference
     const delta_rho = try alloc.alloc(f64, rho.len);
     defer alloc.free(delta_rho);
+
     for (rho, 0..) |value, i| {
         delta_rho[i] = rho_new[i] - value;
     }
@@ -96,15 +97,12 @@ pub const PulayMixer = struct {
         for (0..n) |i| {
             residual[i] = rho_new[i] - rho[i];
         }
-
         // Store current density and residual
         const rho_copy = try self.alloc.alloc(f64, n);
         errdefer self.alloc.free(rho_copy);
         @memcpy(rho_copy, rho);
-
         try self.rho_history.append(self.alloc, rho_copy);
         try self.residual_history.append(self.alloc, residual);
-
         // Remove oldest entries if history is full
         while (self.rho_history.items.len > self.history) {
             self.alloc.free(self.rho_history.orderedRemove(0));
@@ -124,6 +122,7 @@ pub const PulayMixer = struct {
         const matrix_size = m + 1;
         const B = try self.alloc.alloc(f64, matrix_size * matrix_size);
         defer self.alloc.free(B);
+
         const rhs = try self.alloc.alloc(f64, matrix_size);
         defer self.alloc.free(rhs);
 
@@ -201,6 +200,7 @@ pub const PulayMixer = struct {
         const matrix_size = m + 1;
         const B = try self.alloc.alloc(f64, matrix_size * matrix_size);
         defer self.alloc.free(B);
+
         const rhs = try self.alloc.alloc(f64, matrix_size);
         defer self.alloc.free(rhs);
 
@@ -294,6 +294,7 @@ pub const PulayMixer = struct {
         const matrix_size = m + 1;
         const B = try self.alloc.alloc(f64, matrix_size * matrix_size);
         defer self.alloc.free(B);
+
         const rhs_vec = try self.alloc.alloc(f64, matrix_size);
         defer self.alloc.free(rhs_vec);
 
@@ -392,12 +393,12 @@ fn solvePulaySystem(alloc: std.mem.Allocator, B: []f64, rhs: []f64, size: usize)
     // Copy matrix and rhs for in-place solving
     const A = try alloc.alloc(f64, size * size);
     defer alloc.free(A);
-    @memcpy(A, B);
 
+    @memcpy(A, B);
     const b = try alloc.alloc(f64, size);
     defer alloc.free(b);
-    @memcpy(b, rhs);
 
+    @memcpy(b, rhs);
     // Gaussian elimination with partial pivoting
     for (0..size) |col| {
         // Find pivot
@@ -532,6 +533,7 @@ pub const ComplexPulayMixer = struct {
         const matrix_size = m + 1;
         const B = try self.alloc.alloc(f64, matrix_size * matrix_size);
         defer self.alloc.free(B);
+
         const rhs = try self.alloc.alloc(f64, matrix_size);
         defer self.alloc.free(rhs);
 
