@@ -224,6 +224,388 @@ pub const PerturbationResult = struct {
     }
 };
 
+const CoreResources = struct {
+    rho_core: ?[]f64 = null,
+    rho_core_tables_buf: ?[]form_factor.RadialFormFactorTable = null,
+    rho_core_tables: ?[]const form_factor.RadialFormFactorTable = null,
+
+    fn deinit(self: *CoreResources, alloc: std.mem.Allocator) void {
+        if (self.rho_core_tables_buf) |buf| {
+            for (buf) |*t| t.deinit(alloc);
+            alloc.free(buf);
+        }
+        if (self.rho_core) |rc| alloc.free(rc);
+    }
+};
+
+fn initDfptApplyContext(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: config_mod.Config,
+    grid: Grid,
+    gvecs: []const plane_wave.GVector,
+    local_r: []f64,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    volume: f64,
+    pert_threads: usize,
+) !*scf_mod.ApplyContext {
+    const apply_ctx_ptr = try alloc.create(scf_mod.ApplyContext);
+    errdefer alloc.destroy(apply_ctx_ptr);
+
+    apply_ctx_ptr.* = try scf_mod.ApplyContext.initWithWorkspaces(
+        alloc,
+        io,
+        grid,
+        @constCast(gvecs),
+        local_r,
+        null,
+        species,
+        atoms,
+        1.0 / volume,
+        true,
+        null,
+        null,
+        cfg.scf.fft_backend,
+        pert_threads,
+    );
+    return apply_ctx_ptr;
+}
+
+fn solveGammaEigenproblem(
+    alloc: std.mem.Allocator,
+    cfg: config_mod.Config,
+    apply_ctx_ptr: *scf_mod.ApplyContext,
+    gvecs: []const plane_wave.GVector,
+    n_occ: usize,
+) !linalg.EigenDecomp {
+    logDfptInfo("dfpt: solving Gamma-point eigenvalues with LOBPCG\n", .{});
+    const nbands_solve = @max(n_occ + 2, @as(usize, 8));
+    const diag = try alloc.alloc(f64, gvecs.len);
+    defer alloc.free(diag);
+
+    for (gvecs, 0..) |g, i| {
+        diag[i] = g.kinetic;
+    }
+    const op = iterative.Operator{
+        .n = gvecs.len,
+        .ctx = @ptrCast(apply_ctx_ptr),
+        .apply = &scf_mod.applyHamiltonian,
+        .apply_batch = &scf_mod.applyHamiltonianBatched,
+    };
+    return try iterative.hermitianEigenDecompIterative(
+        alloc,
+        cfg.linalg_backend,
+        op,
+        diag,
+        nbands_solve,
+        .{ .max_iter = 100, .tol = 1e-8 },
+    );
+}
+
+fn copyOccupiedWavefunctions(
+    alloc: std.mem.Allocator,
+    eig: linalg.EigenDecomp,
+    n_occ: usize,
+    n_pw: usize,
+) !struct { wf_const: [][]const math.Complex, wf_2d: [][]math.Complex } {
+    const wf_const = try alloc.alloc([]const math.Complex, n_occ);
+    errdefer alloc.free(wf_const);
+
+    const wf_2d = try alloc.alloc([]math.Complex, n_occ);
+    errdefer {
+        for (wf_2d) |wf| alloc.free(wf);
+        alloc.free(wf_2d);
+    }
+
+    for (0..n_occ) |n| {
+        wf_2d[n] = try alloc.alloc(math.Complex, n_pw);
+        @memcpy(wf_2d[n], eig.vectors[n * n_pw .. (n + 1) * n_pw]);
+        wf_const[n] = wf_2d[n];
+    }
+    return .{ .wf_const = wf_const, .wf_2d = wf_2d };
+}
+
+fn buildCoreResources(
+    alloc: std.mem.Allocator,
+    cfg: config_mod.Config,
+    grid: Grid,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+) !CoreResources {
+    var resources = CoreResources{};
+
+    if (!scf_mod.hasNlcc(species)) return resources;
+    resources.rho_core = try scf_mod.buildCoreDensity(alloc, grid, species, @constCast(atoms));
+    logDfptDebug("dfpt: NLCC core charge built on grid\n", .{});
+
+    const ff_q_max = @sqrt(cfg.scf.ecut_ry) * 2.0 + 10.0;
+    const buf = try alloc.alloc(form_factor.RadialFormFactorTable, species.len);
+    for (species, 0..) |sp, si| {
+        buf[si] = try form_factor.RadialFormFactorTable.initRhoCore(alloc, sp.upf.*, ff_q_max);
+    }
+    resources.rho_core_tables_buf = buf;
+    resources.rho_core_tables = buf;
+    return resources;
+}
+
+fn buildDfptVxcGrid(
+    alloc: std.mem.Allocator,
+    cfg: config_mod.Config,
+    grid: Grid,
+    density: []const f64,
+    rho_core: ?[]const f64,
+) !?[]f64 {
+    if (rho_core == null) return null;
+    if (cfg.scf.xc == .pbe) {
+        const fields = try scf_mod.computeXcFields(alloc, grid, density, rho_core, false, .pbe);
+        alloc.free(fields.exc);
+        return fields.vxc;
+    }
+
+    const total = grid.count();
+    const vxc_r = try alloc.alloc(f64, total);
+    for (0..total) |i| {
+        const core = if (rho_core) |rc| rc[i] else 0.0;
+        const eval = xc.evalPoint(cfg.scf.xc, density[i] + core, 0.0);
+        vxc_r[i] = eval.df_dn;
+    }
+    return vxc_r;
+}
+
+const GammaGroundPrep = struct {
+    basis: plane_wave.Basis,
+    ionic: hamiltonian.PotentialGrid,
+    local_r: []f64,
+    n_occ: usize,
+
+    fn deinit(self: *GammaGroundPrep, alloc: std.mem.Allocator) void {
+        alloc.free(self.local_r);
+        self.ionic.deinit(alloc);
+        self.basis.deinit(alloc);
+    }
+};
+
+fn initGammaGroundPrep(
+    alloc: std.mem.Allocator,
+    cfg: config_mod.Config,
+    scf_result: *scf_mod.ScfResult,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    recip: math.Mat3,
+    local_cfg: local_potential.LocalPotentialConfig,
+) !GammaGroundPrep {
+    const nelec = totalElectrons(species, atoms);
+    const n_occ = @as(usize, @intFromFloat(std.math.ceil(nelec / 2.0)));
+    const k_gamma = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
+    var basis = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, k_gamma);
+    errdefer basis.deinit(alloc);
+
+    logDfptInfo("dfpt: nelec={d:.1} n_occ={d} n_pw={d}\n", .{ nelec, n_occ, basis.gvecs.len });
+    var ionic = try scf_mod.buildIonicPotentialGrid(
+        alloc,
+        scf_result.grid,
+        species,
+        @constCast(atoms),
+        local_cfg,
+        null,
+        null,
+    );
+    errdefer ionic.deinit(alloc);
+
+    const local_r = try scf_mod.buildLocalPotentialReal(
+        alloc,
+        scf_result.grid,
+        ionic,
+        scf_result.potential,
+    );
+    errdefer alloc.free(local_r);
+    return .{ .basis = basis, .ionic = ionic, .local_r = local_r, .n_occ = n_occ };
+}
+
+fn logGammaEigenvalues(n_occ: usize, eig: linalg.EigenDecomp) void {
+    logDfptDebug("dfpt: Gamma eigenvalues (Ry):", .{});
+    for (0..@min(n_occ + 2, eig.values.len)) |i| {
+        logDfptDebug(" {d:.6}", .{eig.values[i]});
+    }
+    logDfptDebug("\n", .{});
+}
+
+fn makeGroundState(
+    scf_result: *scf_mod.ScfResult,
+    cfg: config_mod.Config,
+    gvecs: []const plane_wave.GVector,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    local_cfg: local_potential.LocalPotentialConfig,
+    apply_ctx_ptr: *scf_mod.ApplyContext,
+    wf_const: [][]const math.Complex,
+    n_occ: usize,
+    eig: linalg.EigenDecomp,
+    core_resources: CoreResources,
+    vxc_r: ?[]f64,
+    fxc_result: *const FxcGridResult,
+) GroundState {
+    return .{
+        .wavefunctions = wf_const,
+        .n_occ = n_occ,
+        .eigenvalues = eig.values,
+        .rho_r = scf_result.density,
+        .fxc_r = fxc_result.fxc_r,
+        .gvecs = gvecs,
+        .grid = scf_result.grid,
+        .species = species,
+        .atoms = atoms,
+        .local_cfg = local_cfg,
+        .ff_tables = null,
+        .apply_ctx = apply_ctx_ptr,
+        .rho_core = core_resources.rho_core,
+        .rho_core_tables = core_resources.rho_core_tables,
+        .vxc_r = vxc_r,
+        .xc_func = cfg.scf.xc,
+        .fxc_ns_r = fxc_result.fxc_ns_r,
+        .fxc_ss_r = fxc_result.fxc_ss_r,
+        .v_sigma_r = fxc_result.v_sigma_r,
+        .grad_n0_x = fxc_result.grad_n0_x,
+        .grad_n0_y = fxc_result.grad_n0_y,
+        .grad_n0_z = fxc_result.grad_n0_z,
+    };
+}
+
+fn makePreparedGroundState(
+    alloc: std.mem.Allocator,
+    gs: GroundState,
+    gamma_prep: GammaGroundPrep,
+    apply_ctx_ptr: *scf_mod.ApplyContext,
+    eig: linalg.EigenDecomp,
+    wf_2d: [][]math.Complex,
+    wf_const: [][]const math.Complex,
+    core_resources: CoreResources,
+    vxc_r: ?[]f64,
+    fxc_result: FxcGridResult,
+) PreparedGroundState {
+    return .{
+        .gs = gs,
+        .basis = gamma_prep.basis,
+        .ionic = gamma_prep.ionic,
+        .local_r = gamma_prep.local_r,
+        .apply_ctx_ptr = apply_ctx_ptr,
+        .eig = eig,
+        .wf_2d = wf_2d,
+        .wf_const = wf_const,
+        .rho_core = core_resources.rho_core,
+        .rho_core_tables_buf = core_resources.rho_core_tables_buf,
+        .vxc_r = vxc_r,
+        .fxc_r = fxc_result.fxc_r,
+        .fxc_ns_r = fxc_result.fxc_ns_r,
+        .fxc_ss_r = fxc_result.fxc_ss_r,
+        .v_sigma_r = fxc_result.v_sigma_r,
+        .grad_n0_x = fxc_result.grad_n0_x,
+        .grad_n0_y = fxc_result.grad_n0_y,
+        .grad_n0_z = fxc_result.grad_n0_z,
+        .alloc = alloc,
+    };
+}
+
+const ElectronicState = struct {
+    apply_ctx_ptr: *scf_mod.ApplyContext,
+    eig: linalg.EigenDecomp,
+    wf_const: [][]const math.Complex,
+    wf_2d: [][]math.Complex,
+
+    fn deinit(self: *ElectronicState, alloc: std.mem.Allocator) void {
+        for (self.wf_2d) |band| alloc.free(band);
+        alloc.free(self.wf_2d);
+        alloc.free(self.wf_const);
+        self.eig.deinit(alloc);
+        self.apply_ctx_ptr.deinit(alloc);
+        alloc.destroy(self.apply_ctx_ptr);
+    }
+};
+
+fn buildGammaElectronicState(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: config_mod.Config,
+    grid: Grid,
+    gvecs: []const plane_wave.GVector,
+    local_r: []f64,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    volume: f64,
+    n_occ: usize,
+) !ElectronicState {
+    const pert_threads = perturbationThreadCount(3 * atoms.len, cfg.dfpt.perturbation_threads);
+    const apply_ctx_ptr = try initDfptApplyContext(
+        alloc,
+        io,
+        cfg,
+        grid,
+        gvecs,
+        local_r,
+        species,
+        atoms,
+        volume,
+        pert_threads,
+    );
+    errdefer {
+        apply_ctx_ptr.deinit(alloc);
+        alloc.destroy(apply_ctx_ptr);
+    }
+
+    var eig = try solveGammaEigenproblem(alloc, cfg, apply_ctx_ptr, gvecs, n_occ);
+    errdefer eig.deinit(alloc);
+    logGammaEigenvalues(n_occ, eig);
+
+    const wf = try copyOccupiedWavefunctions(alloc, eig, n_occ, gvecs.len);
+    errdefer {
+        for (wf.wf_2d) |band| alloc.free(band);
+        alloc.free(wf.wf_2d);
+        alloc.free(wf.wf_const);
+    }
+    return .{
+        .apply_ctx_ptr = apply_ctx_ptr,
+        .eig = eig,
+        .wf_const = wf.wf_const,
+        .wf_2d = wf.wf_2d,
+    };
+}
+
+const XcSupport = struct {
+    core_resources: CoreResources,
+    vxc_r: ?[]f64,
+    fxc_result: FxcGridResult,
+
+    fn deinit(self: *XcSupport, alloc: std.mem.Allocator) void {
+        self.fxc_result.deinit(alloc);
+        if (self.vxc_r) |v| alloc.free(v);
+        self.core_resources.deinit(alloc);
+    }
+};
+
+fn buildDfptXcSupport(
+    alloc: std.mem.Allocator,
+    cfg: config_mod.Config,
+    grid: Grid,
+    density: []const f64,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+) !XcSupport {
+    var core_resources = try buildCoreResources(alloc, cfg, grid, species, atoms);
+    errdefer core_resources.deinit(alloc);
+
+    const vxc_r = try buildDfptVxcGrid(alloc, cfg, grid, density, core_resources.rho_core);
+    errdefer if (vxc_r) |v| alloc.free(v);
+
+    var fxc_result = try buildFxcGrid(alloc, grid, density, core_resources.rho_core, cfg.scf.xc);
+    errdefer fxc_result.deinit(alloc);
+    return .{
+        .core_resources = core_resources,
+        .vxc_r = vxc_r,
+        .fxc_result = fxc_result,
+    };
+}
+
 // =====================================================================
 // Ground-state preparation
 // =====================================================================
@@ -243,206 +625,69 @@ pub fn prepareGroundState(
     setDfptLogLevel(cfg.dfpt.log_level);
     const grid = scf_result.grid;
     const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, grid.cell);
-
-    // Compute number of occupied bands
-    const nelec = totalElectrons(species, atoms);
-    const n_occ = @as(usize, @intFromFloat(std.math.ceil(nelec / 2.0)));
-
-    // Generate Γ-point PW basis
-    const k_gamma = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
-    var basis = try plane_wave.generate(alloc, recip, cfg.scf.ecut_ry, k_gamma);
-    errdefer basis.deinit(alloc);
-    const gvecs = basis.gvecs;
-    const n_pw = gvecs.len;
-
-    logDfptInfo("dfpt: nelec={d:.1} n_occ={d} n_pw={d}\n", .{ nelec, n_occ, n_pw });
-
-    // Build ionic potential grid
-    var ionic = try scf_mod.buildIonicPotentialGrid(
+    var gamma_prep = try initGammaGroundPrep(
         alloc,
-        grid,
-        species,
-        @constCast(atoms),
-        local_cfg,
-        null,
-        null,
-    );
-    errdefer ionic.deinit(alloc);
-
-    // Build local_r = IFFT(ionic + SCF potential)
-    const local_r = try scf_mod.buildLocalPotentialReal(alloc, grid, ionic, scf_result.potential);
-    errdefer alloc.free(local_r);
-
-    // Build ApplyContext for H₀ at Γ-point (heap-allocated for stable pointer)
-    // Use multiple workspaces to support perturbation parallelism
-    const pert_threads = perturbationThreadCount(3 * atoms.len, cfg.dfpt.perturbation_threads);
-    const apply_ctx_ptr = try alloc.create(scf_mod.ApplyContext);
-    errdefer alloc.destroy(apply_ctx_ptr);
-    apply_ctx_ptr.* = try scf_mod.ApplyContext.initWithWorkspaces(
-        alloc,
-        io,
-        grid,
-        @constCast(gvecs),
-        local_r,
-        null,
+        cfg,
+        scf_result,
         species,
         atoms,
-        1.0 / volume,
-        true,
-        null,
-        null,
-        cfg.scf.fft_backend,
-        pert_threads,
+        recip,
+        local_cfg,
     );
-    errdefer apply_ctx_ptr.deinit(alloc);
-
-    // Solve eigenvalue problem at Γ-point using LOBPCG
-    logDfptInfo("dfpt: solving Gamma-point eigenvalues with LOBPCG\n", .{});
-    const nbands_solve = @max(n_occ + 2, @as(usize, 8));
-    const diag = try alloc.alloc(f64, n_pw);
-    defer alloc.free(diag);
-    for (gvecs, 0..) |g, i| {
-        diag[i] = g.kinetic;
-    }
-
-    const op = iterative.Operator{
-        .n = n_pw,
-        .ctx = @ptrCast(apply_ctx_ptr),
-        .apply = &scf_mod.applyHamiltonian,
-        .apply_batch = &scf_mod.applyHamiltonianBatched,
-    };
-    var eig = try iterative.hermitianEigenDecompIterative(
+    errdefer gamma_prep.deinit(alloc);
+    const gvecs = gamma_prep.basis.gvecs;
+    const n_occ = gamma_prep.n_occ;
+    var electronic = try buildGammaElectronicState(
         alloc,
-        cfg.linalg_backend,
-        op,
-        diag,
-        nbands_solve,
-        .{ .max_iter = 100, .tol = 1e-8 },
+        io,
+        cfg,
+        grid,
+        gvecs,
+        gamma_prep.local_r,
+        species,
+        atoms,
+        volume,
+        n_occ,
     );
-    errdefer eig.deinit(alloc);
+    errdefer electronic.deinit(alloc);
 
-    logDfptDebug("dfpt: Gamma eigenvalues (Ry):", .{});
-    for (0..@min(n_occ + 2, eig.values.len)) |i| {
-        logDfptDebug(" {d:.6}", .{eig.values[i]});
-    }
-    logDfptDebug("\n", .{});
+    var xc_support = try buildDfptXcSupport(
+        alloc,
+        cfg,
+        grid,
+        scf_result.density,
+        species,
+        atoms,
+    );
+    errdefer xc_support.deinit(alloc);
 
-    // Extract occupied wavefunctions as 2D array
-    const wf_const = try alloc.alloc([]const math.Complex, n_occ);
-    errdefer alloc.free(wf_const);
-    const wf_2d = try alloc.alloc([]math.Complex, n_occ);
-    errdefer {
-        for (wf_2d) |wf| alloc.free(wf);
-        alloc.free(wf_2d);
-    }
-    for (0..n_occ) |n| {
-        wf_2d[n] = try alloc.alloc(math.Complex, n_pw);
-        @memcpy(wf_2d[n], eig.vectors[n * n_pw .. (n + 1) * n_pw]);
-        wf_const[n] = wf_2d[n];
-    }
-
-    // Build NLCC core charge density on grid (if any species has NLCC)
-    var rho_core: ?[]f64 = null;
-    if (scf_mod.hasNlcc(species)) {
-        rho_core = try scf_mod.buildCoreDensity(alloc, grid, species, @constCast(atoms));
-        logDfptDebug("dfpt: NLCC core charge built on grid\n", .{});
-    }
-    errdefer if (rho_core) |rc| alloc.free(rc);
-
-    // Build rho_core form factor tables
-    var rho_core_tables_buf: ?[]form_factor.RadialFormFactorTable = null;
-    var rho_core_tables: ?[]const form_factor.RadialFormFactorTable = null;
-    if (rho_core != null) {
-        const ff_q_max = @sqrt(cfg.scf.ecut_ry) * 2.0 + 10.0;
-        const buf = try alloc.alloc(form_factor.RadialFormFactorTable, species.len);
-        for (species, 0..) |sp, si| {
-            buf[si] = try form_factor.RadialFormFactorTable.initRhoCore(alloc, sp.upf.*, ff_q_max);
-        }
-        rho_core_tables_buf = buf;
-        rho_core_tables = buf;
-    }
-    errdefer if (rho_core_tables_buf) |buf| {
-        for (buf) |*t| t.deinit(alloc);
-        alloc.free(buf);
-    };
-
-    // Compute V_xc(r) for NLCC self-energy dynmat term
-    // For PBE, must use computeXcFields to properly include gradient corrections
-    var vxc_r: ?[]f64 = null;
-    if (rho_core != null) {
-        if (cfg.scf.xc == .pbe) {
-            const fields = try scf_mod.computeXcFields(
-                alloc,
-                grid,
-                scf_result.density,
-                rho_core,
-                false,
-                .pbe,
-            );
-            alloc.free(fields.exc);
-            vxc_r = fields.vxc;
-        } else {
-            const total_grid = grid.count();
-            vxc_r = try alloc.alloc(f64, total_grid);
-            for (0..total_grid) |i| {
-                const core = if (rho_core) |rc| rc[i] else 0.0;
-                const eval = xc.evalPoint(cfg.scf.xc, scf_result.density[i] + core, 0.0);
-                vxc_r.?[i] = eval.df_dn;
-            }
-        }
-    }
-    errdefer if (vxc_r) |v| alloc.free(v);
-
-    // Build f_xc(r) grid (includes GGA kernel terms for PBE)
-    var fxc_result = try buildFxcGrid(alloc, grid, scf_result.density, rho_core, cfg.scf.xc);
-    errdefer fxc_result.deinit(alloc);
-
-    const gs = GroundState{
-        .wavefunctions = wf_const,
-        .n_occ = n_occ,
-        .eigenvalues = eig.values,
-        .rho_r = scf_result.density,
-        .fxc_r = fxc_result.fxc_r,
-        .gvecs = gvecs,
-        .grid = grid,
-        .species = species,
-        .atoms = atoms,
-        .local_cfg = local_cfg,
-        .ff_tables = null,
-        .apply_ctx = apply_ctx_ptr,
-        .rho_core = rho_core,
-        .rho_core_tables = rho_core_tables,
-        .vxc_r = vxc_r,
-        .xc_func = cfg.scf.xc,
-        .fxc_ns_r = fxc_result.fxc_ns_r,
-        .fxc_ss_r = fxc_result.fxc_ss_r,
-        .v_sigma_r = fxc_result.v_sigma_r,
-        .grad_n0_x = fxc_result.grad_n0_x,
-        .grad_n0_y = fxc_result.grad_n0_y,
-        .grad_n0_z = fxc_result.grad_n0_z,
-    };
-
-    return PreparedGroundState{
-        .gs = gs,
-        .basis = basis,
-        .ionic = ionic,
-        .local_r = local_r,
-        .apply_ctx_ptr = apply_ctx_ptr,
-        .eig = eig,
-        .wf_2d = wf_2d,
-        .wf_const = wf_const,
-        .rho_core = rho_core,
-        .rho_core_tables_buf = rho_core_tables_buf,
-        .vxc_r = vxc_r,
-        .fxc_r = fxc_result.fxc_r,
-        .fxc_ns_r = fxc_result.fxc_ns_r,
-        .fxc_ss_r = fxc_result.fxc_ss_r,
-        .v_sigma_r = fxc_result.v_sigma_r,
-        .grad_n0_x = fxc_result.grad_n0_x,
-        .grad_n0_y = fxc_result.grad_n0_y,
-        .grad_n0_z = fxc_result.grad_n0_z,
-        .alloc = alloc,
-    };
+    const gs = makeGroundState(
+        scf_result,
+        cfg,
+        gvecs,
+        species,
+        atoms,
+        local_cfg,
+        electronic.apply_ctx_ptr,
+        electronic.wf_const,
+        n_occ,
+        electronic.eig,
+        xc_support.core_resources,
+        xc_support.vxc_r,
+        &xc_support.fxc_result,
+    );
+    return makePreparedGroundState(
+        alloc,
+        gs,
+        gamma_prep,
+        electronic.apply_ctx_ptr,
+        electronic.eig,
+        electronic.wf_2d,
+        electronic.wf_const,
+        xc_support.core_resources,
+        xc_support.vxc_r,
+        xc_support.fxc_result,
+    );
 }
 
 // =====================================================================
@@ -505,6 +750,7 @@ pub fn buildFxcGrid(
     // Build total density
     const density = try alloc.alloc(f64, total);
     defer alloc.free(density);
+
     for (0..total) |i| {
         const core = if (rho_core) |rc| rc[i] else 0.0;
         density[i] = rho_r[i] + core;
