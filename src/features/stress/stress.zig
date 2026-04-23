@@ -1023,17 +1023,7 @@ pub fn compute_stress_from_scf(
 ) !StressTerms {
     const species = model.species;
     const atoms = model.atoms;
-    const grid = Grid{
-        .nx = scf_result.grid.nx,
-        .ny = scf_result.grid.ny,
-        .nz = scf_result.grid.nz,
-        .min_h = scf_result.grid.min_h,
-        .min_k = scf_result.grid.min_k,
-        .min_l = scf_result.grid.min_l,
-        .cell = scf_result.grid.cell,
-        .recip = scf_result.grid.recip,
-        .volume = scf_result.grid.volume,
-    };
+    const grid = stress_grid_from_scf_result(scf_result);
     const rho_g = try density_to_reciprocal(
         alloc,
         io,
@@ -1057,7 +1047,58 @@ pub fn compute_stress_from_scf(
     var paw_buffers = try init_stress_paw_buffers(alloc, grid, scf_result, atoms, ecutrho);
     defer paw_buffers.deinit(alloc);
 
-    var stress_terms = try compute_stress(
+    var stress_terms = try compute_stress_terms_from_scf(
+        alloc,
+        scf_result,
+        cfg,
+        species,
+        atoms,
+        grid,
+        rho_g,
+        &tables,
+        paw_buffers,
+        ecutrho,
+    );
+    try maybe_symmetrize_stress_terms(
+        alloc,
+        &stress_terms,
+        scf_result.grid.cell,
+        scf_result.grid.volume,
+        atoms,
+        cfg.scf.symmetry,
+        cfg.scf.quiet,
+    );
+
+    return stress_terms;
+}
+
+fn stress_grid_from_scf_result(scf_result: *const scf.ScfResult) Grid {
+    return .{
+        .nx = scf_result.grid.nx,
+        .ny = scf_result.grid.ny,
+        .nz = scf_result.grid.nz,
+        .min_h = scf_result.grid.min_h,
+        .min_k = scf_result.grid.min_k,
+        .min_l = scf_result.grid.min_l,
+        .cell = scf_result.grid.cell,
+        .recip = scf_result.grid.recip,
+        .volume = scf_result.grid.volume,
+    };
+}
+
+fn compute_stress_terms_from_scf(
+    alloc: std.mem.Allocator,
+    scf_result: *const scf.ScfResult,
+    cfg: config.Config,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    grid: Grid,
+    rho_g: []const math.Complex,
+    tables: *const StressTableSet,
+    paw_buffers: StressPawBuffers,
+    ecutrho: f64,
+) !StressTerms {
+    return try compute_stress(
         alloc,
         grid,
         rho_g,
@@ -1083,17 +1124,6 @@ pub fn compute_stress_from_scf(
         ecutrho,
         scf_result.wavefunctions_down,
     );
-    try maybe_symmetrize_stress_terms(
-        alloc,
-        &stress_terms,
-        scf_result.grid.cell,
-        scf_result.grid.volume,
-        atoms,
-        cfg.scf.symmetry,
-        cfg.scf.quiet,
-    );
-
-    return stress_terms;
 }
 
 test "ewald stress finite difference" {

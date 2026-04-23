@@ -268,7 +268,7 @@ pub fn band_eigenvalues_iterative_ext(
 fn init_band_problem(
     alloc: std.mem.Allocator,
     ctx: *const BandIterativeContext,
-    gvecs: []const plane_wave.GVector,
+    gvecs: []plane_wave.GVector,
     nbands: usize,
     cache: ?*BandVectorCache,
     opts: BandEigenOptions,

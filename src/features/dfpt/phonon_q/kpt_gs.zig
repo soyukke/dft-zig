@@ -334,6 +334,86 @@ fn expand_ibz_kpoint(
     ibz: *const IbzKData,
     full_kp: symmetry.KPoint,
 ) !KPointGsData {
+    var setup = try init_expanded_kpoint_setup(
+        alloc,
+        io,
+        cfg,
+        local_r,
+        species,
+        atoms,
+        recip,
+        volume,
+        grid,
+        symops,
+        ibz_frac,
+        ibz,
+        full_kp,
+    );
+    errdefer setup.deinit(alloc);
+
+    const rot_result = try wfn_rot.rotate_wavefunctions_in_place(
+        alloc,
+        ibz.wavefunctions_const,
+        ibz.basis,
+        setup.symop,
+        setup.sk_unwrapped,
+        setup.time_reversed,
+    );
+    errdefer {
+        for (rot_result.wfn) |w| alloc.free(w);
+        alloc.free(rot_result.wfn);
+        alloc.free(rot_result.wfn_const);
+    }
+
+    const eigenvalues_k = try copy_kpoint_eigenvalues(alloc, ibz.eigenvalues, ibz.n_occ);
+    errdefer alloc.free(eigenvalues_k);
+
+    return .{
+        .k_frac = full_kp.k_frac,
+        .k_cart = full_kp.k_cart,
+        .weight = 1.0 / @as(f64, @floatFromInt(total)),
+        .n_occ = ibz.n_occ,
+        .n_pw_k = ibz.basis.gvecs.len,
+        .basis_k = setup.basis_k,
+        .map_k = setup.map_k,
+        .apply_ctx_k = setup.apply_ctx_k,
+        .eigenvalues_k = eigenvalues_k,
+        .wavefunctions_k = rot_result.wfn,
+        .wavefunctions_k_const = rot_result.wfn_const,
+    };
+}
+
+const ExpandedKPointSetup = struct {
+    basis_k: plane_wave.Basis,
+    sk_unwrapped: math.Vec3,
+    symop: symmetry.SymOp,
+    time_reversed: bool,
+    map_k: scf_mod.PwGridMap,
+    apply_ctx_k: *scf_mod.ApplyContext,
+
+    fn deinit(self: *ExpandedKPointSetup, alloc: std.mem.Allocator) void {
+        self.basis_k.deinit(alloc);
+        self.map_k.deinit(alloc);
+        self.apply_ctx_k.deinit(alloc);
+        alloc.destroy(self.apply_ctx_k);
+    }
+};
+
+fn init_expanded_kpoint_setup(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: config_mod.Config,
+    local_r: []const f64,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    recip: math.Mat3,
+    volume: f64,
+    grid: Grid,
+    symops: []const symmetry.SymOp,
+    ibz_frac: math.Vec3,
+    ibz: *const IbzKData,
+    full_kp: symmetry.KPoint,
+) !ExpandedKPointSetup {
     const found = find_symop_for_kpoint(symops, ibz_frac, full_kp.k_frac, 1e-6);
     var rotated = try build_rotated_basis(
         alloc,
@@ -365,38 +445,24 @@ fn expand_ibz_kpoint(
         apply_ctx_k.deinit(alloc);
         alloc.destroy(apply_ctx_k);
     }
-
-    const rot_result = try wfn_rot.rotate_wavefunctions_in_place(
-        alloc,
-        ibz.wavefunctions_const,
-        ibz.basis,
-        found.symop,
-        rotated.sk_unwrapped,
-        found.time_reversed,
-    );
-    errdefer {
-        for (rot_result.wfn) |w| alloc.free(w);
-        alloc.free(rot_result.wfn);
-        alloc.free(rot_result.wfn_const);
-    }
-
-    const eigenvalues_k = try alloc.alloc(f64, ibz.n_occ);
-    errdefer alloc.free(eigenvalues_k);
-    @memcpy(eigenvalues_k, ibz.eigenvalues);
-
     return .{
-        .k_frac = full_kp.k_frac,
-        .k_cart = full_kp.k_cart,
-        .weight = 1.0 / @as(f64, @floatFromInt(total)),
-        .n_occ = ibz.n_occ,
-        .n_pw_k = ibz.basis.gvecs.len,
         .basis_k = rotated.basis,
+        .sk_unwrapped = rotated.sk_unwrapped,
+        .symop = found.symop,
+        .time_reversed = found.time_reversed,
         .map_k = map_k,
         .apply_ctx_k = apply_ctx_k,
-        .eigenvalues_k = eigenvalues_k,
-        .wavefunctions_k = rot_result.wfn,
-        .wavefunctions_k_const = rot_result.wfn_const,
     };
+}
+
+fn copy_kpoint_eigenvalues(
+    alloc: std.mem.Allocator,
+    eigenvalues: []const f64,
+    n_occ: usize,
+) ![]f64 {
+    const copied = try alloc.alloc(f64, n_occ);
+    @memcpy(copied, eigenvalues);
+    return copied;
 }
 
 /// Prepare full-BZ k-point ground-state data for DFPT.
@@ -478,6 +544,67 @@ pub fn prepare_full_bz_kpoints_from_ibz(
     volume: f64,
     grid: Grid,
 ) ![]KPointGsData {
+    var ctx = try init_ibz_expansion_context(alloc, cfg, atoms, cell_bohr, recip);
+    defer ctx.deinit(alloc);
+
+    const ibz_data = try solve_ibz_ground_states(
+        alloc,
+        io,
+        cfg,
+        gs,
+        local_r,
+        species,
+        atoms,
+        recip,
+        volume,
+        grid,
+        ctx.mapping.ibz_kpoints,
+    );
+    defer {
+        for (ibz_data) |*data| data.deinit(alloc);
+        alloc.free(ibz_data);
+    }
+
+    return try expand_full_bz_from_ibz(
+        alloc,
+        io,
+        cfg,
+        local_r,
+        species,
+        atoms,
+        recip,
+        volume,
+        grid,
+        ctx.symops,
+        ctx.total,
+        &ctx.mapping,
+        ibz_data,
+        ctx.full_kpts,
+    );
+}
+
+const IbzExpansionContext = struct {
+    total: usize,
+    symops: []const symmetry.SymOp,
+    kmesh_ops: []const reduction.KmeshOp,
+    mapping: reduction.KmeshMapping,
+    full_kpts: []const symmetry.KPoint,
+
+    fn deinit(self: *IbzExpansionContext, alloc: std.mem.Allocator) void {
+        alloc.free(self.symops);
+        alloc.free(self.kmesh_ops);
+        self.mapping.deinit(alloc);
+        alloc.free(self.full_kpts);
+    }
+};
+
+fn init_ibz_expansion_context(
+    alloc: std.mem.Allocator,
+    cfg: config_mod.Config,
+    atoms: []const hamiltonian.AtomData,
+    cell_bohr: math.Mat3,
+    recip: math.Mat3,
+) !IbzExpansionContext {
     const kmesh = cfg.scf.kmesh;
     const shift = math.Vec3{
         .x = cfg.scf.kmesh_shift[0],
@@ -485,18 +612,13 @@ pub fn prepare_full_bz_kpoints_from_ibz(
         .z = cfg.scf.kmesh_shift[2],
     };
     const total = kmesh[0] * kmesh[1] * kmesh[2];
-
-    // Get symmetry operations
     const symops = try symmetry_mod.get_symmetry_ops(alloc, cell_bohr, atoms, 1e-5);
-    defer alloc.free(symops);
-
+    errdefer alloc.free(symops);
     log_dfpt_info("dfpt_ibz: {d} symmetry operations\n", .{symops.len});
 
-    // Filter symmetry ops compatible with k-mesh
     const kmesh_ops = try reduction.filter_sym_ops_for_kmesh(alloc, symops, kmesh, shift, 1e-8);
-    defer alloc.free(kmesh_ops);
+    errdefer alloc.free(kmesh_ops);
 
-    // Get IBZ→full BZ mapping
     var mapping = try reduction.reduce_kmesh_with_mapping(
         alloc,
         kmesh,
@@ -505,23 +627,43 @@ pub fn prepare_full_bz_kpoints_from_ibz(
         recip,
         true,
     );
-    defer mapping.deinit(alloc);
+    errdefer mapping.deinit(alloc);
+    log_dfpt_info(
+        "dfpt_ibz: {d} IBZ k-points -> {d} full BZ k-points\n",
+        .{ mapping.ibz_kpoints.len, total },
+    );
 
-    const n_ibz = mapping.ibz_kpoints.len;
-    log_dfpt_info("dfpt_ibz: {d} IBZ k-points -> {d} full BZ k-points\n", .{ n_ibz, total });
-
-    // Generate full BZ mesh for reference (to get k_frac/k_cart for each full point)
     const full_kpts = try mesh_mod.generate_kmesh(alloc, kmesh, recip, shift);
-    defer alloc.free(full_kpts);
+    errdefer alloc.free(full_kpts);
+    return .{
+        .total = total,
+        .symops = symops,
+        .kmesh_ops = kmesh_ops,
+        .mapping = mapping,
+        .full_kpts = full_kpts,
+    };
+}
 
-    const ibz_data = try alloc.alloc(IbzKData, n_ibz);
-    var ibz_built: usize = 0;
-    defer {
-        for (0..ibz_built) |i| ibz_data[i].deinit(alloc);
+fn solve_ibz_ground_states(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: config_mod.Config,
+    gs: *const GroundState,
+    local_r: []const f64,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    recip: math.Mat3,
+    volume: f64,
+    grid: Grid,
+    ibz_kpoints: []const symmetry.KPoint,
+) ![]IbzKData {
+    const ibz_data = try alloc.alloc(IbzKData, ibz_kpoints.len);
+    var built: usize = 0;
+    errdefer {
+        for (0..built) |i| ibz_data[i].deinit(alloc);
         alloc.free(ibz_data);
     }
-
-    for (mapping.ibz_kpoints, 0..) |kp, i_ibz| {
+    for (ibz_kpoints, 0..) |kp, i_ibz| {
         ibz_data[i_ibz] = try solve_ibz_kpoint(
             alloc,
             io,
@@ -535,21 +677,37 @@ pub fn prepare_full_bz_kpoints_from_ibz(
             grid,
             kp.k_cart,
         );
-        ibz_built = i_ibz + 1;
-
+        built = i_ibz + 1;
         log_dfpt(
             "dfpt_ibz: solved IBZ k-point {d}/{d} (n_pw={d})\n",
-            .{ i_ibz + 1, n_ibz, ibz_data[i_ibz].basis.gvecs.len },
+            .{ i_ibz + 1, ibz_kpoints.len, ibz_data[i_ibz].basis.gvecs.len },
         );
     }
+    return ibz_data;
+}
 
+fn expand_full_bz_from_ibz(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: config_mod.Config,
+    local_r: []const f64,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    recip: math.Mat3,
+    volume: f64,
+    grid: Grid,
+    symops: []const symmetry.SymOp,
+    total: usize,
+    mapping: *const reduction.KmeshMapping,
+    ibz_data: []const IbzKData,
+    full_kpts: []const symmetry.KPoint,
+) ![]KPointGsData {
     var kgs_data = try alloc.alloc(KPointGsData, total);
-    var full_built: usize = 0;
+    var built: usize = 0;
     errdefer {
-        for (0..full_built) |i| kgs_data[i].deinit(alloc);
+        for (0..built) |i| kgs_data[i].deinit(alloc);
         alloc.free(kgs_data);
     }
-
     for (0..total) |i_full| {
         const i_ibz = mapping.full_to_ibz[i_full];
         kgs_data[i_full] = try expand_ibz_kpoint(
@@ -568,13 +726,11 @@ pub fn prepare_full_bz_kpoints_from_ibz(
             &ibz_data[i_ibz],
             full_kpts[i_full],
         );
-        full_built = i_full + 1;
-
+        built = i_full + 1;
         if (i_full == 0 or (i_full + 1) % 16 == 0 or i_full + 1 == total) {
             log_dfpt("dfpt_ibz: expanded k-point {d}/{d}\n", .{ i_full + 1, total });
         }
     }
-
     return kgs_data;
 }
 

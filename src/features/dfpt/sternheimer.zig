@@ -22,6 +22,31 @@ pub const SternheimerResult = struct {
     iterations: usize,
 };
 
+const SolveWorkspace = struct {
+    x: []math.Complex,
+    r: []math.Complex,
+    z: []math.Complex,
+    d: []math.Complex,
+    ad: []math.Complex,
+    psi_matrix: []math.Complex,
+    overlaps: []math.Complex,
+
+    fn deinit(self: *SolveWorkspace, alloc: std.mem.Allocator) void {
+        alloc.free(self.r);
+        alloc.free(self.z);
+        alloc.free(self.d);
+        alloc.free(self.ad);
+        alloc.free(self.psi_matrix);
+        alloc.free(self.overlaps);
+    }
+};
+
+const IterationUpdate = struct {
+    rz: math.Complex,
+    residual_norm: f64,
+    finished: bool,
+};
+
 /// Project onto conduction band subspace: P_c = 1 - Σ_m |ψ_m⟩⟨ψ_m|
 /// Modifies x in-place.
 pub fn project_conduction(
@@ -276,119 +301,149 @@ pub fn solve(
     params: SternheimerParams,
 ) !SternheimerResult {
     const n = rhs.len;
+    var ws = try init_solve_workspace(
+        alloc,
+        rhs,
+        occupied,
+        n_occ,
+        gvecs,
+        epsilon_n,
+        params.alpha_shift,
+    );
+    errdefer alloc.free(ws.x);
+    defer ws.deinit(alloc);
 
-    // Allocate work arrays
-    const x = try alloc.alloc(math.Complex, n); // solution
+    var rz = inner_product(ws.r, ws.z);
+    var residual_norm = norm(ws.r);
+    var iter: usize = 0;
+
+    while (iter < params.max_iter) : (iter += 1) {
+        if (residual_norm < params.tol) break;
+        const update = try sternheimer_iteration(
+            ctx,
+            gvecs,
+            epsilon_n,
+            n_occ,
+            params,
+            &ws,
+            rz,
+        );
+        rz = update.rz;
+        residual_norm = update.residual_norm;
+        if (update.finished) {
+            iter += 1;
+            break;
+        }
+    }
+
+    // Final projection
+    project_conduction_blas(ws.x, ws.psi_matrix, n, n_occ, ws.overlaps);
+
+    return .{
+        .psi1 = ws.x,
+        .converged = residual_norm < params.tol,
+        .residual_norm = residual_norm,
+        .iterations = iter,
+    };
+}
+
+fn init_solve_workspace(
+    alloc: std.mem.Allocator,
+    rhs: []const math.Complex,
+    occupied: []const []const math.Complex,
+    n_occ: usize,
+    gvecs: []const plane_wave.GVector,
+    epsilon_n: f64,
+    alpha_shift: f64,
+) !SolveWorkspace {
+    const n = rhs.len;
+    const x = try alloc.alloc(math.Complex, n);
     errdefer alloc.free(x);
-    const r = try alloc.alloc(math.Complex, n); // residual
-    defer alloc.free(r);
-
-    const z = try alloc.alloc(math.Complex, n); // preconditioned residual
-    defer alloc.free(z);
-
-    const d = try alloc.alloc(math.Complex, n); // search direction
-    defer alloc.free(d);
-
-    const ad = try alloc.alloc(math.Complex, n); // A × d
-    defer alloc.free(ad);
-
-    const temp = try alloc.alloc(math.Complex, n); // temporary
-    defer alloc.free(temp);
-
-    // Pack occupied wavefunctions into contiguous matrix for BLAS
+    const r = try alloc.alloc(math.Complex, n);
+    errdefer alloc.free(r);
+    const z = try alloc.alloc(math.Complex, n);
+    errdefer alloc.free(z);
+    const d = try alloc.alloc(math.Complex, n);
+    errdefer alloc.free(d);
+    const ad = try alloc.alloc(math.Complex, n);
+    errdefer alloc.free(ad);
     const psi_matrix = try alloc.alloc(math.Complex, n * n_occ);
-    defer alloc.free(psi_matrix);
+    errdefer alloc.free(psi_matrix);
+    const overlaps = try alloc.alloc(math.Complex, @max(n_occ, 1));
+    errdefer alloc.free(overlaps);
 
     if (n_occ > 0) {
         for (0..n_occ) |m| {
             @memcpy(psi_matrix[m * n .. (m + 1) * n], occupied[m][0..n]);
         }
     }
-    const overlaps = try alloc.alloc(math.Complex, @max(n_occ, 1));
-    defer alloc.free(overlaps);
 
-    // x = 0
     @memset(x, math.complex.init(0.0, 0.0));
-
-    // r = rhs (since x=0, r = b - Ax = b)
     @memcpy(r, rhs);
     project_conduction_blas(r, psi_matrix, n, n_occ, overlaps);
-
-    // z = K × r
-    apply_preconditioner(gvecs, r, z, epsilon_n, params.alpha_shift);
+    apply_preconditioner(gvecs, r, z, epsilon_n, alpha_shift);
     project_conduction_blas(z, psi_matrix, n, n_occ, overlaps);
-
-    // d = z
     @memcpy(d, z);
 
-    var rz = inner_product(r, z);
-    var residual_norm = norm(r);
-    var iter: usize = 0;
+    return .{
+        .x = x,
+        .r = r,
+        .z = z,
+        .d = d,
+        .ad = ad,
+        .psi_matrix = psi_matrix,
+        .overlaps = overlaps,
+    };
+}
 
-    while (iter < params.max_iter) : (iter += 1) {
-        if (residual_norm < params.tol) break;
+fn sternheimer_iteration(
+    ctx: *scf_mod.ApplyContext,
+    gvecs: []const plane_wave.GVector,
+    epsilon_n: f64,
+    n_occ: usize,
+    params: SternheimerParams,
+    ws: *SolveWorkspace,
+    rz: math.Complex,
+) !IterationUpdate {
+    const n = ws.r.len;
+    try apply_sternheimer_blas(
+        ctx,
+        ws.d,
+        ws.ad,
+        epsilon_n,
+        params.alpha_shift,
+        ws.psi_matrix,
+        n,
+        n_occ,
+        ws.overlaps,
+    );
+    project_conduction_blas(ws.ad, ws.psi_matrix, n, n_occ, ws.overlaps);
 
-        // ad = A × d
-        try apply_sternheimer_blas(
-            ctx,
-            d,
-            ad,
-            epsilon_n,
-            params.alpha_shift,
-            psi_matrix,
-            n,
-            n_occ,
-            overlaps,
-        );
-        project_conduction_blas(ad, psi_matrix, n, n_occ, overlaps);
+    const dad = inner_product(ws.d, ws.ad);
+    if (@abs(dad.r) < 1e-30) {
+        return .{ .rz = rz, .residual_norm = norm(ws.r), .finished = true };
+    }
+    const alpha_cg = rz.r / dad.r;
+    for (0..n) |g| {
+        ws.x[g] = math.complex.add(ws.x[g], math.complex.scale(ws.d[g], alpha_cg));
+        ws.r[g] = math.complex.sub(ws.r[g], math.complex.scale(ws.ad[g], alpha_cg));
+    }
+    project_conduction_blas(ws.r, ws.psi_matrix, n, n_occ, ws.overlaps);
 
-        // α_cg = ⟨r|z⟩ / ⟨d|Ad⟩
-        const dad = inner_product(d, ad);
-        if (@abs(dad.r) < 1e-30) break;
-        const alpha_cg = rz.r / dad.r;
-
-        // x += α_cg × d
-        for (0..n) |g| {
-            x[g] = math.complex.add(x[g], math.complex.scale(d[g], alpha_cg));
-        }
-
-        // r -= α_cg × Ad
-        for (0..n) |g| {
-            r[g] = math.complex.sub(r[g], math.complex.scale(ad[g], alpha_cg));
-        }
-        project_conduction_blas(r, psi_matrix, n, n_occ, overlaps);
-
-        residual_norm = norm(r);
-        if (residual_norm < params.tol) {
-            iter += 1;
-            break;
-        }
-
-        // z_new = K × r
-        apply_preconditioner(gvecs, r, z, epsilon_n, params.alpha_shift);
-        project_conduction_blas(z, psi_matrix, n, n_occ, overlaps);
-
-        // β = ⟨r_new|z_new⟩ / ⟨r_old|z_old⟩
-        const rz_new = inner_product(r, z);
-        const beta = if (@abs(rz.r) > 1e-30) rz_new.r / rz.r else 0.0;
-
-        // d = z + β × d
-        for (0..n) |g| {
-            d[g] = math.complex.add(z[g], math.complex.scale(d[g], beta));
-        }
-
-        rz = rz_new;
+    const residual_norm = norm(ws.r);
+    if (residual_norm < params.tol) {
+        return .{ .rz = rz, .residual_norm = residual_norm, .finished = true };
     }
 
-    // Final projection
-    project_conduction_blas(x, psi_matrix, n, n_occ, overlaps);
+    apply_preconditioner(gvecs, ws.r, ws.z, epsilon_n, params.alpha_shift);
+    project_conduction_blas(ws.z, ws.psi_matrix, n, n_occ, ws.overlaps);
 
-    return .{
-        .psi1 = x,
-        .converged = residual_norm < params.tol,
-        .residual_norm = residual_norm,
-        .iterations = iter,
-    };
+    const rz_new = inner_product(ws.r, ws.z);
+    const beta = if (@abs(rz.r) > 1e-30) rz_new.r / rz.r else 0.0;
+    for (0..n) |g| {
+        ws.d[g] = math.complex.add(ws.z[g], math.complex.scale(ws.d[g], beta));
+    }
+    return .{ .rz = rz_new, .residual_norm = residual_norm, .finished = false };
 }
 
 // =========================================================================

@@ -811,7 +811,74 @@ pub fn compute_forces(
     paw_rhoij: ?[]const []const f64,
     wavefunctions_down: ?scf.WavefunctionData,
 ) !ForceTerms {
-    const force_input: ForceComputeInput = .{
+    const force_input = init_force_compute_input(
+        alloc,
+        io,
+        grid,
+        rho_g,
+        potential_g,
+        species,
+        atoms,
+        cell,
+        recip,
+        volume,
+        alpha,
+        local_cfg,
+        wavefunctions,
+        vresid_g,
+        quiet,
+        radial_tables,
+        precomputed_vxc_r,
+        rho_atom_tables,
+        rho_core_tables,
+        ff_tables,
+        coulomb_r_cut,
+        vdw_cfg,
+        paw_tabs,
+        paw_dij,
+        paw_rhoij,
+        wavefunctions_down,
+    );
+    const primary = try compute_primary_force_components(force_input);
+    const optional = try compute_optional_force_components(force_input);
+    return try finish_force_terms(
+        alloc,
+        io,
+        quiet,
+        primary,
+        optional,
+    );
+}
+
+fn init_force_compute_input(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    grid: Grid,
+    rho_g: []const math.Complex,
+    potential_g: ?[]const math.Complex,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    cell: math.Mat3,
+    recip: math.Mat3,
+    volume: f64,
+    alpha: f64,
+    local_cfg: local_potential.LocalPotentialConfig,
+    wavefunctions: ?scf.WavefunctionData,
+    vresid_g: ?[]const math.Complex,
+    quiet: bool,
+    radial_tables: ?[]nonlocal.RadialTableSet,
+    precomputed_vxc_r: ?[]const f64,
+    rho_atom_tables: ?[]const form_factor.RadialFormFactorTable,
+    rho_core_tables: ?[]const form_factor.RadialFormFactorTable,
+    ff_tables: ?[]const form_factor.LocalFormFactorTable,
+    coulomb_r_cut: ?f64,
+    vdw_cfg: config.VdwConfig,
+    paw_tabs: ?[]const paw_mod.PawTab,
+    paw_dij: ?[]const []const f64,
+    paw_rhoij: ?[]const []const f64,
+    wavefunctions_down: ?scf.WavefunctionData,
+) ForceComputeInput {
+    return .{
         .alloc = alloc,
         .io = io,
         .grid = grid,
@@ -839,20 +906,33 @@ pub fn compute_forces(
         .paw_rhoij = paw_rhoij,
         .wavefunctions_down = wavefunctions_down,
     };
-    const primary = try compute_primary_force_components(force_input);
-    const optional = try compute_optional_force_components(force_input);
-    const timings = ForceTimings{
+}
+
+fn build_force_timings(
+    primary: PrimaryForceComponents,
+    optional: OptionalForceComponents,
+) ForceTimings {
+    return .{
         .t0 = primary.t0,
         .after_ewald = primary.after_ewald,
         .after_local = primary.after_local,
         .after_nonlocal = primary.after_nonlocal,
         .after_nlcc = optional.after_nlcc,
     };
+}
+
+fn finish_force_terms(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    quiet: bool,
+    primary: PrimaryForceComponents,
+    optional: OptionalForceComponents,
+) !ForceTerms {
     return try finalize_force_terms(
         alloc,
         io,
         quiet,
-        timings,
+        build_force_timings(primary, optional),
         primary.ewald_forces,
         primary.local_forces,
         primary.nl_forces,
