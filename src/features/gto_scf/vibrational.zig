@@ -1066,6 +1066,25 @@ fn report_frequencies(
     logging.progress(true, "\nZPVE: {d:.10} Ha ({d:.4} kcal/mol)\n", .{ zpve, zpve * 627.509 });
 }
 
+fn log_vibrational_analysis_start(print_progress: bool, n_atoms: usize, n3: usize) void {
+    logging.progress(
+        print_progress,
+        "\nVibrational Analysis ({d} atoms, {d} coordinates)\n",
+        .{ n_atoms, n3 },
+    );
+}
+
+fn frequency_list_from_eigenvalues(
+    alloc: std.mem.Allocator,
+    eigenvalues: []const f64,
+) ![]f64 {
+    const frequencies = try alloc.alloc(f64, eigenvalues.len);
+    for (eigenvalues, 0..) |value, i| {
+        frequencies[i] = eigenvalue_to_cm1(value);
+    }
+    return frequencies;
+}
+
 pub fn vibrational_analysis(
     alloc: std.mem.Allocator,
     shells: []ContractedShell,
@@ -1078,11 +1097,7 @@ pub fn vibrational_analysis(
     const n_atoms = nuc_positions.len;
     const n3 = n_atoms * 3;
 
-    logging.progress(
-        params.print_progress,
-        "\nVibrational Analysis ({d} atoms, {d} coordinates)\n",
-        .{ n_atoms, n3 },
-    );
+    log_vibrational_analysis_start(params.print_progress, n_atoms, n3);
 
     // Step 1: Compute numerical Hessian
     const hessian = try compute_numerical_hessian(
@@ -1109,11 +1124,7 @@ pub fn vibrational_analysis(
     const normal_modes = try alloc.alloc(f64, n3 * n3);
     @memcpy(normal_modes, mw_hessian);
 
-    // Step 4: Convert eigenvalues to frequencies
-    const frequencies = try alloc.alloc(f64, n3);
-    for (0..n3) |i| {
-        frequencies[i] = eigenvalue_to_cm1(eigenvalues[i]);
-    }
+    const frequencies = try frequency_list_from_eigenvalues(alloc, eigenvalues);
 
     // Step 5: Separate vibrational modes from translations/rotations
     const vib_freqs = try extract_vibrational_frequencies(

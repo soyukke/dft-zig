@@ -33,6 +33,25 @@ pub fn filter_sym_ops_for_kmesh(
     return try list.toOwnedSlice(alloc);
 }
 
+const TimeReversalSettings = struct {
+    shift2_int: Index3,
+    can_time_reverse: bool,
+};
+
+fn init_time_reversal_settings(
+    kmesh: [3]usize,
+    shift: math.Vec3,
+    tol: f64,
+    time_reversal: bool,
+) TimeReversalSettings {
+    const shift_grid = shift_in_grid_units(kmesh, shift);
+    const shift2_int_opt = int_vector(math.Vec3.scale(shift_grid, 2.0), tol);
+    return .{
+        .shift2_int = shift2_int_opt orelse .{ .x = 0, .y = 0, .z = 0 },
+        .can_time_reverse = time_reversal and shift2_int_opt != null,
+    };
+}
+
 pub fn reduce_kmesh(
     alloc: std.mem.Allocator,
     kmesh: [3]usize,
@@ -256,11 +275,7 @@ pub fn reduce_kmesh_with_mapping(
     const total = kmesh[0] * kmesh[1] * kmesh[2];
     if (total == 0) return error.InvalidKmesh;
 
-    const shift_grid = shift_in_grid_units(kmesh, shift);
-    const shift2 = math.Vec3.scale(shift_grid, 2.0);
-    const shift2_int_opt = int_vector(shift2, 1e-8);
-    const shift2_int = shift2_int_opt orelse Index3{ .x = 0, .y = 0, .z = 0 };
-    const can_time_reverse = time_reversal and shift2_int_opt != null;
+    const tr_settings = init_time_reversal_settings(kmesh, shift, 1e-8, time_reversal);
 
     const used = try alloc.alloc(bool, total);
     defer alloc.free(used);
@@ -293,8 +308,8 @@ pub fn reduce_kmesh_with_mapping(
             shift,
             ops,
             recip,
-            can_time_reverse,
-            shift2_int,
+            tr_settings.can_time_reverse,
+            tr_settings.shift2_int,
             total,
             used,
             full_to_ibz,

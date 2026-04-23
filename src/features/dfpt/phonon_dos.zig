@@ -19,9 +19,100 @@ fn compare_f64(context: f64, item: f64) std.math.Order {
     return std.math.order(context, item);
 }
 
+const PhononFrequencySet = struct {
+    values: []f64,
+    min: f64,
+    max: f64,
+
+    fn deinit(self: *PhononFrequencySet, alloc: std.mem.Allocator) void {
+        alloc.free(self.values);
+    }
+};
+
 /// Gaussian delta: (1/(σ√(2π))) × exp(-x²/(2σ²))
 inline fn gaussian_delta(x: f64, inv_sigma_sqrt2pi: f64, inv_2sigma2: f64) f64 {
     return inv_sigma_sqrt2pi * @exp(-x * x * inv_2sigma2);
+}
+
+fn collect_phonon_frequencies(
+    alloc: std.mem.Allocator,
+    ifc_data: *const ifc_mod.IFC,
+    masses: []const f64,
+    n_atoms: usize,
+    dos_qmesh: [3]usize,
+) !PhononFrequencySet {
+    const dim = 3 * n_atoms;
+    const nq1 = dos_qmesh[0];
+    const nq2 = dos_qmesh[1];
+    const nq3 = dos_qmesh[2];
+    const n_q_total = nq1 * nq2 * nq3;
+
+    const values = try alloc.alloc(f64, n_q_total * dim);
+    errdefer alloc.free(values);
+
+    var freq_idx: usize = 0;
+    var f_min: f64 = std.math.inf(f64);
+    var f_max: f64 = -std.math.inf(f64);
+
+    for (0..nq1) |iq1| {
+        for (0..nq2) |iq2| {
+            for (0..nq3) |iq3| {
+                const q_frac = math.Vec3{
+                    .x = @as(f64, @floatFromInt(iq1)) / @as(f64, @floatFromInt(nq1)),
+                    .y = @as(f64, @floatFromInt(iq2)) / @as(f64, @floatFromInt(nq2)),
+                    .z = @as(f64, @floatFromInt(iq3)) / @as(f64, @floatFromInt(nq3)),
+                };
+                const dyn_q = try ifc_mod.interpolate(alloc, ifc_data, q_frac);
+                defer alloc.free(dyn_q);
+
+                dynmat_mod.mass_weight_complex(dyn_q, n_atoms, masses);
+
+                const freq_cm1 = try dynmat_mod.eigenvalues_complex(alloc, dyn_q, dim);
+                defer alloc.free(freq_cm1);
+
+                for (0..dim) |m| {
+                    values[freq_idx] = freq_cm1[m];
+                    if (freq_cm1[m] < f_min) f_min = freq_cm1[m];
+                    if (freq_cm1[m] > f_max) f_max = freq_cm1[m];
+                    freq_idx += 1;
+                }
+            }
+        }
+    }
+
+    return .{
+        .values = values,
+        .min = f_min,
+        .max = f_max,
+    };
+}
+
+fn fill_phonon_dos_bins(
+    frequencies: []f64,
+    dos: []f64,
+    sorted_freqs: []const f64,
+    bin_min: f64,
+    df: f64,
+    sigma_cm1: f64,
+    n_q_total: usize,
+) void {
+    const inv_sigma_sqrt2pi = 1.0 / (sigma_cm1 * std.math.sqrt(2.0 * std.math.pi));
+    const inv_2sigma2 = 1.0 / (2.0 * sigma_cm1 * sigma_cm1);
+    const inv_nq = 1.0 / @as(f64, @floatFromInt(n_q_total));
+    const cutoff = 5.0 * sigma_cm1;
+
+    for (0..frequencies.len) |i| {
+        const f = bin_min + @as(f64, @floatFromInt(i)) * df;
+        frequencies[i] = f;
+        const lo = std.sort.lowerBound(f64, sorted_freqs, f - cutoff, compare_f64);
+        const hi = std.sort.upperBound(f64, sorted_freqs, f + cutoff, compare_f64);
+
+        var d: f64 = 0.0;
+        for (sorted_freqs[lo..hi]) |af| {
+            d += gaussian_delta(f - af, inv_sigma_sqrt2pi, inv_2sigma2);
+        }
+        dos[i] = d * inv_nq;
+    }
 }
 
 /// Compute phonon DOS from IFC by interpolating on a dense q-mesh.
@@ -35,55 +126,13 @@ pub fn compute_phonon_dos(
     sigma_cm1: f64,
     nbin: usize,
 ) !PhononDosResult {
-    const dim = 3 * n_atoms;
-    const nq1 = dos_qmesh[0];
-    const nq2 = dos_qmesh[1];
-    const nq3 = dos_qmesh[2];
-    const n_q_total = nq1 * nq2 * nq3;
+    var all_freqs = try collect_phonon_frequencies(alloc, ifc_data, masses, n_atoms, dos_qmesh);
+    defer all_freqs.deinit(alloc);
 
-    // Collect all frequencies from the dense q-mesh
-    const all_freqs = try alloc.alloc(f64, n_q_total * dim);
-    defer alloc.free(all_freqs);
-
-    var freq_idx: usize = 0;
-
-    var f_min: f64 = std.math.inf(f64);
-    var f_max: f64 = -std.math.inf(f64);
-
-    for (0..nq1) |iq1| {
-        for (0..nq2) |iq2| {
-            for (0..nq3) |iq3| {
-                const q_frac = math.Vec3{
-                    .x = @as(f64, @floatFromInt(iq1)) / @as(f64, @floatFromInt(nq1)),
-                    .y = @as(f64, @floatFromInt(iq2)) / @as(f64, @floatFromInt(nq2)),
-                    .z = @as(f64, @floatFromInt(iq3)) / @as(f64, @floatFromInt(nq3)),
-                };
-
-                // Interpolate dynamical matrix at this q-point
-                const dyn_q = try ifc_mod.interpolate(alloc, ifc_data, q_frac);
-                defer alloc.free(dyn_q);
-
-                // Mass-weight (in-place)
-                dynmat_mod.mass_weight_complex(dyn_q, n_atoms, masses);
-
-                // Eigenvalues only (no eigenvectors needed for DOS)
-                const freq_cm1 = try dynmat_mod.eigenvalues_complex(alloc, dyn_q, dim);
-                defer alloc.free(freq_cm1);
-
-                for (0..dim) |m| {
-                    all_freqs[freq_idx] = freq_cm1[m];
-                    if (freq_cm1[m] < f_min) f_min = freq_cm1[m];
-                    if (freq_cm1[m] > f_max) f_max = freq_cm1[m];
-                    freq_idx += 1;
-                }
-            }
-        }
-    }
-
-    // Set up frequency bins
+    const n_q_total = dos_qmesh[0] * dos_qmesh[1] * dos_qmesh[2];
     const margin = 5.0 * sigma_cm1;
-    const bin_min = @min(f_min - margin, -margin);
-    const bin_max = f_max + margin;
+    const bin_min = @min(all_freqs.min - margin, -margin);
+    const bin_max = all_freqs.max + margin;
     const df = (bin_max - bin_min) / @as(f64, @floatFromInt(nbin - 1));
 
     const frequencies = try alloc.alloc(f64, nbin);
@@ -91,29 +140,8 @@ pub fn compute_phonon_dos(
     const dos = try alloc.alloc(f64, nbin);
     errdefer alloc.free(dos);
 
-    const inv_sigma_sqrt2pi = 1.0 / (sigma_cm1 * std.math.sqrt(2.0 * std.math.pi));
-    const inv_2sigma2 = 1.0 / (2.0 * sigma_cm1 * sigma_cm1);
-    const inv_nq = 1.0 / @as(f64, @floatFromInt(n_q_total));
-    const cutoff = 5.0 * sigma_cm1;
-
-    // Sort frequencies for efficient cutoff evaluation via binary search
-    std.mem.sort(f64, all_freqs[0..freq_idx], {}, std.sort.asc(f64));
-    const sorted_freqs = all_freqs[0..freq_idx];
-
-    for (0..nbin) |i| {
-        const f = bin_min + @as(f64, @floatFromInt(i)) * df;
-        frequencies[i] = f;
-
-        // Binary search for [f - cutoff, f + cutoff] range
-        const lo = std.sort.lowerBound(f64, sorted_freqs, f - cutoff, compare_f64);
-        const hi = std.sort.upperBound(f64, sorted_freqs, f + cutoff, compare_f64);
-
-        var d: f64 = 0.0;
-        for (sorted_freqs[lo..hi]) |af| {
-            d += gaussian_delta(f - af, inv_sigma_sqrt2pi, inv_2sigma2);
-        }
-        dos[i] = d * inv_nq;
-    }
+    std.mem.sort(f64, all_freqs.values, {}, std.sort.asc(f64));
+    fill_phonon_dos_bins(frequencies, dos, all_freqs.values, bin_min, df, sigma_cm1, n_q_total);
 
     return .{
         .frequencies = frequencies,

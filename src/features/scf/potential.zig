@@ -18,6 +18,31 @@ const reciprocal_to_real = fft_grid.reciprocal_to_real;
 const compute_xc_fields = xc_fields_mod.compute_xc_fields;
 const compute_xc_fields_spin = xc_fields_mod.compute_xc_fields_spin;
 
+fn prepare_density_for_xc(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    rho: []const f64,
+    ecutrho: ?f64,
+    use_rfft: bool,
+) !?[]f64 {
+    if (ecutrho) |ecut| {
+        return try filter_density_to_ecutrho(alloc, grid, rho, ecut, use_rfft);
+    }
+    return null;
+}
+
+fn hartree_potential_at_g(rho_g: math.Complex, g2: f64, coulomb_r_cut: ?f64) math.Complex {
+    if (coulomb_r_cut) |r_cut| {
+        const g_mag = @sqrt(g2);
+        const kernel = coulomb.cutoff_coulomb_kernel(g2, g_mag, r_cut);
+        return math.complex.scale(rho_g, kernel);
+    }
+    if (g2 > 1e-12) {
+        return math.complex.scale(rho_g, 8.0 * std.math.pi / g2);
+    }
+    return math.complex.init(0.0, 0.0);
+}
+
 /// Build Hartree+XC potential grid.
 /// If vxc_r_out is non-null, the real-space V_xc(r) is transferred to the caller
 /// instead of being freed (useful for NLCC force calculation).
@@ -37,12 +62,9 @@ pub fn build_potential_grid(
     // When ecutrho is set (PAW), filter the density to the ecutrho sphere
     // before computing V_xc. This matches QE's convention where all G-space
     // operations are limited to |G|² < ecutrho.
-    var rho_filtered: ?[]f64 = null;
+    const rho_filtered = try prepare_density_for_xc(alloc, grid, rho, ecutrho, use_rfft);
     defer if (rho_filtered) |rf| alloc.free(rf);
 
-    if (ecutrho) |ecut| {
-        rho_filtered = try filter_density_to_ecutrho(alloc, grid, rho, ecut, use_rfft);
-    }
     const rho_for_xc = rho_filtered orelse rho;
 
     const rho_g = try real_to_reciprocal(alloc, grid, rho_for_xc, use_rfft);
@@ -72,20 +94,7 @@ pub fn build_potential_grid(
             values[g.idx] = math.complex.init(0.0, 0.0);
             continue;
         }
-        var vh = math.complex.init(0.0, 0.0);
-        if (coulomb_r_cut) |r_cut| {
-            // Isolated system: cutoff Coulomb kernel
-            const g_mag = @sqrt(g.g2);
-            const kernel = coulomb.cutoff_coulomb_kernel(g.g2, g_mag, r_cut);
-            vh = math.complex.scale(rho_g[g.idx], kernel);
-        } else {
-            if (g.g2 > 1e-12) {
-                // Periodic: Hartree potential in Rydberg units: V_H(G) = 8πρ(G)/G²
-                // (factor 2 compared to Hartree units for consistency with
-                // kinetic energy |k+G|² and UPF pseudopotentials in Rydberg)
-                vh = math.complex.scale(rho_g[g.idx], 8.0 * std.math.pi / g.g2);
-            }
-        }
+        const vh = hartree_potential_at_g(rho_g[g.idx], g.g2, coulomb_r_cut);
         values[g.idx] = math.complex.add(vh, vxc_g[g.idx]);
     }
 

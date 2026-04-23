@@ -6,6 +6,64 @@ const neighbor_list = @import("neighbor_list.zig");
 const sparse = @import("sparse.zig");
 const math = @import("../math/math.zig");
 
+fn init_orbitals(
+    alloc: std.mem.Allocator,
+    centers: []const math.Vec3,
+    sigma: f64,
+    cutoff: f64,
+) ![]local_orbital.Orbital {
+    const orbitals = try alloc.alloc(local_orbital.Orbital, centers.len);
+    const alpha = 1.0 / (sigma * sigma);
+    for (centers, 0..) |center, idx| {
+        orbitals[idx] = .{ .center = center, .alpha = alpha, .cutoff = cutoff };
+    }
+    return orbitals;
+}
+
+fn evaluate_grid_point_density(
+    alloc: std.mem.Allocator,
+    cell_list: *OrbitalCellList,
+    orbitals: []const local_orbital.Orbital,
+    density: sparse.CsrMatrix,
+    point: math.Vec3,
+    cell: math.Mat3,
+    inv_cell: math.Mat3,
+    pbc: neighbor_list.Pbc,
+    candidates: *std.ArrayList(usize),
+    phi_map: *std.AutoHashMap(usize, f64),
+) !f64 {
+    try cell_list.collect_candidates(alloc, point, candidates);
+    phi_map.clearRetainingCapacity();
+    for (candidates.items) |orb_idx| {
+        const phi = local_orbital_potential.orbital_value_at(
+            orbitals[orb_idx],
+            point,
+            cell,
+            inv_cell,
+            pbc,
+        );
+        if (phi == 0.0) continue;
+        try phi_map.put(orb_idx, phi);
+    }
+
+    var rho: f64 = 0.0;
+    var it = phi_map.iterator();
+    while (it.next()) |entry| {
+        const row = entry.key_ptr.*;
+        const phi_i = entry.value_ptr.*;
+        const start = density.row_ptr[row];
+        const end = density.row_ptr[row + 1];
+        var di: usize = start;
+        while (di < end) : (di += 1) {
+            const col = density.col_idx[di];
+            if (phi_map.get(col)) |phi_j| {
+                rho += density.values[di] * phi_i * phi_j;
+            }
+        }
+    }
+    return rho;
+}
+
 pub fn build_density_grid_from_centers(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
@@ -21,13 +79,8 @@ pub fn build_density_grid_from_centers(
     const count = grid.count();
     if (count == 0) return error.InvalidGrid;
 
-    var orbitals = try alloc.alloc(local_orbital.Orbital, centers.len);
+    const orbitals = try init_orbitals(alloc, centers, sigma, cutoff);
     defer alloc.free(orbitals);
-
-    const alpha = 1.0 / (sigma * sigma);
-    for (centers, 0..) |center, idx| {
-        orbitals[idx] = .{ .center = center, .alpha = alpha, .cutoff = cutoff };
-    }
 
     var cell_list = try OrbitalCellList.init(alloc, grid.cell, pbc, centers, cutoff);
     defer cell_list.deinit(alloc);
@@ -50,37 +103,18 @@ pub fn build_density_grid_from_centers(
             var ix: usize = 0;
             while (ix < grid.dims[0]) : (ix += 1) {
                 const point = grid.point(ix, iy, iz);
-                try cell_list.collect_candidates(alloc, point, &candidates);
-                phi_map.clearRetainingCapacity();
-                for (candidates.items) |orb_idx| {
-                    const phi = local_orbital_potential.orbital_value_at(
-                        orbitals[orb_idx],
-                        point,
-                        grid.cell,
-                        inv_cell,
-                        pbc,
-                    );
-                    if (phi == 0.0) continue;
-                    try phi_map.put(orb_idx, phi);
-                }
-
-                var rho: f64 = 0.0;
-                var it = phi_map.iterator();
-                while (it.next()) |entry| {
-                    const row = entry.key_ptr.*;
-                    const phi_i = entry.value_ptr.*;
-                    const start = density.row_ptr[row];
-                    const end = density.row_ptr[row + 1];
-                    var di: usize = start;
-                    while (di < end) : (di += 1) {
-                        const col = density.col_idx[di];
-                        if (phi_map.get(col)) |phi_j| {
-                            rho += density.values[di] * phi_i * phi_j;
-                        }
-                    }
-                }
-
-                values[idx] = rho;
+                values[idx] = try evaluate_grid_point_density(
+                    alloc,
+                    &cell_list,
+                    orbitals,
+                    density,
+                    point,
+                    grid.cell,
+                    inv_cell,
+                    pbc,
+                    &candidates,
+                    &phi_map,
+                );
                 idx += 1;
             }
         }
