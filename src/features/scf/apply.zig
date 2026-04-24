@@ -1368,6 +1368,117 @@ fn batch_backproject_and_accumulate(
     }
 }
 
+const NonlocalBatchBuffers = struct {
+    gn: []f64,
+    mn: []f64,
+    xphase_re: []f64,
+    xphase_im: []f64,
+    coeffs_re: []f64,
+    coeffs_im: []f64,
+    coeffs2_re: []f64,
+    coeffs2_im: []f64,
+
+    fn init(
+        alloc: std.mem.Allocator,
+        n_pw: usize,
+        ncols: usize,
+        max_m: usize,
+    ) !NonlocalBatchBuffers {
+        const gn = try alloc.alloc(f64, n_pw * ncols * 2);
+        errdefer alloc.free(gn);
+
+        const mn = try alloc.alloc(f64, max_m * ncols * 4);
+        errdefer alloc.free(mn);
+
+        return .{
+            .gn = gn,
+            .mn = mn,
+            .xphase_re = gn[0 .. n_pw * ncols],
+            .xphase_im = gn[n_pw * ncols .. 2 * n_pw * ncols],
+            .coeffs_re = mn[0 .. max_m * ncols],
+            .coeffs_im = mn[max_m * ncols .. 2 * max_m * ncols],
+            .coeffs2_re = mn[2 * max_m * ncols .. 3 * max_m * ncols],
+            .coeffs2_im = mn[3 * max_m * ncols .. 4 * max_m * ncols],
+        };
+    }
+
+    fn deinit(self: *const NonlocalBatchBuffers, alloc: std.mem.Allocator) void {
+        alloc.free(self.mn);
+        alloc.free(self.gn);
+    }
+};
+
+fn accumulate_species_nonlocal_batch(
+    ctx: *ApplyContext,
+    entry: *const NonlocalSpecies,
+    x_batch: []const math.Complex,
+    out_batch: []math.Complex,
+    n_pw: usize,
+    ncols: usize,
+    work_phase: []math.Complex,
+    bufs: *const NonlocalBatchBuffers,
+) !void {
+    const g_count = entry.g_count;
+    if (g_count != n_pw) return error.InvalidMatrixSize;
+    if (entry.m_total == 0) return;
+
+    const m_total = entry.m_total;
+    const phi = entry.phi[0 .. m_total * g_count];
+    var atom_of_species: usize = 0;
+    for (ctx.atoms) |atom| {
+        if (atom.species_index != entry.species_index) continue;
+        const dij_coeffs = if (entry.dij_per_atom) |dpa| dpa[atom_of_species] else entry.coeffs;
+        const dij_m = if (entry.dij_m_per_atom) |dpa| dpa[atom_of_species] else null;
+        atom_of_species += 1;
+
+        batch_phase_and_xphase(
+            ctx.gvecs,
+            atom.position,
+            x_batch,
+            work_phase,
+            bufs.xphase_re,
+            bufs.xphase_im,
+            n_pw,
+            ncols,
+        );
+        batch_project_coeffs(
+            phi,
+            bufs.xphase_re,
+            bufs.xphase_im,
+            bufs.coeffs_re,
+            bufs.coeffs_im,
+            m_total,
+            g_count,
+            ncols,
+        );
+        batch_apply_dij(
+            entry,
+            dij_coeffs,
+            dij_m,
+            bufs.coeffs_re,
+            bufs.coeffs_im,
+            bufs.coeffs2_re,
+            bufs.coeffs2_im,
+            m_total,
+            ncols,
+        );
+        batch_backproject_and_accumulate(
+            phi,
+            bufs.coeffs2_re,
+            bufs.coeffs2_im,
+            bufs.xphase_re,
+            bufs.xphase_im,
+            work_phase,
+            out_batch,
+            ctx.inv_volume,
+            m_total,
+            g_count,
+            n_pw,
+            ncols,
+        );
+    }
+}
+
 fn apply_nonlocal_batched(
     ctx: *ApplyContext,
     alloc: std.mem.Allocator,
@@ -1386,81 +1497,20 @@ fn apply_nonlocal_batched(
     const max_m = nl.max_m_total;
     if (max_m == 0) return;
 
-    // Allocate work buffers: xphase_re/im (reused for result), coeffs, coeffs2
-    const buf_gn = try alloc.alloc(f64, n_pw * ncols * 2);
-    defer alloc.free(buf_gn);
-
-    const xphase_re = buf_gn[0 .. n_pw * ncols];
-    const xphase_im = buf_gn[n_pw * ncols .. 2 * n_pw * ncols];
-
-    const buf_mn = try alloc.alloc(f64, max_m * ncols * 4);
-    defer alloc.free(buf_mn);
-
-    const coeffs_re = buf_mn[0 .. max_m * ncols];
-    const coeffs_im = buf_mn[max_m * ncols .. 2 * max_m * ncols];
-    const coeffs2_re = buf_mn[2 * max_m * ncols .. 3 * max_m * ncols];
-    const coeffs2_im = buf_mn[3 * max_m * ncols .. 4 * max_m * ncols];
+    const bufs = try NonlocalBatchBuffers.init(alloc, n_pw, ncols, max_m);
+    defer bufs.deinit(alloc);
 
     for (nl.species) |entry| {
-        const g_count = entry.g_count;
-        if (g_count != n_pw) return error.InvalidMatrixSize;
-        if (entry.m_total == 0) continue;
-        const m_total = entry.m_total;
-        const phi = entry.phi[0 .. m_total * g_count];
-
-        var atom_of_species: usize = 0;
-        for (ctx.atoms) |atom| {
-            if (atom.species_index != entry.species_index) continue;
-            const dij_coeffs = if (entry.dij_per_atom) |dpa| dpa[atom_of_species] else entry.coeffs;
-            const dij_m = if (entry.dij_m_per_atom) |dpa| dpa[atom_of_species] else null;
-            atom_of_species += 1;
-
-            batch_phase_and_xphase(
-                ctx.gvecs,
-                atom.position,
-                x_batch,
-                work_phase,
-                xphase_re,
-                xphase_im,
-                n_pw,
-                ncols,
-            );
-            batch_project_coeffs(
-                phi,
-                xphase_re,
-                xphase_im,
-                coeffs_re,
-                coeffs_im,
-                m_total,
-                g_count,
-                ncols,
-            );
-            batch_apply_dij(
-                &entry,
-                dij_coeffs,
-                dij_m,
-                coeffs_re,
-                coeffs_im,
-                coeffs2_re,
-                coeffs2_im,
-                m_total,
-                ncols,
-            );
-            batch_backproject_and_accumulate(
-                phi,
-                coeffs2_re,
-                coeffs2_im,
-                xphase_re,
-                xphase_im,
-                work_phase,
-                out_batch,
-                ctx.inv_volume,
-                m_total,
-                g_count,
-                n_pw,
-                ncols,
-            );
-        }
+        try accumulate_species_nonlocal_batch(
+            ctx,
+            &entry,
+            x_batch,
+            out_batch,
+            n_pw,
+            ncols,
+            work_phase,
+            &bufs,
+        );
     }
 }
 

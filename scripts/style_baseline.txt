@@ -23,7 +23,6 @@ src/features/linalg/linalg.zig	function_too_long	3
 src/features/linalg/lobpcg/common.zig	function_too_long	1
 src/features/paw/paw_xc.zig	function_too_long	3
 src/features/relax/relax.zig	function_too_long	3
-src/features/scf/apply.zig	function_too_long	1
 src/features/scf/kpoint_parallel.zig	function_too_long	7
 src/features/scf/mixing.zig	function_too_long	3
 src/features/scf/paw_scf.zig	function_too_long	1
