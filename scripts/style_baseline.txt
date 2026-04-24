@@ -6,7 +6,4 @@
 # running: just lint-update-baseline
 #
 # Format: <path>\t<rule>\t<count>
-src/features/integrals/libcint.zig	function_too_long	3
-src/features/integrals/obara_saika.zig	function_too_long	1
 src/features/paw/paw_xc.zig	function_too_long	1
-src/features/relax/relax.zig	function_too_long	3

@@ -219,13 +219,7 @@ pub const LibcintData = struct {
         const natm = nuc_charges.len;
         const nbas = shells.len;
 
-        // Calculate total env size needed
-        // env layout: [PTR_ENV_START][atom coords: natm*3][exps+coeffs per shell]
-        var env_size: usize = PTR_ENV_START + natm * 3;
-        for (shells) |shell| {
-            env_size += shell.primitives.len; // exponents
-            env_size += shell.primitives.len; // normalized coefficients
-        }
+        const env_size = libcint_env_size(shells, natm);
 
         const atm = try alloc.alloc(c_int, natm * ATM_SLOTS);
         const bas = try alloc.alloc(c_int, nbas * BAS_SLOTS);
@@ -237,61 +231,8 @@ pub const LibcintData = struct {
         @memset(bas, 0);
         @memset(env, 0.0);
 
-        // Fill atom data
-        var env_ptr: usize = PTR_ENV_START;
-        for (0..natm) |i| {
-            const off = i * ATM_SLOTS;
-            atm[off + CHARGE_OF] = @intFromFloat(nuc_charges[i]);
-            atm[off + PTR_COORD] = @intCast(env_ptr);
-            atm[off + NUC_MOD_OF] = POINT_NUC;
-            env[env_ptr] = nuc_positions[i][0];
-            env[env_ptr + 1] = nuc_positions[i][1];
-            env[env_ptr + 2] = nuc_positions[i][2];
-            env_ptr += 3;
-        }
-
-        // Fill basis data
-        // We need to figure out which atom each shell belongs to.
-        // Match by comparing shell center to atom positions.
-        var ao_offset: usize = 0;
-        for (0..nbas) |i| {
-            const shell = shells[i];
-            const nprim = shell.primitives.len;
-
-            // Find the atom this shell belongs to
-            const atom_idx = find_atom(nuc_positions, shell.center);
-
-            const off = i * BAS_SLOTS;
-            bas[off + ATOM_OF] = @intCast(atom_idx);
-            bas[off + ANG_OF] = @intCast(shell.l);
-            bas[off + NPRIM_OF] = @intCast(nprim);
-            bas[off + NCTR_OF] = 1; // always 1 contraction in our representation
-            bas[off + KAPPA_OF] = 0;
-            bas[off + PTR_EXP] = @intCast(env_ptr);
-
-            // Store exponents
-            for (0..nprim) |p| {
-                env[env_ptr + p] = shell.primitives[p].alpha;
-            }
-            env_ptr += nprim;
-
-            bas[off + PTR_COEFF] = @intCast(env_ptr);
-
-            // Store normalized coefficients: coeff * gto_norm(l, alpha)
-            // This matches PySCF/libcint convention where env stores
-            // raw_coeff * gto_norm(l, alpha).
-            for (0..nprim) |p| {
-                const alpha = shell.primitives[p].alpha;
-                const raw_coeff = shell.primitives[p].coeff;
-                env[env_ptr + p] = raw_coeff * gto_norm(shell.l, alpha);
-            }
-            env_ptr += nprim;
-
-            // Shell AO offsets
-            shell_offsets[i] = ao_offset;
-            ao_offset += basis_mod.num_cartesian(shell.l);
-        }
-        shell_offsets[nbas] = ao_offset;
+        const env_ptr = fill_libcint_atoms(atm, env, nuc_positions, nuc_charges);
+        fill_libcint_basis(bas, env, shell_offsets, shells, nuc_positions, env_ptr);
 
         return LibcintData{
             .atm = atm,
@@ -315,6 +256,67 @@ pub const LibcintData = struct {
         return self.shell_offsets[@intCast(self.nbas)];
     }
 };
+
+fn libcint_env_size(shells: []const ContractedShell, natm: usize) usize {
+    var env_size: usize = PTR_ENV_START + natm * 3;
+    for (shells) |shell| env_size += 2 * shell.primitives.len;
+    return env_size;
+}
+
+fn fill_libcint_atoms(
+    atm: []c_int,
+    env: []f64,
+    nuc_positions: []const [3]f64,
+    nuc_charges: []const f64,
+) usize {
+    var env_ptr: usize = PTR_ENV_START;
+    for (0..nuc_charges.len) |i| {
+        const off = i * ATM_SLOTS;
+        atm[off + CHARGE_OF] = @intFromFloat(nuc_charges[i]);
+        atm[off + PTR_COORD] = @intCast(env_ptr);
+        atm[off + NUC_MOD_OF] = POINT_NUC;
+        env[env_ptr] = nuc_positions[i][0];
+        env[env_ptr + 1] = nuc_positions[i][1];
+        env[env_ptr + 2] = nuc_positions[i][2];
+        env_ptr += 3;
+    }
+    return env_ptr;
+}
+
+fn fill_libcint_basis(
+    bas: []c_int,
+    env: []f64,
+    shell_offsets: []usize,
+    shells: []const ContractedShell,
+    nuc_positions: []const [3]f64,
+    env_start: usize,
+) void {
+    var env_ptr = env_start;
+    var ao_offset: usize = 0;
+    for (shells, 0..) |shell, i| {
+        const nprim = shell.primitives.len;
+        const off = i * BAS_SLOTS;
+        bas[off + ATOM_OF] = @intCast(find_atom(nuc_positions, shell.center));
+        bas[off + ANG_OF] = @intCast(shell.l);
+        bas[off + NPRIM_OF] = @intCast(nprim);
+        bas[off + NCTR_OF] = 1;
+        bas[off + KAPPA_OF] = 0;
+        bas[off + PTR_EXP] = @intCast(env_ptr);
+        for (0..nprim) |p| env[env_ptr + p] = shell.primitives[p].alpha;
+        env_ptr += nprim;
+
+        bas[off + PTR_COEFF] = @intCast(env_ptr);
+        for (0..nprim) |p| {
+            const alpha = shell.primitives[p].alpha;
+            env[env_ptr + p] = shell.primitives[p].coeff * gto_norm(shell.l, alpha);
+        }
+        env_ptr += nprim;
+
+        shell_offsets[i] = ao_offset;
+        ao_offset += basis_mod.num_cartesian(shell.l);
+    }
+    shell_offsets[shells.len] = ao_offset;
+}
 
 // ============================================================================
 // Normalization
@@ -600,6 +602,19 @@ pub fn build_eri_tensor(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
     var buf: [max_buf_size]f64 = undefined;
     var shls: [4]c_int = undefined;
 
+    try fill_eri_tensor_shells(data, n, cart_norms, buf[0..], &shls, eri);
+
+    return eri;
+}
+
+fn fill_eri_tensor_shells(
+    data: LibcintData,
+    n: usize,
+    cart_norms: []const f64,
+    buf: []f64,
+    shls: *[4]c_int,
+    eri: []f64,
+) !void {
     var si: c_int = 0;
     while (si < data.nbas) : (si += 1) {
         var sj: c_int = 0;
@@ -608,66 +623,68 @@ pub fn build_eri_tensor(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
             while (sk < data.nbas) : (sk += 1) {
                 var sl: c_int = 0;
                 while (sl < data.nbas) : (sl += 1) {
-                    shls[0] = si;
-                    shls[1] = sj;
-                    shls[2] = sk;
-                    shls[3] = sl;
-
-                    const li = data.bas[@as(usize, @intCast(si)) * BAS_SLOTS + ANG_OF];
-                    const lj = data.bas[@as(usize, @intCast(sj)) * BAS_SLOTS + ANG_OF];
-                    const lk = data.bas[@as(usize, @intCast(sk)) * BAS_SLOTS + ANG_OF];
-                    const ll_ang = data.bas[@as(usize, @intCast(sl)) * BAS_SLOTS + ANG_OF];
-                    const ni = basis_mod.num_cartesian(@intCast(li));
-                    const nj = basis_mod.num_cartesian(@intCast(lj));
-                    const nk = basis_mod.num_cartesian(@intCast(lk));
-                    const nl = basis_mod.num_cartesian(@intCast(ll_ang));
-
-                    _ = cint_fns.int2e_cart(
-                        &buf,
-                        null,
-                        &shls,
-                        data.atm.ptr,
-                        data.natm,
-                        data.bas.ptr,
-                        data.nbas,
-                        data.env.ptr,
-                        null,
-                        null,
+                    fill_eri_shell_quartet(
+                        data,
+                        n,
+                        cart_norms,
+                        buf,
+                        shls,
+                        eri,
+                        .{ si, sj, sk, sl },
                     );
-
-                    // Copy: libcint column-major (i fastest) → our row-major (ij|kl)
-                    // Apply Cartesian normalization correction
-                    const oi = data.shell_offsets[@intCast(si)];
-                    const oj = data.shell_offsets[@intCast(sj)];
-                    const ok = data.shell_offsets[@intCast(sk)];
-                    const ol = data.shell_offsets[@intCast(sl)];
-
-                    for (0..ni) |ii| {
-                        for (0..nj) |jj| {
-                            for (0..nk) |kk| {
-                                for (0..nl) |ll| {
-                                    // libcint index: col-major:
-                                    //   buf[i + j*ni + k*ni*nj + l*ni*nj*nk]
-                                    const cidx = ii + jj * ni + kk * ni * nj + ll * ni * nj * nk;
-                                    const mu = oi + ii;
-                                    const nu = oj + jj;
-                                    const lam = ok + kk;
-                                    const sig = ol + ll;
-                                    const norm_mn = cart_norms[mu] * cart_norms[nu];
-                                    const norm_ls = cart_norms[lam] * cart_norms[sig];
-                                    const norm = norm_mn * norm_ls;
-                                    const eri_idx = mu * n * n * n + nu * n * n + lam * n + sig;
-                                    eri[eri_idx] = buf[cidx] * norm;
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
     }
+}
 
-    return eri;
+fn fill_eri_shell_quartet(
+    data: LibcintData,
+    n: usize,
+    cart_norms: []const f64,
+    buf: []f64,
+    shls: *[4]c_int,
+    eri: []f64,
+    shell_ids: [4]c_int,
+) void {
+    shls.* = shell_ids;
+    const ni = num_cartesian_from_bas(data, @intCast(shell_ids[0]));
+    const nj = num_cartesian_from_bas(data, @intCast(shell_ids[1]));
+    const nk = num_cartesian_from_bas(data, @intCast(shell_ids[2]));
+    const nl = num_cartesian_from_bas(data, @intCast(shell_ids[3]));
+    _ = cint_fns.int2e_cart(
+        buf.ptr,
+        null,
+        shls,
+        data.atm.ptr,
+        data.natm,
+        data.bas.ptr,
+        data.nbas,
+        data.env.ptr,
+        null,
+        null,
+    );
+    const oi = data.shell_offsets[@intCast(shell_ids[0])];
+    const oj = data.shell_offsets[@intCast(shell_ids[1])];
+    const ok = data.shell_offsets[@intCast(shell_ids[2])];
+    const ol = data.shell_offsets[@intCast(shell_ids[3])];
+    for (0..ni) |ii| {
+        for (0..nj) |jj| {
+            for (0..nk) |kk| {
+                for (0..nl) |ll| {
+                    const cidx = ii + jj * ni + kk * ni * nj + ll * ni * nj * nk;
+                    const mu = oi + ii;
+                    const nu = oj + jj;
+                    const lam = ok + kk;
+                    const sig = ol + ll;
+                    const norm_mn = cart_norms[mu] * cart_norms[nu];
+                    const norm_ls = cart_norms[lam] * cart_norms[sig];
+                    const norm = norm_mn * norm_ls;
+                    eri[mu * n * n * n + nu * n * n + lam * n + sig] = buf[cidx] * norm;
+                }
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -1053,49 +1070,7 @@ pub const LibcintJKBuilder = struct {
             data.env.ptr,
         );
 
-        // Schwarz table
-        const schwarz = try alloc.alloc(f64, nbas * nbas);
-        {
-            const max_buf_size = 50625;
-            var buf: [max_buf_size]f64 = undefined;
-            var shls: [4]c_int = undefined;
-
-            for (0..nbas) |si| {
-                var sj: usize = 0;
-                while (sj <= si) : (sj += 1) {
-                    shls[0] = @intCast(si);
-                    shls[1] = @intCast(sj);
-                    shls[2] = @intCast(si);
-                    shls[3] = @intCast(sj);
-
-                    const ni = num_cartesian_from_bas(data, si);
-                    const nj = num_cartesian_from_bas(data, sj);
-                    const size = ni * nj * ni * nj;
-
-                    _ = cint_fns.int2e_cart(
-                        &buf,
-                        null,
-                        &shls,
-                        data.atm.ptr,
-                        data.natm,
-                        data.bas.ptr,
-                        data.nbas,
-                        data.env.ptr,
-                        opt,
-                        null,
-                    );
-
-                    var max_val: f64 = 0.0;
-                    for (0..size) |idx| {
-                        const abs_val = @abs(buf[idx]);
-                        if (abs_val > max_val) max_val = abs_val;
-                    }
-                    const q = @sqrt(max_val);
-                    schwarz[si * nbas + sj] = q;
-                    schwarz[sj * nbas + si] = q;
-                }
-            }
-        }
+        const schwarz = try build_schwarz_table(alloc, data, nbas, opt);
 
         return .{
             .data = data,
@@ -1186,6 +1161,57 @@ pub const LibcintJKBuilder = struct {
         return .{ .j_matrix = j_matrix, .k_matrix = k_matrix };
     }
 };
+
+fn build_schwarz_table(
+    alloc: std.mem.Allocator,
+    data: LibcintData,
+    nbas: usize,
+    opt: ?*c.CINTOpt,
+) ![]f64 {
+    const schwarz = try alloc.alloc(f64, nbas * nbas);
+    const max_buf_size = 50625;
+    var buf: [max_buf_size]f64 = undefined;
+    var shls: [4]c_int = undefined;
+
+    for (0..nbas) |si| {
+        var sj: usize = 0;
+        while (sj <= si) : (sj += 1) {
+            const q = compute_schwarz_pair(data, opt, si, sj, buf[0..], &shls);
+            schwarz[si * nbas + sj] = q;
+            schwarz[sj * nbas + si] = q;
+        }
+    }
+    return schwarz;
+}
+
+fn compute_schwarz_pair(
+    data: LibcintData,
+    opt: ?*c.CINTOpt,
+    si: usize,
+    sj: usize,
+    buf: []f64,
+    shls: *[4]c_int,
+) f64 {
+    shls.* = .{ @intCast(si), @intCast(sj), @intCast(si), @intCast(sj) };
+    const ni = num_cartesian_from_bas(data, si);
+    const nj = num_cartesian_from_bas(data, sj);
+    const size = ni * nj * ni * nj;
+    _ = cint_fns.int2e_cart(
+        buf.ptr,
+        null,
+        shls,
+        data.atm.ptr,
+        data.natm,
+        data.bas.ptr,
+        data.nbas,
+        data.env.ptr,
+        opt,
+        null,
+    );
+    var max_val: f64 = 0.0;
+    for (0..size) |idx| max_val = @max(max_val, @abs(buf[idx]));
+    return @sqrt(max_val);
+}
 
 /// Build J (Coulomb) and K (exchange) matrices using direct libcint ERIs.
 ///

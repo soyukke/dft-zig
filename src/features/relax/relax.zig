@@ -1037,23 +1037,8 @@ fn update_cell_from_stress(
         }
     }
 
-    // Compute fractional coordinates of atoms BEFORE cell update
-    // frac = pos × cell^{-1} (row-vector convention: pos_j = Σ_i frac_i × cell[i][j])
     const c = cell_ptr.m;
-    const det_c = c[0][0] * (c[1][1] * c[2][2] - c[1][2] * c[2][1]) -
-        c[0][1] * (c[1][0] * c[2][2] - c[1][2] * c[2][0]) +
-        c[0][2] * (c[1][0] * c[2][1] - c[1][1] * c[2][0]);
-    const inv_det = 1.0 / det_c;
-    var c_inv: [3][3]f64 = undefined;
-    c_inv[0][0] = (c[1][1] * c[2][2] - c[1][2] * c[2][1]) * inv_det;
-    c_inv[0][1] = (c[0][2] * c[2][1] - c[0][1] * c[2][2]) * inv_det;
-    c_inv[0][2] = (c[0][1] * c[1][2] - c[0][2] * c[1][1]) * inv_det;
-    c_inv[1][0] = (c[1][2] * c[2][0] - c[1][0] * c[2][2]) * inv_det;
-    c_inv[1][1] = (c[0][0] * c[2][2] - c[0][2] * c[2][0]) * inv_det;
-    c_inv[1][2] = (c[0][2] * c[1][0] - c[0][0] * c[1][2]) * inv_det;
-    c_inv[2][0] = (c[1][0] * c[2][1] - c[1][1] * c[2][0]) * inv_det;
-    c_inv[2][1] = (c[0][1] * c[2][0] - c[0][0] * c[2][1]) * inv_det;
-    c_inv[2][2] = (c[0][0] * c[1][1] - c[0][1] * c[1][0]) * inv_det;
+    const c_inv = invert_cell_matrix(c);
 
     // Update cell: cell' = (I + ε) × cell
     // cell'[i][j] = Σ_k (δ_ik + ε_ik) × cell[k][j]
@@ -1077,8 +1062,32 @@ fn update_cell_from_stress(
     const a3 = cell_ptr.row(2);
     volume_ptr.* = @abs(math.Vec3.dot(a1, math.Vec3.cross(a2, a3)));
 
-    // Update Cartesian positions from fractional coordinates
-    // pos' = frac × new_cell, where frac = pos × old_cell_inv
+    update_atom_positions_for_cell_change(atoms, c_inv, new_cell);
+}
+
+fn invert_cell_matrix(c: [3][3]f64) [3][3]f64 {
+    const det_c = c[0][0] * (c[1][1] * c[2][2] - c[1][2] * c[2][1]) -
+        c[0][1] * (c[1][0] * c[2][2] - c[1][2] * c[2][0]) +
+        c[0][2] * (c[1][0] * c[2][1] - c[1][1] * c[2][0]);
+    const inv_det = 1.0 / det_c;
+    var c_inv: [3][3]f64 = undefined;
+    c_inv[0][0] = (c[1][1] * c[2][2] - c[1][2] * c[2][1]) * inv_det;
+    c_inv[0][1] = (c[0][2] * c[2][1] - c[0][1] * c[2][2]) * inv_det;
+    c_inv[0][2] = (c[0][1] * c[1][2] - c[0][2] * c[1][1]) * inv_det;
+    c_inv[1][0] = (c[1][2] * c[2][0] - c[1][0] * c[2][2]) * inv_det;
+    c_inv[1][1] = (c[0][0] * c[2][2] - c[0][2] * c[2][0]) * inv_det;
+    c_inv[1][2] = (c[0][2] * c[1][0] - c[0][0] * c[1][2]) * inv_det;
+    c_inv[2][0] = (c[1][0] * c[2][1] - c[1][1] * c[2][0]) * inv_det;
+    c_inv[2][1] = (c[0][1] * c[2][0] - c[0][0] * c[2][1]) * inv_det;
+    c_inv[2][2] = (c[0][0] * c[1][1] - c[0][1] * c[1][0]) * inv_det;
+    return c_inv;
+}
+
+fn update_atom_positions_for_cell_change(
+    atoms: []hamiltonian.AtomData,
+    c_inv: [3][3]f64,
+    new_cell: [3][3]f64,
+) void {
     for (atoms) |*atom| {
         const pos = atom.position;
         const frac = math.Vec3{
@@ -1243,92 +1252,97 @@ pub fn write_output(
     species: []const hamiltonian.SpeciesEntry,
     unit_scale_ang: f64,
 ) !void {
-    // Write relax_status.txt
-    {
-        var file = try dir.createFile(io, "relax_status.txt", .{ .truncate = true });
-        defer file.close(io);
+    try write_relax_status(io, dir, result);
+    try write_relax_final_xyz(io, dir, result, species, unit_scale_ang);
+    try write_relax_forces_csv(io, dir, result, species);
+    try write_relax_trajectory_csv(io, dir, result);
+    _ = alloc;
+}
 
-        var buffer: [4096]u8 = undefined;
-        var writer = file.writer(io, &buffer);
-        const out = &writer.interface;
+fn write_relax_status(io: std.Io, dir: std.Io.Dir, result: *const RelaxResult) !void {
+    var file = try dir.createFile(io, "relax_status.txt", .{ .truncate = true });
+    defer file.close(io);
 
-        try out.print("converged = {s}\n", .{if (result.converged) "true" else "false"});
-        try out.print("iterations = {d}\n", .{result.iterations});
-        try out.print("final_energy_ry = {d:.10}\n", .{result.final_energy});
-        try out.print("final_energy_ev = {d:.10}\n", .{result.final_energy * 13.6057});
+    var buffer: [4096]u8 = undefined;
+    var writer = file.writer(io, &buffer);
+    const out = &writer.interface;
 
-        if (result.final_forces.len > 0) {
-            const max_force = forces_mod.max_force(result.final_forces);
-            const rms_force = forces_mod.rms_force(result.final_forces);
-            try out.print("max_force_ry_bohr = {d:.10}\n", .{max_force});
-            try out.print("rms_force_ry_bohr = {d:.10}\n", .{rms_force});
-        }
-        try out.flush();
-    }
-
-    // Write relax_final.xyz - final structure in XYZ format
-    {
-        var file = try dir.createFile(io, "relax_final.xyz", .{ .truncate = true });
-        defer file.close(io);
-
-        var buffer: [8192]u8 = undefined;
-        var writer = file.writer(io, &buffer);
-        const out = &writer.interface;
-
-        try out.print("{d}\n", .{result.final_atoms.len});
-        try out.print("Final relaxed structure (Angstrom)\n", .{});
-
-        for (result.final_atoms) |atom| {
-            const symbol = species[atom.species_index].symbol;
-            // Convert from Bohr to Angstrom
-            const x = atom.position.x * unit_scale_ang;
-            const y = atom.position.y * unit_scale_ang;
-            const z = atom.position.z * unit_scale_ang;
-            try out.print("{s} {d:.10} {d:.10} {d:.10}\n", .{ symbol, x, y, z });
-        }
-        try out.flush();
-    }
-
-    // Write relax_forces.csv - final forces
+    try out.print("converged = {s}\n", .{if (result.converged) "true" else "false"});
+    try out.print("iterations = {d}\n", .{result.iterations});
+    try out.print("final_energy_ry = {d:.10}\n", .{result.final_energy});
+    try out.print("final_energy_ev = {d:.10}\n", .{result.final_energy * 13.6057});
     if (result.final_forces.len > 0) {
-        var file = try dir.createFile(io, "relax_forces.csv", .{ .truncate = true });
-        defer file.close(io);
-
-        var buffer: [8192]u8 = undefined;
-        var writer = file.writer(io, &buffer);
-        const out = &writer.interface;
-
-        try out.writeAll("atom,symbol,fx_ry_bohr,fy_ry_bohr,fz_ry_bohr,f_mag_ry_bohr\n");
-
-        for (result.final_forces, 0..) |f, i| {
-            const symbol = species[result.final_atoms[i].species_index].symbol;
-            const mag = math.Vec3.norm(f);
-            try out.print(
-                "{d},{s},{d:.10},{d:.10},{d:.10},{d:.10}\n",
-                .{ i, symbol, f.x, f.y, f.z, mag },
-            );
-        }
-        try out.flush();
+        const max_force = forces_mod.max_force(result.final_forces);
+        const rms_force = forces_mod.rms_force(result.final_forces);
+        try out.print("max_force_ry_bohr = {d:.10}\n", .{max_force});
+        try out.print("rms_force_ry_bohr = {d:.10}\n", .{rms_force});
     }
+    try out.flush();
+}
 
-    // Write relax_trajectory.csv if trajectory is available
-    if (result.trajectory) |traj| {
-        var file = try dir.createFile(io, "relax_trajectory.csv", .{ .truncate = true });
-        defer file.close(io);
+fn write_relax_final_xyz(
+    io: std.Io,
+    dir: std.Io.Dir,
+    result: *const RelaxResult,
+    species: []const hamiltonian.SpeciesEntry,
+    unit_scale_ang: f64,
+) !void {
+    var file = try dir.createFile(io, "relax_final.xyz", .{ .truncate = true });
+    defer file.close(io);
 
-        var buffer: [8192]u8 = undefined;
-        var writer = file.writer(io, &buffer);
-        const out = &writer.interface;
+    var buffer: [8192]u8 = undefined;
+    var writer = file.writer(io, &buffer);
+    const out = &writer.interface;
 
-        try out.writeAll("iter,energy_ry,max_force_ry_bohr\n");
-
-        for (traj, 0..) |step, i| {
-            try out.print("{d},{d:.10},{d:.10}\n", .{ i + 1, step.energy, step.max_force });
-        }
-        try out.flush();
+    try out.print("{d}\n", .{result.final_atoms.len});
+    try out.print("Final relaxed structure (Angstrom)\n", .{});
+    for (result.final_atoms) |atom| {
+        const symbol = species[atom.species_index].symbol;
+        const pos = atom.position.scale(unit_scale_ang);
+        try out.print("{s} {d:.10} {d:.10} {d:.10}\n", .{ symbol, pos.x, pos.y, pos.z });
     }
+    try out.flush();
+}
 
-    _ = alloc; // Reserved for future use
+fn write_relax_forces_csv(
+    io: std.Io,
+    dir: std.Io.Dir,
+    result: *const RelaxResult,
+    species: []const hamiltonian.SpeciesEntry,
+) !void {
+    if (result.final_forces.len == 0) return;
+    var file = try dir.createFile(io, "relax_forces.csv", .{ .truncate = true });
+    defer file.close(io);
+
+    var buffer: [8192]u8 = undefined;
+    var writer = file.writer(io, &buffer);
+    const out = &writer.interface;
+
+    try out.writeAll("atom,symbol,fx_ry_bohr,fy_ry_bohr,fz_ry_bohr,f_mag_ry_bohr\n");
+    for (result.final_forces, 0..) |f, i| {
+        const symbol = species[result.final_atoms[i].species_index].symbol;
+        try out.print(
+            "{d},{s},{d:.10},{d:.10},{d:.10},{d:.10}\n",
+            .{ i, symbol, f.x, f.y, f.z, math.Vec3.norm(f) },
+        );
+    }
+    try out.flush();
+}
+
+fn write_relax_trajectory_csv(io: std.Io, dir: std.Io.Dir, result: *const RelaxResult) !void {
+    const traj = result.trajectory orelse return;
+    var file = try dir.createFile(io, "relax_trajectory.csv", .{ .truncate = true });
+    defer file.close(io);
+
+    var buffer: [8192]u8 = undefined;
+    var writer = file.writer(io, &buffer);
+    const out = &writer.interface;
+
+    try out.writeAll("iter,energy_ry,max_force_ry_bohr\n");
+    for (traj, 0..) |step, i| {
+        try out.print("{d},{d:.10},{d:.10}\n", .{ i + 1, step.energy, step.max_force });
+    }
+    try out.flush();
 }
 
 /// Write trajectory in extended XYZ format for visualization.
@@ -1356,85 +1370,71 @@ pub fn write_trajectory_xyz(
     const c = cell.scale(unit_scale_ang);
 
     for (traj, 0..) |step, iter| {
-        const n_atoms = step.atoms.len;
-
-        // Number of atoms
-        try out.print("{d}\n", .{n_atoms});
-
-        // Extended XYZ comment line with lattice, energy, properties
-        try out.print(
-            "Lattice=\"{d:.8} {d:.8} {d:.8} {d:.8} {d:.8} {d:.8}" ++
-                " {d:.8} {d:.8} {d:.8}\" ",
-            .{
-                c.m[0][0], c.m[0][1], c.m[0][2],
-                c.m[1][0], c.m[1][1], c.m[1][2],
-                c.m[2][0], c.m[2][1], c.m[2][2],
-            },
-        );
-        try out.print("Properties=species:S:1:pos:R:3:forces:R:3 ", .{});
-        try out.print("energy={d:.10} ", .{step.energy * 13.6057}); // eV
-        // eV/Angstrom
-        try out.print("max_force={d:.10} ", .{step.max_force * 13.6057 / 0.529177});
-        try out.print("iter={d} ", .{iter + 1});
-        try out.print("pbc=\"T T T\"\n", .{});
-
-        // Atom lines: symbol x y z fx fy fz
-        for (step.atoms, 0..) |atom, i| {
-            const sym = species[atom.species_index].symbol;
-            // Position in Angstrom
-            const x = atom.position.x * unit_scale_ang;
-            const y = atom.position.y * unit_scale_ang;
-            const z = atom.position.z * unit_scale_ang;
-            // Force in eV/Angstrom
-            const force_scale = 13.6057 / 0.529177; // Ry/Bohr -> eV/Angstrom
-            const fx = step.forces[i].x * force_scale;
-            const fy = step.forces[i].y * force_scale;
-            const fz = step.forces[i].z * force_scale;
-            try out.print(
-                "{s} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10}\n",
-                .{ sym, x, y, z, fx, fy, fz },
-            );
-        }
+        try write_trajectory_step_xyz(out, step, iter, species, c, unit_scale_ang);
         try out.flush();
     }
 
-    // Also write final structure
-    {
-        const n_atoms = result.final_atoms.len;
-        try out.print("{d}\n", .{n_atoms});
-        try out.print(
-            "Lattice=\"{d:.8} {d:.8} {d:.8} {d:.8} {d:.8} {d:.8}" ++
-                " {d:.8} {d:.8} {d:.8}\" ",
-            .{
-                c.m[0][0], c.m[0][1], c.m[0][2],
-                c.m[1][0], c.m[1][1], c.m[1][2],
-                c.m[2][0], c.m[2][1], c.m[2][2],
-            },
-        );
-        try out.print("Properties=species:S:1:pos:R:3:forces:R:3 ", .{});
-        try out.print("energy={d:.10} ", .{result.final_energy * 13.6057});
-        try out.print("converged={s} ", .{if (result.converged) "true" else "false"});
-        try out.print("pbc=\"T T T\"\n", .{});
+    try write_final_trajectory_xyz(out, result, species, c, unit_scale_ang);
+    try out.flush();
+}
 
-        for (result.final_atoms, 0..) |atom, i| {
-            const sym = species[atom.species_index].symbol;
-            const x = atom.position.x * unit_scale_ang;
-            const y = atom.position.y * unit_scale_ang;
-            const z = atom.position.z * unit_scale_ang;
-            const force_scale = 13.6057 / 0.529177;
-            var fx: f64 = 0.0;
-            var fy: f64 = 0.0;
-            var fz: f64 = 0.0;
-            if (result.final_forces.len > i) {
-                fx = result.final_forces[i].x * force_scale;
-                fy = result.final_forces[i].y * force_scale;
-                fz = result.final_forces[i].z * force_scale;
-            }
-            try out.print(
-                "{s} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10}\n",
-                .{ sym, x, y, z, fx, fy, fz },
-            );
-        }
-        try out.flush();
+fn write_lattice_xyz_header(out: anytype, c: math.Mat3) !void {
+    try out.print(
+        "Lattice=\"{d:.8} {d:.8} {d:.8} {d:.8} {d:.8} {d:.8}" ++
+            " {d:.8} {d:.8} {d:.8}\" ",
+        .{
+            c.m[0][0], c.m[0][1], c.m[0][2],
+            c.m[1][0], c.m[1][1], c.m[1][2],
+            c.m[2][0], c.m[2][1], c.m[2][2],
+        },
+    );
+}
+
+fn write_trajectory_step_xyz(
+    out: anytype,
+    step: RelaxStep,
+    iter: usize,
+    species: []const hamiltonian.SpeciesEntry,
+    c: math.Mat3,
+    unit_scale_ang: f64,
+) !void {
+    try out.print("{d}\n", .{step.atoms.len});
+    try write_lattice_xyz_header(out, c);
+    try out.print("Properties=species:S:1:pos:R:3:forces:R:3 ", .{});
+    try out.print("energy={d:.10} ", .{step.energy * 13.6057});
+    try out.print("max_force={d:.10} ", .{step.max_force * 13.6057 / 0.529177});
+    try out.print("iter={d} pbc=\"T T T\"\n", .{iter + 1});
+    for (step.atoms, 0..) |atom, i| {
+        const pos = atom.position.scale(unit_scale_ang);
+        const force = step.forces[i].scale(13.6057 / 0.529177);
+        try out.print(
+            "{s} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10}\n",
+            .{ species[atom.species_index].symbol, pos.x, pos.y, pos.z, force.x, force.y, force.z },
+        );
+    }
+}
+
+fn write_final_trajectory_xyz(
+    out: anytype,
+    result: *const RelaxResult,
+    species: []const hamiltonian.SpeciesEntry,
+    c: math.Mat3,
+    unit_scale_ang: f64,
+) !void {
+    try out.print("{d}\n", .{result.final_atoms.len});
+    try write_lattice_xyz_header(out, c);
+    try out.print("Properties=species:S:1:pos:R:3:forces:R:3 ", .{});
+    try out.print("energy={d:.10} ", .{result.final_energy * 13.6057});
+    try out.print("converged={s} pbc=\"T T T\"\n", .{if (result.converged) "true" else "false"});
+    for (result.final_atoms, 0..) |atom, i| {
+        const pos = atom.position.scale(unit_scale_ang);
+        const force = if (result.final_forces.len > i)
+            result.final_forces[i].scale(13.6057 / 0.529177)
+        else
+            math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
+        try out.print(
+            "{s} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10} {d:.10}\n",
+            .{ species[atom.species_index].symbol, pos.x, pos.y, pos.z, force.x, force.y, force.z },
+        );
     }
 }

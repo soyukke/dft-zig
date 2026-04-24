@@ -394,58 +394,15 @@ pub fn primitive_nuclear_attraction(
     z_nuc: f64,
 ) f64 {
     const p = alpha + beta;
-    const mu = alpha * beta / p;
-    const inv_2p = 0.5 / p;
-
-    // Gaussian product center
-    const pc = math.Vec3{
-        .x = (alpha * center_a.x + beta * center_b.x) / p,
-        .y = (alpha * center_a.y + beta * center_b.y) / p,
-        .z = (alpha * center_a.z + beta * center_b.z) / p,
-    };
-
-    const diff_ab = math.Vec3.sub(center_a, center_b);
-    const r2_ab = math.Vec3.dot(diff_ab, diff_ab);
-
-    const diff_pc = math.Vec3.sub(pc, nuc_pos);
-    const r2_pc = math.Vec3.dot(diff_pc, diff_pc);
-
-    const exp_factor = @exp(-mu * r2_ab);
-    const prefactor = -z_nuc * 2.0 * std.math.pi / p * exp_factor;
-
-    // PA and CP components
-    const pa_x = pc.x - center_a.x;
-    const pa_y = pc.y - center_a.y;
-    const pa_z = pc.z - center_a.z;
-
-    const pb_x = pc.x - center_b.x;
-    const pb_y = pc.y - center_b.y;
-    const pb_z = pc.z - center_b.z;
-
-    const cp_x = nuc_pos.x - pc.x;
-    const cp_y = nuc_pos.y - pc.y;
-    const cp_z = nuc_pos.z - pc.z;
-
+    const centers = nuclear_attraction_centers(alpha, center_a, beta, center_b, nuc_pos, p);
     const total_am = a.x + a.y + a.z + b.x + b.y + b.z;
 
-    // Compute Boys function values F_m(p × |P-C|²) for m = 0 to total_am
     var boys: [MAX_AM_AUX + 1]f64 = undefined;
-    const arg = p * r2_pc;
+    const arg = p * centers.r2_pc;
     for (0..total_am + 1) |m| {
         boys[m] = boys_mod.boys_n(@as(u32, @intCast(m)), arg);
     }
 
-    // Now use 3D Obara-Saika recurrence for the nuclear attraction auxiliary integral.
-    // We need to build Θ^(m)[ax][bx][ay][by][az][bz] but this is too much memory.
-    // Instead, we use a recursive approach or flat indexing.
-    //
-    // The factored approach: nuclear attraction does NOT factor into 1D components
-    // (unlike overlap and kinetic), so we use a direct 3D recurrence.
-    //
-    // We'll implement using a compact array indexed by (ax, bx, ay, by, az, bz, m).
-    // For practical efficiency, we use a flat buffer.
-
-    // Use a simpler recursive implementation for now (sufficient for s, p, d).
     const aux_result = nuclear_aux3_d(
         a.x,
         a.y,
@@ -454,20 +411,52 @@ pub fn primitive_nuclear_attraction(
         b.y,
         b.z,
         0,
-        pa_x,
-        pa_y,
-        pa_z,
-        pb_x,
-        pb_y,
-        pb_z,
-        cp_x,
-        cp_y,
-        cp_z,
-        inv_2p,
+        centers.pa.x,
+        centers.pa.y,
+        centers.pa.z,
+        centers.pb.x,
+        centers.pb.y,
+        centers.pb.z,
+        centers.cp.x,
+        centers.cp.y,
+        centers.cp.z,
+        0.5 / p,
         &boys,
     );
 
-    return prefactor * aux_result;
+    return (-z_nuc * 2.0 * std.math.pi / p * @exp(-alpha * beta / p * centers.r2_ab)) * aux_result;
+}
+
+const NuclearAttractionCenters = struct {
+    pa: math.Vec3,
+    pb: math.Vec3,
+    cp: math.Vec3,
+    r2_ab: f64,
+    r2_pc: f64,
+};
+
+fn nuclear_attraction_centers(
+    alpha: f64,
+    center_a: math.Vec3,
+    beta: f64,
+    center_b: math.Vec3,
+    nuc_pos: math.Vec3,
+    p: f64,
+) NuclearAttractionCenters {
+    const pc = math.Vec3{
+        .x = (alpha * center_a.x + beta * center_b.x) / p,
+        .y = (alpha * center_a.y + beta * center_b.y) / p,
+        .z = (alpha * center_a.z + beta * center_b.z) / p,
+    };
+    const diff_ab = math.Vec3.sub(center_a, center_b);
+    const diff_pc = math.Vec3.sub(pc, nuc_pos);
+    return .{
+        .pa = math.Vec3.sub(pc, center_a),
+        .pb = math.Vec3.sub(pc, center_b),
+        .cp = math.Vec3.sub(nuc_pos, pc),
+        .r2_ab = math.Vec3.dot(diff_ab, diff_ab),
+        .r2_pc = math.Vec3.dot(diff_pc, diff_pc),
+    };
 }
 
 fn first_non_zero_axis(comptime T: type, values: [3]T) ?usize {
