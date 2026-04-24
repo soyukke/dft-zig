@@ -1587,30 +1587,9 @@ fn finish_scf_iteration(
         .density => diff,
         .potential => state.last_potential_residual,
     };
-    try ctx.common.log.write_iter(
-        state.iterations,
-        diff,
-        state.last_potential_residual,
-        state.last_band_energy,
-        state.last_nonlocal_energy,
-    );
-    if (!ctx.cfg.scf.quiet) {
-        try log_progress(
-            ctx.io,
-            state.iterations,
-            diff,
-            state.last_potential_residual,
-            state.last_band_energy,
-            state.last_nonlocal_energy,
-        );
-    }
+    try log_scf_iteration_progress(ctx, state, diff);
     if (conv_value < ctx.cfg.scf.convergence) {
-        state.converged = true;
-        @memcpy(state.rho, density.density_result.rho);
-        state.potential.deinit(ctx.alloc);
-        state.potential = potential_step.potential_out;
-        potential_step.keep = true;
-        return true;
+        return finish_converged_scf_iteration(ctx, state, density, potential_step);
     }
 
     const t_mix_start = if (ctx.cfg.scf.profile) profile_start(ctx.io) else null;
@@ -1652,6 +1631,44 @@ fn finish_scf_iteration(
         caches.apply_caches,
     );
     return false;
+}
+
+fn log_scf_iteration_progress(
+    ctx: *const ScfRunContext,
+    state: *const ScfRunState,
+    diff: f64,
+) !void {
+    try ctx.common.log.write_iter(
+        state.iterations,
+        diff,
+        state.last_potential_residual,
+        state.last_band_energy,
+        state.last_nonlocal_energy,
+    );
+    if (!ctx.cfg.scf.quiet) {
+        try log_progress(
+            ctx.io,
+            state.iterations,
+            diff,
+            state.last_potential_residual,
+            state.last_band_energy,
+            state.last_nonlocal_energy,
+        );
+    }
+}
+
+fn finish_converged_scf_iteration(
+    ctx: *const ScfRunContext,
+    state: *ScfRunState,
+    density: *const ScfIterationDensity,
+    potential_step: *ScfIterationPotential,
+) bool {
+    state.converged = true;
+    @memcpy(state.rho, density.density_result.rho);
+    state.potential.deinit(ctx.alloc);
+    state.potential = potential_step.potential_out;
+    potential_step.keep = true;
+    return true;
 }
 
 fn run_scf_iterations(
