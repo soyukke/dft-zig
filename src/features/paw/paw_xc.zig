@@ -2932,6 +2932,69 @@ fn compute_spin_dij_xc_one_angular(
     }
 }
 
+const SpinDijDensityPair = struct {
+    up: DensityAccumCtx,
+    down: DensityAccumCtx,
+};
+
+fn build_spin_dij_density_pair(
+    paw: PawData,
+    rhoij_m_up: []const f64,
+    rhoij_m_down: []const f64,
+    m_total: usize,
+    m_offsets: []const usize,
+    alpha: usize,
+    lb: *const LebedevBuffers,
+    dims: MeshAndAug,
+    aug: *const AugR2Buffers,
+    uiuj: *const UiUjBuffers,
+    gaunt_table: *const GauntTable,
+    sc: *const SpinDijXcScratch,
+) SpinDijDensityPair {
+    return .{
+        .up = build_density_accum_ctx(
+            paw,
+            rhoij_m_up,
+            m_total,
+            m_offsets,
+            alpha,
+            lb.ylm_at,
+            lb.grad_ylm_at,
+            lb.ylm_aug_at,
+            lb.grad_ylm_aug_at,
+            dims.n_lm_aug,
+            dims.n_l_aug,
+            dims.lmax_aug,
+            aug.vals,
+            uiuj.ae,
+            uiuj.ps,
+            gaunt_table,
+            dims.n_mesh,
+            &sc.up,
+        ),
+        .down = build_density_accum_ctx(
+            paw,
+            rhoij_m_down,
+            m_total,
+            m_offsets,
+            alpha,
+            lb.ylm_at,
+            lb.grad_ylm_at,
+            lb.ylm_aug_at,
+            lb.grad_ylm_aug_at,
+            dims.n_lm_aug,
+            dims.n_l_aug,
+            dims.lmax_aug,
+            aug.vals,
+            uiuj.ae,
+            uiuj.ps,
+            gaunt_table,
+            dims.n_mesh,
+            &sc.down,
+        ),
+    };
+}
+
 fn run_spin_dij_xc_angular_pass(
     grid: anytype,
     paw: PawData,
@@ -2952,45 +3015,19 @@ fn run_spin_dij_xc_angular_pass(
     xc_func: xc.Functional,
 ) void {
     for (grid, 0..) |_, alpha| {
-        const dens_up = build_density_accum_ctx(
+        const dens = build_spin_dij_density_pair(
             paw,
             rhoij_m_up,
-            m_total,
-            m_offsets,
-            alpha,
-            lb.ylm_at,
-            lb.grad_ylm_at,
-            lb.ylm_aug_at,
-            lb.grad_ylm_aug_at,
-            dims.n_lm_aug,
-            dims.n_l_aug,
-            dims.lmax_aug,
-            aug.vals,
-            uiuj.ae,
-            uiuj.ps,
-            gaunt_table,
-            dims.n_mesh,
-            &sc.up,
-        );
-        const dens_down = build_density_accum_ctx(
-            paw,
             rhoij_m_down,
             m_total,
             m_offsets,
             alpha,
-            lb.ylm_at,
-            lb.grad_ylm_at,
-            lb.ylm_aug_at,
-            lb.grad_ylm_aug_at,
-            dims.n_lm_aug,
-            dims.n_l_aug,
-            dims.lmax_aug,
-            aug.vals,
-            uiuj.ae,
-            uiuj.ps,
+            lb,
+            dims,
+            aug,
+            uiuj,
             gaunt_table,
-            dims.n_mesh,
-            &sc.down,
+            sc,
         );
         const ctx = SpinDijXcAngularCtx{
             .alpha = alpha,
@@ -3004,7 +3041,7 @@ fn run_spin_dij_xc_angular_pass(
             .up = &sc.up,
             .down = &sc.down,
         };
-        compute_spin_dij_xc_one_angular(&ctx, &dens_up, &dens_down, rho_core_ae, rho_core_ps);
+        compute_spin_dij_xc_one_angular(&ctx, &dens.up, &dens.down, rho_core_ae, rho_core_ps);
     }
 }
 
