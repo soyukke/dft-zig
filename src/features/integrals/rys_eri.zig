@@ -846,6 +846,61 @@ fn accumulate_energy_root_contribution(
     }
 }
 
+fn accumulate_derivative_components(
+    alpha_a: f64,
+    setup: QuartetSetup,
+    prim_deriv_x: []f64,
+    prim_deriv_y: []f64,
+    prim_deriv_z: []f64,
+    idx: usize,
+    gx_idx: usize,
+    gy_idx: usize,
+    gz_idx: usize,
+    exps_x: [4]usize,
+    exps_y: [4]usize,
+    exps_z: [4]usize,
+    hr4d_x: []const f64,
+    hr4d_y: []const f64,
+    hr4d_z: []const f64,
+) void {
+    const gx_val = hr4d_x[gx_idx];
+    const gy_val = hr4d_y[gy_idx];
+    const gz_val = hr4d_z[gz_idx];
+    prim_deriv_x[idx] += derivative_axis_contribution(
+        alpha_a,
+        exps_x[0],
+        exps_x[1],
+        exps_x[2],
+        exps_x[3],
+        gy_val,
+        gz_val,
+        hr4d_x,
+        setup,
+    );
+    prim_deriv_y[idx] += derivative_axis_contribution(
+        alpha_a,
+        exps_y[0],
+        exps_y[1],
+        exps_y[2],
+        exps_y[3],
+        gx_val,
+        gz_val,
+        hr4d_y,
+        setup,
+    );
+    prim_deriv_z[idx] += derivative_axis_contribution(
+        alpha_a,
+        exps_z[0],
+        exps_z[1],
+        exps_z[2],
+        exps_z[3],
+        gx_val,
+        gy_val,
+        hr4d_z,
+        setup,
+    );
+}
+
 fn accumulate_derivative_root_contribution(
     setup: QuartetSetup,
     alpha_a: f64,
@@ -888,41 +943,22 @@ fn accumulate_derivative_root_contribution(
                     const gz_idx = az * setup.hr4d_a_stride +
                         bz * setup.hr4d_b_stride +
                         cz * setup.hr4d_c_stride + dz;
-                    const gx_val = hr4d_x[gx_idx];
-                    const gy_val = hr4d_y[gy_idx];
-                    const gz_val = hr4d_z[gz_idx];
-                    prim_deriv_x[idx] += derivative_axis_contribution(
+                    accumulate_derivative_components(
                         alpha_a,
-                        ax,
-                        bx,
-                        cx,
-                        dx,
-                        gy_val,
-                        gz_val,
+                        setup,
+                        prim_deriv_x,
+                        prim_deriv_y,
+                        prim_deriv_z,
+                        idx,
+                        gx_idx,
+                        gy_idx,
+                        gz_idx,
+                        .{ ax, bx, cx, dx },
+                        .{ ay, by, cy, dy },
+                        .{ az, bz, cz, dz },
                         hr4d_x,
-                        setup,
-                    );
-                    prim_deriv_y[idx] += derivative_axis_contribution(
-                        alpha_a,
-                        ay,
-                        by,
-                        cy,
-                        dy,
-                        gx_val,
-                        gz_val,
                         hr4d_y,
-                        setup,
-                    );
-                    prim_deriv_z[idx] += derivative_axis_contribution(
-                        alpha_a,
-                        az,
-                        bz,
-                        cz,
-                        dz,
-                        gx_val,
-                        gy_val,
                         hr4d_z,
-                        setup,
                     );
                 }
             }
