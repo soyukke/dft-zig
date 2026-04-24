@@ -130,69 +130,19 @@ fn process_one_kpoint_dfpt(
     // ψ^(0)(r) cache for this k-point
     const psi0_r_k = shared.psi0_r_cache[ik];
 
-    // Solve Sternheimer for each occupied band at this k-point
     for (0..n_occ) |n| {
-        // RHS: -P_c^{k+q} × H^(1)|ψ^(0)_{n,k}⟩
-        const rhs = try apply_v1_psi_q_cached(
+        try process_one_kpoint_band_dfpt(
             alloc,
-            shared.grid,
+            shared,
+            kd,
             map_kq_ptr,
-            shared.v_scf_r,
             psi0_r_k[n],
+            ik,
+            n,
+            nl_ctx_k_opt,
+            nl_ctx_kq_opt,
             n_pw_kq,
         );
-        defer alloc.free(rhs);
-
-        // Add nonlocal perturbation
-        if (nl_ctx_k_opt != null and nl_ctx_kq_opt != null) {
-            const nl_out = try alloc.alloc(math.Complex, n_pw_kq);
-            defer alloc.free(nl_out);
-
-            try perturbation.apply_nonlocal_perturbation_q(
-                alloc,
-                kd.basis_k.gvecs,
-                kd.basis_kq.gvecs,
-                shared.atoms,
-                nl_ctx_k_opt.?,
-                nl_ctx_kq_opt.?,
-                shared.atom_index,
-                shared.direction,
-                1.0 / shared.grid.volume,
-                kd.wavefunctions_k_const[n],
-                nl_out,
-            );
-            for (0..n_pw_kq) |g| {
-                rhs[g] = math.complex.add(rhs[g], nl_out[g]);
-            }
-        }
-
-        // Negate
-        for (0..n_pw_kq) |g| {
-            rhs[g] = math.complex.scale(rhs[g], -1.0);
-        }
-
-        // Project onto conduction band in k+q space
-        sternheimer.project_conduction(rhs, kd.occ_kq_const, kd.n_occ_kq);
-
-        // Solve Sternheimer
-        const result = try sternheimer.solve(
-            alloc,
-            kd.apply_ctx_kq,
-            rhs,
-            kd.eigenvalues_k[n],
-            kd.occ_kq_const,
-            kd.n_occ_kq,
-            kd.basis_kq.gvecs,
-            .{
-                .tol = shared.cfg.sternheimer_tol,
-                .max_iter = shared.cfg.sternheimer_max_iter,
-                .alpha_shift = shared.cfg.alpha_shift,
-            },
-        );
-
-        // Copy result to psi1_per_k (fixed-size buffer, no reallocation needed)
-        @memcpy(shared.psi1_per_k[ik][n], result.psi1);
-        alloc.free(result.psi1);
     }
 
     // Compute ρ^(1) for this k-point (weighted by wtk)
@@ -216,6 +166,89 @@ fn process_one_kpoint_dfpt(
     for (0..total) |i| {
         rho1_local[i] = math.complex.add(rho1_local[i], rho1_k_r[i]);
     }
+}
+
+fn process_one_kpoint_band_dfpt(
+    alloc: std.mem.Allocator,
+    shared: *DfptKpointShared,
+    kd: *KPointDfptData,
+    map_kq_ptr: *const scf_mod.PwGridMap,
+    psi0_r: []const math.Complex,
+    ik: usize,
+    n: usize,
+    nl_ctx_k_opt: anytype,
+    nl_ctx_kq_opt: anytype,
+    n_pw_kq: usize,
+) !void {
+    const rhs = try apply_v1_psi_q_cached(
+        alloc,
+        shared.grid,
+        map_kq_ptr,
+        shared.v_scf_r,
+        psi0_r,
+        n_pw_kq,
+    );
+    defer alloc.free(rhs);
+
+    try add_nonlocal_perturbation_rhs(
+        alloc,
+        shared,
+        kd,
+        n,
+        nl_ctx_k_opt,
+        nl_ctx_kq_opt,
+        n_pw_kq,
+        rhs,
+    );
+    for (0..n_pw_kq) |g| rhs[g] = math.complex.scale(rhs[g], -1.0);
+    sternheimer.project_conduction(rhs, kd.occ_kq_const, kd.n_occ_kq);
+
+    const result = try sternheimer.solve(
+        alloc,
+        kd.apply_ctx_kq,
+        rhs,
+        kd.eigenvalues_k[n],
+        kd.occ_kq_const,
+        kd.n_occ_kq,
+        kd.basis_kq.gvecs,
+        .{
+            .tol = shared.cfg.sternheimer_tol,
+            .max_iter = shared.cfg.sternheimer_max_iter,
+            .alpha_shift = shared.cfg.alpha_shift,
+        },
+    );
+    @memcpy(shared.psi1_per_k[ik][n], result.psi1);
+    alloc.free(result.psi1);
+}
+
+fn add_nonlocal_perturbation_rhs(
+    alloc: std.mem.Allocator,
+    shared: *DfptKpointShared,
+    kd: *KPointDfptData,
+    n: usize,
+    nl_ctx_k_opt: anytype,
+    nl_ctx_kq_opt: anytype,
+    n_pw_kq: usize,
+    rhs: []math.Complex,
+) !void {
+    if (nl_ctx_k_opt == null or nl_ctx_kq_opt == null) return;
+    const nl_out = try alloc.alloc(math.Complex, n_pw_kq);
+    defer alloc.free(nl_out);
+
+    try perturbation.apply_nonlocal_perturbation_q(
+        alloc,
+        kd.basis_k.gvecs,
+        kd.basis_kq.gvecs,
+        shared.atoms,
+        nl_ctx_k_opt.?,
+        nl_ctx_kq_opt.?,
+        shared.atom_index,
+        shared.direction,
+        1.0 / shared.grid.volume,
+        kd.wavefunctions_k_const[n],
+        nl_out,
+    );
+    for (0..n_pw_kq) |g| rhs[g] = math.complex.add(rhs[g], nl_out[g]);
 }
 
 const Psi1Buffers = struct {

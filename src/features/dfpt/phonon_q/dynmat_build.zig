@@ -17,6 +17,7 @@ const scf_mod = @import("../../scf/scf.zig");
 const plane_wave = @import("../../plane_wave/basis.zig");
 const hamiltonian = @import("../../hamiltonian/hamiltonian.zig");
 const form_factor = @import("../../pseudopotential/form_factor.zig");
+const local_potential = @import("../../pseudopotential/local_potential.zig");
 const config_mod = @import("../../config/config.zig");
 const d3 = @import("../../vdw/d3.zig");
 const d3_params = @import("../../vdw/d3_params.zig");
@@ -216,42 +217,7 @@ fn add_single_kq_independent_terms(
     vxc_g: ?[]const math.Complex,
     n_atoms: usize,
 ) !void {
-    const ewald_dyn_q = try ewald2.ewald_dynmat_q(
-        alloc,
-        cell_bohr,
-        recip,
-        charges,
-        positions,
-        q_cart,
-    );
-    defer alloc.free(ewald_dyn_q);
-
-    log_dfpt(
-        "dfptQ_dyn: D_ewald(0x,0x)=({e:.6},{e:.6}) D_ewald(0x,1x)=({e:.6},{e:.6}) [Ha]\n",
-        .{ ewald_dyn_q[0].r, ewald_dyn_q[0].i, ewald_dyn_q[3].r, ewald_dyn_q[3].i },
-    );
-    log_dfpt(
-        "dfptQ_dyn: D_ewald(0x,0y)=({e:.6},{e:.6}) D_ewald(0y,0y)=({e:.6},{e:.6}) [Ha]\n",
-        .{
-            ewald_dyn_q[1].r,
-            ewald_dyn_q[1].i,
-            ewald_dyn_q[dim + 1].r,
-            ewald_dyn_q[dim + 1].i,
-        },
-    );
-    log_dfpt("dfptQ_dyn: D_ewald full [Ha]:\n", .{});
-    for (0..dim) |row| {
-        for (0..dim) |col| {
-            log_dfpt(
-                "  ({e:.6},{e:.6})",
-                .{ ewald_dyn_q[row * dim + col].r, ewald_dyn_q[row * dim + col].i },
-            );
-        }
-        log_dfpt("\n", .{});
-    }
-    for (dyn_q, ewald_dyn_q) |*value, addend| {
-        value.* = math.complex.add(value.*, math.complex.scale(addend, 2.0));
-    }
+    try add_single_ewald_dynmat_q(alloc, dyn_q, dim, charges, positions, cell_bohr, recip, q_cart);
 
     const self_dyn_real = try dynmat_contrib.compute_self_energy_dynmat(
         alloc,
@@ -296,6 +262,49 @@ fn add_single_kq_independent_terms(
     }
 }
 
+fn add_single_ewald_dynmat_q(
+    alloc: std.mem.Allocator,
+    dyn_q: []math.Complex,
+    dim: usize,
+    charges: []const f64,
+    positions: []const math.Vec3,
+    cell_bohr: math.Mat3,
+    recip: math.Mat3,
+    q_cart: math.Vec3,
+) !void {
+    const ewald_dyn_q = try ewald2.ewald_dynmat_q(
+        alloc,
+        cell_bohr,
+        recip,
+        charges,
+        positions,
+        q_cart,
+    );
+    defer alloc.free(ewald_dyn_q);
+
+    log_dfpt(
+        "dfptQ_dyn: D_ewald(0x,0x)=({e:.6},{e:.6}) D_ewald(0x,1x)=({e:.6},{e:.6}) [Ha]\n",
+        .{ ewald_dyn_q[0].r, ewald_dyn_q[0].i, ewald_dyn_q[3].r, ewald_dyn_q[3].i },
+    );
+    log_dfpt(
+        "dfptQ_dyn: D_ewald(0x,0y)=({e:.6},{e:.6}) D_ewald(0y,0y)=({e:.6},{e:.6}) [Ha]\n",
+        .{ ewald_dyn_q[1].r, ewald_dyn_q[1].i, ewald_dyn_q[dim + 1].r, ewald_dyn_q[dim + 1].i },
+    );
+    log_dfpt("dfptQ_dyn: D_ewald full [Ha]:\n", .{});
+    for (0..dim) |row| {
+        for (0..dim) |col| {
+            log_dfpt("  ({e:.6},{e:.6})", .{
+                ewald_dyn_q[row * dim + col].r,
+                ewald_dyn_q[row * dim + col].i,
+            });
+        }
+        log_dfpt("\n", .{});
+    }
+    for (dyn_q, ewald_dyn_q) |*value, addend| {
+        value.* = math.complex.add(value.*, math.complex.scale(addend, 2.0));
+    }
+}
+
 fn add_multi_kq_independent_terms(
     alloc: std.mem.Allocator,
     dyn_q: []math.Complex,
@@ -318,8 +327,86 @@ fn add_multi_kq_independent_terms(
     vdw_cfg: config_mod.VdwConfig,
     n_atoms: usize,
 ) !void {
-    const dim = 3 * n_atoms;
+    try add_multi_ewald_dynmat_q(alloc, dyn_q, charges, positions, cell_bohr, recip, q_cart);
+    try add_multi_local_self_dynmat(
+        alloc,
+        dyn_q,
+        grid,
+        species,
+        atoms,
+        rho0_g,
+        gs.local_cfg,
+        ff_tables,
+    );
+    const nl_self_real = try compute_nonlocal_self_dynmat_multi_k(
+        alloc,
+        kpts,
+        atoms,
+        n_atoms,
+        volume,
+    );
+    defer alloc.free(nl_self_real);
 
+    log_dfpt("dfptQ_mk_dyn: D_nl_self(0x,0x)={e:.6}\n", .{nl_self_real[0]});
+    add_real_dynmat(dyn_q, nl_self_real);
+    try add_multi_nlcc_self_dynmat(
+        alloc,
+        dyn_q,
+        grid,
+        species,
+        atoms,
+        rho_core_tables,
+        rho_core,
+        vxc_g,
+    );
+    if (!vdw_cfg.enabled) return;
+    try add_multi_vdw_dynmat_q(
+        alloc,
+        dyn_q,
+        species,
+        atoms,
+        n_atoms,
+        positions,
+        cell_bohr,
+        vdw_cfg,
+        q_cart,
+    );
+}
+
+fn add_multi_local_self_dynmat(
+    alloc: std.mem.Allocator,
+    dyn_q: []math.Complex,
+    grid: Grid,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    rho0_g: []const math.Complex,
+    local_cfg: local_potential.LocalPotentialConfig,
+    ff_tables: ?[]const form_factor.LocalFormFactorTable,
+) !void {
+    const self_dyn_real = try dynmat_contrib.compute_self_energy_dynmat(
+        alloc,
+        grid,
+        species,
+        atoms,
+        rho0_g,
+        local_cfg,
+        ff_tables,
+    );
+    defer alloc.free(self_dyn_real);
+
+    log_dfpt("dfptQ_mk_dyn: D_self(0x,0x)={e:.6}\n", .{self_dyn_real[0]});
+    add_real_dynmat(dyn_q, self_dyn_real);
+}
+
+fn add_multi_ewald_dynmat_q(
+    alloc: std.mem.Allocator,
+    dyn_q: []math.Complex,
+    charges: []const f64,
+    positions: []const math.Vec3,
+    cell_bohr: math.Mat3,
+    recip: math.Mat3,
+    q_cart: math.Vec3,
+) !void {
     const ewald_dyn_q = try ewald2.ewald_dynmat_q(
         alloc,
         cell_bohr,
@@ -337,52 +424,45 @@ fn add_multi_kq_independent_terms(
     for (dyn_q, ewald_dyn_q) |*value, addend| {
         value.* = math.complex.add(value.*, math.complex.scale(addend, 2.0));
     }
+}
 
-    const self_dyn_real = try dynmat_contrib.compute_self_energy_dynmat(
+fn add_multi_nlcc_self_dynmat(
+    alloc: std.mem.Allocator,
+    dyn_q: []math.Complex,
+    grid: Grid,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    rho_core_tables: ?[]const form_factor.RadialFormFactorTable,
+    rho_core: ?[]const f64,
+    vxc_g: ?[]const math.Complex,
+) !void {
+    if (rho_core == null) return;
+    const vg = vxc_g orelse return;
+    const nlcc_self_real = try dynmat_contrib.compute_nlcc_self_dynmat(
         alloc,
         grid,
         species,
         atoms,
-        rho0_g,
-        gs.local_cfg,
-        ff_tables,
+        vg,
+        rho_core_tables,
     );
-    defer alloc.free(self_dyn_real);
+    defer alloc.free(nlcc_self_real);
 
-    log_dfpt("dfptQ_mk_dyn: D_self(0x,0x)={e:.6}\n", .{self_dyn_real[0]});
-    add_real_dynmat(dyn_q, self_dyn_real);
+    log_dfpt("dfptQ_mk_dyn: D_nlcc_self(0x,0x)={e:.6}\n", .{nlcc_self_real[0]});
+    add_real_dynmat(dyn_q, nlcc_self_real);
+}
 
-    const nl_self_real = try compute_nonlocal_self_dynmat_multi_k(
-        alloc,
-        kpts,
-        atoms,
-        n_atoms,
-        volume,
-    );
-    defer alloc.free(nl_self_real);
-
-    log_dfpt("dfptQ_mk_dyn: D_nl_self(0x,0x)={e:.6}\n", .{nl_self_real[0]});
-    add_real_dynmat(dyn_q, nl_self_real);
-
-    if (rho_core != null) {
-        if (vxc_g) |vg| {
-            const nlcc_self_real = try dynmat_contrib.compute_nlcc_self_dynmat(
-                alloc,
-                grid,
-                species,
-                atoms,
-                vg,
-                rho_core_tables,
-            );
-            defer alloc.free(nlcc_self_real);
-
-            log_dfpt("dfptQ_mk_dyn: D_nlcc_self(0x,0x)={e:.6}\n", .{nlcc_self_real[0]});
-            add_real_dynmat(dyn_q, nlcc_self_real);
-        }
-    }
-
-    if (!vdw_cfg.enabled) return;
-
+fn add_multi_vdw_dynmat_q(
+    alloc: std.mem.Allocator,
+    dyn_q: []math.Complex,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    n_atoms: usize,
+    positions: []const math.Vec3,
+    cell_bohr: math.Mat3,
+    vdw_cfg: config_mod.VdwConfig,
+    q_cart: math.Vec3,
+) !void {
     const atomic_numbers = try alloc.alloc(usize, n_atoms);
     defer alloc.free(atomic_numbers);
 
@@ -409,7 +489,6 @@ fn add_multi_kq_independent_terms(
 
     log_dfpt("dfptQ_mk_dyn: D_d3(0x,0x)=({e:.6},{e:.6})\n", .{ d3_dyn_q[0].r, d3_dyn_q[0].i });
     add_complex_dynmat(dyn_q, d3_dyn_q);
-    _ = dim;
 }
 
 fn fill_phase_factors(
