@@ -1563,6 +1563,34 @@ const LoadState = struct {
     }
 
     fn parse_scf_numeric_field(self: *LoadState, key: []const u8, value: []const u8) !bool {
+        if (try self.parse_scf_float_field(key, value)) return true;
+        if (try self.parse_scf_index_field(key, value)) return true;
+        if (std.mem.eql(u8, key, "kpoint_threads")) {
+            self.scf.kpoint_threads = try float_to_index(try parse_float(value));
+            self.scf_kpoint_threads_explicit = true;
+            return true;
+        }
+        if (std.mem.eql(u8, key, "diemac")) {
+            const diemac = try parse_float(value);
+            if (diemac < 1.0) return error.InvalidConfig;
+            self.scf.diemac = diemac;
+            return true;
+        }
+        if (std.mem.eql(u8, key, "dielng")) {
+            const dielng = try parse_float(value);
+            if (dielng <= 0.0) return error.InvalidConfig;
+            self.scf.dielng = dielng;
+            return true;
+        }
+        if (std.mem.eql(u8, key, "nspin")) {
+            self.scf.nspin = try float_to_index(try parse_float(value));
+            if (self.scf.nspin != 1 and self.scf.nspin != 2) return error.InvalidNspin;
+            return true;
+        }
+        return false;
+    }
+
+    fn parse_scf_float_field(self: *LoadState, key: []const u8, value: []const u8) !bool {
         if (std.mem.eql(u8, key, "smear_ry")) {
             self.scf.smear_ry = try parse_float(value);
             return true;
@@ -1571,25 +1599,32 @@ const LoadState = struct {
             self.scf.mixing_beta = try parse_float(value);
             return true;
         }
-        if (std.mem.eql(u8, key, "max_iter")) {
-            self.scf.max_iter = try float_to_index(try parse_float(value));
-            return true;
-        }
         if (std.mem.eql(u8, key, "convergence")) {
             self.scf.convergence = try parse_float(value);
             return true;
         }
-        if (std.mem.eql(u8, key, "kpoint_threads")) {
-            self.scf.kpoint_threads = try float_to_index(try parse_float(value));
-            self.scf_kpoint_threads_explicit = true;
+        if (std.mem.eql(u8, key, "iterative_tol")) {
+            self.scf.iterative_tol = try parse_float(value);
+            return true;
+        }
+        if (std.mem.eql(u8, key, "iterative_warmup_tol")) {
+            self.scf.iterative_warmup_tol = try parse_float(value);
+            return true;
+        }
+        if (std.mem.eql(u8, key, "kerker_q0")) {
+            self.scf.kerker_q0 = try parse_float(value);
+            return true;
+        }
+        return false;
+    }
+
+    fn parse_scf_index_field(self: *LoadState, key: []const u8, value: []const u8) !bool {
+        if (std.mem.eql(u8, key, "max_iter")) {
+            self.scf.max_iter = try float_to_index(try parse_float(value));
             return true;
         }
         if (std.mem.eql(u8, key, "iterative_max_iter")) {
             self.scf.iterative_max_iter = try float_to_index(try parse_float(value));
-            return true;
-        }
-        if (std.mem.eql(u8, key, "iterative_tol")) {
-            self.scf.iterative_tol = try parse_float(value);
             return true;
         }
         if (std.mem.eql(u8, key, "iterative_max_subspace")) {
@@ -1608,37 +1643,12 @@ const LoadState = struct {
             self.scf.iterative_warmup_max_iter = try float_to_index(try parse_float(value));
             return true;
         }
-        if (std.mem.eql(u8, key, "iterative_warmup_tol")) {
-            self.scf.iterative_warmup_tol = try parse_float(value);
-            return true;
-        }
-        if (std.mem.eql(u8, key, "kerker_q0")) {
-            self.scf.kerker_q0 = try parse_float(value);
-            return true;
-        }
-        if (std.mem.eql(u8, key, "diemac")) {
-            const diemac = try parse_float(value);
-            if (diemac < 1.0) return error.InvalidConfig;
-            self.scf.diemac = diemac;
-            return true;
-        }
-        if (std.mem.eql(u8, key, "dielng")) {
-            const dielng = try parse_float(value);
-            if (dielng <= 0.0) return error.InvalidConfig;
-            self.scf.dielng = dielng;
-            return true;
-        }
         if (std.mem.eql(u8, key, "pulay_history")) {
             self.scf.pulay_history = try float_to_index(try parse_float(value));
             return true;
         }
         if (std.mem.eql(u8, key, "pulay_start")) {
             self.scf.pulay_start = try float_to_index(try parse_float(value));
-            return true;
-        }
-        if (std.mem.eql(u8, key, "nspin")) {
-            self.scf.nspin = try float_to_index(try parse_float(value));
-            if (self.scf.nspin != 1 and self.scf.nspin != 2) return error.InvalidNspin;
             return true;
         }
         return false;
