@@ -588,7 +588,6 @@ fn hermitian_gen_eigenvalues_lapack(
 
     const w = try alloc.alloc(f64, n);
     errdefer alloc.free(w);
-
     const rwork = try alloc.alloc(f64, @max(@as(usize, 1), 3 * n - 2));
     errdefer alloc.free(rwork);
 
@@ -648,14 +647,7 @@ fn hermitian_gen_eigen_decomp_lapack(
     defer lapack_mutex.unlock();
 
     if (a.len != n * n or b.len != n * n) return error.InvalidMatrixSize;
-    if (n == 0) {
-        return EigenDecomp{
-            .values = try alloc.alloc(f64, 0),
-            .vectors = try alloc.alloc(math.Complex, 0),
-            .n = 0,
-        };
-    }
-
+    if (n == 0) return empty_eigen_decomp(alloc);
     const matrix_a = try alloc.alloc(math.Complex, n * n);
     errdefer alloc.free(matrix_a);
     @memcpy(matrix_a, a);
@@ -674,30 +666,21 @@ fn hermitian_gen_eigen_decomp_lapack(
     const w = try alloc.alloc(f64, n);
     errdefer alloc.free(w);
 
-    var lwork: c_int = -1;
-    var work_query = math.complex.init(0.0, 0.0);
     const rwork = try alloc.alloc(f64, @max(@as(usize, 1), 3 * n - 2));
     errdefer alloc.free(rwork);
 
-    zhegv_(
+    const lwork = try query_zhegv_lwork(
+        nn,
+        matrix_a,
+        matrix_b,
+        w,
+        rwork,
         &itype,
-        jobz[0..].ptr,
-        uplo[0..].ptr,
-        @constCast(&nn),
-        @ptrCast(@constCast(matrix_a.ptr)),
-        @constCast(&lda),
-        @ptrCast(@constCast(matrix_b.ptr)),
-        @constCast(&ldb),
-        w.ptr,
-        @ptrCast(&work_query),
-        &lwork,
-        rwork.ptr,
-        &info,
+        &jobz,
+        &uplo,
+        &lda,
+        &ldb,
     );
-    if (info != 0) return error.LapackFailure;
-
-    lwork = @intFromFloat(work_query.r);
-    if (lwork < 1) lwork = 1;
     const work = try alloc.alloc(math.Complex, @intCast(lwork));
     errdefer alloc.free(work);
 
