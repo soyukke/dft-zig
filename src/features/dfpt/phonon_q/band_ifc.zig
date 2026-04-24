@@ -239,12 +239,10 @@ fn solve_ifc_q_grid_point_dynmat(
     q_cart: math.Vec3,
     qf: math.Vec3,
 ) ![]math.Complex {
-    const n_atoms = atoms.len;
-    const q_norm = math.Vec3.norm(q_cart);
     var irr_info = try init_ifc_irreducible_atoms(
         alloc,
         sym_data,
-        n_atoms,
+        atoms.len,
         iq,
         q_cart,
         qf,
@@ -252,10 +250,7 @@ fn solve_ifc_q_grid_point_dynmat(
     );
     defer irr_info.deinit(alloc);
 
-    const pert_thread_count = dfpt.perturbation_thread_count(
-        3 * n_atoms,
-        dfpt_cfg.perturbation_threads,
-    );
+    const pert_thread_count = ifc_pert_thread_count(atoms.len, dfpt_cfg);
     const kpts = try build_ifc_q_grid_k_points(
         alloc,
         io,
@@ -268,7 +263,7 @@ fn solve_ifc_q_grid_point_dynmat(
         grid,
         kgs_data,
         q_cart,
-        q_norm,
+        math.Vec3.norm(q_cart),
         pert_thread_count,
     );
     defer deinit_k_point_dfpt_data(alloc, kpts);
@@ -293,6 +288,10 @@ fn solve_ifc_q_grid_point_dynmat(
         pert_thread_count,
         irr_info,
     );
+}
+
+fn ifc_pert_thread_count(n_atoms: usize, dfpt_cfg: DfptConfig) usize {
+    return dfpt.perturbation_thread_count(3 * n_atoms, dfpt_cfg.perturbation_threads);
 }
 
 fn compute_ifc_q_grid_dynmat(
