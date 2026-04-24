@@ -292,34 +292,17 @@ fn solve_ddk_direction(
     }
 
     for (0..kg.n_occ) |n| {
-        const h1psi = try alloc.alloc(math.Complex, kg.n_pw_k);
+        const h1psi = try build_ddk_h1psi(
+            alloc,
+            kg,
+            atoms,
+            radial_tables,
+            volume,
+            dir,
+            n,
+            buffers,
+        );
         defer alloc.free(h1psi);
-
-        for (0..kg.n_pw_k) |g| {
-            const kpg_dir = perturbation.g_component(kg.basis_k.gvecs[g].kpg, dir);
-            h1psi[g] = math.complex.scale(kg.wavefunctions_k[n][g], 2.0 * kpg_dir);
-        }
-
-        if (kg.apply_ctx_k.nonlocal_ctx) |nl_ctx| {
-            apply_ddk_nonlocal(
-                kg.basis_k.gvecs,
-                atoms,
-                nl_ctx,
-                dir,
-                1.0 / volume,
-                kg.wavefunctions_k[n],
-                radial_tables,
-                buffers.nl_out,
-                buffers.nl_phase,
-                buffers.nl_c1,
-                buffers.nl_c2,
-                buffers.nl_dc1,
-                buffers.nl_dc2,
-            );
-            for (0..kg.n_pw_k) |g| {
-                h1psi[g] = math.complex.add(h1psi[g], buffers.nl_out[g]);
-            }
-        }
 
         const rhs = try alloc.alloc(math.Complex, kg.n_pw_k);
         defer alloc.free(rhs);
@@ -346,6 +329,44 @@ fn solve_ddk_direction(
     }
 
     return psi1;
+}
+
+fn build_ddk_h1psi(
+    alloc: std.mem.Allocator,
+    kg: *const KPointGsData,
+    atoms: []const hamiltonian.AtomData,
+    radial_tables: []const nonlocal.RadialTableSet,
+    volume: f64,
+    dir: usize,
+    band: usize,
+    buffers: *DdkNonlocalBuffers,
+) ![]math.Complex {
+    const h1psi = try alloc.alloc(math.Complex, kg.n_pw_k);
+    for (0..kg.n_pw_k) |g| {
+        const kpg_dir = perturbation.g_component(kg.basis_k.gvecs[g].kpg, dir);
+        h1psi[g] = math.complex.scale(kg.wavefunctions_k[band][g], 2.0 * kpg_dir);
+    }
+    if (kg.apply_ctx_k.nonlocal_ctx) |nl_ctx| {
+        apply_ddk_nonlocal(
+            kg.basis_k.gvecs,
+            atoms,
+            nl_ctx,
+            dir,
+            1.0 / volume,
+            kg.wavefunctions_k[band],
+            radial_tables,
+            buffers.nl_out,
+            buffers.nl_phase,
+            buffers.nl_c1,
+            buffers.nl_c2,
+            buffers.nl_dc1,
+            buffers.nl_dc2,
+        );
+        for (0..kg.n_pw_k) |g| {
+            h1psi[g] = math.complex.add(h1psi[g], buffers.nl_out[g]);
+        }
+    }
+    return h1psi;
 }
 
 fn cache_psi0_real_space(
