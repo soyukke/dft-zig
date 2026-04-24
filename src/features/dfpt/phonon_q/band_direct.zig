@@ -598,6 +598,38 @@ fn finalize_q_point_frequencies(
     );
     defer alloc.free(dyn_q);
 
+    finalize_q_point_dynmat(
+        dyn_q,
+        n_atoms,
+        irr_info,
+        symops,
+        indsym,
+        tnons_shift,
+        cell_bohr,
+        qf,
+        q_norm,
+        ionic.masses,
+    );
+    var result_q = try dynmat_mod.diagonalize_complex(alloc, dyn_q, dim);
+    defer result_q.deinit(alloc);
+
+    const frequencies = try alloc.alloc(f64, dim);
+    @memcpy(frequencies, result_q.frequencies_cm1);
+    return frequencies;
+}
+
+fn finalize_q_point_dynmat(
+    dyn_q: []math.Complex,
+    n_atoms: usize,
+    irr_info: dynmat_mod.IrreducibleAtomInfo,
+    symops: []const symmetry_mod.SymOp,
+    indsym: []const []const usize,
+    tnons_shift: []const []const math.Vec3,
+    cell_bohr: math.Mat3,
+    qf: math.Vec3,
+    q_norm: f64,
+    masses: []const f64,
+) void {
     if (irr_info.n_irr_atoms < n_atoms) {
         dynmat_mod.reconstruct_dynmat_columns_complex(
             dyn_q,
@@ -611,15 +643,7 @@ fn finalize_q_point_frequencies(
         );
     }
     if (q_norm < 1e-10) dynmat_mod.apply_asr_complex(dyn_q, n_atoms);
-    dynmat_mod.mass_weight_complex(dyn_q, n_atoms, ionic.masses);
-
-    var result_q = try dynmat_mod.diagonalize_complex(alloc, dyn_q, dim);
-    defer result_q.deinit(alloc);
-
-    const frequencies = try alloc.alloc(f64, dim);
-    @memcpy(frequencies, result_q.frequencies_cm1);
-
-    return frequencies;
+    dynmat_mod.mass_weight_complex(dyn_q, n_atoms, masses);
 }
 
 fn log_q_point_summary(
