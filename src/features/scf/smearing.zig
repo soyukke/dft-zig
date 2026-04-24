@@ -580,6 +580,22 @@ fn collect_smearing_eigen_data(
     return .{ .filled = kpoints.len, .used_parallel = true };
 }
 
+fn init_shared_smearing_fft_plan(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    grid: Grid,
+    cfg: *const config.Config,
+) !fft.Fft3dPlan {
+    return try fft.Fft3dPlan.init_with_backend(
+        alloc,
+        io,
+        grid.nx,
+        grid.ny,
+        grid.nz,
+        cfg.scf.fft_backend,
+    );
+}
+
 fn collect_smearing_eigen_data_sequential(
     alloc: std.mem.Allocator,
     io: std.Io,
@@ -607,14 +623,7 @@ fn collect_smearing_eigen_data_sequential(
     profile_ptr: ?*ScfProfile,
     eigen_data: []KpointEigenData,
 ) !usize {
-    var shared_fft_plan = try fft.Fft3dPlan.init_with_backend(
-        alloc,
-        io,
-        grid.nx,
-        grid.ny,
-        grid.nz,
-        cfg.scf.fft_backend,
-    );
+    var shared_fft_plan = try init_shared_smearing_fft_plan(alloc, io, grid, cfg);
     defer shared_fft_plan.deinit(alloc);
 
     var filled: usize = 0;
