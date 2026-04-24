@@ -573,6 +573,62 @@ fn mix_single_q_potential(
     return false;
 }
 
+fn run_single_q_iteration(
+    alloc: std.mem.Allocator,
+    gs: *const GroundState,
+    atom_index: usize,
+    direction: usize,
+    cfg: DfptConfig,
+    q_cart: math.Vec3,
+    gvecs_kq: []const plane_wave.GVector,
+    apply_ctx_kq: *scf_mod.ApplyContext,
+    map_kq: *const scf_mod.PwGridMap,
+    occ_kq: []const []const math.Complex,
+    n_occ_kq: usize,
+    setup: *SingleQSetup,
+    mix_state: *SingleQMixState,
+    iter: usize,
+) !bool {
+    const v_scf_r = try reciprocal_to_complex_copy(alloc, gs.grid, setup.v_scf_g);
+    defer alloc.free(v_scf_r);
+
+    if (iter == 0) {
+        log_scf_potential_sample(v_scf_r, setup.v_scf_g, atom_index, direction, gs.grid.count());
+    }
+
+    try solve_single_q_bands(
+        alloc,
+        gs,
+        atom_index,
+        direction,
+        cfg,
+        gvecs_kq,
+        apply_ctx_kq,
+        map_kq,
+        occ_kq,
+        n_occ_kq,
+        v_scf_r,
+        setup.psi0_r_cache,
+        setup.psi1,
+    );
+
+    const rho1_g = try build_single_q_rho1_g(alloc, gs, map_kq, setup.psi0_r_const, setup.psi1);
+    defer alloc.free(rho1_g);
+
+    log_single_q_rho_diagnostic(iter, rho1_g, setup.vloc1_g, gs.grid.volume);
+    const v_out_g = try build_single_q_output_potential(
+        alloc,
+        gs,
+        q_cart,
+        setup.vloc1_g,
+        rho1_g,
+        setup.rho1_core_r,
+    );
+    defer alloc.free(v_out_g);
+
+    return try mix_single_q_potential(alloc, cfg, iter, setup.v_scf_g, v_out_g, mix_state);
+}
+
 fn run_single_q_scf(
     alloc: std.mem.Allocator,
     gs: *const GroundState,
@@ -590,63 +646,21 @@ fn run_single_q_scf(
 ) !void {
     var iter: usize = 0;
     while (iter < cfg.scf_max_iter) : (iter += 1) {
-        const v_scf_r = try reciprocal_to_complex_copy(alloc, gs.grid, setup.v_scf_g);
-        defer alloc.free(v_scf_r);
-
-        if (iter == 0) {
-            log_scf_potential_sample(
-                v_scf_r,
-                setup.v_scf_g,
-                atom_index,
-                direction,
-                gs.grid.count(),
-            );
-        }
-
-        try solve_single_q_bands(
+        if (try run_single_q_iteration(
             alloc,
             gs,
             atom_index,
             direction,
             cfg,
+            q_cart,
             gvecs_kq,
             apply_ctx_kq,
             map_kq,
             occ_kq,
             n_occ_kq,
-            v_scf_r,
-            setup.psi0_r_cache,
-            setup.psi1,
-        );
-
-        const rho1_g = try build_single_q_rho1_g(
-            alloc,
-            gs,
-            map_kq,
-            setup.psi0_r_const,
-            setup.psi1,
-        );
-        defer alloc.free(rho1_g);
-
-        log_single_q_rho_diagnostic(iter, rho1_g, setup.vloc1_g, gs.grid.volume);
-
-        const v_out_g = try build_single_q_output_potential(
-            alloc,
-            gs,
-            q_cart,
-            setup.vloc1_g,
-            rho1_g,
-            setup.rho1_core_r,
-        );
-        defer alloc.free(v_out_g);
-
-        if (try mix_single_q_potential(
-            alloc,
-            cfg,
-            iter,
-            setup.v_scf_g,
-            v_out_g,
+            setup,
             mix_state,
+            iter,
         )) break;
     }
 }
