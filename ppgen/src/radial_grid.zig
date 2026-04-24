@@ -61,18 +61,18 @@ pub const RadialGrid = struct {
         std.debug.assert(f.len == self.n);
         var sum: f64 = 0;
         for (0..self.n) |i| {
-            const w = ctrapWeight(i, self.n);
+            const w = ctrap_weight(i, self.n);
             sum += w * f[i] * self.r[i] * self.r[i] * self.rab[i];
         }
         return sum;
     }
 
     /// Integrate f(r) dr (no r^2 factor) over the grid.
-    pub fn integrateRaw(self: *const RadialGrid, f: []const f64) f64 {
+    pub fn integrate_raw(self: *const RadialGrid, f: []const f64) f64 {
         std.debug.assert(f.len == self.n);
         var sum: f64 = 0;
         for (0..self.n) |i| {
-            const w = ctrapWeight(i, self.n);
+            const w = ctrap_weight(i, self.n);
             sum += w * f[i] * self.rab[i];
         }
         return sum;
@@ -81,7 +81,7 @@ pub const RadialGrid = struct {
 
 /// Newton-Cotes 6th order endpoint correction weights (ABINIT convention).
 /// Interior points have weight 1.0. First/last 5 points use corrected weights.
-fn ctrapWeight(i: usize, n: usize) f64 {
+fn ctrap_weight(i: usize, n: usize) f64 {
     const endpoint_weights = [5]f64{
         23.75 / 72.0,
         95.10 / 72.0,

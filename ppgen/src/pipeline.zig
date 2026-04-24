@@ -51,7 +51,7 @@ const NonLocalData = struct {
 };
 
 /// Run the full pipeline and write UPF to the given writer.
-pub fn generatePseudopotential(
+pub fn generate_pseudopotential(
     allocator: std.mem.Allocator,
     config: GeneratorConfig,
     writer: anytype,
@@ -59,8 +59,7 @@ pub fn generatePseudopotential(
     var grid = try RadialGrid.init(allocator, 4000, 1e-8, 80.0);
     defer grid.deinit();
 
-    const n = grid.n;
-    const orb_configs = try buildOrbitalConfigs(allocator, config.all_orbitals);
+    const orb_configs = try build_orbital_configs(allocator, config.all_orbitals);
     defer allocator.free(orb_configs);
 
     var ae_result = try atomic_solver.solve(allocator, &grid, .{
@@ -70,33 +69,33 @@ pub fn generatePseudopotential(
     }, 300, 0.3, 1e-10);
     defer ae_result.deinit();
 
-    const val_indices = try findValenceIndices(allocator, config);
+    const val_indices = try find_valence_indices(allocator, config);
     defer allocator.free(val_indices);
 
-    const pw_list = try generatePseudoWavefunctions(
+    const pw_list = try generate_pseudo_wavefunctions(
         allocator,
         &grid,
         config,
         &ae_result,
         val_indices,
     );
-    defer deinitPseudoWavefunctions(allocator, pw_list);
+    defer deinit_pseudo_wavefunctions(allocator, pw_list);
 
-    const rho_val = try buildValenceDensity(allocator, &grid, config.valence_channels, pw_list);
+    const rho_val = try build_valence_density(allocator, &grid, config.valence_channels, pw_list);
     defer allocator.free(rho_val);
 
-    const v_h = try buildHartreePotential(allocator, &grid, rho_val);
+    const v_h = try build_hartree_potential(allocator, &grid, rho_val);
     defer allocator.free(v_h);
 
-    const v_xc = try buildValenceXcPotential(allocator, &grid, config.xc, rho_val);
+    const v_xc = try build_valence_xc_potential(allocator, &grid, config.xc, rho_val);
     defer allocator.free(v_xc);
 
-    const l_local_idx = findLocalChannelIndex(config.valence_channels, config.l_local);
+    const l_local_idx = find_local_channel_index(config.valence_channels, config.l_local);
     const v_local_screened = pw_list[l_local_idx].v_ps;
     const v_local_ion = try kb_projector.unscreen(allocator, &grid, v_local_screened, v_h, v_xc);
     defer allocator.free(v_local_ion);
 
-    var nonlocal = try buildNonLocalData(
+    var nonlocal = try build_nonlocal_data(
         allocator,
         &grid,
         config.valence_channels,
@@ -106,33 +105,53 @@ pub fn generatePseudopotential(
     );
     defer nonlocal.deinit();
 
-    const rho_atom = try buildAtomicRho(allocator, &grid, rho_val);
+    const rho_atom = try build_atomic_rho(allocator, &grid, rho_val);
     defer allocator.free(rho_atom);
 
-    const l_max = maxAngularMomentum(config.valence_channels);
-    const z_valence = totalValenceCharge(config.valence_channels);
-    const xc_name: []const u8 = switch (config.xc) {
-        .lda_pz => "PZ",
-        .pbe => "PBE",
-    };
+    try write_pseudopotential_data(
+        writer,
+        config,
+        &grid,
+        v_local_ion,
+        nonlocal.betas.items,
+        nonlocal.dij,
+        rho_atom,
+    );
+}
 
+fn write_pseudopotential_data(
+    writer: anytype,
+    config: GeneratorConfig,
+    grid: *const RadialGrid,
+    v_local_ion: []const f64,
+    betas: []const upf_writer.BetaData,
+    dij: []const f64,
+    rho_atom: []const f64,
+) !void {
     try upf_writer.write(.{
         .element = config.element,
         .z = config.z,
-        .z_valence = z_valence,
-        .xc_functional = xc_name,
+        .z_valence = total_valence_charge(config.valence_channels),
+        .xc_functional = xc_name(config.xc),
         .r = grid.r,
         .rab = grid.rab,
         .v_local = v_local_ion,
-        .betas = nonlocal.betas.items,
-        .dij = nonlocal.dij,
+        .betas = betas,
+        .dij = dij,
         .rho_atom = rho_atom,
-        .l_max = l_max,
-        .mesh_size = n,
+        .l_max = max_angular_momentum(config.valence_channels),
+        .mesh_size = grid.n,
     }, writer);
 }
 
-fn buildOrbitalConfigs(
+fn xc_name(xc: xc_mod.Functional) []const u8 {
+    return switch (xc) {
+        .lda_pz => "PZ",
+        .pbe => "PBE",
+    };
+}
+
+fn build_orbital_configs(
     allocator: std.mem.Allocator,
     all_orbitals: []const OrbitalDef,
 ) ![]atomic_solver.OrbitalConfig {
@@ -143,7 +162,7 @@ fn buildOrbitalConfigs(
     return orb_configs;
 }
 
-fn findValenceIndices(
+fn find_valence_indices(
     allocator: std.mem.Allocator,
     config: GeneratorConfig,
 ) ![]usize {
@@ -160,7 +179,7 @@ fn findValenceIndices(
     return val_indices;
 }
 
-fn generatePseudoWavefunctions(
+fn generate_pseudo_wavefunctions(
     allocator: std.mem.Allocator,
     grid: *const RadialGrid,
     config: GeneratorConfig,
@@ -192,7 +211,7 @@ fn generatePseudoWavefunctions(
     return pw_list;
 }
 
-fn deinitPseudoWavefunctions(
+fn deinit_pseudo_wavefunctions(
     allocator: std.mem.Allocator,
     pw_list: []tm_generator.PseudoWavefunction,
 ) void {
@@ -200,7 +219,7 @@ fn deinitPseudoWavefunctions(
     allocator.free(pw_list);
 }
 
-fn buildValenceDensity(
+fn build_valence_density(
     allocator: std.mem.Allocator,
     grid: *const RadialGrid,
     valence_channels: []const ChannelConfig,
@@ -219,17 +238,17 @@ fn buildValenceDensity(
     return rho_val;
 }
 
-fn buildHartreePotential(
+fn build_hartree_potential(
     allocator: std.mem.Allocator,
     grid: *const RadialGrid,
     rho_val: []const f64,
 ) ![]f64 {
     const v_h = try allocator.alloc(f64, grid.n);
-    atomic_solver.radialPoisson(grid, rho_val, v_h);
+    atomic_solver.radial_poisson(grid, rho_val, v_h);
     return v_h;
 }
 
-fn buildValenceXcPotential(
+fn build_valence_xc_potential(
     allocator: std.mem.Allocator,
     grid: *const RadialGrid,
     xc: xc_mod.Functional,
@@ -237,20 +256,20 @@ fn buildValenceXcPotential(
 ) ![]f64 {
     const v_xc = try allocator.alloc(f64, grid.n);
     for (rho_val, 0..) |rho_i, i| {
-        const xc_pt = xc_mod.evalPoint(xc, rho_i, 0);
+        const xc_pt = xc_mod.eval_point(xc, rho_i, 0);
         v_xc[i] = xc_pt.df_dn;
     }
     return v_xc;
 }
 
-fn findLocalChannelIndex(valence_channels: []const ChannelConfig, l_local: u32) usize {
+fn find_local_channel_index(valence_channels: []const ChannelConfig, l_local: u32) usize {
     for (valence_channels, 0..) |ch, i| {
         if (ch.l == l_local) return i;
     }
     return 0;
 }
 
-fn buildNonLocalData(
+fn build_nonlocal_data(
     allocator: std.mem.Allocator,
     grid: *const RadialGrid,
     valence_channels: []const ChannelConfig,
@@ -270,7 +289,7 @@ fn buildNonLocalData(
     for (valence_channels, pw_list) |ch, pw| {
         if (ch.l == l_local) continue;
 
-        var kb = try kb_projector.buildProjector(
+        var kb = try kb_projector.build_projector(
             allocator,
             grid,
             pw.v_ps,
@@ -286,16 +305,16 @@ fn buildNonLocalData(
         try betas.append(allocator, .{
             .l = ch.l,
             .values = beta_copy,
-            .cutoff_index = tm_generator.findGridIndex(grid, ch.rc) + 1,
+            .cutoff_index = tm_generator.find_grid_index(grid, ch.rc) + 1,
         });
         try dij_diag.append(allocator, kb.d_ion);
     }
 
-    const dij = try buildDiagonalDijMatrix(allocator, dij_diag.items);
+    const dij = try build_diagonal_dij_matrix(allocator, dij_diag.items);
     return .{ .betas = betas, .dij = dij, .allocator = allocator };
 }
 
-fn buildDiagonalDijMatrix(
+fn build_diagonal_dij_matrix(
     allocator: std.mem.Allocator,
     diagonal: []const f64,
 ) ![]f64 {
@@ -308,7 +327,7 @@ fn buildDiagonalDijMatrix(
     return dij;
 }
 
-fn buildAtomicRho(
+fn build_atomic_rho(
     allocator: std.mem.Allocator,
     grid: *const RadialGrid,
     rho_val: []const f64,
@@ -320,7 +339,7 @@ fn buildAtomicRho(
     return rho_atom;
 }
 
-fn maxAngularMomentum(valence_channels: []const ChannelConfig) u32 {
+fn max_angular_momentum(valence_channels: []const ChannelConfig) u32 {
     var l_max: u32 = 0;
     for (valence_channels) |ch| {
         if (ch.l > l_max) l_max = ch.l;
@@ -328,7 +347,7 @@ fn maxAngularMomentum(valence_channels: []const ChannelConfig) u32 {
     return l_max;
 }
 
-fn totalValenceCharge(valence_channels: []const ChannelConfig) f64 {
+fn total_valence_charge(valence_channels: []const ChannelConfig) f64 {
     var z_valence: f64 = 0;
     for (valence_channels) |ch| {
         z_valence += ch.occupation;
@@ -354,7 +373,7 @@ test "end-to-end: H atom s+p UPF round-trip" {
     var buf: [1024 * 1024]u8 = undefined;
     var writer = std.Io.Writer.fixed(&buf);
 
-    try generatePseudopotential(allocator, .{
+    try generate_pseudopotential(allocator, .{
         .z = 1,
         .element = "H",
         .xc = .lda_pz,

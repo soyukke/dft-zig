@@ -88,6 +88,64 @@ const ScfStep = struct {
     max_drho: f64,
 };
 
+const ScfWork = struct {
+    rho: []f64,
+    rho_new: []f64,
+    v_eff: []f64,
+    v_h: []f64,
+    v_xc: []f64,
+    v_coul: []f64,
+    grad_rho: []f64,
+    allocator: std.mem.Allocator,
+
+    fn init(allocator: std.mem.Allocator, grid: *const RadialGrid, z: f64) !ScfWork {
+        const n = grid.n;
+        const rho = try allocator.alloc(f64, n);
+        errdefer allocator.free(rho);
+        const rho_new = try allocator.alloc(f64, n);
+        errdefer allocator.free(rho_new);
+        const v_eff = try allocator.alloc(f64, n);
+        errdefer allocator.free(v_eff);
+        const v_h = try allocator.alloc(f64, n);
+        errdefer allocator.free(v_h);
+        const v_xc = try allocator.alloc(f64, n);
+        errdefer allocator.free(v_xc);
+        const v_coul = try allocator.alloc(f64, n);
+        errdefer allocator.free(v_coul);
+        const grad_rho = try allocator.alloc(f64, n);
+        errdefer allocator.free(grad_rho);
+
+        init_coulomb_potential(grid, z, v_coul);
+        @memcpy(v_eff, v_coul);
+        init_density_guess(grid, z, rho);
+
+        return .{
+            .rho = rho,
+            .rho_new = rho_new,
+            .v_eff = v_eff,
+            .v_h = v_h,
+            .v_xc = v_xc,
+            .v_coul = v_coul,
+            .grad_rho = grad_rho,
+            .allocator = allocator,
+        };
+    }
+
+    fn deinit_all(self: *ScfWork) void {
+        self.allocator.free(self.rho);
+        self.allocator.free(self.v_eff);
+        self.deinit_temps();
+    }
+
+    fn deinit_temps(self: *ScfWork) void {
+        self.allocator.free(self.rho_new);
+        self.allocator.free(self.v_h);
+        self.allocator.free(self.v_xc);
+        self.allocator.free(self.v_coul);
+        self.allocator.free(self.grad_rho);
+    }
+};
+
 pub const AtomResult = struct {
     /// Total energy (Ry)
     total_energy: f64,
@@ -122,51 +180,29 @@ pub fn solve(
     mix_beta: f64,
     tol: f64,
 ) !AtomResult {
-    const n = grid.n;
-    const rho = try allocator.alloc(f64, n);
-    errdefer allocator.free(rho);
-
-    const rho_new = try allocator.alloc(f64, n);
-    defer allocator.free(rho_new);
-
-    const v_eff = try allocator.alloc(f64, n);
-    errdefer allocator.free(v_eff);
-
-    const v_h = try allocator.alloc(f64, n);
-    defer allocator.free(v_h);
-
-    const v_xc = try allocator.alloc(f64, n);
-    defer allocator.free(v_xc);
-
-    const v_coul = try allocator.alloc(f64, n);
-    defer allocator.free(v_coul);
-
-    initCoulombPotential(grid, config.z, v_coul);
-    @memcpy(v_eff, v_coul);
-    initDensityGuess(grid, config.z, rho);
+    var work = try ScfWork.init(allocator, grid, config.z);
+    errdefer work.deinit_all();
+    defer work.deinit_temps();
 
     var orbitals = try OrbitalState.init(allocator, grid, config.orbitals, config.z);
     errdefer orbitals.deinit();
-
-    const grad_rho = try allocator.alloc(f64, n);
-    defer allocator.free(grad_rho);
 
     var total_energy: f64 = 0;
     var converged = false;
 
     for (0..max_iter) |iter| {
-        const step = try runScfStep(
+        const step = try run_scf_step(
             allocator,
             grid,
             config,
             mix_beta,
-            rho,
-            rho_new,
-            v_eff,
-            v_coul,
-            v_h,
-            v_xc,
-            grad_rho,
+            work.rho,
+            work.rho_new,
+            work.v_eff,
+            work.v_coul,
+            work.v_h,
+            work.v_xc,
+            work.grad_rho,
             &orbitals,
         );
         total_energy = step.total_energy;
@@ -191,21 +227,21 @@ pub fn solve(
     return .{
         .total_energy = total_energy,
         .eigenvalues = orbitals.eigenvalues,
-        .rho = rho,
-        .v_eff = v_eff,
+        .rho = work.rho,
+        .v_eff = work.v_eff,
         .wavefunctions = orbitals.wavefunctions,
         .allocator = allocator,
     };
 }
 
-fn initCoulombPotential(grid: *const RadialGrid, z: f64, v_coul: []f64) void {
+fn init_coulomb_potential(grid: *const RadialGrid, z: f64, v_coul: []f64) void {
     for (0..grid.n) |i| {
         const r = grid.r[i];
         v_coul[i] = if (r > 1e-30) -2.0 * z / r else -2.0 * z / 1e-30;
     }
 }
 
-fn initDensityGuess(grid: *const RadialGrid, z: f64, rho: []f64) void {
+fn init_density_guess(grid: *const RadialGrid, z: f64, rho: []f64) void {
     for (0..grid.n) |i| {
         const r = grid.r[i];
         if (r > 1e-30) {
@@ -216,7 +252,7 @@ fn initDensityGuess(grid: *const RadialGrid, z: f64, rho: []f64) void {
     }
 }
 
-fn runScfStep(
+fn run_scf_step(
     allocator: std.mem.Allocator,
     grid: *const RadialGrid,
     config: AtomConfig,
@@ -230,16 +266,16 @@ fn runScfStep(
     grad_rho: []f64,
     orbitals: *OrbitalState,
 ) !ScfStep {
-    try solveOrbitals(allocator, grid, config.orbitals, v_eff, orbitals);
-    buildDensity(grid, config.orbitals, orbitals.wavefunctions, rho_new);
-    const max_drho = mixDensity(rho, rho_new, mix_beta);
+    try solve_orbitals(allocator, grid, config.orbitals, v_eff, orbitals);
+    build_density(grid, config.orbitals, orbitals.wavefunctions, rho_new);
+    const max_drho = mix_density(rho, rho_new, mix_beta);
 
-    radialPoisson(grid, rho, v_h);
-    computeXcPotential(grid, config.xc, rho, grad_rho, v_xc);
-    updateEffectivePotential(v_eff, v_coul, v_h, v_xc);
+    radial_poisson(grid, rho, v_h);
+    compute_xc_potential(grid, config.xc, rho, grad_rho, v_xc);
+    update_effective_potential(v_eff, v_coul, v_h, v_xc);
 
     return .{
-        .total_energy = computeTotalEnergy(
+        .total_energy = compute_total_energy(
             grid,
             config,
             rho,
@@ -252,7 +288,7 @@ fn runScfStep(
     };
 }
 
-fn solveOrbitals(
+fn solve_orbitals(
     allocator: std.mem.Allocator,
     grid: *const RadialGrid,
     orbitals: []const OrbitalConfig,
@@ -274,7 +310,7 @@ fn solveOrbitals(
     }
 }
 
-fn buildDensity(
+fn build_density(
     grid: *const RadialGrid,
     orbitals: []const OrbitalConfig,
     wavefunctions: [][]f64,
@@ -291,7 +327,7 @@ fn buildDensity(
     }
 }
 
-fn mixDensity(rho: []f64, rho_new: []const f64, mix_beta: f64) f64 {
+fn mix_density(rho: []f64, rho_new: []const f64, mix_beta: f64) f64 {
     var max_drho: f64 = 0;
     for (rho, rho_new) |*current, next| {
         const diff = next - current.*;
@@ -301,22 +337,22 @@ fn mixDensity(rho: []f64, rho_new: []const f64, mix_beta: f64) f64 {
     return max_drho;
 }
 
-fn computeXcPotential(
+fn compute_xc_potential(
     grid: *const RadialGrid,
     xc: xc_mod.Functional,
     rho: []const f64,
     grad_rho: []f64,
     v_xc: []f64,
 ) void {
-    computeRadialGradient(grid, rho, grad_rho);
+    compute_radial_gradient(grid, rho, grad_rho);
     for (rho, grad_rho, 0..) |rho_i, grad_i, i| {
         const g2 = grad_i * grad_i;
-        const xc_point = xc_mod.evalPoint(xc, rho_i, g2);
+        const xc_point = xc_mod.eval_point(xc, rho_i, g2);
         v_xc[i] = xc_point.df_dn;
     }
 }
 
-fn updateEffectivePotential(
+fn update_effective_potential(
     v_eff: []f64,
     v_coul: []const f64,
     v_h: []const f64,
@@ -333,7 +369,7 @@ fn updateEffectivePotential(
 ///
 /// Factor of 2 for Rydberg units.
 /// Uses trapezoidal rule for both forward and backward integrals.
-pub fn radialPoisson(grid: *const RadialGrid, rho: []const f64, v_h: []f64) void {
+pub fn radial_poisson(grid: *const RadialGrid, rho: []const f64, v_h: []f64) void {
     const n = grid.n;
 
     // Forward integral: I_in(r_i) = ∫₀^{r_i} ρ(r') r'² dr'
@@ -365,7 +401,7 @@ pub fn radialPoisson(grid: *const RadialGrid, rho: []const f64, v_h: []f64) void
 }
 
 /// Compute radial gradient dρ/dr using finite differences.
-fn computeRadialGradient(grid: *const RadialGrid, f: []const f64, grad: []f64) void {
+fn compute_radial_gradient(grid: *const RadialGrid, f: []const f64, grad: []f64) void {
     const n = grid.n;
     if (n < 3) return;
 
@@ -389,7 +425,7 @@ fn computeRadialGradient(grid: *const RadialGrid, f: []const f64, grad: []f64) v
 /// Compute total energy.
 ///
 /// E_total = Σ_nl f_nl ε_nl - E_H + E_xc - ∫ V_xc ρ dr
-fn computeTotalEnergy(
+fn compute_total_energy(
     grid: *const RadialGrid,
     config: AtomConfig,
     rho: []const f64,
@@ -411,7 +447,7 @@ fn computeTotalEnergy(
     var e_h: f64 = 0;
     for (0..n) |i| {
         const r = grid.r[i];
-        const w = ctrapWeight(i, n);
+        const w = ctrap_weight(i, n);
         e_h += 0.5 * w * v_h[i] * rho[i] * 4.0 * std.math.pi * r * r * grid.rab[i];
     }
 
@@ -420,9 +456,9 @@ fn computeTotalEnergy(
     var vxc_rho: f64 = 0;
     for (0..n) |i| {
         const r = grid.r[i];
-        const w = ctrapWeight(i, n);
+        const w = ctrap_weight(i, n);
         const g2 = grad_rho[i] * grad_rho[i];
-        const xc_point = xc_mod.evalPoint(config.xc, rho[i], g2);
+        const xc_point = xc_mod.eval_point(config.xc, rho[i], g2);
         const vol_elem = w * 4.0 * std.math.pi * r * r * grid.rab[i];
         e_xc += xc_point.f * vol_elem;
         vxc_rho += v_xc[i] * rho[i] * vol_elem;
@@ -432,7 +468,7 @@ fn computeTotalEnergy(
 }
 
 /// Newton-Cotes endpoint correction.
-fn ctrapWeight(i: usize, n: usize) f64 {
+fn ctrap_weight(i: usize, n: usize) f64 {
     const endpoint_weights = [5]f64{
         23.75 / 72.0,
         95.10 / 72.0,

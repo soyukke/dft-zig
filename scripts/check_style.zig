@@ -12,14 +12,14 @@
 //!     style_checker := env("ZIG_STYLE_CHECKER", "scripts/check_style.zig")
 //!
 //!     lint:
-//!         zig run {{style_checker}} -- --root src
+//!         zig run {{style_checker}} -- --root src --root ppgen/src
 //!     lint-strict:
-//!         zig run {{style_checker}} -- --root src --strict
+//!         zig run {{style_checker}} -- --root src --root ppgen/src --strict
 //!     lint-update-baseline:
-//!         zig run {{style_checker}} -- --root src --update-baseline
+//!         zig run {{style_checker}} -- --root src --root ppgen/src --update-baseline
 //!
 //! CLI:
-//!     --root <dir>         Directory to scan (default: src).
+//!     --root <dir>         Directory to scan. Repeatable (default: src).
 //!     --baseline <path>    Baseline file (default: scripts/style_baseline.txt).
 //!     --line-limit <n>     Column limit for line_too_long (default: 100).
 //!     --function-line-limit <n>

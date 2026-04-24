@@ -50,7 +50,7 @@ pub const LocalPotential = struct {
 /// v_ps_l: screened pseudopotential for this l (Ry)
 /// v_local: local potential (Ry)
 /// u_ps: pseudo wavefunction u_ps(r) = r*R(r)
-pub fn buildProjector(
+pub fn build_projector(
     allocator: std.mem.Allocator,
     grid: *const RadialGrid,
     v_ps_l: []const f64,
@@ -133,7 +133,7 @@ test "KB projector: D_l nonzero for non-local channel" {
     defer pw.deinit();
 
     // When V_local = V_ps,l, the KB projector should give D = 0
-    var kb = try buildProjector(allocator, &grid, pw.v_ps, pw.v_ps, pw.u, 0);
+    var kb = try build_projector(allocator, &grid, pw.v_ps, pw.v_ps, pw.u, 0);
     defer kb.deinit();
 
     try std.testing.expectApproxEqAbs(0.0, kb.d_ion, 1e-10);
@@ -173,7 +173,7 @@ test "KB projector: nonzero for different V_local" {
     defer pw_p.deinit();
 
     // Use p-channel as local, build s projector
-    var kb_s = try buildProjector(allocator, &grid, pw_s.v_ps, pw_p.v_ps, pw_s.u, 0);
+    var kb_s = try build_projector(allocator, &grid, pw_s.v_ps, pw_p.v_ps, pw_s.u, 0);
     defer kb_s.deinit();
 
     // D_s should be nonzero (s and p potentials differ inside rc)

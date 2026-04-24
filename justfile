@@ -251,15 +251,15 @@ fmt-check:
 # Run the style checker against the ratcheting baseline.
 # Fails only when a file has *more* violations than scripts/style_baseline.txt.
 lint:
-    ZIG_GLOBAL_CACHE_DIR=.zig-global-cache ZIG_LOCAL_CACHE_DIR=.zig-cache zig run {{style_checker}} -- --root src
+    ZIG_GLOBAL_CACHE_DIR=.zig-global-cache ZIG_LOCAL_CACHE_DIR=.zig-cache zig run {{style_checker}} -- --root src --root ppgen/src
 
 # Report every violation, ignoring the baseline (fails on any).
 lint-strict:
-    ZIG_GLOBAL_CACHE_DIR=.zig-global-cache ZIG_LOCAL_CACHE_DIR=.zig-cache zig run {{style_checker}} -- --root src --strict
+    ZIG_GLOBAL_CACHE_DIR=.zig-global-cache ZIG_LOCAL_CACHE_DIR=.zig-cache zig run {{style_checker}} -- --root src --root ppgen/src --strict
 
 # Regenerate the style baseline from current violations (run after cleanup).
 lint-update-baseline:
-    ZIG_GLOBAL_CACHE_DIR=.zig-global-cache ZIG_LOCAL_CACHE_DIR=.zig-cache zig run {{style_checker}} -- --root src --update-baseline
+    ZIG_GLOBAL_CACHE_DIR=.zig-global-cache ZIG_LOCAL_CACHE_DIR=.zig-cache zig run {{style_checker}} -- --root src --root ppgen/src --update-baseline
 
 # Install project git hooks (symlinks scripts/hooks/* into .git/hooks/).
 # Run once per clone. Currently installs: pre-commit (zig fmt --check).
