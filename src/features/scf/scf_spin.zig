@@ -1768,6 +1768,26 @@ fn build_spin_scf_result(
     };
 }
 
+fn log_spin_final_result(
+    ctx: *const SpinContext,
+    metrics: *const SpinLoopMetrics,
+    energy_terms: EnergyTerms,
+) !void {
+    if (!ctx.cfg.scf.quiet) {
+        try log_spin_energy_summary(ctx.io, energy_terms, ctx.common.is_paw);
+    }
+    try ctx.common.log.write_result(
+        metrics.converged,
+        metrics.iterations,
+        energy_terms.total,
+        energy_terms.band,
+        energy_terms.hartree,
+        energy_terms.xc,
+        energy_terms.ion_ion,
+        energy_terms.psp_core,
+    );
+}
+
 fn finalize_spin_scf_result(
     ctx: *const SpinContext,
     resources: *SpinLoopResources,
@@ -1803,19 +1823,7 @@ fn finalize_spin_scf_result(
     var paw_results = try extract_spin_paw_results(ctx, resources, &energy_terms);
     errdefer paw_results.deinit(ctx.alloc);
 
-    if (!ctx.cfg.scf.quiet) {
-        try log_spin_energy_summary(ctx.io, energy_terms, ctx.common.is_paw);
-    }
-    try ctx.common.log.write_result(
-        metrics.converged,
-        metrics.iterations,
-        energy_terms.total,
-        energy_terms.band,
-        energy_terms.hartree,
-        energy_terms.xc,
-        energy_terms.ion_ion,
-        energy_terms.psp_core,
-    );
+    try log_spin_final_result(ctx, metrics, energy_terms);
 
     var final_data = try compute_spin_final_wavefunctions(
         ctx,
