@@ -46,7 +46,7 @@ pub fn generate(alloc: std.mem.Allocator, band: config.BandConfig, recip: math.M
         while (step < band.points_per_segment) : (step += 1) {
             const t = @as(f64, @floatFromInt(step)) / segs_f;
             const k_frac = math.Vec3.add(start.k, math.Vec3.scale(delta, t));
-            const k_cart = math.fracToCart(k_frac, recip);
+            const k_cart = math.frac_to_cart(k_frac, recip);
             if (prev_cart) |prev| {
                 distance += math.Vec3.norm(math.Vec3.sub(k_cart, prev));
             }
@@ -63,7 +63,7 @@ pub fn generate(alloc: std.mem.Allocator, band: config.BandConfig, recip: math.M
     }
 
     const last = band.path[band.path.len - 1];
-    const last_cart = math.fracToCart(last.k, recip);
+    const last_cart = math.frac_to_cart(last.k, recip);
     if (prev_cart) |prev| {
         distance += math.Vec3.norm(math.Vec3.sub(last_cart, prev));
     }

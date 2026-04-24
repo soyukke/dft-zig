@@ -29,7 +29,7 @@ const ForceProjectors = struct {
 
 /// Fill per-beta radial projector values at each (k+G) magnitude, populate l_list /
 /// m_offsets / m_counts, and return the total number of (b, m) channels.
-fn fillRadialProjectors(
+fn fill_radial_projectors(
     upf: pseudo.UpfData,
     gvecs: []plane_wave.GVector,
     radial_tables: ?nonlocal.RadialTableSet,
@@ -60,7 +60,7 @@ fn fillRadialProjectors(
             var g: usize = 0;
             while (g < g_count) : (g += 1) {
                 const gmag = math.Vec3.norm(gvecs[g].kpg);
-                radial_buf[b * g_count + g] = nonlocal.radialProjector(
+                radial_buf[b * g_count + g] = nonlocal.radial_projector(
                     upf.beta[b].values,
                     upf.r,
                     upf.rab,
@@ -74,7 +74,7 @@ fn fillRadialProjectors(
 }
 
 /// Build phi[bm * g_count + g] = 4π β_l(|k+G|) Y_lm(k+G) from radial values.
-fn buildPhiFromRadial(
+fn build_phi_from_radial(
     gvecs: []plane_wave.GVector,
     l_list: []i32,
     m_offsets: []usize,
@@ -95,7 +95,7 @@ fn buildPhiFromRadial(
             var g: usize = 0;
             while (g < g_count) : (g += 1) {
                 const kpg = gvecs[g].kpg;
-                const ylm = nonlocal.realSphericalHarmonic(l_val, m, kpg.x, kpg.y, kpg.z);
+                const ylm = nonlocal.real_spherical_harmonic(l_val, m, kpg.x, kpg.y, kpg.z);
                 const base = radial_buf[b * g_count + g];
                 phi[offset * g_count + g] = 4.0 * std.math.pi * base * ylm;
             }
@@ -103,8 +103,8 @@ fn buildPhiFromRadial(
     }
 }
 
-/// Build projector arrays for a species. Mirrors buildNonlocalSpeciesWithTables in apply.zig.
-fn buildForceProjectors(
+/// Build projector arrays for a species. Mirrors build_nonlocal_species_with_tables in apply.zig.
+fn build_force_projectors(
     alloc: std.mem.Allocator,
     species_index: usize,
     upf: pseudo.UpfData,
@@ -128,7 +128,7 @@ fn buildForceProjectors(
     const radial_buf = try alloc.alloc(f64, beta_count * g_count);
     defer alloc.free(radial_buf);
 
-    const total_m = fillRadialProjectors(
+    const total_m = fill_radial_projectors(
         upf,
         gvecs,
         radial_tables,
@@ -141,7 +141,7 @@ fn buildForceProjectors(
     const phi = try alloc.alloc(f64, total_m * g_count);
     errdefer alloc.free(phi);
 
-    buildPhiFromRadial(gvecs, l_list, m_offsets, m_counts, radial_buf, phi);
+    build_phi_from_radial(gvecs, l_list, m_offsets, m_counts, radial_buf, phi);
 
     return ForceProjectors{
         .species_index = species_index,
@@ -158,7 +158,7 @@ fn buildForceProjectors(
 
 /// Build projectors for each species for a single k-point (null entries signal
 /// species without nonlocal channels).
-fn buildSpeciesProjectors(
+fn build_species_projectors(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
     gvecs: []plane_wave.GVector,
@@ -175,12 +175,12 @@ fn buildSpeciesProjectors(
             if (si < rtl.len) rtl[si] else null
         else
             null;
-        projectors[si] = try buildForceProjectors(alloc, si, upf.*, gvecs, tables);
+        projectors[si] = try build_force_projectors(alloc, si, upf.*, gvecs, tables);
     }
 }
 
 /// Step A: p_bm = Σ_G phi_bm(G) × phase(G) × c(G).
-fn projectNonlocalBandCoeffs(
+fn project_nonlocal_band_coeffs(
     proj: ForceProjectors,
     n: usize,
     phase_buf: []const math.Complex,
@@ -207,7 +207,7 @@ fn projectNonlocalBandCoeffs(
 }
 
 /// Step B: Dp_bm = Σ_j (D_bj - ε_nk × q_bj) × p_jm (same l).
-fn applyDMatrixToProjectors(
+fn apply_d_matrix_to_projectors(
     proj: ForceProjectors,
     atom_idx: usize,
     species_index: usize,
@@ -255,14 +255,14 @@ fn applyDMatrixToProjectors(
 }
 
 /// Compute the maximum m_total across all non-null species projectors.
-fn maxMTotal(projectors: []const ?ForceProjectors) usize {
-    var max_m_total: usize = 0;
+fn max_m_total(projectors: []const ?ForceProjectors) usize {
+    var m_total_max: usize = 0;
     for (projectors) |p| {
         if (p) |proj| {
-            if (proj.m_total > max_m_total) max_m_total = proj.m_total;
+            if (proj.m_total > m_total_max) m_total_max = proj.m_total;
         }
     }
-    return max_m_total;
+    return m_total_max;
 }
 
 /// Aggregate inputs for accumulating nonlocal forces from one k-point.
@@ -281,7 +281,7 @@ const KpointForceInputs = struct {
 };
 
 /// Accumulate nonlocal force contributions from a single atom at a single k-point.
-fn accumulateAtomForceAtKpoint(
+fn accumulate_atom_force_at_kpoint(
     inputs: KpointForceInputs,
     atom: hamiltonian.AtomData,
     atom_idx: usize,
@@ -305,12 +305,12 @@ fn accumulateAtomForceAtKpoint(
         const coeff2 = inputs.coeff2_buf[0..proj.m_total];
 
         // Step A: Project p_bm = Σ_G phi_bm(G) × phase(G) × c(G)
-        projectNonlocalBandCoeffs(proj, inputs.n, inputs.phase_buf, c, coeff);
+        project_nonlocal_band_coeffs(proj, inputs.n, inputs.phase_buf, c, coeff);
 
         // Step B: D-apply Dp_bm = Σ_j (D_bj - ε_nk × q_bj) × p_jm (same l)
         // For PAW: D_bj = D_full (per-atom), q_bj = S_bj - δ_bj
         // For NCPP: D_bj = D^0 (from UPF), q_bj = 0
-        applyDMatrixToProjectors(
+        apply_d_matrix_to_projectors(
             proj,
             atom_idx,
             atom.species_index,
@@ -326,7 +326,7 @@ fn accumulateAtomForceAtKpoint(
         // F_α += prefactor × Im[ G_α × q(G) × phase(G) × c(G) ]
         const prefactor = 2.0 * occ * inputs.kp_wf.weight *
             inputs.spin_factor * inputs.inv_volume;
-        accumulateBandForce(
+        accumulate_band_force(
             proj,
             inputs.n,
             inputs.gvecs,
@@ -340,7 +340,7 @@ fn accumulateAtomForceAtKpoint(
 }
 
 /// Steps C+D: Back-project q(G) and accumulate forces for a single band.
-fn accumulateBandForce(
+fn accumulate_band_force(
     proj: ForceProjectors,
     n: usize,
     gvecs: []const plane_wave.GVector,
@@ -386,7 +386,7 @@ fn accumulateBandForce(
 }
 
 /// Accumulate nonlocal force contributions from all atoms at a single k-point.
-fn accumulateKpointForces(
+fn accumulate_kpoint_forces(
     alloc: std.mem.Allocator,
     kp_wf: scf.KpointWavefunction,
     species: []const hamiltonian.SpeciesEntry,
@@ -416,18 +416,18 @@ fn accumulateKpointForces(
         alloc.free(projectors);
     }
 
-    try buildSpeciesProjectors(alloc, species, gvecs, radial_tables_list, projectors);
+    try build_species_projectors(alloc, species, gvecs, radial_tables_list, projectors);
 
     // Allocate work buffers
-    const max_m_total = maxMTotal(projectors);
+    const m_total_max = max_m_total(projectors);
 
     const phase_buf = try alloc.alloc(math.Complex, n);
     defer alloc.free(phase_buf);
 
-    const coeff_buf = try alloc.alloc(math.Complex, max_m_total);
+    const coeff_buf = try alloc.alloc(math.Complex, m_total_max);
     defer alloc.free(coeff_buf);
 
-    const coeff2_buf = try alloc.alloc(math.Complex, max_m_total);
+    const coeff2_buf = try alloc.alloc(math.Complex, m_total_max);
     defer alloc.free(coeff2_buf);
 
     const inputs = KpointForceInputs{
@@ -445,7 +445,7 @@ fn accumulateKpointForces(
     };
 
     for (atoms, 0..) |atom, atom_idx| {
-        accumulateAtomForceAtKpoint(inputs, atom, atom_idx, &forces[atom_idx]);
+        accumulate_atom_force_at_kpoint(inputs, atom, atom_idx, &forces[atom_idx]);
     }
 }
 
@@ -464,7 +464,7 @@ fn accumulateKpointForces(
 ///   where q_ij = S_ij - δ_ij (augmentation overlap).
 ///
 /// Returns forces in Rydberg/Bohr units.
-pub fn nonlocalForces(
+pub fn nonlocal_forces(
     alloc: std.mem.Allocator,
     wavefunctions: scf.WavefunctionData,
     species: []const hamiltonian.SpeciesEntry,
@@ -489,7 +489,7 @@ pub fn nonlocalForces(
     const inv_volume = 1.0 / volume;
 
     for (wavefunctions.kpoints) |kp_wf| {
-        try accumulateKpointForces(
+        try accumulate_kpoint_forces(
             alloc,
             kp_wf,
             species,
@@ -517,7 +517,7 @@ test "nonlocal force analytical vs finite difference" {
     const io = std.testing.io;
     const testing = std.testing;
     const alloc = testing.allocator;
-    try test_support.requireFile(io, "pseudo/Si.upf");
+    try test_support.require_file(io, "pseudo/Si.upf");
 
     const element_buf: [2]u8 = .{ 'S', 'i' };
     var path_buf: [24]u8 = undefined;
@@ -534,7 +534,7 @@ test "nonlocal force analytical vs finite difference" {
     defer parsed.deinit(alloc);
 
     var parsed_items = [_]pseudo.Parsed{parsed};
-    const species_entries = try hamiltonian.buildSpeciesEntries(alloc, parsed_items[0..]);
+    const species_entries = try hamiltonian.build_species_entries(alloc, parsed_items[0..]);
     defer {
         for (species_entries) |*entry| {
             entry.deinit();
@@ -603,7 +603,7 @@ test "nonlocal force analytical vs finite difference" {
     };
 
     // Analytical forces (NCPP mode: no PAW)
-    const forces = try nonlocalForces(
+    const forces = try nonlocal_forces(
         alloc,
         wf,
         species_entries,
@@ -632,7 +632,7 @@ test "nonlocal force analytical vs finite difference" {
             psi: []const math.Complex,
             occ: f64,
         ) !f64 {
-            const vnl = try hamiltonian.buildNonlocalMatrix(
+            const vnl = try hamiltonian.build_nonlocal_matrix(
                 alloc_inner,
                 gvecs,
                 sp,

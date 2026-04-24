@@ -43,7 +43,7 @@ const MAX_AM: usize = 10;
 ///         where μ = α×β/p. NOTE: For 3D factorized case, we pass in 1D factor.
 ///
 /// Returns: (la_max+1) × (lb_max+1) array of 1D overlaps indexed as [a][b].
-fn overlap1D(
+fn overlap1_d(
     la_max: usize,
     lb_max: usize,
     pa: f64,
@@ -96,7 +96,7 @@ fn overlap1D(
 ///
 /// S = S_x(ax,bx) × S_y(ay,by) × S_z(az,bz) × exp(-μ|A-B|²)
 ///     × (π/p)^(3/2) absorbed via the factored 1D S00 values.
-pub fn primitiveOverlap(
+pub fn primitive_overlap(
     alpha: f64,
     center_a: math.Vec3,
     a: AngularMomentum,
@@ -134,9 +134,9 @@ pub fn primitiveOverlap(
 
     // 1D overlap recurrences (each starts with S_00 = sqrt(π/p))
     // The exponential factor is applied once at the end.
-    const sx = overlap1D(a.x, b.x, pa_x, pb_x, inv_2p, sqrt_pi_p);
-    const sy = overlap1D(a.y, b.y, pa_y, pb_y, inv_2p, sqrt_pi_p);
-    const sz = overlap1D(a.z, b.z, pa_z, pb_z, inv_2p, sqrt_pi_p);
+    const sx = overlap1_d(a.x, b.x, pa_x, pb_x, inv_2p, sqrt_pi_p);
+    const sy = overlap1_d(a.y, b.y, pa_y, pb_y, inv_2p, sqrt_pi_p);
+    const sz = overlap1_d(a.z, b.z, pa_z, pb_z, inv_2p, sqrt_pi_p);
 
     return exp_factor * sx[a.x][b.x] * sy[a.y][b.y] * sz[a.z][b.z];
 }
@@ -144,8 +144,8 @@ pub fn primitiveOverlap(
 /// Compute the overlap integral between two contracted shells for specific
 /// Cartesian components (a_cart, b_cart).
 ///
-/// S = Σ_i Σ_j c_i c_j N_i N_j × primitiveOverlap(...)
-pub fn contractedOverlap(
+/// S = Σ_i Σ_j c_i c_j N_i N_j × primitive_overlap(...)
+pub fn contracted_overlap(
     shell_a: ContractedShell,
     a_cart: AngularMomentum,
     shell_b: ContractedShell,
@@ -157,7 +157,7 @@ pub fn contractedOverlap(
         const na = basis_mod.normalization(prim_a.alpha, a_cart.x, a_cart.y, a_cart.z);
         for (shell_b.primitives) |prim_b| {
             const nb = basis_mod.normalization(prim_b.alpha, b_cart.x, b_cart.y, b_cart.z);
-            const prim_s = primitiveOverlap(
+            const prim_s = primitive_overlap(
                 prim_a.alpha,
                 shell_a.center,
                 a_cart,
@@ -234,11 +234,11 @@ pub fn contractedOverlap(
 /// Actually just: T_x(ax,bx) = -½ × second_deriv_x
 /// T_x = β(2bx+1)S(ax,bx) - 2β² S(ax,bx+2) - ½bx(bx-1)S(ax,bx-2)
 ///
-/// This uses the 1D overlap array which we already have from overlap1D.
+/// This uses the 1D overlap array which we already have from overlap1_d.
 /// Compute 1D kinetic energy contribution for one dimension.
 /// T_x(a,b) = β(2b+1)·S(a,b) - 2β²·S(a,b+2) - ½·b(b-1)·S(a,b-2)
 /// where S is the 1D overlap array and β is the exponent of center B.
-fn kinetic1D(
+fn kinetic1_d(
     a: usize,
     b: usize,
     beta: f64,
@@ -255,7 +255,7 @@ fn kinetic1D(
 
 /// Compute the kinetic energy integral between two primitive Cartesian Gaussians.
 /// T = -½ <a|∇²|b> = T_x·S_y·S_z + S_x·T_y·S_z + S_x·S_y·T_z
-pub fn primitiveKinetic(
+pub fn primitive_kinetic(
     alpha: f64,
     center_a: math.Vec3,
     a: AngularMomentum,
@@ -287,14 +287,14 @@ pub fn primitiveKinetic(
     const pb_z = pz - center_b.z;
 
     // Need overlaps up to la+2 and lb+2 for kinetic energy
-    const sx = overlap1D(a.x + 2, b.x + 2, pa_x, pb_x, inv_2p, sqrt_pi_p);
-    const sy = overlap1D(a.y + 2, b.y + 2, pa_y, pb_y, inv_2p, sqrt_pi_p);
-    const sz = overlap1D(a.z + 2, b.z + 2, pa_z, pb_z, inv_2p, sqrt_pi_p);
+    const sx = overlap1_d(a.x + 2, b.x + 2, pa_x, pb_x, inv_2p, sqrt_pi_p);
+    const sy = overlap1_d(a.y + 2, b.y + 2, pa_y, pb_y, inv_2p, sqrt_pi_p);
+    const sz = overlap1_d(a.z + 2, b.z + 2, pa_z, pb_z, inv_2p, sqrt_pi_p);
 
     // T = T_x · S_y · S_z + S_x · T_y · S_z + S_x · S_y · T_z
-    const tx = kinetic1D(a.x, b.x, beta, sx);
-    const ty = kinetic1D(a.y, b.y, beta, sy);
-    const tz = kinetic1D(a.z, b.z, beta, sz);
+    const tx = kinetic1_d(a.x, b.x, beta, sx);
+    const ty = kinetic1_d(a.y, b.y, beta, sy);
+    const tz = kinetic1_d(a.z, b.z, beta, sz);
 
     const sov_x = sx[a.x][b.x];
     const sov_y = sy[a.y][b.y];
@@ -305,7 +305,7 @@ pub fn primitiveKinetic(
 
 /// Compute the kinetic energy integral between two contracted shells for
 /// specific Cartesian components.
-pub fn contractedKinetic(
+pub fn contracted_kinetic(
     shell_a: ContractedShell,
     a_cart: AngularMomentum,
     shell_b: ContractedShell,
@@ -317,7 +317,7 @@ pub fn contractedKinetic(
         const na = basis_mod.normalization(prim_a.alpha, a_cart.x, a_cart.y, a_cart.z);
         for (shell_b.primitives) |prim_b| {
             const nb = basis_mod.normalization(prim_b.alpha, b_cart.x, b_cart.y, b_cart.z);
-            const prim_t = primitiveKinetic(
+            const prim_t = primitive_kinetic(
                 prim_a.alpha,
                 shell_a.center,
                 a_cart,
@@ -383,7 +383,7 @@ const MAX_AM_AUX: usize = 12;
 /// and a point charge nucleus.
 ///
 /// Returns: -Z × 2π/p × exp(-μ|A-B|²) × Θ(a,b)
-pub fn primitiveNuclearAttraction(
+pub fn primitive_nuclear_attraction(
     alpha: f64,
     center_a: math.Vec3,
     a: AngularMomentum,
@@ -394,59 +394,16 @@ pub fn primitiveNuclearAttraction(
     z_nuc: f64,
 ) f64 {
     const p = alpha + beta;
-    const mu = alpha * beta / p;
-    const inv_2p = 0.5 / p;
-
-    // Gaussian product center
-    const pc = math.Vec3{
-        .x = (alpha * center_a.x + beta * center_b.x) / p,
-        .y = (alpha * center_a.y + beta * center_b.y) / p,
-        .z = (alpha * center_a.z + beta * center_b.z) / p,
-    };
-
-    const diff_ab = math.Vec3.sub(center_a, center_b);
-    const r2_ab = math.Vec3.dot(diff_ab, diff_ab);
-
-    const diff_pc = math.Vec3.sub(pc, nuc_pos);
-    const r2_pc = math.Vec3.dot(diff_pc, diff_pc);
-
-    const exp_factor = @exp(-mu * r2_ab);
-    const prefactor = -z_nuc * 2.0 * std.math.pi / p * exp_factor;
-
-    // PA and CP components
-    const pa_x = pc.x - center_a.x;
-    const pa_y = pc.y - center_a.y;
-    const pa_z = pc.z - center_a.z;
-
-    const pb_x = pc.x - center_b.x;
-    const pb_y = pc.y - center_b.y;
-    const pb_z = pc.z - center_b.z;
-
-    const cp_x = nuc_pos.x - pc.x;
-    const cp_y = nuc_pos.y - pc.y;
-    const cp_z = nuc_pos.z - pc.z;
-
+    const centers = nuclear_attraction_centers(alpha, center_a, beta, center_b, nuc_pos, p);
     const total_am = a.x + a.y + a.z + b.x + b.y + b.z;
 
-    // Compute Boys function values F_m(p × |P-C|²) for m = 0 to total_am
     var boys: [MAX_AM_AUX + 1]f64 = undefined;
-    const arg = p * r2_pc;
+    const arg = p * centers.r2_pc;
     for (0..total_am + 1) |m| {
-        boys[m] = boys_mod.boysN(@as(u32, @intCast(m)), arg);
+        boys[m] = boys_mod.boys_n(@as(u32, @intCast(m)), arg);
     }
 
-    // Now use 3D Obara-Saika recurrence for the nuclear attraction auxiliary integral.
-    // We need to build Θ^(m)[ax][bx][ay][by][az][bz] but this is too much memory.
-    // Instead, we use a recursive approach or flat indexing.
-    //
-    // The factored approach: nuclear attraction does NOT factor into 1D components
-    // (unlike overlap and kinetic), so we use a direct 3D recurrence.
-    //
-    // We'll implement using a compact array indexed by (ax, bx, ay, by, az, bz, m).
-    // For practical efficiency, we use a flat buffer.
-
-    // Use a simpler recursive implementation for now (sufficient for s, p, d).
-    const aux_result = nuclearAux3D(
+    const aux_result = nuclear_aux3_d(
         a.x,
         a.y,
         a.z,
@@ -454,30 +411,62 @@ pub fn primitiveNuclearAttraction(
         b.y,
         b.z,
         0,
-        pa_x,
-        pa_y,
-        pa_z,
-        pb_x,
-        pb_y,
-        pb_z,
-        cp_x,
-        cp_y,
-        cp_z,
-        inv_2p,
+        centers.pa.x,
+        centers.pa.y,
+        centers.pa.z,
+        centers.pb.x,
+        centers.pb.y,
+        centers.pb.z,
+        centers.cp.x,
+        centers.cp.y,
+        centers.cp.z,
+        0.5 / p,
         &boys,
     );
 
-    return prefactor * aux_result;
+    return (-z_nuc * 2.0 * std.math.pi / p * @exp(-alpha * beta / p * centers.r2_ab)) * aux_result;
 }
 
-fn firstNonZeroAxis(comptime T: type, values: [3]T) ?usize {
+const NuclearAttractionCenters = struct {
+    pa: math.Vec3,
+    pb: math.Vec3,
+    cp: math.Vec3,
+    r2_ab: f64,
+    r2_pc: f64,
+};
+
+fn nuclear_attraction_centers(
+    alpha: f64,
+    center_a: math.Vec3,
+    beta: f64,
+    center_b: math.Vec3,
+    nuc_pos: math.Vec3,
+    p: f64,
+) NuclearAttractionCenters {
+    const pc = math.Vec3{
+        .x = (alpha * center_a.x + beta * center_b.x) / p,
+        .y = (alpha * center_a.y + beta * center_b.y) / p,
+        .z = (alpha * center_a.z + beta * center_b.z) / p,
+    };
+    const diff_ab = math.Vec3.sub(center_a, center_b);
+    const diff_pc = math.Vec3.sub(pc, nuc_pos);
+    return .{
+        .pa = math.Vec3.sub(pc, center_a),
+        .pb = math.Vec3.sub(pc, center_b),
+        .cp = math.Vec3.sub(nuc_pos, pc),
+        .r2_ab = math.Vec3.dot(diff_ab, diff_ab),
+        .r2_pc = math.Vec3.dot(diff_pc, diff_pc),
+    };
+}
+
+fn first_non_zero_axis(comptime T: type, values: [3]T) ?usize {
     for (0..3) |axis| {
         if (values[axis] != 0) return axis;
     }
     return null;
 }
 
-fn nuclearAux3DArr(
+fn nuclear_aux3_d_arr(
     a_arr: [3]u32,
     b_arr: [3]u32,
     m: u32,
@@ -487,20 +476,20 @@ fn nuclearAux3DArr(
     inv_2p: f64,
     boys: []const f64,
 ) f64 {
-    if (firstNonZeroAxis(u32, b_arr)) |axis| {
+    if (first_non_zero_axis(u32, b_arr)) |axis| {
         var b_dec = b_arr;
         b_dec[axis] -= 1;
         var a_inc = a_arr;
         a_inc[axis] += 1;
-        const t1 = nuclearAux3DArr(a_inc, b_dec, m, pa, pb, cp, inv_2p, boys);
-        const t2 = nuclearAux3DArr(a_arr, b_dec, m, pa, pb, cp, inv_2p, boys);
+        const t1 = nuclear_aux3_d_arr(a_inc, b_dec, m, pa, pb, cp, inv_2p, boys);
+        const t2 = nuclear_aux3_d_arr(a_arr, b_dec, m, pa, pb, cp, inv_2p, boys);
         return t1 + (pb[axis] - pa[axis]) * t2;
     }
 
-    return nuclearAuxVerticalArr(a_arr, m, pa, cp, inv_2p, boys);
+    return nuclear_aux_vertical_arr(a_arr, m, pa, cp, inv_2p, boys);
 }
 
-fn nuclearAuxVerticalArr(
+fn nuclear_aux_vertical_arr(
     a_arr: [3]u32,
     m: u32,
     pa: [3]f64,
@@ -508,18 +497,18 @@ fn nuclearAuxVerticalArr(
     inv_2p: f64,
     boys: []const f64,
 ) f64 {
-    if (firstNonZeroAxis(u32, a_arr)) |axis| {
+    if (first_non_zero_axis(u32, a_arr)) |axis| {
         var a_dec = a_arr;
         a_dec[axis] -= 1;
-        const t_m0 = nuclearAuxVerticalArr(a_dec, m, pa, cp, inv_2p, boys);
-        const t_m1 = nuclearAuxVerticalArr(a_dec, m + 1, pa, cp, inv_2p, boys);
+        const t_m0 = nuclear_aux_vertical_arr(a_dec, m, pa, cp, inv_2p, boys);
+        const t_m1 = nuclear_aux_vertical_arr(a_dec, m + 1, pa, cp, inv_2p, boys);
         var result = pa[axis] * t_m0 + cp[axis] * t_m1;
         if (a_dec[axis] > 0) {
             var a_dec2 = a_dec;
             a_dec2[axis] -= 1;
             const ai = @as(f64, @floatFromInt(a_dec[axis]));
-            result += ai * inv_2p * (nuclearAuxVerticalArr(a_dec2, m, pa, cp, inv_2p, boys) -
-                nuclearAuxVerticalArr(a_dec2, m + 1, pa, cp, inv_2p, boys));
+            result += ai * inv_2p * (nuclear_aux_vertical_arr(a_dec2, m, pa, cp, inv_2p, boys) -
+                nuclear_aux_vertical_arr(a_dec2, m + 1, pa, cp, inv_2p, boys));
         }
         return result;
     }
@@ -531,7 +520,7 @@ fn nuclearAuxVerticalArr(
 /// Θ^(m)_{a,b} with a = (ax,ay,az), b = (bx,by,bz).
 ///
 /// Uses horizontal transfer to reduce b → 0 first, then vertical recurrence on a.
-fn nuclearAux3D(
+fn nuclear_aux3_d(
     ax: u32,
     ay: u32,
     az: u32,
@@ -551,7 +540,7 @@ fn nuclearAux3D(
     inv_2p: f64,
     boys: []const f64,
 ) f64 {
-    return nuclearAux3DArr(
+    return nuclear_aux3_d_arr(
         .{ ax, ay, az },
         .{ bx, by, bz },
         m,
@@ -565,7 +554,7 @@ fn nuclearAux3D(
 
 /// Vertical recurrence for nuclear attraction with b = (0,0,0).
 /// Θ^(m)_{a,0}
-fn nuclearAuxVertical(
+fn nuclear_aux_vertical(
     ax: u32,
     ay: u32,
     az: u32,
@@ -579,7 +568,7 @@ fn nuclearAuxVertical(
     inv_2p: f64,
     boys: []const f64,
 ) f64 {
-    return nuclearAuxVerticalArr(
+    return nuclear_aux_vertical_arr(
         .{ ax, ay, az },
         m,
         .{ pa_x, pa_y, pa_z },
@@ -591,7 +580,7 @@ fn nuclearAuxVertical(
 
 /// Compute nuclear attraction integral between two contracted shells for
 /// specific Cartesian components and a single nucleus.
-pub fn contractedNuclearAttraction(
+pub fn contracted_nuclear_attraction(
     shell_a: ContractedShell,
     a_cart: AngularMomentum,
     shell_b: ContractedShell,
@@ -605,7 +594,7 @@ pub fn contractedNuclearAttraction(
         const na = basis_mod.normalization(prim_a.alpha, a_cart.x, a_cart.y, a_cart.z);
         for (shell_b.primitives) |prim_b| {
             const nb = basis_mod.normalization(prim_b.alpha, b_cart.x, b_cart.y, b_cart.z);
-            const prim_v = primitiveNuclearAttraction(
+            const prim_v = primitive_nuclear_attraction(
                 prim_a.alpha,
                 shell_a.center,
                 a_cart,
@@ -623,7 +612,7 @@ pub fn contractedNuclearAttraction(
 }
 
 /// Compute total nuclear attraction integral for all nuclei.
-pub fn contractedTotalNuclearAttraction(
+pub fn contracted_total_nuclear_attraction(
     shell_a: ContractedShell,
     a_cart: AngularMomentum,
     shell_b: ContractedShell,
@@ -633,7 +622,7 @@ pub fn contractedTotalNuclearAttraction(
 ) f64 {
     var result: f64 = 0.0;
     for (nuc_positions, 0..) |pos, i| {
-        result += contractedNuclearAttraction(
+        result += contracted_nuclear_attraction(
             shell_a,
             a_cart,
             shell_b,
@@ -659,16 +648,16 @@ const ERI_MAX_M: usize = 13; // 0..12 inclusive
 
 /// Number of Cartesian monomials with total angular momentum <= L.
 /// This is (L+1)(L+2)(L+3)/6.
-fn numCartesianUpTo(comptime l: usize) usize {
+fn num_cartesian_up_to(comptime l: usize) usize {
     return (l + 1) * (l + 2) * (l + 3) / 6;
 }
 
 /// Maximum number of Cartesian indices for one side of the vertical table.
-const ERI_MAX_CART: usize = numCartesianUpTo(ERI_MAX_AM - 1); // 84 for L=6
+const ERI_MAX_CART: usize = num_cartesian_up_to(ERI_MAX_AM - 1); // 84 for L=6
 
 /// Map (ax,ay,az) to a linear index. Requires ax+ay+az <= ERI_MAX_AM-1.
 /// Uses a simple 3D layout: idx = az + (ERI_MAX_AM)*(ay + ERI_MAX_AM*ax).
-fn eriCartIndex(ax: usize, ay: usize, az: usize) usize {
+fn eri_cart_index(ax: usize, ay: usize, az: usize) usize {
     return az + ERI_MAX_AM * (ay + ERI_MAX_AM * ax);
 }
 
@@ -677,7 +666,7 @@ const ERI_CART_STRIDE: usize = ERI_MAX_AM * ERI_MAX_AM * ERI_MAX_AM; // 343
 
 /// Vertical recurrence table type.
 /// theta[idx_a][idx_c][m] = [a,0|c,0]^(m)
-/// where idx_a = eriCartIndex(ax,ay,az), idx_c = eriCartIndex(cx,cy,cz).
+/// where idx_a = eri_cart_index(ax,ay,az), idx_c = eri_cart_index(cx,cy,cz).
 ///
 /// We use a flat array: theta[idx_a * ERI_CART_STRIDE * ERI_MAX_M + idx_c * ERI_MAX_M + m]
 const THETA_SIZE: usize = ERI_CART_STRIDE * ERI_CART_STRIDE * ERI_MAX_M;
@@ -692,7 +681,7 @@ const ThetaView = struct {
     m_stride: usize,
 };
 
-fn thetaLookup(view: ThetaView, a_arr: [3]u32, c_arr: [3]u32, m: usize) f64 {
+fn theta_lookup(view: ThetaView, a_arr: [3]u32, c_arr: [3]u32, m: usize) f64 {
     const a_idx = @as(usize, a_arr[0]) * view.a_stride_x +
         @as(usize, a_arr[1]) * view.a_stride_y +
         @as(usize, a_arr[2]);
@@ -702,7 +691,7 @@ fn thetaLookup(view: ThetaView, a_arr: [3]u32, c_arr: [3]u32, m: usize) f64 {
     return view.theta[a_idx * view.c_size * view.m_stride + c_idx * view.m_stride + m];
 }
 
-fn eriHorizontalArr(
+fn eri_horizontal_arr(
     a_arr: [3]u32,
     b_arr: [3]u32,
     c_arr: [3]u32,
@@ -711,30 +700,30 @@ fn eriHorizontalArr(
     ab: [3]f64,
     cd_vec: [3]f64,
 ) f64 {
-    if (firstNonZeroAxis(u32, d_arr)) |axis| {
+    if (first_non_zero_axis(u32, d_arr)) |axis| {
         var d_dec = d_arr;
         d_dec[axis] -= 1;
         var c_inc = c_arr;
         c_inc[axis] += 1;
-        const t1 = eriHorizontalArr(a_arr, b_arr, c_inc, d_dec, view, ab, cd_vec);
-        const t2 = eriHorizontalArr(a_arr, b_arr, c_arr, d_dec, view, ab, cd_vec);
+        const t1 = eri_horizontal_arr(a_arr, b_arr, c_inc, d_dec, view, ab, cd_vec);
+        const t2 = eri_horizontal_arr(a_arr, b_arr, c_arr, d_dec, view, ab, cd_vec);
         return t1 + cd_vec[axis] * t2;
     }
-    if (firstNonZeroAxis(u32, b_arr)) |axis| {
+    if (first_non_zero_axis(u32, b_arr)) |axis| {
         var b_dec = b_arr;
         b_dec[axis] -= 1;
         var a_inc = a_arr;
         a_inc[axis] += 1;
-        const t1 = eriHorizontalArr(a_inc, b_dec, c_arr, d_arr, view, ab, cd_vec);
-        const t2 = eriHorizontalArr(a_arr, b_dec, c_arr, d_arr, view, ab, cd_vec);
+        const t1 = eri_horizontal_arr(a_inc, b_dec, c_arr, d_arr, view, ab, cd_vec);
+        const t2 = eri_horizontal_arr(a_arr, b_dec, c_arr, d_arr, view, ab, cd_vec);
         return t1 + ab[axis] * t2;
     }
-    return thetaLookup(view, a_arr, c_arr, 0);
+    return theta_lookup(view, a_arr, c_arr, 0);
 }
 
 const MAX_STACK_THETA_TABLE: usize = 256 * 1024;
 
-fn coordIndex3(coords: [3]usize, stride_x: usize, stride_y: usize) usize {
+fn coord_index3(coords: [3]usize, stride_x: usize, stride_y: usize) usize {
     return coords[0] * stride_x + coords[1] * stride_y + coords[2];
 }
 
@@ -814,7 +803,7 @@ const PrimitiveEriSetup = struct {
     rho_over_q: f64,
 };
 
-fn initPrimitiveEriSetup(
+fn init_primitive_eri_setup(
     alpha: f64,
     center_a: math.Vec3,
     a: AngularMomentum,
@@ -859,7 +848,7 @@ fn initPrimitiveEriSetup(
     const lc = c_am.x + c_am.y + c_am.z;
     const ld = d_am.x + d_am.y + d_am.z;
     var boys: [ERI_MAX_M]f64 = undefined;
-    boys_mod.boysBatch(@as(u32, @intCast(la + lb + lc + ld)), arg, &boys);
+    boys_mod.boys_batch(@as(u32, @intCast(la + lb + lc + ld)), arg, &boys);
     return .{
         .prefactor = 2.0 * std.math.pow(f64, std.math.pi, 2.5) /
             (p * q * @sqrt(p + q)) * @exp(-mu_ab * r2_ab - mu_cd * r2_cd),
@@ -879,7 +868,7 @@ fn initPrimitiveEriSetup(
     };
 }
 
-fn thetaBuildInputs(setup: *const PrimitiveEriSetup) ThetaBuildInputs {
+fn theta_build_inputs(setup: *const PrimitiveEriSetup) ThetaBuildInputs {
     return .{
         .boys = &setup.boys,
         .pa = setup.pa,
@@ -894,7 +883,7 @@ fn thetaBuildInputs(setup: *const PrimitiveEriSetup) ThetaBuildInputs {
     };
 }
 
-fn initThetaBase(
+fn init_theta_base(
     theta: []f64,
     layout: ThetaLayout,
     boys: []const f64,
@@ -906,18 +895,18 @@ fn initThetaBase(
     }
 }
 
-fn fillThetaCEntry(
+fn fill_theta_c_entry(
     theta: []f64,
     layout: ThetaLayout,
     inputs: ThetaBuildInputs,
     c_coords: [3]usize,
     lc_total: usize,
 ) void {
-    const axis = firstNonZeroAxis(usize, c_coords).?;
+    const axis = first_non_zero_axis(usize, c_coords).?;
     var c_dec = c_coords;
     c_dec[axis] -= 1;
-    const c_idx = coordIndex3(c_coords, layout.c_stride_x, layout.c_stride_y);
-    const c_dec_idx = coordIndex3(c_dec, layout.c_stride_x, layout.c_stride_y);
+    const c_idx = coord_index3(c_coords, layout.c_stride_x, layout.c_stride_y);
+    const c_dec_idx = coord_index3(c_dec, layout.c_stride_x, layout.c_stride_y);
     const base_dec = c_dec_idx * layout.m_stride;
     const base_out = c_idx * layout.m_stride;
     const ci_after = @as(f64, @floatFromInt(c_dec[axis]));
@@ -927,7 +916,7 @@ fn fillThetaCEntry(
             var c_dec2 = c_dec;
             c_dec2[axis] -= 1;
             const base_dec2 =
-                coordIndex3(c_dec2, layout.c_stride_x, layout.c_stride_y) * layout.m_stride;
+                coord_index3(c_dec2, layout.c_stride_x, layout.c_stride_y) * layout.m_stride;
             val += ci_after * inputs.inv_2q *
                 (theta[base_dec2 + m] - inputs.rho_over_q * theta[base_dec2 + m + 1]);
         }
@@ -935,13 +924,19 @@ fn fillThetaCEntry(
     }
 }
 
-fn buildThetaCDirection(theta: []f64, layout: ThetaLayout, inputs: ThetaBuildInputs) void {
+fn build_theta_c_direction(theta: []f64, layout: ThetaLayout, inputs: ThetaBuildInputs) void {
     for (1..layout.Lc + 1) |lc_total| {
         var cx: usize = lc_total;
         while (true) {
             var cy: usize = lc_total - cx;
             while (true) {
-                fillThetaCEntry(theta, layout, inputs, .{ cx, cy, lc_total - cx - cy }, lc_total);
+                fill_theta_c_entry(
+                    theta,
+                    layout,
+                    inputs,
+                    .{ cx, cy, lc_total - cx - cy },
+                    lc_total,
+                );
                 if (cy == 0) break;
                 cy -= 1;
             }
@@ -951,7 +946,7 @@ fn buildThetaCDirection(theta: []f64, layout: ThetaLayout, inputs: ThetaBuildInp
     }
 }
 
-fn fillThetaAEntry(
+fn fill_theta_a_entry(
     theta: []f64,
     layout: ThetaLayout,
     inputs: ThetaBuildInputs,
@@ -962,9 +957,9 @@ fn fillThetaAEntry(
     la_total: usize,
     lc_total: usize,
 ) void {
-    const a_idx = coordIndex3(a_coords, layout.a_stride_x, layout.a_stride_y);
-    const a_dec_idx = coordIndex3(a_dec, layout.a_stride_x, layout.a_stride_y);
-    const c_idx = coordIndex3(c_coords, layout.c_stride_x, layout.c_stride_y);
+    const a_idx = coord_index3(a_coords, layout.a_stride_x, layout.a_stride_y);
+    const a_dec_idx = coord_index3(a_dec, layout.a_stride_x, layout.a_stride_y);
+    const c_idx = coord_index3(c_coords, layout.c_stride_x, layout.c_stride_y);
     const base_dec = a_dec_idx * layout.c_size * layout.m_stride + c_idx * layout.m_stride;
     const base_out = a_idx * layout.c_size * layout.m_stride + c_idx * layout.m_stride;
     const ai_after = @as(f64, @floatFromInt(a_dec[axis]));
@@ -974,7 +969,7 @@ fn fillThetaAEntry(
             var a_dec2 = a_dec;
             a_dec2[axis] -= 1;
             const base_dec2 =
-                coordIndex3(a_dec2, layout.a_stride_x, layout.a_stride_y) *
+                coord_index3(a_dec2, layout.a_stride_x, layout.a_stride_y) *
                 layout.c_size *
                 layout.m_stride +
                 c_idx * layout.m_stride;
@@ -986,7 +981,7 @@ fn fillThetaAEntry(
             c_dec[axis] -= 1;
             const coupling_base =
                 a_dec_idx * layout.c_size * layout.m_stride +
-                coordIndex3(c_dec, layout.c_stride_x, layout.c_stride_y) * layout.m_stride;
+                coord_index3(c_dec, layout.c_stride_x, layout.c_stride_y) * layout.m_stride;
             val += @as(f64, @floatFromInt(c_coords[axis])) *
                 inputs.inv_2pq *
                 theta[coupling_base + m + 1];
@@ -995,14 +990,14 @@ fn fillThetaAEntry(
     }
 }
 
-fn buildThetaADirection(theta: []f64, layout: ThetaLayout, inputs: ThetaBuildInputs) void {
+fn build_theta_a_direction(theta: []f64, layout: ThetaLayout, inputs: ThetaBuildInputs) void {
     for (1..layout.La + 1) |la_total| {
         var ax: usize = la_total;
         while (true) {
             var ay: usize = la_total - ax;
             while (true) {
                 const a_coords = [3]usize{ ax, ay, la_total - ax - ay };
-                const axis = firstNonZeroAxis(usize, a_coords).?;
+                const axis = first_non_zero_axis(usize, a_coords).?;
                 var a_dec = a_coords;
                 a_dec[axis] -= 1;
                 for (0..layout.Lc + 1) |lc_total| {
@@ -1010,7 +1005,7 @@ fn buildThetaADirection(theta: []f64, layout: ThetaLayout, inputs: ThetaBuildInp
                     while (true) {
                         var cy: usize = lc_total - cx;
                         while (true) {
-                            fillThetaAEntry(
+                            fill_theta_a_entry(
                                 theta,
                                 layout,
                                 inputs,
@@ -1037,18 +1032,18 @@ fn buildThetaADirection(theta: []f64, layout: ThetaLayout, inputs: ThetaBuildInp
     }
 }
 
-fn buildThetaTable(
+fn build_theta_table(
     theta: []f64,
     layout: ThetaLayout,
     inputs: ThetaBuildInputs,
     zero_used: bool,
 ) void {
-    initThetaBase(theta, layout, inputs.boys, zero_used);
-    buildThetaCDirection(theta, layout, inputs);
-    buildThetaADirection(theta, layout, inputs);
+    init_theta_base(theta, layout, inputs.boys, zero_used);
+    build_theta_c_direction(theta, layout, inputs);
+    build_theta_a_direction(theta, layout, inputs);
 }
 
-fn eriHorizontalWithLayout(
+fn eri_horizontal_with_layout(
     a_arr: [3]u32,
     b_arr: [3]u32,
     c_arr: [3]u32,
@@ -1058,7 +1053,7 @@ fn eriHorizontalWithLayout(
     ab: [3]f64,
     cd_vec: [3]f64,
 ) f64 {
-    return eriHorizontalArr(a_arr, b_arr, c_arr, d_arr, layout.view(theta), ab, cd_vec);
+    return eri_horizontal_arr(a_arr, b_arr, c_arr, d_arr, layout.view(theta), ab, cd_vec);
 }
 
 /// Compute ERI between four primitive Cartesian Gaussians using table-based Obara-Saika.
@@ -1069,7 +1064,7 @@ fn eriHorizontalWithLayout(
 ///   1. Compute intermediate quantities (P, Q, W, Boys values, etc.)
 ///   2. Build vertical recurrence table theta[a][c][m] = [a,0|c,0]^(m) bottom-up
 ///   3. Apply horizontal recurrence to recover [a,b|c,d]
-pub fn primitiveERI(
+pub fn primitive_eri(
     alpha: f64,
     center_a: math.Vec3,
     a: AngularMomentum,
@@ -1083,7 +1078,7 @@ pub fn primitiveERI(
     center_d: math.Vec3,
     d_am: AngularMomentum,
 ) f64 {
-    const setup = initPrimitiveEriSetup(
+    const setup = init_primitive_eri_setup(
         alpha,
         center_a,
         a,
@@ -1098,7 +1093,7 @@ pub fn primitiveERI(
         d_am,
     );
     if (setup.layout.theta_size > MAX_STACK_THETA_TABLE) {
-        return setup.prefactor * primitiveERIRecursive(
+        return setup.prefactor * primitive_eri_recursive(
             a,
             b,
             c_am,
@@ -1119,13 +1114,13 @@ pub fn primitiveERI(
     }
 
     var theta: [MAX_STACK_THETA_TABLE]f64 = undefined;
-    buildThetaTable(
+    build_theta_table(
         theta[0..setup.layout.theta_size],
         setup.layout,
-        thetaBuildInputs(&setup),
+        theta_build_inputs(&setup),
         true,
     );
-    return setup.prefactor * eriHorizontalWithLayout(
+    return setup.prefactor * eri_horizontal_with_layout(
         .{ a.x, a.y, a.z },
         .{ b.x, b.y, b.z },
         .{ c_am.x, c_am.y, c_am.z },
@@ -1141,7 +1136,7 @@ pub fn primitiveERI(
 /// This is still recursive but only in b and d (which are small: l <= 3),
 /// and each call does O(1) work (table lookup), so the total cost is
 /// O(2^(lb+ld)) which is at most 2^6 = 64 for f+f.
-fn eriHorizontal(
+fn eri_horizontal(
     a_arr: [3]u32,
     b_arr: [3]u32,
     c_arr: [3]u32,
@@ -1156,7 +1151,7 @@ fn eriHorizontal(
     ab: [3]f64,
     cd_vec: [3]f64,
 ) f64 {
-    return eriHorizontalArr(a_arr, b_arr, c_arr, d_arr, .{
+    return eri_horizontal_arr(a_arr, b_arr, c_arr, d_arr, .{
         .theta = theta,
         .a_stride_x = a_stride_x,
         .a_stride_y = a_stride_y,
@@ -1168,7 +1163,7 @@ fn eriHorizontal(
 }
 
 /// Fallback recursive ERI for very large angular momentum (exceeds stack table size).
-fn primitiveERIRecursive(
+fn primitive_eri_recursive(
     a: AngularMomentum,
     b: AngularMomentum,
     c_am: AngularMomentum,
@@ -1200,7 +1195,7 @@ fn primitiveERIRecursive(
         .rho_over_q = rho_over_q,
         .boys = boys_vals,
     };
-    return eriRecursive(
+    return eri_recursive(
         .{ a.x, a.y, a.z },
         .{ b.x, b.y, b.z },
         .{ c_am.x, c_am.y, c_am.z },
@@ -1226,7 +1221,7 @@ const EriParams = struct {
 };
 
 /// Recursive ERI evaluation (fallback for large angular momentum).
-fn eriRecursive(
+fn eri_recursive(
     a: [3]u32,
     b: [3]u32,
     c: [3]u32,
@@ -1242,8 +1237,8 @@ fn eriRecursive(
             var c_inc = c;
             c_inc[i] += 1;
             const cd_i = params.cd[i];
-            return eriRecursive(a, b, c_inc, d_dec, m, params) +
-                cd_i * eriRecursive(a, b, c, d_dec, m, params);
+            return eri_recursive(a, b, c_inc, d_dec, m, params) +
+                cd_i * eri_recursive(a, b, c, d_dec, m, params);
         }
     }
 
@@ -1255,17 +1250,31 @@ fn eriRecursive(
             var a_inc = a;
             a_inc[i] += 1;
             const ab_i = params.ab[i];
-            return eriRecursive(a_inc, b_dec, c, d, m, params) +
-                ab_i * eriRecursive(a, b_dec, c, d, m, params);
+            return eri_recursive(a_inc, b_dec, c, d, m, params) +
+                ab_i * eri_recursive(a, b_dec, c, d, m, params);
         }
     }
 
     // b = d = 0: vertical recurrence
-    return eriVertical(a, c, m, params);
+    return eri_vertical(a, c, m, params);
+}
+
+const VerticalAxis = struct {
+    axis: usize,
+    from_a: bool,
+};
+
+fn select_vertical_axis(a: [3]u32, c: [3]u32) VerticalAxis {
+    if (a[0] > 0 or a[1] > 0 or a[2] > 0) {
+        const axis: usize = if (a[0] > 0) 0 else if (a[1] > 0) 1 else 2;
+        return .{ .axis = axis, .from_a = true };
+    }
+    const axis: usize = if (c[0] > 0) 0 else if (c[1] > 0) 1 else 2;
+    return .{ .axis = axis, .from_a = false };
 }
 
 /// Vertical recurrence for [a,0|c,0]^(m) (fallback recursive version).
-fn eriVertical(
+fn eri_vertical(
     a: [3]u32,
     c: [3]u32,
     m: u32,
@@ -1275,49 +1284,29 @@ fn eriVertical(
         return params.boys[m];
     }
 
-    var axis: usize = 0;
-    var from_a = true;
+    const vertical = select_vertical_axis(a, c);
+    const axis = vertical.axis;
 
-    if (a[0] > 0 or a[1] > 0 or a[2] > 0) {
-        if (a[0] > 0) {
-            axis = 0;
-        } else if (a[1] > 0) {
-            axis = 1;
-        } else {
-            axis = 2;
-        }
-        from_a = true;
-    } else {
-        if (c[0] > 0) {
-            axis = 0;
-        } else if (c[1] > 0) {
-            axis = 1;
-        } else {
-            axis = 2;
-        }
-        from_a = false;
-    }
-
-    if (from_a) {
+    if (vertical.from_a) {
         var a_dec = a;
         a_dec[axis] -= 1;
 
-        var result = params.pa[axis] * eriVertical(a_dec, c, m, params) +
-            params.wp[axis] * eriVertical(a_dec, c, m + 1, params);
+        var result = params.pa[axis] * eri_vertical(a_dec, c, m, params) +
+            params.wp[axis] * eri_vertical(a_dec, c, m + 1, params);
 
         if (a_dec[axis] >= 1) {
             var a_dec2 = a_dec;
             a_dec2[axis] -= 1;
             const ai = @as(f64, @floatFromInt(a_dec[axis]));
-            result += ai * params.inv_2p * (eriVertical(a_dec2, c, m, params) -
-                params.rho_over_p * eriVertical(a_dec2, c, m + 1, params));
+            result += ai * params.inv_2p * (eri_vertical(a_dec2, c, m, params) -
+                params.rho_over_p * eri_vertical(a_dec2, c, m + 1, params));
         }
 
         if (c[axis] >= 1) {
             var c_dec = c;
             c_dec[axis] -= 1;
             const ci = @as(f64, @floatFromInt(c[axis]));
-            result += ci * params.inv_2pq * eriVertical(a_dec, c_dec, m + 1, params);
+            result += ci * params.inv_2pq * eri_vertical(a_dec, c_dec, m + 1, params);
         }
 
         return result;
@@ -1325,15 +1314,15 @@ fn eriVertical(
         var c_dec = c;
         c_dec[axis] -= 1;
 
-        var result = params.qc[axis] * eriVertical(a, c_dec, m, params) +
-            params.wq[axis] * eriVertical(a, c_dec, m + 1, params);
+        var result = params.qc[axis] * eri_vertical(a, c_dec, m, params) +
+            params.wq[axis] * eri_vertical(a, c_dec, m + 1, params);
 
         if (c_dec[axis] >= 1) {
             var c_dec2 = c_dec;
             c_dec2[axis] -= 1;
             const ci = @as(f64, @floatFromInt(c_dec[axis]));
-            result += ci * params.inv_2q * (eriVertical(a, c_dec2, m, params) -
-                params.rho_over_q * eriVertical(a, c_dec2, m + 1, params));
+            result += ci * params.inv_2q * (eri_vertical(a, c_dec2, m, params) -
+                params.rho_over_q * eri_vertical(a, c_dec2, m + 1, params));
         }
 
         return result;
@@ -1341,7 +1330,7 @@ fn eriVertical(
 }
 
 /// Compute contracted ERI between four shells for specific Cartesian components.
-pub fn contractedERI(
+pub fn contracted_eri(
     shell_a: ContractedShell,
     a_cart: AngularMomentum,
     shell_b: ContractedShell,
@@ -1385,7 +1374,7 @@ pub fn contractedERI(
                     if (@abs(coeff_product) * norm_product * prefactor_bound <
                         prim_screen_threshold) continue;
 
-                    const prim = primitiveERI(
+                    const prim = primitive_eri(
                         pa.alpha,
                         shell_a.center,
                         a_cart,
@@ -1466,7 +1455,7 @@ const PrimitiveAbSetup = struct {
     inv_2p: f64,
 };
 
-fn initNormTable(
+fn init_norm_table(
     primitives: []const PrimitiveGaussian,
     cart: []const AngularMomentum,
     num_cart: usize,
@@ -1485,16 +1474,16 @@ fn initNormTable(
     return table;
 }
 
-fn initShellQuartetBatchSetup(
+fn init_shell_quartet_batch_setup(
     shell_a: ContractedShell,
     shell_b: ContractedShell,
     shell_c: ContractedShell,
     shell_d: ContractedShell,
 ) ShellQuartetBatchSetup {
-    const na = basis_mod.numCartesian(shell_a.l);
-    const nb = basis_mod.numCartesian(shell_b.l);
-    const nc = basis_mod.numCartesian(shell_c.l);
-    const nd = basis_mod.numCartesian(shell_d.l);
+    const na = basis_mod.num_cartesian(shell_a.l);
+    const nb = basis_mod.num_cartesian(shell_b.l);
+    const nc = basis_mod.num_cartesian(shell_c.l);
+    const nd = basis_mod.num_cartesian(shell_d.l);
     const diff_ab = math.Vec3.sub(shell_a.center, shell_b.center);
     const diff_cd = math.Vec3.sub(shell_c.center, shell_d.center);
     return .{
@@ -1502,10 +1491,10 @@ fn initShellQuartetBatchSetup(
         .shell_b = shell_b,
         .shell_c = shell_c,
         .shell_d = shell_d,
-        .cart_a = basis_mod.cartesianExponents(shell_a.l),
-        .cart_b = basis_mod.cartesianExponents(shell_b.l),
-        .cart_c = basis_mod.cartesianExponents(shell_c.l),
-        .cart_d = basis_mod.cartesianExponents(shell_d.l),
+        .cart_a = basis_mod.cartesian_exponents(shell_a.l),
+        .cart_b = basis_mod.cartesian_exponents(shell_b.l),
+        .cart_c = basis_mod.cartesian_exponents(shell_c.l),
+        .cart_d = basis_mod.cartesian_exponents(shell_d.l),
         .na = na,
         .nb = nb,
         .nc = nc,
@@ -1527,16 +1516,16 @@ fn initShellQuartetBatchSetup(
     };
 }
 
-fn initBatchNormTables(setup: ShellQuartetBatchSetup) BatchNormTables {
+fn init_batch_norm_tables(setup: ShellQuartetBatchSetup) BatchNormTables {
     return .{
-        .a = initNormTable(setup.shell_a.primitives, setup.cart_a[0..], setup.na),
-        .b = initNormTable(setup.shell_b.primitives, setup.cart_b[0..], setup.nb),
-        .c = initNormTable(setup.shell_c.primitives, setup.cart_c[0..], setup.nc),
-        .d = initNormTable(setup.shell_d.primitives, setup.cart_d[0..], setup.nd),
+        .a = init_norm_table(setup.shell_a.primitives, setup.cart_a[0..], setup.na),
+        .b = init_norm_table(setup.shell_b.primitives, setup.cart_b[0..], setup.nb),
+        .c = init_norm_table(setup.shell_c.primitives, setup.cart_c[0..], setup.nc),
+        .d = init_norm_table(setup.shell_d.primitives, setup.cart_d[0..], setup.nd),
     };
 }
 
-fn fillContractedShellQuartetFallback(
+fn fill_contracted_shell_quartet_fallback(
     setup: ShellQuartetBatchSetup,
     output: []f64,
 ) void {
@@ -1549,7 +1538,7 @@ fn fillContractedShellQuartetFallback(
                         ib * setup.nc * setup.nd +
                         ic * setup.nd +
                         id;
-                    output[idx] = contractedERI(
+                    output[idx] = contracted_eri(
                         setup.shell_a,
                         setup.cart_a[ia],
                         setup.shell_b,
@@ -1565,7 +1554,7 @@ fn fillContractedShellQuartetFallback(
     }
 }
 
-fn initPrimitiveAbSetup(
+fn init_primitive_ab_setup(
     setup: ShellQuartetBatchSetup,
     prim_a: PrimitiveGaussian,
     ipa: usize,
@@ -1597,7 +1586,7 @@ fn initPrimitiveAbSetup(
     };
 }
 
-fn maybeBuildPrimitiveQuartetTheta(
+fn maybe_build_primitive_quartet_theta(
     theta: []f64,
     setup: ShellQuartetBatchSetup,
     norms: BatchNormTables,
@@ -1634,12 +1623,12 @@ fn maybeBuildPrimitiveQuartetTheta(
     };
     const diff_pq = math.Vec3.sub(ab_setup.p_center, q_center);
     var boys: [ERI_MAX_M]f64 = undefined;
-    boys_mod.boysBatch(
+    boys_mod.boys_batch(
         @as(u32, @intCast(setup.layout.m_max)),
         rho * math.Vec3.dot(diff_pq, diff_pq),
         &boys,
     );
-    buildThetaTable(theta, setup.layout, .{
+    build_theta_table(theta, setup.layout, .{
         .boys = &boys,
         .pa = ab_setup.pa,
         .qc = .{
@@ -1666,7 +1655,7 @@ fn maybeBuildPrimitiveQuartetTheta(
     return prefactor * coeff_abcd;
 }
 
-fn accumulatePrimitiveQuartetOutput(
+fn accumulate_primitive_quartet_output(
     theta: []const f64,
     setup: ShellQuartetBatchSetup,
     norms: BatchNormTables,
@@ -1692,7 +1681,7 @@ fn accumulatePrimitiveQuartetOutput(
                     output[idx] += prim_prefactor *
                         nabc *
                         norms.d.values[ipd * setup.nd + id] *
-                        eriHorizontalWithLayout(
+                        eri_horizontal_with_layout(
                             .{ setup.cart_a[ia].x, setup.cart_a[ia].y, setup.cart_a[ia].z },
                             .{ setup.cart_b[ib].x, setup.cart_b[ib].y, setup.cart_b[ib].z },
                             .{ setup.cart_c[ic].x, setup.cart_c[ic].y, setup.cart_c[ic].z },
@@ -1708,7 +1697,7 @@ fn accumulatePrimitiveQuartetOutput(
     }
 }
 
-fn accumulateContractedShellQuartet(
+fn accumulate_contracted_shell_quartet(
     theta: []f64,
     setup: ShellQuartetBatchSetup,
     norms: BatchNormTables,
@@ -1716,10 +1705,10 @@ fn accumulateContractedShellQuartet(
 ) void {
     for (setup.shell_a.primitives, 0..) |prim_a, ipa| {
         for (setup.shell_b.primitives, 0..) |prim_b, ipb| {
-            const ab_setup = initPrimitiveAbSetup(setup, prim_a, ipa, prim_b, ipb);
+            const ab_setup = init_primitive_ab_setup(setup, prim_a, ipa, prim_b, ipb);
             for (setup.shell_c.primitives, 0..) |prim_c, ipc| {
                 for (setup.shell_d.primitives, 0..) |prim_d, ipd| {
-                    const prim_prefactor = maybeBuildPrimitiveQuartetTheta(
+                    const prim_prefactor = maybe_build_primitive_quartet_theta(
                         theta,
                         setup,
                         norms,
@@ -1729,7 +1718,7 @@ fn accumulateContractedShellQuartet(
                         prim_d,
                         ipd,
                     ) orelse continue;
-                    accumulatePrimitiveQuartetOutput(
+                    accumulate_primitive_quartet_output(
                         theta,
                         setup,
                         norms,
@@ -1752,24 +1741,24 @@ const ShellIndexMap = struct {
     n_shells: usize,
 };
 
-fn initShellIndexMap(shells: []const ContractedShell) ShellIndexMap {
+fn init_shell_index_map(shells: []const ContractedShell) ShellIndexMap {
     var map: ShellIndexMap = undefined;
     map.n_shells = shells.len;
     var offset: usize = 0;
     for (shells, 0..) |shell, si| {
         map.offsets[si] = offset;
-        map.sizes[si] = shell.numCartesianFunctions();
+        map.sizes[si] = shell.num_cartesian_functions();
         offset += map.sizes[si];
     }
     return map;
 }
 
-fn buildSchwarzTable(shells: []const ContractedShell, map: ShellIndexMap) [128 * 128]f64 {
+fn build_schwarz_table(shells: []const ContractedShell, map: ShellIndexMap) [128 * 128]f64 {
     var schwarz_q: [128 * 128]f64 = undefined;
     var schwarz_buf: [MAX_SHELL_BATCH]f64 = undefined;
     for (0..map.n_shells) |si| {
         for (si..map.n_shells) |sj| {
-            _ = rys_eri.contractedShellQuartetERI(
+            _ = rys_eri.contracted_shell_quartet_eri(
                 shells[si],
                 shells[sj],
                 shells[si],
@@ -1794,7 +1783,7 @@ fn buildSchwarzTable(shells: []const ContractedShell, map: ShellIndexMap) [128 *
     return schwarz_q;
 }
 
-fn distributeShellQuartet(
+fn distribute_shell_quartet(
     values: []f64,
     eri_buf: []const f64,
     map: ShellIndexMap,
@@ -1808,25 +1797,25 @@ fn distributeShellQuartet(
         for (0..map.sizes[sj]) |ib| {
             const j = map.offsets[sj] + ib;
             if (i < j) continue;
-            const ij = triangularIndex(i, j);
+            const ij = triangular_index(i, j);
             for (0..map.sizes[sk]) |ic| {
                 const k = map.offsets[sk] + ic;
                 for (0..map.sizes[sl]) |id| {
                     const l = map.offsets[sl] + id;
                     if (k < l) continue;
-                    const kl = triangularIndex(k, l);
+                    const kl = triangular_index(k, l);
                     const idx = ia * map.sizes[sj] * map.sizes[sk] * map.sizes[sl] +
                         ib * map.sizes[sk] * map.sizes[sl] +
                         ic * map.sizes[sl] +
                         id;
-                    values[triangularIndex(@max(ij, kl), @min(ij, kl))] = eri_buf[idx];
+                    values[triangular_index(@max(ij, kl), @min(ij, kl))] = eri_buf[idx];
                 }
             }
         }
     }
 }
 
-fn fillEriTableValues(
+fn fill_eri_table_values(
     values: []f64,
     shells: []const ContractedShell,
     map: ShellIndexMap,
@@ -1835,20 +1824,20 @@ fn fillEriTableValues(
     var eri_buf: [MAX_SHELL_BATCH]f64 = undefined;
     for (0..map.n_shells) |si| {
         for (0..si + 1) |sj| {
-            const ab_pair = shellPairIndex(si, sj);
+            const ab_pair = shell_pair_index(si, sj);
             const q_ab = schwarz_q[si * map.n_shells + sj];
             for (0..map.n_shells) |sk| {
                 for (0..sk + 1) |sl| {
-                    if (ab_pair < shellPairIndex(sk, sl)) continue;
+                    if (ab_pair < shell_pair_index(sk, sl)) continue;
                     if (q_ab * schwarz_q[sk * map.n_shells + sl] < SCHWARZ_THRESHOLD) continue;
-                    _ = rys_eri.contractedShellQuartetERI(
+                    _ = rys_eri.contracted_shell_quartet_eri(
                         shells[si],
                         shells[sj],
                         shells[sk],
                         shells[sl],
                         &eri_buf,
                     );
-                    distributeShellQuartet(values, &eri_buf, map, si, sj, sk, sl);
+                    distribute_shell_quartet(values, &eri_buf, map, si, sj, sk, sl);
                 }
             }
         }
@@ -1866,27 +1855,27 @@ fn fillEriTableValues(
 ///
 /// Returns the number of ERIs computed (na * nb * nc * nd), or 0 if the shell quartet
 /// could not be handled (falls back to per-integral computation).
-pub fn contractedShellQuartetERI(
+pub fn contracted_shell_quartet_eri(
     shell_a: ContractedShell,
     shell_b: ContractedShell,
     shell_c: ContractedShell,
     shell_d: ContractedShell,
     output: []f64,
 ) usize {
-    const setup = initShellQuartetBatchSetup(shell_a, shell_b, shell_c, shell_d);
+    const setup = init_shell_quartet_batch_setup(shell_a, shell_b, shell_c, shell_d);
     std.debug.assert(output.len >= setup.total_out);
     @memset(output[0..setup.total_out], 0.0);
 
     if (setup.layout.theta_size > MAX_STACK_THETA_TABLE) {
-        fillContractedShellQuartetFallback(setup, output[0..setup.total_out]);
+        fill_contracted_shell_quartet_fallback(setup, output[0..setup.total_out]);
         return setup.total_out;
     }
 
     var theta: [MAX_STACK_THETA_TABLE]f64 = undefined;
-    accumulateContractedShellQuartet(
+    accumulate_contracted_shell_quartet(
         theta[0..setup.layout.theta_size],
         setup,
-        initBatchNormTables(setup),
+        init_batch_norm_tables(setup),
         output[0..setup.total_out],
     );
     return setup.total_out;
@@ -1897,28 +1886,28 @@ pub fn contractedShellQuartetERI(
 // ============================================================================
 
 /// Build the full overlap matrix for a set of shells with arbitrary angular momentum.
-/// Each shell contributes numCartesian(l) basis functions.
-/// Returns a flat row-major N×N matrix where N = Σ numCartesian(shell.l).
-pub fn buildOverlapMatrix(
+/// Each shell contributes num_cartesian(l) basis functions.
+/// Returns a flat row-major N×N matrix where N = Σ num_cartesian(shell.l).
+pub fn build_overlap_matrix(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
 ) ![]f64 {
-    const n = totalBasisFunctions(shells);
+    const n = total_basis_functions(shells);
     const mat = try alloc.alloc(f64, n * n);
     @memset(mat, 0.0);
 
     var mu: usize = 0;
     for (shells) |shell_a| {
-        const cart_a = basis_mod.cartesianExponents(shell_a.l);
-        const na = shell_a.numCartesianFunctions();
+        const cart_a = basis_mod.cartesian_exponents(shell_a.l);
+        const na = shell_a.num_cartesian_functions();
         var nu: usize = 0;
         for (shells) |shell_b| {
-            const cart_b = basis_mod.cartesianExponents(shell_b.l);
-            const nb = shell_b.numCartesianFunctions();
+            const cart_b = basis_mod.cartesian_exponents(shell_b.l);
+            const nb = shell_b.num_cartesian_functions();
 
             for (0..na) |ia| {
                 for (0..nb) |ib| {
-                    const val = contractedOverlap(shell_a, cart_a[ia], shell_b, cart_b[ib]);
+                    const val = contracted_overlap(shell_a, cart_a[ia], shell_b, cart_b[ib]);
                     mat[(mu + ia) * n + (nu + ib)] = val;
                 }
             }
@@ -1932,26 +1921,26 @@ pub fn buildOverlapMatrix(
 }
 
 /// Build the full kinetic energy matrix for a set of shells.
-pub fn buildKineticMatrix(
+pub fn build_kinetic_matrix(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
 ) ![]f64 {
-    const n = totalBasisFunctions(shells);
+    const n = total_basis_functions(shells);
     const mat = try alloc.alloc(f64, n * n);
     @memset(mat, 0.0);
 
     var mu: usize = 0;
     for (shells) |shell_a| {
-        const cart_a = basis_mod.cartesianExponents(shell_a.l);
-        const na = shell_a.numCartesianFunctions();
+        const cart_a = basis_mod.cartesian_exponents(shell_a.l);
+        const na = shell_a.num_cartesian_functions();
         var nu: usize = 0;
         for (shells) |shell_b| {
-            const cart_b = basis_mod.cartesianExponents(shell_b.l);
-            const nb = shell_b.numCartesianFunctions();
+            const cart_b = basis_mod.cartesian_exponents(shell_b.l);
+            const nb = shell_b.num_cartesian_functions();
 
             for (0..na) |ia| {
                 for (0..nb) |ib| {
-                    const val = contractedKinetic(shell_a, cart_a[ia], shell_b, cart_b[ib]);
+                    const val = contracted_kinetic(shell_a, cart_a[ia], shell_b, cart_b[ib]);
                     mat[(mu + ia) * n + (nu + ib)] = val;
                 }
             }
@@ -1965,28 +1954,28 @@ pub fn buildKineticMatrix(
 }
 
 /// Build the full nuclear attraction matrix for a set of shells.
-pub fn buildNuclearMatrix(
+pub fn build_nuclear_matrix(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
     nuc_positions: []const math.Vec3,
     nuc_charges: []const f64,
 ) ![]f64 {
-    const n = totalBasisFunctions(shells);
+    const n = total_basis_functions(shells);
     const mat = try alloc.alloc(f64, n * n);
     @memset(mat, 0.0);
 
     var mu: usize = 0;
     for (shells) |shell_a| {
-        const cart_a = basis_mod.cartesianExponents(shell_a.l);
-        const na = shell_a.numCartesianFunctions();
+        const cart_a = basis_mod.cartesian_exponents(shell_a.l);
+        const na = shell_a.num_cartesian_functions();
         var nu: usize = 0;
         for (shells) |shell_b| {
-            const cart_b = basis_mod.cartesianExponents(shell_b.l);
-            const nb = shell_b.numCartesianFunctions();
+            const cart_b = basis_mod.cartesian_exponents(shell_b.l);
+            const nb = shell_b.num_cartesian_functions();
 
             for (0..na) |ia| {
                 for (0..nb) |ib| {
-                    const val = contractedTotalNuclearAttraction(
+                    const val = contracted_total_nuclear_attraction(
                         shell_a,
                         cart_a[ia],
                         shell_b,
@@ -2008,31 +1997,31 @@ pub fn buildNuclearMatrix(
 
 /// Build the ERI table for a set of shells with arbitrary angular momentum.
 /// Uses Schwarz screening at the shell-quartet level, then batch ERI computation
-/// (contractedShellQuartetERI) to share theta tables across Cartesian components.
+/// (contracted_shell_quartet_eri) to share theta tables across Cartesian components.
 /// Falls back to per-integral computation for shell quartets that exceed stack limits.
 /// Returns a flat array indexed by compound index.
-pub fn buildEriTable(
+pub fn build_eri_table(
     alloc: std.mem.Allocator,
     shells: []const ContractedShell,
 ) !GeneralEriTable {
-    const n = totalBasisFunctions(shells);
+    const n = total_basis_functions(shells);
     const nn = n * (n + 1) / 2;
     const size = nn * (nn + 1) / 2;
     const values = try alloc.alloc(f64, size);
     @memset(values, 0.0);
-    const map = initShellIndexMap(shells);
-    fillEriTableValues(values, shells, map, buildSchwarzTable(shells, map));
+    const map = init_shell_index_map(shells);
+    fill_eri_table_values(values, shells, map, build_schwarz_table(shells, map));
     return GeneralEriTable{ .values = values, .n = n };
 }
 
 /// Shell pair index: maps (a, b) with a >= b to a*(a+1)/2 + b.
-fn shellPairIndex(a: usize, b: usize) usize {
+fn shell_pair_index(a: usize, b: usize) usize {
     if (a >= b) return a * (a + 1) / 2 + b;
     return b * (b + 1) / 2 + a;
 }
 
 /// Triangular index: maps (i,j) with i >= j to i*(i+1)/2 + j.
-fn triangularIndex(i: usize, j: usize) usize {
+fn triangular_index(i: usize, j: usize) usize {
     if (i >= j) {
         return i * (i + 1) / 2 + j;
     } else {
@@ -2051,18 +2040,18 @@ pub const GeneralEriTable = struct {
 
     /// Get the ERI (ij|kl) using symmetry.
     pub fn get(self: GeneralEriTable, i: usize, j: usize, k: usize, l: usize) f64 {
-        const ij = triangularIndex(i, j);
-        const kl = triangularIndex(k, l);
-        const idx = triangularIndex(ij, kl);
+        const ij = triangular_index(i, j);
+        const kl = triangular_index(k, l);
+        const idx = triangular_index(ij, kl);
         return self.values[idx];
     }
 };
 
 /// Compute total number of basis functions from a set of shells.
-pub fn totalBasisFunctions(shells: []const ContractedShell) usize {
+pub fn total_basis_functions(shells: []const ContractedShell) usize {
     var n: usize = 0;
     for (shells) |shell| {
-        n += shell.numCartesianFunctions();
+        n += shell.num_cartesian_functions();
     }
     return n;
 }
@@ -2092,11 +2081,11 @@ test "OS overlap ss matches old implementation" {
     const s_cart = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
     // OS overlap for (ss)
-    const s_os = contractedOverlap(shell_a, s_cart, shell_b, s_cart);
+    const s_os = contracted_overlap(shell_a, s_cart, shell_b, s_cart);
 
     // Old implementation
     const overlap_old = @import("overlap.zig");
-    const s_old = overlap_old.overlapSS(shell_a, shell_b);
+    const s_old = overlap_old.overlap_ss(shell_a, shell_b);
 
     try testing.expectApproxEqAbs(s_old, s_os, 1e-12);
 }
@@ -2111,7 +2100,7 @@ test "OS overlap self-overlap s" {
         .primitives = &sto3g.H_1s,
     };
     const s_cart = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
-    const s = contractedOverlap(shell, s_cart, shell, s_cart);
+    const s = contracted_overlap(shell, s_cart, shell, s_cart);
     try testing.expectApproxEqAbs(1.0, s, 1e-4);
 }
 
@@ -2127,9 +2116,9 @@ test "OS kinetic ss matches old implementation" {
 
     const s_cart = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
-    const t_os = contractedKinetic(shell_a, s_cart, shell_b, s_cart);
+    const t_os = contracted_kinetic(shell_a, s_cart, shell_b, s_cart);
     const kinetic_old = @import("kinetic.zig");
-    const t_old = kinetic_old.kineticSS(shell_a, shell_b);
+    const t_old = kinetic_old.kinetic_ss(shell_a, shell_b);
 
     try testing.expectApproxEqAbs(t_old, t_os, 1e-10);
 }
@@ -2143,7 +2132,7 @@ test "OS nuclear attraction primitive p-type displaced nucleus" {
     const alpha: f64 = 5.0331513;
 
     // <py|V|py> with a = b = (0,1,0), same exponent
-    const v_yy = primitiveNuclearAttraction(
+    const v_yy = primitive_nuclear_attraction(
         alpha,
         center,
         .{ .x = 0, .y = 1, .z = 0 },
@@ -2153,7 +2142,7 @@ test "OS nuclear attraction primitive p-type displaced nucleus" {
         nuc,
         1.0,
     );
-    const v_xx = primitiveNuclearAttraction(
+    const v_xx = primitive_nuclear_attraction(
         alpha,
         center,
         .{ .x = 1, .y = 0, .z = 0 },
@@ -2166,7 +2155,7 @@ test "OS nuclear attraction primitive p-type displaced nucleus" {
 
     // Now test with alpha != beta
     const beta: f64 = 1.1695961;
-    const v_yy_ab = primitiveNuclearAttraction(
+    const v_yy_ab = primitive_nuclear_attraction(
         alpha,
         center,
         .{ .x = 0, .y = 1, .z = 0 },
@@ -2176,7 +2165,7 @@ test "OS nuclear attraction primitive p-type displaced nucleus" {
         nuc,
         1.0,
     );
-    const v_xx_ab = primitiveNuclearAttraction(
+    const v_xx_ab = primitive_nuclear_attraction(
         alpha,
         center,
         .{ .x = 1, .y = 0, .z = 0 },
@@ -2202,9 +2191,9 @@ test "OS nuclear attraction ss matches old implementation" {
 
     const s_cart = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
-    const v_os = contractedNuclearAttraction(shell, s_cart, shell, s_cart, center, 1.0);
+    const v_os = contracted_nuclear_attraction(shell, s_cart, shell, s_cart, center, 1.0);
     const nuclear_old = @import("nuclear.zig");
-    const v_old = nuclear_old.nuclearAttractionSS(shell, shell, center, 1.0);
+    const v_old = nuclear_old.nuclear_attraction_ss(shell, shell, center, 1.0);
 
     try testing.expectApproxEqAbs(v_old, v_os, 1e-10);
 }
@@ -2222,7 +2211,7 @@ test "OS ERI ssss matches old implementation" {
     const s_cart = AngularMomentum{ .x = 0, .y = 0, .z = 0 };
 
     // (aa|aa)
-    const eri_os = contractedERI(
+    const eri_os = contracted_eri(
         shell_a,
         s_cart,
         shell_a,
@@ -2233,11 +2222,11 @@ test "OS ERI ssss matches old implementation" {
         s_cart,
     );
     const eri_old_mod = @import("eri.zig");
-    const eri_old = eri_old_mod.eriSSSS(shell_a, shell_a, shell_a, shell_a);
+    const eri_old = eri_old_mod.eri_ssss(shell_a, shell_a, shell_a, shell_a);
     try testing.expectApproxEqAbs(eri_old, eri_os, 1e-10);
 
     // (ab|ab)
-    const eri_os2 = contractedERI(
+    const eri_os2 = contracted_eri(
         shell_a,
         s_cart,
         shell_b,
@@ -2247,7 +2236,7 @@ test "OS ERI ssss matches old implementation" {
         shell_b,
         s_cart,
     );
-    const eri_old2 = eri_old_mod.eriSSSS(shell_a, shell_b, shell_a, shell_b);
+    const eri_old2 = eri_old_mod.eri_ssss(shell_a, shell_b, shell_a, shell_b);
     try testing.expectApproxEqAbs(eri_old2, eri_os2, 1e-10);
 }
 
@@ -2269,17 +2258,17 @@ test "OS overlap pp self is identity block" {
     const pz = AngularMomentum{ .x = 0, .y = 0, .z = 1 };
 
     // Self-overlaps should be 1.0
-    const sxx = contractedOverlap(shell, px, shell, px);
-    const syy = contractedOverlap(shell, py, shell, py);
-    const szz = contractedOverlap(shell, pz, shell, pz);
+    const sxx = contracted_overlap(shell, px, shell, px);
+    const syy = contracted_overlap(shell, py, shell, py);
+    const szz = contracted_overlap(shell, pz, shell, pz);
     try testing.expectApproxEqAbs(1.0, sxx, 1e-10);
     try testing.expectApproxEqAbs(1.0, syy, 1e-10);
     try testing.expectApproxEqAbs(1.0, szz, 1e-10);
 
     // Cross-overlaps should be 0.0
-    const sxy = contractedOverlap(shell, px, shell, py);
-    const sxz = contractedOverlap(shell, px, shell, pz);
-    const syz = contractedOverlap(shell, py, shell, pz);
+    const sxy = contracted_overlap(shell, px, shell, py);
+    const sxz = contracted_overlap(shell, px, shell, pz);
+    const syz = contracted_overlap(shell, py, shell, pz);
     try testing.expectApproxEqAbs(0.0, sxy, 1e-10);
     try testing.expectApproxEqAbs(0.0, sxz, 1e-10);
     try testing.expectApproxEqAbs(0.0, syz, 1e-10);
@@ -2296,12 +2285,12 @@ test "OS general matrix builder matches old for H2" {
     };
 
     // Build with general builder
-    const s_gen = try buildOverlapMatrix(alloc, &shells);
+    const s_gen = try build_overlap_matrix(alloc, &shells);
     defer alloc.free(s_gen);
 
     // Build with old builder
     const overlap_old = @import("overlap.zig");
-    const s_old = try overlap_old.buildOverlapMatrix(alloc, &shells);
+    const s_old = try overlap_old.build_overlap_matrix(alloc, &shells);
     defer alloc.free(s_old);
 
     for (0..4) |i| {

@@ -17,13 +17,13 @@ pub const ScfToleranceResult = struct {
     all: bool,
 };
 
-pub fn withinScfTolerance(
+pub fn within_scf_tolerance(
     report: scf_harness.ScfComparisonReport,
     tol: ScfTolerance,
 ) ScfToleranceResult {
-    const energy_ok = compare.withinScalarTolerance(report.total.energy, tol.energy);
-    const density_ok = compare.withinTolerance(report.total.density, tol.density);
-    const terms_ok = energy_compare.withinEnergyTolerance(report.energy_terms, tol.energy_terms);
+    const energy_ok = compare.within_scalar_tolerance(report.total.energy, tol.energy);
+    const density_ok = compare.within_tolerance(report.total.density, tol.density);
+    const terms_ok = energy_compare.within_energy_tolerance(report.energy_terms, tol.energy_terms);
     const all = energy_ok and density_ok and terms_ok.all;
     return .{
         .energy = energy_ok,
@@ -33,7 +33,7 @@ pub fn withinScfTolerance(
     };
 }
 
-test "withinScfTolerance aggregates results" {
+test "within_scf_tolerance aggregates results" {
     const report = scf_harness.ScfComparisonReport{
         .total = .{
             .energy = .{ .abs = 0.01, .rel = 0.001 },
@@ -74,11 +74,11 @@ test "withinScfTolerance aggregates results" {
             .nonlocal_pseudo = .{ .abs = 0.1, .rel = 0.1 },
         },
     };
-    const result = withinScfTolerance(report, tol);
+    const result = within_scf_tolerance(report, tol);
     try std.testing.expect(result.all);
 }
 
-test "withinScfTolerance detects failed terms" {
+test "within_scf_tolerance detects failed terms" {
     const report = scf_harness.ScfComparisonReport{
         .total = .{
             .energy = .{ .abs = 0.2, .rel = 0.2 },
@@ -119,7 +119,7 @@ test "withinScfTolerance detects failed terms" {
             .nonlocal_pseudo = .{ .abs = 0.1, .rel = 0.1 },
         },
     };
-    const result = withinScfTolerance(report, tol);
+    const result = within_scf_tolerance(report, tol);
     try std.testing.expect(!result.all);
     try std.testing.expect(!result.energy);
     try std.testing.expect(!result.density);

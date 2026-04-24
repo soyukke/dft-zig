@@ -53,13 +53,13 @@ pub const NonlocalContext = struct {
     }
 
     /// Check if any species has PAW overlap coefficients.
-    pub fn hasPawOverlap(self: *const NonlocalContext) bool {
+    pub fn has_paw_overlap(self: *const NonlocalContext) bool {
         return self.has_paw;
     }
 
     /// Update D_ij coefficients for a PAW species (by species_index).
     /// new_dij must have length beta_count * beta_count.
-    pub fn updateDij(self: *NonlocalContext, species_index: usize, new_dij: []const f64) void {
+    pub fn update_dij(self: *NonlocalContext, species_index: usize, new_dij: []const f64) void {
         for (self.species) |*entry| {
             if (entry.species_index == species_index) {
                 if (entry.dij_buf) |buf| {
@@ -73,7 +73,7 @@ pub const NonlocalContext = struct {
 
     /// Ensure per-atom D_ij arrays are allocated for a PAW species.
     /// Lazy init: does nothing if already allocated with matching natom.
-    pub fn ensureDijPerAtom(
+    pub fn ensure_dij_per_atom(
         self: *NonlocalContext,
         alloc: std.mem.Allocator,
         species_index: usize,
@@ -95,7 +95,7 @@ pub const NonlocalContext = struct {
     }
 
     /// Update D_ij for a specific atom of a PAW species.
-    pub fn updateDijAtom(
+    pub fn update_dij_atom(
         self: *NonlocalContext,
         species_index: usize,
         atom_of_species: usize,
@@ -113,7 +113,7 @@ pub const NonlocalContext = struct {
     }
 
     /// Ensure per-atom m-resolved D_ij arrays are allocated for a PAW species.
-    pub fn ensureDijMPerAtom(
+    pub fn ensure_dij_m_per_atom(
         self: *NonlocalContext,
         alloc: std.mem.Allocator,
         species_index: usize,
@@ -136,7 +136,7 @@ pub const NonlocalContext = struct {
     }
 
     /// Update m-resolved D_ij for a specific atom of a PAW species.
-    pub fn updateDijMAtom(
+    pub fn update_dij_m_atom(
         self: *NonlocalContext,
         species_index: usize,
         atom_of_species: usize,
@@ -154,17 +154,17 @@ pub const NonlocalContext = struct {
     }
 };
 
-/// Public wrapper for buildNonlocalContext (used by kpoints.zig for caching).
-pub fn buildNonlocalContextPub(
+/// Public wrapper for build_nonlocal_context (used by kpoints.zig for caching).
+pub fn build_nonlocal_context_pub(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
     gvecs: []const plane_wave.GVector,
 ) !?NonlocalContext {
-    return buildNonlocalContext(alloc, species, gvecs);
+    return build_nonlocal_context(alloc, species, gvecs);
 }
 
 /// Build NonlocalContext using pre-computed radial tables for fast evaluation.
-pub fn buildNonlocalContextWithTables(
+pub fn build_nonlocal_context_with_tables(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
     gvecs: []const plane_wave.GVector,
@@ -184,7 +184,7 @@ pub fn buildNonlocalContextWithTables(
         const upf = entry.upf.*;
         if (upf.beta.len == 0 or upf.dij.len == 0) continue;
         const tables = if (table_idx < radial_tables.len) &radial_tables[table_idx] else null;
-        const nl = try buildNonlocalSpeciesWithTables(alloc, s, upf, gvecs, tables);
+        const nl = try build_nonlocal_species_with_tables(alloc, s, upf, gvecs, tables);
         if (nl.m_total > max_total) max_total = nl.m_total;
         try list.append(alloc, nl);
         table_idx += 1;
@@ -197,7 +197,7 @@ pub fn buildNonlocalContextWithTables(
 
 /// Build NonlocalContext with PAW support (mutable D_ij and overlap coefficients).
 /// paw_tabs should have one entry per species. Species with nbeta=0 are treated as non-PAW.
-pub fn buildNonlocalContextPaw(
+pub fn build_nonlocal_context_paw(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
     gvecs: []const plane_wave.GVector,
@@ -223,7 +223,7 @@ pub fn buildNonlocalContextPaw(
             (if (table_idx < rt.len) &rt[table_idx] else null)
         else
             null;
-        var nl = try buildNonlocalSpeciesWithTables(alloc, s, upf, gvecs, tables);
+        var nl = try build_nonlocal_species_with_tables(alloc, s, upf, gvecs, tables);
 
         // If this species has PAW data, set up mutable D_ij buffer and overlap coefficients
         if (s < paw_tabs.len and paw_tabs[s].nbeta > 0) {
@@ -257,7 +257,7 @@ pub fn buildNonlocalContextPaw(
     return NonlocalContext{ .species = slice, .max_m_total = max_total, .has_paw = has_paw };
 }
 
-fn buildNonlocalContext(
+fn build_nonlocal_context(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
     gvecs: []const plane_wave.GVector,
@@ -274,7 +274,7 @@ fn buildNonlocalContext(
     for (species, 0..) |entry, s| {
         const upf = entry.upf.*;
         if (upf.beta.len == 0 or upf.dij.len == 0) continue;
-        const nl = try buildNonlocalSpecies(alloc, s, upf, gvecs);
+        const nl = try build_nonlocal_species(alloc, s, upf, gvecs);
         if (nl.m_total > max_total) max_total = nl.m_total;
         try list.append(alloc, nl);
     }
@@ -284,16 +284,16 @@ fn buildNonlocalContext(
     return NonlocalContext{ .species = slice, .max_m_total = max_total };
 }
 
-fn buildNonlocalSpecies(
+fn build_nonlocal_species(
     alloc: std.mem.Allocator,
     species_index: usize,
     upf: pseudo.UpfData,
     gvecs: []const plane_wave.GVector,
 ) !NonlocalSpecies {
-    return buildNonlocalSpeciesWithTables(alloc, species_index, upf, gvecs, null);
+    return build_nonlocal_species_with_tables(alloc, species_index, upf, gvecs, null);
 }
 
-fn buildNonlocalSpeciesWithTables(
+fn build_nonlocal_species_with_tables(
     alloc: std.mem.Allocator,
     species_index: usize,
     upf: pseudo.UpfData,
@@ -312,9 +312,48 @@ fn buildNonlocalSpeciesWithTables(
     const m_counts = try alloc.alloc(usize, beta_count);
     errdefer alloc.free(m_counts);
 
-    var radial = try alloc.alloc(f64, beta_count * g_count);
+    const radial = try alloc.alloc(f64, beta_count * g_count);
     defer alloc.free(radial);
 
+    const total_m = fill_nonlocal_radial_terms(
+        upf,
+        gvecs,
+        radial_tables,
+        l_list,
+        m_offsets,
+        m_counts,
+        radial,
+    );
+
+    const phi = try alloc.alloc(f64, total_m * g_count);
+    errdefer alloc.free(phi);
+
+    fill_nonlocal_phi(gvecs, l_list, m_offsets, m_counts, radial, phi);
+
+    return NonlocalSpecies{
+        .species_index = species_index,
+        .beta_count = beta_count,
+        .g_count = g_count,
+        .l_list = l_list,
+        .coeffs = upf.dij,
+        .m_offsets = m_offsets,
+        .m_counts = m_counts,
+        .m_total = total_m,
+        .phi = phi,
+    };
+}
+
+fn fill_nonlocal_radial_terms(
+    upf: pseudo.UpfData,
+    gvecs: []const plane_wave.GVector,
+    radial_tables: ?*const nonlocal.RadialTableSet,
+    l_list: []i32,
+    m_offsets: []usize,
+    m_counts: []usize,
+    radial: []f64,
+) usize {
+    const beta_count = upf.beta.len;
+    const g_count = gvecs.len;
     var total_m: usize = 0;
     var b: usize = 0;
     while (b < beta_count) : (b += 1) {
@@ -333,7 +372,7 @@ fn buildNonlocalSpeciesWithTables(
             var g: usize = 0;
             while (g < g_count) : (g += 1) {
                 const gmag = math.Vec3.norm(gvecs[g].kpg);
-                radial[b * g_count + g] = nonlocal.radialProjector(
+                radial[b * g_count + g] = nonlocal.radial_projector(
                     upf.beta[b].values,
                     upf.r,
                     upf.rab,
@@ -343,12 +382,20 @@ fn buildNonlocalSpeciesWithTables(
             }
         }
     }
+    return total_m;
+}
 
-    const phi = try alloc.alloc(f64, total_m * g_count);
-    errdefer alloc.free(phi);
-
-    b = 0;
-    while (b < beta_count) : (b += 1) {
+fn fill_nonlocal_phi(
+    gvecs: []const plane_wave.GVector,
+    l_list: []const i32,
+    m_offsets: []const usize,
+    m_counts: []const usize,
+    radial: []const f64,
+    phi: []f64,
+) void {
+    const g_count = gvecs.len;
+    var b: usize = 0;
+    while (b < l_list.len) : (b += 1) {
         const l_val = l_list[b];
         const m_count = m_counts[b];
         var m_idx: usize = 0;
@@ -358,22 +405,9 @@ fn buildNonlocalSpeciesWithTables(
             var g: usize = 0;
             while (g < g_count) : (g += 1) {
                 const kpg = gvecs[g].kpg;
-                const ylm = nonlocal.realSphericalHarmonic(l_val, m, kpg.x, kpg.y, kpg.z);
-                const base = radial[b * g_count + g];
-                phi[offset * g_count + g] = 4.0 * std.math.pi * base * ylm;
+                const ylm = nonlocal.real_spherical_harmonic(l_val, m, kpg.x, kpg.y, kpg.z);
+                phi[offset * g_count + g] = 4.0 * std.math.pi * radial[b * g_count + g] * ylm;
             }
         }
     }
-
-    return NonlocalSpecies{
-        .species_index = species_index,
-        .beta_count = beta_count,
-        .g_count = g_count,
-        .l_list = l_list,
-        .coeffs = upf.dij,
-        .m_offsets = m_offsets,
-        .m_counts = m_counts,
-        .m_total = total_m,
-        .phi = phi,
-    };
 }

@@ -13,9 +13,9 @@
 //!   - kpt_dfpt        — Multi-k DFPT data types and k+q builder.
 //!   - solver_single   — Single-k DFPT SCF solver (reference implementation).
 //!   - solver_multik   — Multi-k DFPT SCF solver (production path).
-//!   - dynmat_build    — buildQDynmat / buildQDynmatMultiK + multi-k helpers.
-//!   - band_direct     — runPhononBand (direct q-path) and per-q parallelism.
-//!   - band_ifc        — runPhononBandIFC (coarse grid → IFC → interpolation).
+//!   - dynmat_build    — build_q_dynmat / build_q_dynmat_multi_k + multi-k helpers.
+//!   - band_direct     — run_phonon_band (direct q-path) and per-q parallelism.
+//!   - band_ifc        — run_phonon_band_ifc (coarse grid → IFC → interpolation).
 
 // Submodules
 const qpath_mod = @import("phonon_q/qpath.zig");
@@ -30,41 +30,42 @@ const band_direct_mod = @import("phonon_q/band_direct.zig");
 const band_ifc_mod = @import("phonon_q/band_ifc.zig");
 
 // Q-path generation
-pub const generateFccQPath = qpath_mod.generateFccQPath;
-pub const generateQPathFromConfig = qpath_mod.generateQPathFromConfig;
+pub const generate_fcc_q_path = qpath_mod.generate_fcc_q_path;
+pub const generate_q_path_from_config = qpath_mod.generate_q_path_from_config;
 
 // Cross-basis ops (electric.zig consumes the Cached variants)
-pub const applyV1PsiQCached = cross_basis.applyV1PsiQCached;
-pub const computeRho1QCached = cross_basis.computeRho1QCached;
+pub const apply_v1_psi_q_cached = cross_basis.apply_v1_psi_q_cached;
+pub const compute_rho1_q_cached = cross_basis.compute_rho1_q_cached;
 
 // Complex dynmat element computations
-pub const computeElecDynmatElementQ = dynmat_elem_q.computeElecDynmatElementQ;
-pub const computeNonlocalResponseDynmatQ = dynmat_elem_q.computeNonlocalResponseDynmatQ;
-pub const computeNlccCrossDynmatQ = dynmat_elem_q.computeNlccCrossDynmatQ;
+pub const compute_elec_dynmat_element_q = dynmat_elem_q.compute_elec_dynmat_element_q;
+pub const compute_nonlocal_response_dynmat_q = dynmat_elem_q.compute_nonlocal_response_dynmat_q;
+pub const compute_nlcc_cross_dynmat_q = dynmat_elem_q.compute_nlcc_cross_dynmat_q;
 
 // K-point ground-state data (electric.zig uses these directly)
 pub const KPointGsData = kpt_gs_mod.KPointGsData;
-pub const prepareFullBZKpoints = kpt_gs_mod.prepareFullBZKpoints;
-pub const prepareFullBZKpointsFromIBZ = kpt_gs_mod.prepareFullBZKpointsFromIBZ;
+pub const prepare_full_bz_kpoints = kpt_gs_mod.prepare_full_bz_kpoints;
+pub const prepare_full_bz_kpoints_from_ibz = kpt_gs_mod.prepare_full_bz_kpoints_from_ibz;
 
 // Multi-k DFPT data
 pub const KPointDfptData = kpt_dfpt_mod.KPointDfptData;
 pub const MultiKPertResult = kpt_dfpt_mod.MultiKPertResult;
 
 // DFPT SCF solvers
-pub const solvePerturbationQ = solver_single_mod.solvePerturbationQ;
-pub const solvePerturbationQMultiK = solver_multik_mod.solvePerturbationQMultiK;
+pub const solve_perturbation_q = solver_single_mod.solve_perturbation_q;
+pub const solve_perturbation_q_multi_k = solver_multik_mod.solve_perturbation_q_multi_k;
 
 // Dynamical matrix construction
-pub const buildQDynmat = dynmat_build_mod.buildQDynmat;
-pub const computeNonlocalResponseDynmatQMultiK =
-    dynmat_build_mod.computeNonlocalResponseDynmatQMultiK;
-pub const computeNonlocalSelfDynmatMultiK = dynmat_build_mod.computeNonlocalSelfDynmatMultiK;
+pub const build_q_dynmat = dynmat_build_mod.build_q_dynmat;
+pub const compute_nonlocal_response_dynmat_q_multi_k =
+    dynmat_build_mod.compute_nonlocal_response_dynmat_q_multi_k;
+pub const compute_nonlocal_self_dynmat_multi_k =
+    dynmat_build_mod.compute_nonlocal_self_dynmat_multi_k;
 
 // Phonon band structure entry points
 pub const PhononBandResult = band_direct_mod.PhononBandResult;
-pub const runPhononBand = band_direct_mod.runPhononBand;
-pub const runPhononBandIFC = band_ifc_mod.runPhononBandIFC;
+pub const run_phonon_band = band_direct_mod.run_phonon_band;
+pub const run_phonon_band_ifc = band_ifc_mod.run_phonon_band_ifc;
 
 test {
     _ = qpath_mod;

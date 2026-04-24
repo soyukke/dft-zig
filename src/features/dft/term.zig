@@ -2,7 +2,7 @@
 //!
 //! Each Term carries the parameters for one density-dependent contribution
 //! to the total energy (Hartree, XC, local pseudo, Ewald). Evaluation goes
-//! through `termEnergy(term, input)`.
+//! through `term_energy(term, input)`.
 //!
 //! Wavefunction-dependent contributions (kinetic, nonlocal pseudopotential)
 //! are not represented here — they are handled inside the band solver,
@@ -95,21 +95,21 @@ pub const EvalInput = struct {
 /// Terms that do not yet route through this contract return 0 and are
 /// still accumulated via the existing SCF code path. As each term is
 /// wired, the corresponding legacy path is retired.
-pub fn termEnergy(term: Term, input: EvalInput) !f64 {
+pub fn term_energy(term: Term, input: EvalInput) !f64 {
     return switch (term) {
-        .atomic_local => |t| try atomicLocalEnergy(t, input),
-        .hartree => |t| try hartreeEnergy(t, input),
-        .xc => |t| try xcEnergy(t, input),
-        .ewald => |t| try ewaldEnergy(t, input),
+        .atomic_local => |t| try atomic_local_energy(t, input),
+        .hartree => |t| try hartree_energy(t, input),
+        .xc => |t| try xc_energy(t, input),
+        .ewald => |t| try ewald_energy(t, input),
     };
 }
 
-fn atomicLocalEnergy(term: TermAtomicLocal, input: EvalInput) !f64 {
+fn atomic_local_energy(term: TermAtomicLocal, input: EvalInput) !f64 {
     const grid = input.grid orelse return error.MissingGrid;
     const rho = input.rho orelse return error.MissingDensity;
     if (rho.len != grid.count()) return error.DensitySizeMismatch;
 
-    const rho_g = try fft_grid.realToReciprocal(input.alloc, grid.*, rho, false);
+    const rho_g = try fft_grid.real_to_reciprocal(input.alloc, grid.*, rho, false);
     defer input.alloc.free(rho_g);
 
     const local_cfg = local_potential.resolve(term.mode, term.explicit_alpha, grid.cell);
@@ -122,7 +122,7 @@ fn atomicLocalEnergy(term: TermAtomicLocal, input: EvalInput) !f64 {
             if (g.g2 >= ecut) continue;
         }
         const rho_val = rho_g[g.idx];
-        const vloc = try hamiltonian.ionicLocalPotential(
+        const vloc = try hamiltonian.ionic_local_potential(
             g.gvec,
             input.model.species,
             input.model.atoms,
@@ -135,20 +135,20 @@ fn atomicLocalEnergy(term: TermAtomicLocal, input: EvalInput) !f64 {
     return e_local;
 }
 
-fn xcEnergy(term: TermXc, input: EvalInput) !f64 {
+fn xc_energy(term: TermXc, input: EvalInput) !f64 {
     const grid = input.grid orelse return error.MissingGrid;
     const rho = input.rho orelse return error.MissingDensity;
     if (rho.len != grid.count()) return error.DensitySizeMismatch;
 
-    // NOTE: the SCF energy path also calls computeXcFields for V_xc, so
+    // NOTE: the SCF energy path also calls compute_xc_fields for V_xc, so
     // this evaluator currently duplicates that work. A follow-up will
-    // extend termEnergy to expose V_xc alongside E_xc, letting the SCF
-    // driver drop its own computeXcFields call.
+    // extend term_energy to expose V_xc alongside E_xc, letting the SCF
+    // driver drop its own compute_xc_fields call.
     const dv = grid.volume / @as(f64, @floatFromInt(grid.count()));
 
     if (input.rho_down) |rho_down| {
         if (rho_down.len != grid.count()) return error.DensitySizeMismatch;
-        const fields = try xc_fields.computeXcFieldsSpin(
+        const fields = try xc_fields.compute_xc_fields_spin(
             input.alloc,
             grid.*,
             rho,
@@ -168,7 +168,7 @@ fn xcEnergy(term: TermXc, input: EvalInput) !f64 {
         return sum;
     }
 
-    const fields = try xc_fields.computeXcFields(
+    const fields = try xc_fields.compute_xc_fields(
         input.alloc,
         grid.*,
         rho,
@@ -186,15 +186,15 @@ fn xcEnergy(term: TermXc, input: EvalInput) !f64 {
     return sum;
 }
 
-fn hartreeEnergy(term: TermHartree, input: EvalInput) !f64 {
+fn hartree_energy(term: TermHartree, input: EvalInput) !f64 {
     const grid = input.grid orelse return error.MissingGrid;
     const rho = input.rho orelse return error.MissingDensity;
     if (rho.len != grid.count()) return error.DensitySizeMismatch;
 
-    const rho_g = try fft_grid.realToReciprocal(input.alloc, grid.*, rho, false);
+    const rho_g = try fft_grid.real_to_reciprocal(input.alloc, grid.*, rho, false);
     defer input.alloc.free(rho_g);
 
-    const r_cut: ?f64 = if (term.isolated) coulomb_mod.cutoffRadius(grid.cell) else null;
+    const r_cut: ?f64 = if (term.isolated) coulomb_mod.cutoff_radius(grid.cell) else null;
 
     var eh: f64 = 0.0;
     var it = gvec_iter.GVecIterator.init(grid.*);
@@ -206,7 +206,7 @@ fn hartreeEnergy(term: TermHartree, input: EvalInput) !f64 {
         const rho2 = rho_val.r * rho_val.r + rho_val.i * rho_val.i;
         if (r_cut) |rc| {
             const g_mag = @sqrt(g.g2);
-            const kernel = coulomb_mod.cutoffCoulombEnergyKernel(g.g2, g_mag, rc);
+            const kernel = coulomb_mod.cutoff_coulomb_energy_kernel(g.g2, g_mag, rc);
             eh += 0.5 * kernel * rho2 * grid.volume;
         } else {
             if (g.gh == 0 and g.gk == 0 and g.gl == 0) continue;
@@ -218,7 +218,7 @@ fn hartreeEnergy(term: TermHartree, input: EvalInput) !f64 {
     return eh;
 }
 
-fn ewaldEnergy(term: TermEwald, input: EvalInput) !f64 {
+fn ewald_energy(term: TermEwald, input: EvalInput) !f64 {
     const atoms = input.model.atoms;
     const count = atoms.len;
     if (count == 0) return 0.0;
@@ -239,7 +239,7 @@ fn ewaldEnergy(term: TermEwald, input: EvalInput) !f64 {
         .tol = term.tol,
         .quiet = term.quiet,
     };
-    return try ewald_mod.ionIonEnergy(
+    return try ewald_mod.ion_ion_energy(
         input.io,
         input.model.cell_bohr,
         input.model.recip,
@@ -249,13 +249,13 @@ fn ewaldEnergy(term: TermEwald, input: EvalInput) !f64 {
     );
 }
 
-test "termEnergy(.hartree) returns zero for uniform periodic density" {
+test "term_energy(.hartree) returns zero for uniform periodic density" {
     const testing = std.testing;
     const io = testing.io;
     const alloc = testing.allocator;
 
     const L = 8.0; // Bohr
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = L, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = L, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = L },
@@ -271,9 +271,9 @@ test "termEnergy(.hartree) returns zero for uniform periodic density" {
         .cell = cell,
         .recip = recip,
         .volume = volume,
-        .min_h = grid_mod.minIndex(nx),
-        .min_k = grid_mod.minIndex(nx),
-        .min_l = grid_mod.minIndex(nx),
+        .min_h = grid_mod.min_index(nx),
+        .min_k = grid_mod.min_index(nx),
+        .min_l = grid_mod.min_index(nx),
     };
 
     const n_points = grid.count();
@@ -299,17 +299,17 @@ test "termEnergy(.hartree) returns zero for uniform periodic density" {
 
     // Uniform ρ has non-zero Fourier component only at G=0, which
     // the periodic Hartree sum skips — so E_H must vanish.
-    const eh = try termEnergy(.{ .hartree = .{} }, input);
+    const eh = try term_energy(.{ .hartree = .{} }, input);
     try testing.expectApproxEqAbs(eh, 0.0, 1e-10);
 }
 
-test "termEnergy(.hartree) is positive and deterministic for cosine density" {
+test "term_energy(.hartree) is positive and deterministic for cosine density" {
     const testing = std.testing;
     const io = testing.io;
     const alloc = testing.allocator;
 
     const L = 8.0;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = L, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = L, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = L },
@@ -325,9 +325,9 @@ test "termEnergy(.hartree) is positive and deterministic for cosine density" {
         .cell = cell,
         .recip = recip,
         .volume = volume,
-        .min_h = grid_mod.minIndex(nx),
-        .min_k = grid_mod.minIndex(nx),
-        .min_l = grid_mod.minIndex(nx),
+        .min_h = grid_mod.min_index(nx),
+        .min_k = grid_mod.min_index(nx),
+        .min_l = grid_mod.min_index(nx),
     };
 
     const n_points = grid.count();
@@ -362,21 +362,21 @@ test "termEnergy(.hartree) is positive and deterministic for cosine density" {
         .grid = &grid,
     };
 
-    const eh = try termEnergy(.{ .hartree = .{} }, input);
+    const eh = try term_energy(.{ .hartree = .{} }, input);
     // Positive by construction (cos density has real Fourier components at ±G₁).
     try testing.expect(eh > 0.0);
     // Deterministic: re-running gives the same value.
-    const eh2 = try termEnergy(.{ .hartree = .{} }, input);
+    const eh2 = try term_energy(.{ .hartree = .{} }, input);
     try testing.expectApproxEqAbs(eh, eh2, 1e-14);
 }
 
-test "termEnergy(.atomic_local) is zero with no atoms" {
+test "term_energy(.atomic_local) is zero with no atoms" {
     const testing = std.testing;
     const io = testing.io;
     const alloc = testing.allocator;
 
     const L = 6.0;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = L, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = L, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = L },
@@ -391,9 +391,9 @@ test "termEnergy(.atomic_local) is zero with no atoms" {
         .cell = cell,
         .recip = recip,
         .volume = volume,
-        .min_h = grid_mod.minIndex(nx),
-        .min_k = grid_mod.minIndex(nx),
-        .min_l = grid_mod.minIndex(nx),
+        .min_h = grid_mod.min_index(nx),
+        .min_k = grid_mod.min_index(nx),
+        .min_l = grid_mod.min_index(nx),
     };
 
     const rho = try alloc.alloc(f64, grid.count());
@@ -416,17 +416,17 @@ test "termEnergy(.atomic_local) is zero with no atoms" {
         .grid = &grid,
     };
 
-    const e = try termEnergy(.{ .atomic_local = .{} }, input);
+    const e = try term_energy(.{ .atomic_local = .{} }, input);
     try testing.expectApproxEqAbs(e, 0.0, 1e-14);
 }
 
-test "termEnergy(.xc) matches computeXcFields integral (LDA)" {
+test "term_energy(.xc) matches compute_xc_fields integral (LDA)" {
     const testing = std.testing;
     const io = testing.io;
     const alloc = testing.allocator;
 
     const L = 6.0;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = L, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = L, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = L },
@@ -442,9 +442,9 @@ test "termEnergy(.xc) matches computeXcFields integral (LDA)" {
         .cell = cell,
         .recip = recip,
         .volume = volume,
-        .min_h = grid_mod.minIndex(nx),
-        .min_k = grid_mod.minIndex(nx),
-        .min_l = grid_mod.minIndex(nx),
+        .min_h = grid_mod.min_index(nx),
+        .min_k = grid_mod.min_index(nx),
+        .min_l = grid_mod.min_index(nx),
     };
 
     const n_points = grid.count();
@@ -468,7 +468,7 @@ test "termEnergy(.xc) matches computeXcFields integral (LDA)" {
         .grid = &grid,
     };
 
-    const fields = try xc_fields.computeXcFields(alloc, grid, rho, null, false, .lda_pz);
+    const fields = try xc_fields.compute_xc_fields(alloc, grid, rho, null, false, .lda_pz);
     defer {
         alloc.free(fields.vxc);
         alloc.free(fields.exc);
@@ -478,11 +478,11 @@ test "termEnergy(.xc) matches computeXcFields integral (LDA)" {
     var expected: f64 = 0.0;
     for (fields.exc) |e| expected += e * dv;
 
-    const actual = try termEnergy(.{ .xc = .{ .functional = .lda_pz } }, input);
+    const actual = try term_energy(.{ .xc = .{ .functional = .lda_pz } }, input);
     try testing.expectApproxEqRel(expected, actual, 1e-12);
 }
 
-test "termEnergy(.ewald) matches direct ionIonEnergy" {
+test "term_energy(.ewald) matches direct ion_ion_energy" {
     const testing = std.testing;
     const io = testing.io;
     const alloc = testing.allocator;
@@ -490,7 +490,7 @@ test "termEnergy(.ewald) matches direct ionIonEnergy" {
     // Graphene cell (Bohr) — reuse the established benchmark.
     const a = 4.6487262675;
     const c = 37.7945225;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = a, .y = 0.0, .z = 0.0 },
         .{ .x = a * 0.5, .y = a * std.math.sqrt(3.0) / 2.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = c },
@@ -515,7 +515,7 @@ test "termEnergy(.ewald) matches direct ionIonEnergy" {
         .tol = 0.0,
         .quiet = true,
     };
-    const e_direct = try ewald_mod.ionIonEnergy(
+    const e_direct = try ewald_mod.ion_ion_energy(
         io,
         cell,
         recip,
@@ -536,7 +536,7 @@ test "termEnergy(.ewald) matches direct ionIonEnergy" {
         .io = io,
         .model = &model,
     };
-    const e_term = try termEnergy(.{ .ewald = .{ .alpha = 0.0, .quiet = true } }, input);
+    const e_term = try term_energy(.{ .ewald = .{ .alpha = 0.0, .quiet = true } }, input);
 
     try testing.expectApproxEqRel(e_direct, e_term, 1e-12);
 }

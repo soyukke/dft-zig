@@ -20,7 +20,7 @@ pub const Grid = struct {
 };
 
 /// Accumulate the force contribution from a single G-vector across all atoms.
-fn accumulateLocalForceG(
+fn accumulate_local_force_g(
     g: anytype,
     g_norm: f64,
     rho: math.Complex,
@@ -36,7 +36,7 @@ fn accumulateLocalForceG(
         const v_loc = if (ff_tables) |tables|
             tables[atom.species_index].eval(g_norm)
         else
-            hamiltonian.localFormFactor(&species[atom.species_index], g_norm, local_cfg);
+            hamiltonian.local_form_factor(&species[atom.species_index], g_norm, local_cfg);
 
         // Phase: G·R
         const phase = math.Vec3.dot(g.gvec, atom.position);
@@ -63,7 +63,7 @@ fn accumulateLocalForceG(
 /// F_I = -∂E_local/∂R_I = Σ_G G × V_form(|G|) × Re[i × ρ(G) × exp(-iG·R_I)]
 ///
 /// Returns forces in Rydberg/Bohr units.
-pub fn localPseudoForces(
+pub fn local_pseudo_forces(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho_g: []const math.Complex,
@@ -92,7 +92,7 @@ pub fn localPseudoForces(
     //     = Σ_G ρ(G) × V_form(|G|) × iG × exp(+iG·R_I)
     //     = Σ_G G × V_form(|G|) × Re[i × ρ(G) × exp(+iG·R_I)]
     //     = Σ_G G × V_form(|G|) × [ρ_r sin(G·R) + ρ_i cos(G·R)]
-    // This matches ionicLocalPotential's phase exp(-iG·R) via E_loc = Re[ρ(G) V_loc(G)].
+    // This matches ionic_local_potential's phase exp(-iG·R) via E_loc = Re[ρ(G) V_loc(G)].
 
     // Loop over all G vectors
     var it = scf.GVecIterator.init(grid);
@@ -107,7 +107,7 @@ pub fn localPseudoForces(
         // Get electron density at G
         const rho = rho_g[g.idx];
 
-        accumulateLocalForceG(g, g_norm, rho, species, atoms, local_cfg, ff_tables, forces);
+        accumulate_local_force_g(g, g_norm, rho, species, atoms, local_cfg, ff_tables, forces);
     }
 
     return forces;
@@ -117,7 +117,7 @@ test "local force finite difference" {
     const io = std.testing.io;
     const testing = std.testing;
     const alloc = testing.allocator;
-    try test_support.requireFile(io, "pseudo/Si.upf");
+    try test_support.require_file(io, "pseudo/Si.upf");
 
     var element_buf: [2]u8 = .{ 'S', 'i' };
     var path_buf: [24]u8 = undefined;
@@ -134,7 +134,7 @@ test "local force finite difference" {
     defer parsed.deinit(alloc);
 
     var parsed_items = [_]pseudo.Parsed{parsed};
-    const species = try hamiltonian.buildSpeciesEntries(alloc, parsed_items[0..]);
+    const species = try hamiltonian.build_species_entries(alloc, parsed_items[0..]);
     defer {
         for (species) |*entry| {
             entry.deinit();
@@ -194,7 +194,7 @@ test "local force finite difference" {
     rho_g[idx.of(grid, 0, -1, 0)] = math.complex.conj(rho_y);
 
     const local_cfg = local_potential.LocalPotentialConfig.init(.short_range, 0.0);
-    const forces = try localPseudoForces(
+    const forces = try local_pseudo_forces(
         alloc,
         grid,
         rho_g,
@@ -242,7 +242,7 @@ test "local force finite difference" {
                         const g_norm = math.Vec3.norm(gvec);
                         const rho_val = rho[idx_local];
                         const sp = &species_entries[0];
-                        const v_loc = hamiltonian.localFormFactor(sp, g_norm, cfg);
+                        const v_loc = hamiltonian.local_form_factor(sp, g_norm, cfg);
                         const phase = math.Vec3.dot(gvec, pos);
                         const cos_phase = std.math.cos(phase);
                         const sin_phase = std.math.sin(phase);

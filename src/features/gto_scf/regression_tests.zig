@@ -17,7 +17,7 @@ const kohn_sham = @import("kohn_sham.zig");
 const optimizer = @import("optimizer.zig");
 const vibrational = @import("vibrational.zig");
 
-fn buildSto3gShells(
+fn build_sto3g_shells(
     alloc: std.mem.Allocator,
     atomic_numbers: []const u8,
     positions: []const Vec3,
@@ -27,8 +27,9 @@ fn buildSto3gShells(
 
     for (atomic_numbers, 0..) |z, i| {
         const center = positions[i];
-        const n_shells = sto3g.numShellsForAtom(@intCast(z)) orelse return error.UnsupportedElement;
-        const atom_shells = sto3g.buildAtomShells(@intCast(z), center) orelse
+        const n_shells = sto3g.num_shells_for_atom(@intCast(z)) orelse
+            return error.UnsupportedElement;
+        const atom_shells = sto3g.build_atom_shells(@intCast(z), center) orelse
             return error.UnsupportedElement;
         for (0..n_shells) |s| {
             try shells_list.append(alloc, atom_shells[s]);
@@ -49,9 +50,9 @@ test "General RHF H2O 6-31G" {
     };
     const nuc_charges = [_]f64{ 8.0, 1.0, 1.0 };
 
-    const o_data = basis631g.buildAtomShells(8, nuc_positions[0]).?;
-    const h1_data = basis631g.buildAtomShells(1, nuc_positions[1]).?;
-    const h2_data = basis631g.buildAtomShells(1, nuc_positions[2]).?;
+    const o_data = basis631g.build_atom_shells(8, nuc_positions[0]).?;
+    const h1_data = basis631g.build_atom_shells(1, nuc_positions[1]).?;
+    const h2_data = basis631g.build_atom_shells(1, nuc_positions[2]).?;
 
     var all_shells: [basis631g.MAX_SHELLS_PER_ATOM * 3]ContractedShell = undefined;
     var count: usize = 0;
@@ -69,9 +70,16 @@ test "General RHF H2O 6-31G" {
     }
 
     const shells = all_shells[0..count];
-    try testing.expectEqual(@as(usize, 13), obara_saika.totalBasisFunctions(shells));
+    try testing.expectEqual(@as(usize, 13), obara_saika.total_basis_functions(shells));
 
-    var result = try gto_scf.runGeneralRhfScf(alloc, shells, &nuc_positions, &nuc_charges, 10, .{});
+    var result = try gto_scf.run_general_rhf_scf(
+        alloc,
+        shells,
+        &nuc_positions,
+        &nuc_charges,
+        10,
+        .{},
+    );
     defer result.deinit(alloc);
 
     try testing.expect(result.converged);
@@ -97,7 +105,7 @@ test "KS-DFT H2O STO-3G B3LYP" {
         .{ .center = nuc_positions[2], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    var result = try kohn_sham.runKohnShamScf(
+    var result = try kohn_sham.run_kohn_sham_scf(
         alloc,
         std.testing.io,
         &shells,
@@ -128,9 +136,9 @@ test "QM9 validation: H2O B3LYP/6-31G(2df,p) vs PySCF" {
     };
     const nuc_charges = [_]f64{ 8.0, 1.0, 1.0 };
 
-    const o_data = basis631g_2dfp.buildAtomShells(8, nuc_positions[0]).?;
-    const h1_data = basis631g_2dfp.buildAtomShells(1, nuc_positions[1]).?;
-    const h2_data = basis631g_2dfp.buildAtomShells(1, nuc_positions[2]).?;
+    const o_data = basis631g_2dfp.build_atom_shells(8, nuc_positions[0]).?;
+    const h1_data = basis631g_2dfp.build_atom_shells(1, nuc_positions[1]).?;
+    const h2_data = basis631g_2dfp.build_atom_shells(1, nuc_positions[2]).?;
 
     var all_shells: [basis631g_2dfp.MAX_SHELLS_PER_ATOM * 3]ContractedShell = undefined;
     var count: usize = 0;
@@ -147,7 +155,7 @@ test "QM9 validation: H2O B3LYP/6-31G(2df,p) vs PySCF" {
         count += 1;
     }
 
-    var result = try kohn_sham.runKohnShamScf(
+    var result = try kohn_sham.run_kohn_sham_scf(
         alloc,
         std.testing.io,
         all_shells[0..count],
@@ -182,11 +190,11 @@ test "QM9 validation: CH4 B3LYP/6-31G(2df,p) vs PySCF" {
     };
     const nuc_charges = [_]f64{ 6.0, 1.0, 1.0, 1.0, 1.0 };
 
-    const c_data = basis631g_2dfp.buildAtomShells(6, nuc_positions[0]).?;
-    const h1_data = basis631g_2dfp.buildAtomShells(1, nuc_positions[1]).?;
-    const h2_data = basis631g_2dfp.buildAtomShells(1, nuc_positions[2]).?;
-    const h3_data = basis631g_2dfp.buildAtomShells(1, nuc_positions[3]).?;
-    const h4_data = basis631g_2dfp.buildAtomShells(1, nuc_positions[4]).?;
+    const c_data = basis631g_2dfp.build_atom_shells(6, nuc_positions[0]).?;
+    const h1_data = basis631g_2dfp.build_atom_shells(1, nuc_positions[1]).?;
+    const h2_data = basis631g_2dfp.build_atom_shells(1, nuc_positions[2]).?;
+    const h3_data = basis631g_2dfp.build_atom_shells(1, nuc_positions[3]).?;
+    const h4_data = basis631g_2dfp.build_atom_shells(1, nuc_positions[4]).?;
 
     var all_shells: [basis631g_2dfp.MAX_SHELLS_PER_ATOM * 5]ContractedShell = undefined;
     var count: usize = 0;
@@ -197,7 +205,7 @@ test "QM9 validation: CH4 B3LYP/6-31G(2df,p) vs PySCF" {
         }
     }
 
-    var result = try kohn_sham.runKohnShamScf(
+    var result = try kohn_sham.run_kohn_sham_scf(
         alloc,
         std.testing.io,
         all_shells[0..count],
@@ -231,10 +239,10 @@ test "QM9 validation: CH2O B3LYP/6-31G(2df,p) vs PySCF" {
     };
     const nuc_charges = [_]f64{ 6.0, 8.0, 1.0, 1.0 };
 
-    const c_data = basis631g_2dfp.buildAtomShells(6, nuc_positions[0]).?;
-    const o_data = basis631g_2dfp.buildAtomShells(8, nuc_positions[1]).?;
-    const h1_data = basis631g_2dfp.buildAtomShells(1, nuc_positions[2]).?;
-    const h2_data = basis631g_2dfp.buildAtomShells(1, nuc_positions[3]).?;
+    const c_data = basis631g_2dfp.build_atom_shells(6, nuc_positions[0]).?;
+    const o_data = basis631g_2dfp.build_atom_shells(8, nuc_positions[1]).?;
+    const h1_data = basis631g_2dfp.build_atom_shells(1, nuc_positions[2]).?;
+    const h2_data = basis631g_2dfp.build_atom_shells(1, nuc_positions[3]).?;
 
     var all_shells: [basis631g_2dfp.MAX_SHELLS_PER_ATOM * 4]ContractedShell = undefined;
     var count: usize = 0;
@@ -245,7 +253,7 @@ test "QM9 validation: CH2O B3LYP/6-31G(2df,p) vs PySCF" {
         }
     }
 
-    var result = try kohn_sham.runKohnShamScf(
+    var result = try kohn_sham.run_kohn_sham_scf(
         alloc,
         std.testing.io,
         all_shells[0..count],
@@ -285,9 +293,9 @@ test "DF KS-DFT H2O STO-3G LDA" {
         .{ .center = nuc_positions[2], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    const aux_o = aux_basis.buildDef2UniversalJkfit(8, nuc_positions[0]).?;
-    const aux_h1 = aux_basis.buildDef2UniversalJkfit(1, nuc_positions[1]).?;
-    const aux_h2 = aux_basis.buildDef2UniversalJkfit(1, nuc_positions[2]).?;
+    const aux_o = aux_basis.build_def2_universal_jkfit(8, nuc_positions[0]).?;
+    const aux_h1 = aux_basis.build_def2_universal_jkfit(1, nuc_positions[1]).?;
+    const aux_h2 = aux_basis.build_def2_universal_jkfit(1, nuc_positions[2]).?;
 
     var all_aux: [aux_basis.MAX_AUX_SHELLS * 3]ContractedShell = undefined;
     var aux_count: usize = 0;
@@ -304,7 +312,7 @@ test "DF KS-DFT H2O STO-3G LDA" {
         aux_count += 1;
     }
 
-    var result_conv = try kohn_sham.runKohnShamScf(
+    var result_conv = try kohn_sham.run_kohn_sham_scf(
         alloc,
         std.testing.io,
         &shells,
@@ -315,7 +323,7 @@ test "DF KS-DFT H2O STO-3G LDA" {
     );
     defer result_conv.deinit(alloc);
 
-    var result_df = try kohn_sham.runKohnShamScf(
+    var result_df = try kohn_sham.run_kohn_sham_scf(
         alloc,
         std.testing.io,
         &shells,
@@ -345,10 +353,10 @@ test "H2 STO-3G geometry optimization" {
     const charges = [_]f64{ 1.0, 1.0 };
     const atomic_numbers = [_]u8{ 1, 1 };
 
-    const shells = try buildSto3gShells(alloc, &atomic_numbers, &positions);
+    const shells = try build_sto3g_shells(alloc, &atomic_numbers, &positions);
     defer alloc.free(shells);
 
-    var result = try optimizer.optimizeGeometry(
+    var result = try optimizer.optimize_geometry(
         alloc,
         shells,
         &positions,
@@ -393,10 +401,10 @@ test "H2O STO-3G geometry optimization" {
     const charges = [_]f64{ 8.0, 1.0, 1.0 };
     const atomic_numbers = [_]u8{ 8, 1, 1 };
 
-    const shells = try buildSto3gShells(alloc, &atomic_numbers, &positions);
+    const shells = try build_sto3g_shells(alloc, &atomic_numbers, &positions);
     defer alloc.free(shells);
 
-    var result = try optimizer.optimizeGeometry(
+    var result = try optimizer.optimize_geometry(
         alloc,
         shells,
         &positions,
@@ -447,10 +455,10 @@ test "H2 LDA STO-3G geometry optimization" {
     const charges = [_]f64{ 1.0, 1.0 };
     const atomic_numbers = [_]u8{ 1, 1 };
 
-    const shells = try buildSto3gShells(alloc, &atomic_numbers, &positions);
+    const shells = try build_sto3g_shells(alloc, &atomic_numbers, &positions);
     defer alloc.free(shells);
 
-    var result = try optimizer.optimizeKsDftGeometry(
+    var result = try optimizer.optimize_ks_dft_geometry(
         alloc,
         std.testing.io,
         shells,
@@ -500,10 +508,10 @@ test "H2O LDA STO-3G geometry optimization" {
     const charges = [_]f64{ 8.0, 1.0, 1.0 };
     const atomic_numbers = [_]u8{ 8, 1, 1 };
 
-    const shells = try buildSto3gShells(alloc, &atomic_numbers, &positions);
+    const shells = try build_sto3g_shells(alloc, &atomic_numbers, &positions);
     defer alloc.free(shells);
 
-    var result = try optimizer.optimizeKsDftGeometry(
+    var result = try optimizer.optimize_ks_dft_geometry(
         alloc,
         std.testing.io,
         shells,
@@ -567,7 +575,7 @@ test "KS-DFT B3LYP geometry optimization H2 STO-3G" {
     @memcpy(shells, &init_shells);
     defer alloc.free(shells);
 
-    var result = try optimizer.optimizeKsDftGeometry(
+    var result = try optimizer.optimize_ks_dft_geometry(
         alloc,
         std.testing.io,
         shells,
@@ -623,7 +631,7 @@ test "KS-DFT B3LYP geometry optimization H2O STO-3G" {
     @memcpy(shells, &init_shells);
     defer alloc.free(shells);
 
-    var result = try optimizer.optimizeKsDftGeometry(
+    var result = try optimizer.optimize_ks_dft_geometry(
         alloc,
         std.testing.io,
         shells,
@@ -679,10 +687,10 @@ test "H2 STO-3G vibrational frequency" {
     const charges = [_]f64{ 1.0, 1.0 };
     const atomic_numbers = [_]u8{ 1, 1 };
 
-    const shells = try buildSto3gShells(alloc, &atomic_numbers, &positions);
+    const shells = try build_sto3g_shells(alloc, &atomic_numbers, &positions);
     defer alloc.free(shells);
 
-    var result = try vibrational.vibrationalAnalysis(
+    var result = try vibrational.vibrational_analysis(
         alloc,
         shells,
         &positions,
@@ -718,10 +726,10 @@ test "H2O STO-3G vibrational frequencies" {
     const charges = [_]f64{ 8.0, 1.0, 1.0 };
     const atomic_numbers = [_]u8{ 8, 1, 1 };
 
-    const shells = try buildSto3gShells(alloc, &atomic_numbers, &positions);
+    const shells = try build_sto3g_shells(alloc, &atomic_numbers, &positions);
     defer alloc.free(shells);
 
-    var result = try vibrational.vibrationalAnalysis(
+    var result = try vibrational.vibrational_analysis(
         alloc,
         shells,
         &positions,
@@ -765,10 +773,10 @@ test "H2O STO-3G thermodynamic properties" {
     const charges = [_]f64{ 8.0, 1.0, 1.0 };
     const atomic_numbers = [_]u8{ 8, 1, 1 };
 
-    const shells = try buildSto3gShells(alloc, &atomic_numbers, &positions);
+    const shells = try build_sto3g_shells(alloc, &atomic_numbers, &positions);
     defer alloc.free(shells);
 
-    var vib_result = try vibrational.vibrationalAnalysis(
+    var vib_result = try vibrational.vibrational_analysis(
         alloc,
         shells,
         &positions,
@@ -788,7 +796,7 @@ test "H2O STO-3G thermodynamic properties" {
     );
     defer vib_result.deinit(alloc);
 
-    var scf_result = try gto_scf.runGeneralRhfScf(
+    var scf_result = try gto_scf.run_general_rhf_scf(
         alloc,
         shells,
         &positions,
@@ -802,7 +810,7 @@ test "H2O STO-3G thermodynamic properties" {
     );
     defer scf_result.deinit(alloc);
 
-    const thermo = vibrational.computeThermo(
+    const thermo = vibrational.compute_thermo(
         &vib_result,
         &positions,
         &atomic_numbers,
@@ -837,10 +845,10 @@ test "H2 STO-3G thermodynamic properties" {
     const charges = [_]f64{ 1.0, 1.0 };
     const atomic_numbers = [_]u8{ 1, 1 };
 
-    const shells = try buildSto3gShells(alloc, &atomic_numbers, &positions);
+    const shells = try build_sto3g_shells(alloc, &atomic_numbers, &positions);
     defer alloc.free(shells);
 
-    var vib_result = try vibrational.vibrationalAnalysis(
+    var vib_result = try vibrational.vibrational_analysis(
         alloc,
         shells,
         &positions,
@@ -860,7 +868,7 @@ test "H2 STO-3G thermodynamic properties" {
     );
     defer vib_result.deinit(alloc);
 
-    var scf_result = try gto_scf.runGeneralRhfScf(
+    var scf_result = try gto_scf.run_general_rhf_scf(
         alloc,
         shells,
         &positions,
@@ -874,7 +882,7 @@ test "H2 STO-3G thermodynamic properties" {
     );
     defer scf_result.deinit(alloc);
 
-    const thermo = vibrational.computeThermo(
+    const thermo = vibrational.compute_thermo(
         &vib_result,
         &positions,
         &atomic_numbers,

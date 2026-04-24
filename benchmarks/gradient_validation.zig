@@ -41,9 +41,9 @@ pub fn main(init: std.process.Init) !void {
     const n_electrons: usize = 10;
 
     // Build basis
-    const o_data = b631g2dfp.buildAtomShells(8, nuc_positions[0]).?;
-    const h1_data = b631g2dfp.buildAtomShells(1, nuc_positions[1]).?;
-    const h2_data = b631g2dfp.buildAtomShells(1, nuc_positions[2]).?;
+    const o_data = b631g2dfp.build_atom_shells(8, nuc_positions[0]).?;
+    const h1_data = b631g2dfp.build_atom_shells(1, nuc_positions[1]).?;
+    const h2_data = b631g2dfp.build_atom_shells(1, nuc_positions[2]).?;
 
     var all_shells: [b631g2dfp.MAX_SHELLS_PER_ATOM * 3]ContractedShell = undefined;
     var count: usize = 0;
@@ -61,14 +61,14 @@ pub fn main(init: std.process.Init) !void {
     }
     const shells = all_shells[0..count];
 
-    const n_basis = obara_saika.totalBasisFunctions(shells);
+    const n_basis = obara_saika.total_basis_functions(shells);
     std.debug.print("  Atoms:            {d}\n", .{nuc_charges.len});
     std.debug.print("  Electrons:        {d}\n", .{n_electrons});
     std.debug.print("  Basis functions:  {d}\n", .{n_basis});
 
     // Step 1: Run KS-DFT SCF
     std.debug.print("\n  [Step 1] Running KS-DFT SCF...\n", .{});
-    var ks_result = try kohn_sham.runKohnShamScf(alloc, io, shells, &nuc_positions, &nuc_charges, n_electrons, .{
+    var ks_result = try kohn_sham.run_kohn_sham_scf(alloc, io, shells, &nuc_positions, &nuc_charges, n_electrons, .{
         .xc_functional = .b3lyp,
         .n_radial = 50,
         .n_angular = 302,
@@ -104,7 +104,7 @@ pub fn main(init: std.process.Init) !void {
         .use_atomic_radii = true,
         .becke_hardness = 3,
     };
-    const grid_points = try becke.buildMolecularGrid(alloc, atoms, grid_config);
+    const grid_points = try becke.build_molecular_grid(alloc, atoms, grid_config);
     defer alloc.free(grid_points);
     std.debug.print("  Grid points:      {d}\n", .{grid_points.len});
 
@@ -112,7 +112,7 @@ pub fn main(init: std.process.Init) !void {
     std.debug.print("\n  [Step 3] Computing analytical gradient...\n", .{});
     const n_occ = n_electrons / 2;
     const timer_start = std.Io.Clock.Timestamp.now(io, .awake);
-    var grad_result = try gradient_mod.computeKsDftGradient(
+    var grad_result = try gradient_mod.compute_ks_dft_gradient(
         alloc,
         shells,
         &nuc_positions,
@@ -166,8 +166,8 @@ pub fn main(init: std.process.Init) !void {
     // +h
     var pos_plus = nuc_positions;
     pos_plus[0].z += h;
-    const shells_plus = buildShellsForGeometry(alloc, &pos_plus, &nuc_charges);
-    var result_plus = try kohn_sham.runKohnShamScf(alloc, io, shells_plus, &pos_plus, &nuc_charges, n_electrons, .{
+    const shells_plus = build_shells_for_geometry(alloc, &pos_plus, &nuc_charges);
+    var result_plus = try kohn_sham.run_kohn_sham_scf(alloc, io, shells_plus, &pos_plus, &nuc_charges, n_electrons, .{
         .xc_functional = .b3lyp,
         .n_radial = 50,
         .n_angular = 302,
@@ -182,8 +182,8 @@ pub fn main(init: std.process.Init) !void {
     // -h
     var pos_minus = nuc_positions;
     pos_minus[0].z -= h;
-    const shells_minus = buildShellsForGeometry(alloc, &pos_minus, &nuc_charges);
-    var result_minus = try kohn_sham.runKohnShamScf(alloc, io, shells_minus, &pos_minus, &nuc_charges, n_electrons, .{
+    const shells_minus = build_shells_for_geometry(alloc, &pos_minus, &nuc_charges);
+    var result_minus = try kohn_sham.run_kohn_sham_scf(alloc, io, shells_minus, &pos_minus, &nuc_charges, n_electrons, .{
         .xc_functional = .b3lyp,
         .n_radial = 50,
         .n_angular = 302,
@@ -227,7 +227,7 @@ pub fn main(init: std.process.Init) !void {
 }
 
 /// Helper to rebuild shells for a displaced geometry.
-fn buildShellsForGeometry(
+fn build_shells_for_geometry(
     _: std.mem.Allocator,
     nuc_positions: []const Vec3,
     nuc_charges: []const f64,
@@ -241,7 +241,7 @@ fn buildShellsForGeometry(
     S.shell_count = 0;
     for (nuc_positions, nuc_charges) |pos, charge| {
         const z = @as(u32, @intFromFloat(charge));
-        const data = b631g2dfp.buildAtomShells(z, pos).?;
+        const data = b631g2dfp.build_atom_shells(z, pos).?;
         for (data.shells[0..data.count]) |s| {
             S.shells_buf[S.shell_count] = s;
             S.shell_count += 1;

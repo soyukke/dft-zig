@@ -10,7 +10,7 @@ pub const default_cn_cutoff: f64 = 40.0;
 /// Compute fractional coordination numbers for all atoms.
 /// CN_A = Σ_{B≠A, L} 1/(1 + exp(-k1 × (4/3 × (rcov_A + rcov_B)/R_{ABL} - 1)))
 /// Periodic images are included via lattice vector sum.
-pub fn computeCoordinationNumbers(
+pub fn compute_coordination_numbers(
     alloc: std.mem.Allocator,
     atomic_numbers: []const usize,
     positions: []const math.Vec3,
@@ -22,7 +22,7 @@ pub fn computeCoordinationNumbers(
     @memset(cn, 0.0);
 
     // Determine lattice vector range
-    const lat_range = latticeRange(cell, cn_cutoff);
+    const lat_range = lattice_range(cell, cn_cutoff);
 
     for (0..n_atoms) |ia| {
         const za = atomic_numbers[ia];
@@ -42,7 +42,7 @@ pub fn computeCoordinationNumbers(
                     var lc: i32 = -lat_range[2];
                     while (lc <= lat_range[2]) : (lc += 1) {
                         if (ia == ib and la == 0 and lb == 0 and lc == 0) continue;
-                        const shift = latticeVector(cell, la, lb, lc);
+                        const shift = lattice_vector(cell, la, lb, lc);
                         const r_vec = math.Vec3.sub(
                             math.Vec3.add(positions[ib], shift),
                             positions[ia],
@@ -64,19 +64,19 @@ pub fn computeCoordinationNumbers(
 
 /// Compute interpolated C6 coefficient for atom pair (A, B) with given CNs.
 /// Uses Gaussian-weight interpolation over reference C6 data.
-pub fn computeC6(za: usize, zb: usize, cn_a: f64, cn_b: f64) f64 {
-    const n_ref_a = params.numRef(za);
-    const n_ref_b = params.numRef(zb);
+pub fn compute_c6(za: usize, zb: usize, cn_a: f64, cn_b: f64) f64 {
+    const n_ref_a = params.num_ref(za);
+    const n_ref_b = params.num_ref(zb);
     if (n_ref_a == 0 or n_ref_b == 0) return 0.0;
 
     const cn_ref_a = params.ref_cn[za];
     const cn_ref_b = params.ref_cn[zb];
 
     // Try to get the explicit C6 reference table
-    const c6_table = getC6Table(za, zb, n_ref_a, n_ref_b);
+    const c6_table = get_c6_table(za, zb, n_ref_a, n_ref_b);
     if (c6_table == null) {
         // Fall back to geometric mean approximation
-        return geometricMeanC6(za, zb, cn_a, cn_b);
+        return geometric_mean_c6(za, zb, cn_a, cn_b);
     }
 
     var w_sum: f64 = 0.0;
@@ -109,7 +109,7 @@ pub fn computeC6(za: usize, zb: usize, cn_a: f64, cn_b: f64) f64 {
 /// Compute C8 from C6 using the recursion relation.
 /// C8 = 3 × C6 × sqrt(Q_A × Q_B)
 /// where Q_Z = s42 × r2r4[Z] (s42 = sqrt(0.5 * Z))
-pub fn computeC8(c6: f64, za: usize, zb: usize) f64 {
+pub fn compute_c8(c6: f64, za: usize, zb: usize) f64 {
     if (za == 0 or za > params.max_z or zb == 0 or zb > params.max_z) return 0.0;
     const qa = params.r2r4[za];
     const qb = params.r2r4[zb];
@@ -118,7 +118,7 @@ pub fn computeC8(c6: f64, za: usize, zb: usize) f64 {
 
 /// Compute DFT-D3(BJ) dispersion energy.
 /// Returns energy in Rydberg.
-pub fn computeEnergy(
+pub fn compute_energy(
     alloc: std.mem.Allocator,
     atomic_numbers: []const usize,
     positions: []const math.Vec3,
@@ -131,11 +131,11 @@ pub fn computeEnergy(
     if (n_atoms == 0) return 0.0;
 
     // Compute coordination numbers
-    const cn = try computeCoordinationNumbers(alloc, atomic_numbers, positions, cell, cn_cutoff);
+    const cn = try compute_coordination_numbers(alloc, atomic_numbers, positions, cell, cn_cutoff);
     defer alloc.free(cn);
 
     var energy: f64 = 0.0;
-    const lat_range = latticeRange(cell, cutoff);
+    const lat_range = lattice_range(cell, cutoff);
 
     for (0..n_atoms) |ia| {
         const za = atomic_numbers[ia];
@@ -145,8 +145,8 @@ pub fn computeEnergy(
             const zb = atomic_numbers[ib];
             if (zb == 0 or zb > params.max_z) continue;
 
-            const c6 = computeC6(za, zb, cn[ia], cn[ib]);
-            const c8 = computeC8(c6, za, zb);
+            const c6 = compute_c6(za, zb, cn[ia], cn[ib]);
+            const c8 = compute_c8(c6, za, zb);
             const r0 = damping.a1 * @sqrt(c8 / c6) + damping.a2;
 
             var la: i32 = -lat_range[0];
@@ -156,7 +156,7 @@ pub fn computeEnergy(
                     var lc: i32 = -lat_range[2];
                     while (lc <= lat_range[2]) : (lc += 1) {
                         if (ia == ib and la == 0 and lb == 0 and lc == 0) continue;
-                        const shift = latticeVector(cell, la, lb, lc);
+                        const shift = lattice_vector(cell, la, lb, lc);
                         const r_vec = math.Vec3.sub(
                             math.Vec3.add(positions[ib], shift),
                             positions[ia],
@@ -188,7 +188,7 @@ pub fn computeEnergy(
 
 /// Accumulate the pair (ia, ib) contribution to forces over the lattice-image
 /// range defined by `lat_range_cutoff`. Writes to `forces` in Hartree/Bohr.
-fn accumulateForcesPair(
+fn accumulate_forces_pair(
     forces: []math.Vec3,
     positions: []const math.Vec3,
     cell: math.Mat3,
@@ -208,7 +208,7 @@ fn accumulateForcesPair(
             var lc: i32 = -lat_range_cutoff[2];
             while (lc <= lat_range_cutoff[2]) : (lc += 1) {
                 if (ia == ib and la == 0 and lb == 0 and lc == 0) continue;
-                const shift = latticeVector(cell, la, lb, lc);
+                const shift = lattice_vector(cell, la, lb, lc);
                 const r_vec = math.Vec3.sub(
                     math.Vec3.add(positions[ib], shift),
                     positions[ia],
@@ -255,7 +255,7 @@ fn accumulateForcesPair(
 
 /// Compute DFT-D3(BJ) dispersion forces.
 /// Returns forces in Rydberg/Bohr.
-pub fn computeForces(
+pub fn compute_forces(
     alloc: std.mem.Allocator,
     atomic_numbers: []const usize,
     positions: []const math.Vec3,
@@ -270,7 +270,7 @@ pub fn computeForces(
     if (n_atoms == 0) return forces;
 
     // Compute coordination numbers
-    const cn = try computeCoordinationNumbers(alloc, atomic_numbers, positions, cell, cn_cutoff);
+    const cn = try compute_coordination_numbers(alloc, atomic_numbers, positions, cell, cn_cutoff);
     defer alloc.free(cn);
 
     // Precompute C6, dC6/dCN_A, dC6/dCN_B for all pairs
@@ -278,7 +278,7 @@ pub fn computeForces(
     // The CN-indirect terms are typically small (~2-5% of forces).
     // Full implementation would require dC6/dCN × dCN/dR chain rule.
 
-    const lat_range_cutoff = latticeRange(cell, cutoff);
+    const lat_range_cutoff = lattice_range(cell, cutoff);
 
     for (0..n_atoms) |ia| {
         const za = atomic_numbers[ia];
@@ -288,11 +288,11 @@ pub fn computeForces(
             const zb = atomic_numbers[ib];
             if (zb == 0 or zb > params.max_z) continue;
 
-            const c6 = computeC6(za, zb, cn[ia], cn[ib]);
-            const c8 = computeC8(c6, za, zb);
+            const c6 = compute_c6(za, zb, cn[ia], cn[ib]);
+            const c8 = compute_c8(c6, za, zb);
             const r0 = damping.a1 * @sqrt(c8 / c6) + damping.a2;
 
-            accumulateForcesPair(
+            accumulate_forces_pair(
                 forces,
                 positions,
                 cell,
@@ -320,7 +320,7 @@ pub fn computeForces(
 
 /// Accumulate off-diagonal (I != J) pair contribution to the real-space
 /// dynamical matrix, summed over lattice images within `lat_range_cutoff`.
-fn accumulateDynmatPair(
+fn accumulate_dynmat_pair(
     dyn: []f64,
     dim: usize,
     positions: []const math.Vec3,
@@ -340,7 +340,7 @@ fn accumulateDynmatPair(
         while (lb <= lat_range_cutoff[1]) : (lb += 1) {
             var lc: i32 = -lat_range_cutoff[2];
             while (lc <= lat_range_cutoff[2]) : (lc += 1) {
-                const shift = latticeVector(cell, la, lb, lc);
+                const shift = lattice_vector(cell, la, lb, lc);
                 const r_vec = math.Vec3.sub(
                     math.Vec3.add(positions[ib], shift),
                     positions[ia],
@@ -351,7 +351,7 @@ fn accumulateDynmatPair(
 
                 // d²E/dR_Iα dR_Jβ for off-diagonal blocks (I≠J)
                 // with R_vec = R_J + L - R_I
-                const hess = pairwiseHessian(r_vec, r2, c6, c8, r0, damping);
+                const hess = pairwise_hessian(r_vec, r2, c6, c8, r0, damping);
 
                 // Fill D(Iα, Jβ) += hess(α,β) for the (ia, ib) block
                 for (0..3) |a| {
@@ -366,7 +366,7 @@ fn accumulateDynmatPair(
 
 /// Apply the acoustic sum rule for Γ-point dynamical matrix:
 /// D(Iα, Iβ) = -Σ_{J≠I} D(Iα, Jβ).
-fn applyDynmatAsr(dyn: []f64, n_atoms: usize, dim: usize) void {
+fn apply_dynmat_asr(dyn: []f64, n_atoms: usize, dim: usize) void {
     for (0..n_atoms) |ia| {
         for (0..3) |a| {
             for (0..3) |b| {
@@ -384,7 +384,7 @@ fn applyDynmatAsr(dyn: []f64, n_atoms: usize, dim: usize) void {
 /// Compute D3(BJ) contribution to the dynamical matrix at Γ point.
 /// D(Iα, Jβ) = ∂²E/∂R_Iα∂R_Jβ
 /// Returns flat array of size (3*n_atoms)² in Rydberg/Bohr².
-pub fn computeDynmat(
+pub fn compute_dynmat(
     alloc: std.mem.Allocator,
     atomic_numbers: []const usize,
     positions: []const math.Vec3,
@@ -399,10 +399,10 @@ pub fn computeDynmat(
     @memset(dyn, 0.0);
     if (n_atoms == 0) return dyn;
 
-    const cn = try computeCoordinationNumbers(alloc, atomic_numbers, positions, cell, cn_cutoff);
+    const cn = try compute_coordination_numbers(alloc, atomic_numbers, positions, cell, cn_cutoff);
     defer alloc.free(cn);
 
-    const lat_range_cutoff = latticeRange(cell, cutoff);
+    const lat_range_cutoff = lattice_range(cell, cutoff);
 
     // Compute off-diagonal blocks (I ≠ J)
     for (0..n_atoms) |ia| {
@@ -414,11 +414,11 @@ pub fn computeDynmat(
             const zb = atomic_numbers[ib];
             if (zb == 0 or zb > params.max_z) continue;
 
-            const c6 = computeC6(za, zb, cn[ia], cn[ib]);
-            const c8 = computeC8(c6, za, zb);
+            const c6 = compute_c6(za, zb, cn[ia], cn[ib]);
+            const c8 = compute_c8(c6, za, zb);
             const r0 = damping.a1 * @sqrt(c8 / c6) + damping.a2;
 
-            accumulateDynmatPair(
+            accumulate_dynmat_pair(
                 dyn,
                 dim,
                 positions,
@@ -436,7 +436,7 @@ pub fn computeDynmat(
     }
 
     // Diagonal blocks: ASR D(Iα, Iβ) = -Σ_{J≠I} D(Iα, Jβ)
-    applyDynmatAsr(dyn, n_atoms, dim);
+    apply_dynmat_asr(dyn, n_atoms, dim);
 
     // Convert Hartree/Bohr² → Rydberg/Bohr² (×2)
     for (dyn) |*d| {
@@ -448,7 +448,7 @@ pub fn computeDynmat(
 
 /// Accumulate the (ia, ib) pair contribution to the q-space dynamical matrix,
 /// including the phase factor exp(iq·r_vec) for each lattice image.
-fn accumulateDynmatQPair(
+fn accumulate_dynmat_q_pair(
     dyn_q: []math.Complex,
     dim: usize,
     positions: []const math.Vec3,
@@ -470,7 +470,7 @@ fn accumulateDynmatQPair(
             var lc: i32 = -lat_range_cutoff[2];
             while (lc <= lat_range_cutoff[2]) : (lc += 1) {
                 if (ia == ib and la == 0 and lb == 0 and lc == 0) continue;
-                const shift = latticeVector(cell, la, lb, lc);
+                const shift = lattice_vector(cell, la, lb, lc);
                 const r_vec = math.Vec3.sub(
                     math.Vec3.add(positions[ib], shift),
                     positions[ia],
@@ -479,7 +479,7 @@ fn accumulateDynmatQPair(
                 const r = @sqrt(r2);
                 if (r > cutoff or r < 1e-10) continue;
 
-                const hess = pairwiseHessian(r_vec, r2, c6, c8, r0, damping);
+                const hess = pairwise_hessian(r_vec, r2, c6, c8, r0, damping);
 
                 // Phase factor: exp(iq·(R_J+L - R_I)) = exp(iq·r_vec)
                 const phase_arg = math.Vec3.dot(q_cart, r_vec);
@@ -499,7 +499,7 @@ fn accumulateDynmatQPair(
 
 /// Accumulate the self-Hessian of atom `ia` over all pairs (ia, ib) and
 /// lattice images (ib, L) != (ia, 0). Writes into `self_hess`.
-fn accumulateSelfHessian(
+fn accumulate_self_hessian(
     self_hess: *[3][3]f64,
     atomic_numbers: []const usize,
     positions: []const math.Vec3,
@@ -515,8 +515,8 @@ fn accumulateSelfHessian(
         const zb = atomic_numbers[ib];
         if (zb == 0 or zb > params.max_z) continue;
 
-        const c6 = computeC6(za, zb, cn[ia], cn[ib]);
-        const c8 = computeC8(c6, za, zb);
+        const c6 = compute_c6(za, zb, cn[ia], cn[ib]);
+        const c8 = compute_c8(c6, za, zb);
         const r0 = damping.a1 * @sqrt(c8 / c6) + damping.a2;
 
         var la: i32 = -lat_range_cutoff[0];
@@ -526,7 +526,7 @@ fn accumulateSelfHessian(
                 var lc: i32 = -lat_range_cutoff[2];
                 while (lc <= lat_range_cutoff[2]) : (lc += 1) {
                     if (ia == ib and la == 0 and lb == 0 and lc == 0) continue;
-                    const shift = latticeVector(cell, la, lb, lc);
+                    const shift = lattice_vector(cell, la, lb, lc);
                     const r_vec = math.Vec3.sub(
                         math.Vec3.add(positions[ib], shift),
                         positions[ia],
@@ -535,7 +535,7 @@ fn accumulateSelfHessian(
                     const r = @sqrt(r2);
                     if (r > cutoff or r < 1e-10) continue;
 
-                    const hess = pairwiseHessian(r_vec, r2, c6, c8, r0, damping);
+                    const hess = pairwise_hessian(r_vec, r2, c6, c8, r0, damping);
                     for (0..3) |a| {
                         for (0..3) |b| {
                             self_hess[a][b] += hess[a][b];
@@ -551,7 +551,7 @@ fn accumulateSelfHessian(
 /// D_q(Iα, Jβ) = Σ_L D(Iα, Jβ; L) × exp(iq·(R_J+L - R_I))
 /// Returns flat array of Complex of size (3*n_atoms)².
 /// Units: Rydberg/Bohr².
-pub fn computeDynmatQ(
+pub fn compute_dynmat_q(
     alloc: std.mem.Allocator,
     atomic_numbers: []const usize,
     positions: []const math.Vec3,
@@ -567,13 +567,13 @@ pub fn computeDynmatQ(
     @memset(dyn_q, math.complex.init(0.0, 0.0));
     if (n_atoms == 0) return dyn_q;
 
-    const cn = try computeCoordinationNumbers(alloc, atomic_numbers, positions, cell, cn_cutoff);
+    const cn = try compute_coordination_numbers(alloc, atomic_numbers, positions, cell, cn_cutoff);
     defer alloc.free(cn);
 
-    const lat_range_cutoff = latticeRange(cell, cutoff);
+    const lat_range_cutoff = lattice_range(cell, cutoff);
 
     // Compute off-diagonal blocks (sum over all J, L including J==I with L≠0)
-    accumulateDynmatQOffDiag(
+    accumulate_dynmat_q_off_diag(
         dyn_q,
         dim,
         atomic_numbers,
@@ -590,7 +590,7 @@ pub fn computeDynmatQ(
     //   D(Iα,Iβ;L=0) = -Σ_{(J,L')≠(I,0)} hess(I,J;L')
     // We add this to dyn_q on top of the ib==ia, L≠0 contributions that are
     // already accumulated above with their phase factors.
-    applyDynmatQSelfTerm(
+    apply_dynmat_q_self_term(
         dyn_q,
         dim,
         atomic_numbers,
@@ -612,7 +612,7 @@ pub fn computeDynmatQ(
 
 /// Loop body that accumulates off-diagonal (J, L) contributions into the
 /// q-space dynamical matrix for every (I, J) atom pair.
-fn accumulateDynmatQOffDiag(
+fn accumulate_dynmat_q_off_diag(
     dyn_q: []math.Complex,
     dim: usize,
     atomic_numbers: []const usize,
@@ -633,11 +633,11 @@ fn accumulateDynmatQOffDiag(
             const zb = atomic_numbers[ib];
             if (zb == 0 or zb > params.max_z) continue;
 
-            const c6 = computeC6(za, zb, cn[ia], cn[ib]);
-            const c8 = computeC8(c6, za, zb);
+            const c6 = compute_c6(za, zb, cn[ia], cn[ib]);
+            const c8 = compute_c8(c6, za, zb);
             const r0 = damping.a1 * @sqrt(c8 / c6) + damping.a2;
 
-            accumulateDynmatQPair(
+            accumulate_dynmat_q_pair(
                 dyn_q,
                 dim,
                 positions,
@@ -657,7 +657,7 @@ fn accumulateDynmatQOffDiag(
 }
 
 /// Add the on-site self-term D(Iα,Iβ;L=0) = -Σ_{(J,L)≠(I,0)} hess to dyn_q.
-fn applyDynmatQSelfTerm(
+fn apply_dynmat_q_self_term(
     dyn_q: []math.Complex,
     dim: usize,
     atomic_numbers: []const usize,
@@ -674,7 +674,7 @@ fn applyDynmatQSelfTerm(
         if (za == 0 or za > params.max_z) continue;
 
         var self_hess: [3][3]f64 = .{ .{ 0, 0, 0 }, .{ 0, 0, 0 }, .{ 0, 0, 0 } };
-        accumulateSelfHessian(
+        accumulate_self_hessian(
             &self_hess,
             atomic_numbers,
             positions,
@@ -717,7 +717,7 @@ fn applyDynmatQSelfTerm(
 ///
 /// For the Hessian in real space we need d²E/(dR_Iα)(dR_Jβ) which goes into
 /// the dynmat.
-fn pairwiseHessian(
+fn pairwise_hessian(
     r_vec: math.Vec3,
     r2: f64,
     c6: f64,
@@ -793,7 +793,7 @@ fn pow_f64(base: f64, exp_val: f64) f64 {
 }
 
 /// Compute lattice vector from integer indices.
-fn latticeVector(cell: math.Mat3, la: i32, lb: i32, lc: i32) math.Vec3 {
+fn lattice_vector(cell: math.Mat3, la: i32, lb: i32, lc: i32) math.Vec3 {
     const fa: f64 = @floatFromInt(la);
     const fb: f64 = @floatFromInt(lb);
     const fc: f64 = @floatFromInt(lc);
@@ -805,7 +805,7 @@ fn latticeVector(cell: math.Mat3, la: i32, lb: i32, lc: i32) math.Vec3 {
 }
 
 /// Determine the range of lattice vectors needed for a given cutoff.
-fn latticeRange(cell: math.Mat3, cutoff: f64) [3]i32 {
+fn lattice_range(cell: math.Mat3, cutoff: f64) [3]i32 {
     // Use the lengths of the lattice vectors to estimate the range
     const a1_len = math.Vec3.norm(cell.row(0));
     const a2_len = math.Vec3.norm(cell.row(1));
@@ -819,22 +819,22 @@ fn latticeRange(cell: math.Mat3, cutoff: f64) [3]i32 {
 
 /// Get the C6 reference table for a pair (za, zb).
 /// Returns the table pointer or null if not available.
-fn getC6Table(za: usize, zb: usize, n_ref_a: usize, n_ref_b: usize) ?[]const f64 {
+fn get_c6_table(za: usize, zb: usize, n_ref_a: usize, n_ref_b: usize) ?[]const f64 {
     if (za == zb) {
-        const table = params.getC6RefHomo(za);
+        const table = params.get_c6_ref_homo(za);
         if (table.len == n_ref_a * n_ref_b) return table;
         return null;
     }
     // For hetero pairs, ensure consistent ordering
     if (za < zb) {
-        const table = params.getC6RefHetero(za, zb);
+        const table = params.get_c6_ref_hetero(za, zb);
         if (table) |t| {
             if (t.len == n_ref_a * n_ref_b) return t;
         }
         return null;
     }
     // za > zb: swap and transpose
-    const table = params.getC6RefHetero(zb, za);
+    const table = params.get_c6_ref_hetero(zb, za);
     if (table) |t| {
         if (t.len == n_ref_b * n_ref_a) return t; // Will need transposed access
     }
@@ -842,10 +842,10 @@ fn getC6Table(za: usize, zb: usize, n_ref_a: usize, n_ref_b: usize) ?[]const f64
 }
 
 /// Geometric mean approximation for C6 when reference data is unavailable.
-fn geometricMeanC6(za: usize, zb: usize, cn_a: f64, cn_b: f64) f64 {
+fn geometric_mean_c6(za: usize, zb: usize, cn_a: f64, cn_b: f64) f64 {
     // Compute homonuclear C6 for each element and take geometric mean
-    const c6_aa = computeC6(za, za, cn_a, cn_a);
-    const c6_bb = computeC6(zb, zb, cn_b, cn_b);
+    const c6_aa = compute_c6(za, za, cn_a, cn_a);
+    const c6_bb = compute_c6(zb, zb, cn_b, cn_b);
     if (c6_aa <= 0 or c6_bb <= 0) return 0.0;
     return @sqrt(c6_aa * c6_bb);
 }
@@ -864,13 +864,13 @@ test "coordination number - H2 molecule" {
         .{ .x = 1.4, .y = 0.0, .z = 0.0 }, // ~0.74 Å ≈ 1.4 Bohr
     };
     // Large box for isolated molecule
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 100.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 100.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 100.0 },
     );
 
-    const cn = try computeCoordinationNumbers(
+    const cn = try compute_coordination_numbers(
         alloc,
         &atomic_numbers,
         &positions,
@@ -886,14 +886,14 @@ test "coordination number - H2 molecule" {
 
 test "C6 interpolation - carbon" {
     // C-C C6 should be between ~11 (sp3) and ~49 (free atom)
-    const c6 = computeC6(6, 6, 3.0, 3.0); // near sp3 CN
+    const c6 = compute_c6(6, 6, 3.0, 3.0); // near sp3 CN
     const testing = std.testing;
     try testing.expect(c6 > 10.0 and c6 < 50.0);
 }
 
 test "C8 from C6" {
     const c6: f64 = 25.0; // Approximate C-C C6
-    const c8 = computeC8(c6, 6, 6);
+    const c8 = compute_c8(c6, 6, 6);
     const testing = std.testing;
     // C8 should be positive and reasonable
     try testing.expect(c8 > 0.0);
@@ -909,13 +909,13 @@ test "energy - H2 molecule" {
         .{ .x = 0.0, .y = 0.0, .z = 0.0 },
         .{ .x = 1.4, .y = 0.0, .z = 0.0 },
     };
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 100.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 100.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 100.0 },
     );
 
-    const energy = try computeEnergy(
+    const energy = try compute_energy(
         alloc,
         &atomic_numbers,
         &positions,
@@ -940,13 +940,13 @@ test "forces - H2 molecule sum to zero" {
         .{ .x = 0.0, .y = 0.0, .z = 0.0 },
         .{ .x = 1.4, .y = 0.0, .z = 0.0 },
     };
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 100.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 100.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 100.0 },
     );
 
-    const forces = try computeForces(
+    const forces = try compute_forces(
         alloc,
         &atomic_numbers,
         &positions,
@@ -979,13 +979,13 @@ test "dynmat - H2 molecule acoustic sum rule" {
         .{ .x = 0.0, .y = 0.0, .z = 0.0 },
         .{ .x = 1.4, .y = 0.0, .z = 0.0 },
     };
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 100.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 100.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 100.0 },
     );
 
-    const dyn = try computeDynmat(
+    const dyn = try compute_dynmat(
         alloc,
         &atomic_numbers,
         &positions,

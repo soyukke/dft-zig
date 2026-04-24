@@ -24,10 +24,10 @@ pub fn load(alloc: std.mem.Allocator, io: std.Io, path: []const u8) !AtomList {
     defer alloc.free(content);
 
     var it = std.mem.splitScalar(u8, content, '\n');
-    const count_line = nextNonEmptyLine(&it) orelse return error.InvalidXyz;
-    const atom_count = try parseCount(count_line);
+    const count_line = next_non_empty_line(&it) orelse return error.InvalidXyz;
+    const atom_count = try parse_count(count_line);
 
-    _ = nextNonEmptyLine(&it) orelse return error.InvalidXyz;
+    _ = next_non_empty_line(&it) orelse return error.InvalidXyz;
 
     var list: std.ArrayList(Atom) = .empty;
     errdefer {
@@ -39,7 +39,7 @@ pub fn load(alloc: std.mem.Allocator, io: std.Io, path: []const u8) !AtomList {
 
     var read_atoms: usize = 0;
     while (read_atoms < atom_count) {
-        const line = nextNonEmptyLine(&it) orelse return error.InvalidXyz;
+        const line = next_non_empty_line(&it) orelse return error.InvalidXyz;
         var tokens = std.mem.tokenizeAny(u8, line, " \t\r");
         const symbol = tokens.next() orelse return error.InvalidXyz;
         const x_str = tokens.next() orelse return error.InvalidXyz;
@@ -62,7 +62,7 @@ pub fn load(alloc: std.mem.Allocator, io: std.Io, path: []const u8) !AtomList {
 }
 
 /// Validate that atoms are inside the given cell.
-pub fn validateInCell(atoms: []Atom, cell: math.Mat3) !void {
+pub fn validate_in_cell(atoms: []Atom, cell: math.Mat3) !void {
     const a1 = cell.row(0);
     const a2 = cell.row(1);
     const a3 = cell.row(2);
@@ -86,7 +86,7 @@ pub fn validateInCell(atoms: []Atom, cell: math.Mat3) !void {
 }
 
 /// Read next non-empty line.
-fn nextNonEmptyLine(it: anytype) ?[]const u8 {
+fn next_non_empty_line(it: anytype) ?[]const u8 {
     while (it.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0) continue;
@@ -96,6 +96,6 @@ fn nextNonEmptyLine(it: anytype) ?[]const u8 {
 }
 
 /// Parse atom count from line.
-fn parseCount(line: []const u8) !usize {
+fn parse_count(line: []const u8) !usize {
     return try std.fmt.parseInt(usize, std.mem.trim(u8, line, " \t\r"), 10);
 }

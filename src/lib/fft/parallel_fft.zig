@@ -124,10 +124,10 @@ pub const ParallelPlan3d = struct {
         ny: usize,
         nz: usize,
     ) !ParallelPlan3d {
-        return initWithThreads(allocator, io, nx, ny, nz, 0);
+        return init_with_threads(allocator, io, nx, ny, nz, 0);
     }
 
-    pub fn initWithThreads(
+    pub fn init_with_threads(
         allocator: std.mem.Allocator,
         io: std.Io,
         nx: usize,
@@ -180,7 +180,7 @@ pub const ParallelPlan3d = struct {
 
         // Spawn worker threads
         for (0..num_threads) |i| {
-            threads[i] = try std.Thread.spawn(.{}, workerThread, .{ state, &workspaces[i], i });
+            threads[i] = try std.Thread.spawn(.{}, worker_thread, .{ state, &workspaces[i], i });
             spawned += 1;
         }
 
@@ -234,16 +234,16 @@ pub const ParallelPlan3d = struct {
         if (data.len != nx * ny * nz) return;
 
         // FFT along x-axis (parallel over y*z)
-        self.dispatchTask(.fft_x, data, inv, ny * nz);
+        self.dispatch_task(.fft_x, data, inv, ny * nz);
 
         // FFT along y-axis (parallel over x*z)
-        self.dispatchTask(.fft_y, data, inv, nx * nz);
+        self.dispatch_task(.fft_y, data, inv, nx * nz);
 
         // FFT along z-axis (parallel over x*y)
-        self.dispatchTask(.fft_z, data, inv, nx * ny);
+        self.dispatch_task(.fft_z, data, inv, nx * ny);
     }
 
-    fn dispatchTask(
+    fn dispatch_task(
         self: *ParallelPlan3d,
         task: TaskType,
         data: []Complex,
@@ -276,7 +276,7 @@ pub const ParallelPlan3d = struct {
         self.state.mutex.unlock(self.state.io);
     }
 
-    fn workerThread(state: *ThreadPoolState, ws: *ThreadWorkspace, thread_id: usize) void {
+    fn worker_thread(state: *ThreadPoolState, ws: *ThreadWorkspace, thread_id: usize) void {
         _ = thread_id;
         var last_generation: usize = 0;
 
@@ -308,9 +308,9 @@ pub const ParallelPlan3d = struct {
                     if (item >= state.total_work) break;
 
                     switch (task) {
-                        .fft_x => processXAxis(state, ws, d, inv, item),
-                        .fft_y => processYAxis(state, ws, d, inv, item),
-                        .fft_z => processZAxis(state, ws, d, inv, item),
+                        .fft_x => process_x_axis(state, ws, d, inv, item),
+                        .fft_y => process_y_axis(state, ws, d, inv, item),
+                        .fft_z => process_z_axis(state, ws, d, inv, item),
                         else => {},
                     }
                 }
@@ -326,7 +326,7 @@ pub const ParallelPlan3d = struct {
         }
     }
 
-    fn processXAxis(
+    fn process_x_axis(
         state: *ThreadPoolState,
         ws: *ThreadWorkspace,
         data: []Complex,
@@ -346,7 +346,7 @@ pub const ParallelPlan3d = struct {
         }
     }
 
-    fn processYAxis(
+    fn process_y_axis(
         state: *ThreadPoolState,
         ws: *ThreadWorkspace,
         data: []Complex,
@@ -375,7 +375,7 @@ pub const ParallelPlan3d = struct {
         }
     }
 
-    fn processZAxis(
+    fn process_z_axis(
         state: *ThreadPoolState,
         ws: *ThreadWorkspace,
         data: []Complex,
@@ -412,7 +412,7 @@ test "ParallelPlan3d roundtrip" {
     const io = std.testing.io;
     const allocator = std.testing.allocator;
 
-    var plan = try ParallelPlan3d.initWithThreads(allocator, io, 8, 8, 8, 4);
+    var plan = try ParallelPlan3d.init_with_threads(allocator, io, 8, 8, 8, 4);
     defer plan.deinit();
 
     var data: [512]Complex = undefined;
@@ -436,7 +436,7 @@ test "ParallelPlan3d matches sequential" {
     const allocator = std.testing.allocator;
     const Plan3d = @import("fft.zig").Plan3d;
 
-    var par_plan = try ParallelPlan3d.initWithThreads(allocator, io, 8, 8, 8, 4);
+    var par_plan = try ParallelPlan3d.init_with_threads(allocator, io, 8, 8, 8, 4);
     defer par_plan.deinit();
 
     var seq_plan = try Plan3d.init(allocator, 8, 8, 8);
@@ -463,7 +463,7 @@ test "ParallelPlan3d multiple calls" {
     const io = std.testing.io;
     const allocator = std.testing.allocator;
 
-    var plan = try ParallelPlan3d.initWithThreads(allocator, io, 8, 8, 8, 4);
+    var plan = try ParallelPlan3d.init_with_threads(allocator, io, 8, 8, 8, 4);
     defer plan.deinit();
 
     var data: [512]Complex = undefined;

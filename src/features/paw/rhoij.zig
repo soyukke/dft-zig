@@ -115,7 +115,7 @@ pub const RhoIJ = struct {
     /// Contract m-resolved rhoij to radial rhoij for a given atom.
     /// Result: radial_rhoij[i*nbeta+j] = Σ_m ρ_{(i,m),(j,m)} for l_i == l_j, 0 otherwise.
     /// This is what the old m-summed code produced.
-    pub fn contractToRadial(
+    pub fn contract_to_radial(
         self: *const RhoIJ,
         atom_idx: usize,
         radial_rhoij: []f64,
@@ -182,7 +182,7 @@ pub const RhoIJ = struct {
 
     /// Add scaled values from another RhoIJ: self += scale * other.
     /// Both must have the same atom layout.
-    pub fn addScaled(self: *RhoIJ, other: *const RhoIJ, scale: f64) void {
+    pub fn add_scaled(self: *RhoIJ, other: *const RhoIJ, scale: f64) void {
         for (0..self.natom) |a| {
             for (0..self.values[a].len) |i| {
                 self.values[a][i] += scale * other.values[a][i];

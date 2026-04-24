@@ -14,7 +14,7 @@
 //!   defer cint_data.deinit(alloc);
 //!
 //!   // Build overlap matrix
-//!   const S = try buildOverlapMatrix(alloc, cint_data);
+//!   const S = try build_overlap_matrix(alloc, cint_data);
 //!
 //! When libcint is not available (not linked), all functions return
 //! `error.LibcintNotAvailable`.
@@ -219,13 +219,7 @@ pub const LibcintData = struct {
         const natm = nuc_charges.len;
         const nbas = shells.len;
 
-        // Calculate total env size needed
-        // env layout: [PTR_ENV_START][atom coords: natm*3][exps+coeffs per shell]
-        var env_size: usize = PTR_ENV_START + natm * 3;
-        for (shells) |shell| {
-            env_size += shell.primitives.len; // exponents
-            env_size += shell.primitives.len; // normalized coefficients
-        }
+        const env_size = libcint_env_size(shells, natm);
 
         const atm = try alloc.alloc(c_int, natm * ATM_SLOTS);
         const bas = try alloc.alloc(c_int, nbas * BAS_SLOTS);
@@ -237,61 +231,8 @@ pub const LibcintData = struct {
         @memset(bas, 0);
         @memset(env, 0.0);
 
-        // Fill atom data
-        var env_ptr: usize = PTR_ENV_START;
-        for (0..natm) |i| {
-            const off = i * ATM_SLOTS;
-            atm[off + CHARGE_OF] = @intFromFloat(nuc_charges[i]);
-            atm[off + PTR_COORD] = @intCast(env_ptr);
-            atm[off + NUC_MOD_OF] = POINT_NUC;
-            env[env_ptr] = nuc_positions[i][0];
-            env[env_ptr + 1] = nuc_positions[i][1];
-            env[env_ptr + 2] = nuc_positions[i][2];
-            env_ptr += 3;
-        }
-
-        // Fill basis data
-        // We need to figure out which atom each shell belongs to.
-        // Match by comparing shell center to atom positions.
-        var ao_offset: usize = 0;
-        for (0..nbas) |i| {
-            const shell = shells[i];
-            const nprim = shell.primitives.len;
-
-            // Find the atom this shell belongs to
-            const atom_idx = findAtom(nuc_positions, shell.center);
-
-            const off = i * BAS_SLOTS;
-            bas[off + ATOM_OF] = @intCast(atom_idx);
-            bas[off + ANG_OF] = @intCast(shell.l);
-            bas[off + NPRIM_OF] = @intCast(nprim);
-            bas[off + NCTR_OF] = 1; // always 1 contraction in our representation
-            bas[off + KAPPA_OF] = 0;
-            bas[off + PTR_EXP] = @intCast(env_ptr);
-
-            // Store exponents
-            for (0..nprim) |p| {
-                env[env_ptr + p] = shell.primitives[p].alpha;
-            }
-            env_ptr += nprim;
-
-            bas[off + PTR_COEFF] = @intCast(env_ptr);
-
-            // Store normalized coefficients: coeff * gto_norm(l, alpha)
-            // This matches PySCF/libcint convention where env stores
-            // raw_coeff * gto_norm(l, alpha).
-            for (0..nprim) |p| {
-                const alpha = shell.primitives[p].alpha;
-                const raw_coeff = shell.primitives[p].coeff;
-                env[env_ptr + p] = raw_coeff * gtoNorm(shell.l, alpha);
-            }
-            env_ptr += nprim;
-
-            // Shell AO offsets
-            shell_offsets[i] = ao_offset;
-            ao_offset += basis_mod.numCartesian(shell.l);
-        }
-        shell_offsets[nbas] = ao_offset;
+        const env_ptr = fill_libcint_atoms(atm, env, nuc_positions, nuc_charges);
+        fill_libcint_basis(bas, env, shell_offsets, shells, nuc_positions, env_ptr);
 
         return LibcintData{
             .atm = atm,
@@ -316,6 +257,67 @@ pub const LibcintData = struct {
     }
 };
 
+fn libcint_env_size(shells: []const ContractedShell, natm: usize) usize {
+    var env_size: usize = PTR_ENV_START + natm * 3;
+    for (shells) |shell| env_size += 2 * shell.primitives.len;
+    return env_size;
+}
+
+fn fill_libcint_atoms(
+    atm: []c_int,
+    env: []f64,
+    nuc_positions: []const [3]f64,
+    nuc_charges: []const f64,
+) usize {
+    var env_ptr: usize = PTR_ENV_START;
+    for (0..nuc_charges.len) |i| {
+        const off = i * ATM_SLOTS;
+        atm[off + CHARGE_OF] = @intFromFloat(nuc_charges[i]);
+        atm[off + PTR_COORD] = @intCast(env_ptr);
+        atm[off + NUC_MOD_OF] = POINT_NUC;
+        env[env_ptr] = nuc_positions[i][0];
+        env[env_ptr + 1] = nuc_positions[i][1];
+        env[env_ptr + 2] = nuc_positions[i][2];
+        env_ptr += 3;
+    }
+    return env_ptr;
+}
+
+fn fill_libcint_basis(
+    bas: []c_int,
+    env: []f64,
+    shell_offsets: []usize,
+    shells: []const ContractedShell,
+    nuc_positions: []const [3]f64,
+    env_start: usize,
+) void {
+    var env_ptr = env_start;
+    var ao_offset: usize = 0;
+    for (shells, 0..) |shell, i| {
+        const nprim = shell.primitives.len;
+        const off = i * BAS_SLOTS;
+        bas[off + ATOM_OF] = @intCast(find_atom(nuc_positions, shell.center));
+        bas[off + ANG_OF] = @intCast(shell.l);
+        bas[off + NPRIM_OF] = @intCast(nprim);
+        bas[off + NCTR_OF] = 1;
+        bas[off + KAPPA_OF] = 0;
+        bas[off + PTR_EXP] = @intCast(env_ptr);
+        for (0..nprim) |p| env[env_ptr + p] = shell.primitives[p].alpha;
+        env_ptr += nprim;
+
+        bas[off + PTR_COEFF] = @intCast(env_ptr);
+        for (0..nprim) |p| {
+            const alpha = shell.primitives[p].alpha;
+            env[env_ptr + p] = shell.primitives[p].coeff * gto_norm(shell.l, alpha);
+        }
+        env_ptr += nprim;
+
+        shell_offsets[i] = ao_offset;
+        ao_offset += basis_mod.num_cartesian(shell.l);
+    }
+    shell_offsets[shells.len] = ao_offset;
+}
+
 // ============================================================================
 // Normalization
 // ============================================================================
@@ -326,7 +328,7 @@ pub const LibcintData = struct {
 ///
 /// This is the normalization for the radial part g(r) = r^l * exp(-alpha*r^2),
 /// consistent with PySCF's gto.gto_norm and libcint's CINTgto_norm.
-fn gtoNorm(l: u32, alpha: f64) f64 {
+fn gto_norm(l: u32, alpha: f64) f64 {
     // gaussian_int(s, a) = Gamma((s+1)/2) / (2 * a^((s+1)/2))
     // For s = 2*l + 2:
     //   gaussian_int(2l+2, 2a) = Gamma(l + 1.5) / (2 * (2a)^(l+1.5))
@@ -336,7 +338,7 @@ fn gtoNorm(l: u32, alpha: f64) f64 {
     // Gamma(l + 1.5) via recursion from Gamma(0.5) = sqrt(pi)
     // Gamma(n + 0.5) = (2n-1)!! / 2^n * sqrt(pi)  for n >= 0
     // Here n = l + 1, so Gamma(l + 1.5) = (2l+1)!! / 2^(l+1) * sqrt(pi)
-    const gamma_val = gammaHalfInt(l + 1);
+    const gamma_val = gamma_half_int(l + 1);
 
     // (2*alpha)^(l + 1.5)
     const pow_val = std.math.pow(f64, two_alpha, l_f + 1.5);
@@ -350,7 +352,7 @@ fn gtoNorm(l: u32, alpha: f64) f64 {
 /// Gamma(0.5) = sqrt(pi)
 /// Gamma(n + 0.5) = (n - 0.5) * (n - 1.5) * ... * 0.5 * sqrt(pi)
 ///                = (2n-1)!! / 2^n * sqrt(pi)
-fn gammaHalfInt(n: u32) f64 {
+fn gamma_half_int(n: u32) f64 {
     var result: f64 = std.math.sqrt(std.math.pi);
     var i: u32 = 0;
     while (i < n) : (i += 1) {
@@ -365,7 +367,7 @@ fn gammaHalfInt(n: u32) f64 {
 
 /// Compute the Cartesian normalization correction factor for AO component (ax,ay,az).
 ///
-/// With gtoNorm coefficients in env, libcint's Cartesian overlap diagonal is:
+/// With gto_norm coefficients in env, libcint's Cartesian overlap diagonal is:
 ///   - S_diag = 1.0 for s-type (l=0) and p-type (l=1)
 ///   - S_diag = (2ax-1)!! * (2ay-1)!! * (2az-1)!! * 4π / (2l+1)!! for l >= 2
 ///
@@ -381,7 +383,7 @@ fn gammaHalfInt(n: u32) f64 {
 ///   p (1,0,0): 1.0
 ///   d (2,0,0): sqrt(5/(4π)) ≈ 0.6308,  d (1,1,0): sqrt(15/(4π)) ≈ 1.0925
 ///   f (3,0,0): sqrt(105/(4π*15)) ≈ 0.7464, f (1,1,1): sqrt(105/(4π)) ≈ 2.8906
-fn cartNormFactor(ax: u32, ay: u32, az: u32) f64 {
+fn cart_norm_factor(ax: u32, ay: u32, az: u32) f64 {
     const l = ax + ay + az;
     if (l <= 1) return 1.0;
     // (2l+1)!! = 1 * 3 * 5 * ... * (2l+1)
@@ -392,9 +394,9 @@ fn cartNormFactor(ax: u32, ay: u32, az: u32) f64 {
             df_2l1 *= @as(f64, @floatFromInt(k));
         }
     }
-    const df_x = basis_mod.doubleFactorial(ax);
-    const df_y = basis_mod.doubleFactorial(ay);
-    const df_z = basis_mod.doubleFactorial(az);
+    const df_x = basis_mod.double_factorial(ax);
+    const df_y = basis_mod.double_factorial(ay);
+    const df_z = basis_mod.double_factorial(az);
     const df_cart = df_x * df_y * df_z;
     return @sqrt(df_2l1 / (4.0 * std.math.pi * df_cart));
 }
@@ -404,19 +406,19 @@ fn cartNormFactor(ax: u32, ay: u32, az: u32) f64 {
 /// Returns an array of length n = total number of AOs. Each element is the
 /// correction factor for the corresponding AO, such that:
 ///   native_integral[i,j] = libcint_integral[i,j] * factors[i] * factors[j]
-fn buildCartNormFactors(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
+fn build_cart_norm_factors(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
     const n = data.nao();
     const factors = try alloc.alloc(f64, n);
 
     var shell_idx: usize = 0;
     while (shell_idx < @as(usize, @intCast(data.nbas))) : (shell_idx += 1) {
         const l: u32 = @intCast(data.bas[shell_idx * BAS_SLOTS + ANG_OF]);
-        const ncart = basis_mod.numCartesian(l);
+        const ncart = basis_mod.num_cartesian(l);
         const offset = data.shell_offsets[shell_idx];
-        const cart_exps = basis_mod.cartesianExponents(l);
+        const cart_exps = basis_mod.cartesian_exponents(l);
 
         for (0..ncart) |k| {
-            factors[offset + k] = cartNormFactor(cart_exps[k].x, cart_exps[k].y, cart_exps[k].z);
+            factors[offset + k] = cart_norm_factor(cart_exps[k].x, cart_exps[k].y, cart_exps[k].z);
         }
     }
 
@@ -428,7 +430,7 @@ fn buildCartNormFactors(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
 // ============================================================================
 
 /// Find the atom index whose position matches the given shell center.
-fn findAtom(nuc_positions: []const [3]f64, center: @import("../math/math.zig").Vec3) usize {
+fn find_atom(nuc_positions: []const [3]f64, center: @import("../math/math.zig").Vec3) usize {
     const tol = 1e-10;
     for (nuc_positions, 0..) |pos, i| {
         const dx = pos[0] - center.x;
@@ -449,25 +451,25 @@ fn findAtom(nuc_positions: []const [3]f64, center: @import("../math/math.zig").V
 /// Build the overlap matrix using libcint.
 ///
 /// Returns a flat n×n array in row-major order.
-pub fn buildOverlapMatrix(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
+pub fn build_overlap_matrix(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
     if (!enable_libcint) return error.LibcintNotAvailable;
-    return buildOneElectronMatrix(alloc, data, cint_fns.int1e_ovlp_cart);
+    return build_one_electron_matrix(alloc, data, cint_fns.int1e_ovlp_cart);
 }
 
 /// Build the kinetic energy matrix using libcint.
-pub fn buildKineticMatrix(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
+pub fn build_kinetic_matrix(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
     if (!enable_libcint) return error.LibcintNotAvailable;
-    return buildOneElectronMatrix(alloc, data, cint_fns.int1e_kin_cart);
+    return build_one_electron_matrix(alloc, data, cint_fns.int1e_kin_cart);
 }
 
 /// Build the nuclear attraction matrix using libcint.
-pub fn buildNuclearMatrix(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
+pub fn build_nuclear_matrix(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
     if (!enable_libcint) return error.LibcintNotAvailable;
-    return buildOneElectronMatrix(alloc, data, cint_fns.int1e_nuc_cart);
+    return build_one_electron_matrix(alloc, data, cint_fns.int1e_nuc_cart);
 }
 
 /// Generic 1-electron integral matrix builder.
-fn buildOneElectronMatrix(
+fn build_one_electron_matrix(
     alloc: std.mem.Allocator,
     data: LibcintData,
     comptime integral_fn: anytype,
@@ -477,7 +479,7 @@ fn buildOneElectronMatrix(
     @memset(mat, 0.0);
 
     // Build Cartesian normalization correction factors
-    const cart_norms = try buildCartNormFactors(alloc, data);
+    const cart_norms = try build_cart_norm_factors(alloc, data);
     defer alloc.free(cart_norms);
 
     // Buffer for shell-pair integrals (max: 15 × 15 = 225 for g-type)
@@ -491,10 +493,10 @@ fn buildOneElectronMatrix(
             shls[0] = i;
             shls[1] = j;
 
-            const ni = basis_mod.numCartesian(
+            const ni = basis_mod.num_cartesian(
                 @intCast(data.bas[@as(usize, @intCast(i)) * BAS_SLOTS + ANG_OF]),
             );
-            const nj = basis_mod.numCartesian(
+            const nj = basis_mod.num_cartesian(
                 @intCast(data.bas[@as(usize, @intCast(j)) * BAS_SLOTS + ANG_OF]),
             );
 
@@ -537,7 +539,7 @@ fn buildOneElectronMatrix(
 /// Returns the buffer size (number of doubles written).
 /// The output is in the caller-provided buffer, column-major within the block:
 ///   buf[l_idx * nk * nj * ni + k_idx * nj * ni + j_idx * ni + i_idx]
-pub fn shellQuartetEri(
+pub fn shell_quartet_eri(
     data: LibcintData,
     shell_i: usize,
     shell_j: usize,
@@ -554,10 +556,10 @@ pub fn shellQuartetEri(
         @intCast(shell_l),
     };
 
-    const ni = basis_mod.numCartesian(@intCast(data.bas[shell_i * BAS_SLOTS + ANG_OF]));
-    const nj = basis_mod.numCartesian(@intCast(data.bas[shell_j * BAS_SLOTS + ANG_OF]));
-    const nk = basis_mod.numCartesian(@intCast(data.bas[shell_k * BAS_SLOTS + ANG_OF]));
-    const nl = basis_mod.numCartesian(@intCast(data.bas[shell_l * BAS_SLOTS + ANG_OF]));
+    const ni = basis_mod.num_cartesian(@intCast(data.bas[shell_i * BAS_SLOTS + ANG_OF]));
+    const nj = basis_mod.num_cartesian(@intCast(data.bas[shell_j * BAS_SLOTS + ANG_OF]));
+    const nk = basis_mod.num_cartesian(@intCast(data.bas[shell_k * BAS_SLOTS + ANG_OF]));
+    const nl = basis_mod.num_cartesian(@intCast(data.bas[shell_l * BAS_SLOTS + ANG_OF]));
 
     const size = ni * nj * nk * nl;
     std.debug.assert(buf.len >= size);
@@ -582,7 +584,7 @@ pub fn shellQuartetEri(
 ///
 /// This is primarily for validation — for production use, the direct SCF
 /// approach in fock.zig is preferred.
-pub fn buildEriTensor(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
+pub fn build_eri_tensor(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
     if (!enable_libcint) return error.LibcintNotAvailable;
 
     const n = data.nao();
@@ -591,7 +593,7 @@ pub fn buildEriTensor(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
     @memset(eri, 0.0);
 
     // Build Cartesian normalization correction factors
-    const cart_norms = try buildCartNormFactors(alloc, data);
+    const cart_norms = try build_cart_norm_factors(alloc, data);
     defer alloc.free(cart_norms);
 
     // Buffer for max shell quartet: (15*15*15*15 = 50625 for g-type)
@@ -600,6 +602,19 @@ pub fn buildEriTensor(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
     var buf: [max_buf_size]f64 = undefined;
     var shls: [4]c_int = undefined;
 
+    try fill_eri_tensor_shells(data, n, cart_norms, buf[0..], &shls, eri);
+
+    return eri;
+}
+
+fn fill_eri_tensor_shells(
+    data: LibcintData,
+    n: usize,
+    cart_norms: []const f64,
+    buf: []f64,
+    shls: *[4]c_int,
+    eri: []f64,
+) !void {
     var si: c_int = 0;
     while (si < data.nbas) : (si += 1) {
         var sj: c_int = 0;
@@ -608,66 +623,68 @@ pub fn buildEriTensor(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
             while (sk < data.nbas) : (sk += 1) {
                 var sl: c_int = 0;
                 while (sl < data.nbas) : (sl += 1) {
-                    shls[0] = si;
-                    shls[1] = sj;
-                    shls[2] = sk;
-                    shls[3] = sl;
-
-                    const li = data.bas[@as(usize, @intCast(si)) * BAS_SLOTS + ANG_OF];
-                    const lj = data.bas[@as(usize, @intCast(sj)) * BAS_SLOTS + ANG_OF];
-                    const lk = data.bas[@as(usize, @intCast(sk)) * BAS_SLOTS + ANG_OF];
-                    const ll_ang = data.bas[@as(usize, @intCast(sl)) * BAS_SLOTS + ANG_OF];
-                    const ni = basis_mod.numCartesian(@intCast(li));
-                    const nj = basis_mod.numCartesian(@intCast(lj));
-                    const nk = basis_mod.numCartesian(@intCast(lk));
-                    const nl = basis_mod.numCartesian(@intCast(ll_ang));
-
-                    _ = cint_fns.int2e_cart(
-                        &buf,
-                        null,
-                        &shls,
-                        data.atm.ptr,
-                        data.natm,
-                        data.bas.ptr,
-                        data.nbas,
-                        data.env.ptr,
-                        null,
-                        null,
+                    fill_eri_shell_quartet(
+                        data,
+                        n,
+                        cart_norms,
+                        buf,
+                        shls,
+                        eri,
+                        .{ si, sj, sk, sl },
                     );
-
-                    // Copy: libcint column-major (i fastest) → our row-major (ij|kl)
-                    // Apply Cartesian normalization correction
-                    const oi = data.shell_offsets[@intCast(si)];
-                    const oj = data.shell_offsets[@intCast(sj)];
-                    const ok = data.shell_offsets[@intCast(sk)];
-                    const ol = data.shell_offsets[@intCast(sl)];
-
-                    for (0..ni) |ii| {
-                        for (0..nj) |jj| {
-                            for (0..nk) |kk| {
-                                for (0..nl) |ll| {
-                                    // libcint index: col-major:
-                                    //   buf[i + j*ni + k*ni*nj + l*ni*nj*nk]
-                                    const cidx = ii + jj * ni + kk * ni * nj + ll * ni * nj * nk;
-                                    const mu = oi + ii;
-                                    const nu = oj + jj;
-                                    const lam = ok + kk;
-                                    const sig = ol + ll;
-                                    const norm_mn = cart_norms[mu] * cart_norms[nu];
-                                    const norm_ls = cart_norms[lam] * cart_norms[sig];
-                                    const norm = norm_mn * norm_ls;
-                                    const eri_idx = mu * n * n * n + nu * n * n + lam * n + sig;
-                                    eri[eri_idx] = buf[cidx] * norm;
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
     }
+}
 
-    return eri;
+fn fill_eri_shell_quartet(
+    data: LibcintData,
+    n: usize,
+    cart_norms: []const f64,
+    buf: []f64,
+    shls: *[4]c_int,
+    eri: []f64,
+    shell_ids: [4]c_int,
+) void {
+    shls.* = shell_ids;
+    const ni = num_cartesian_from_bas(data, @intCast(shell_ids[0]));
+    const nj = num_cartesian_from_bas(data, @intCast(shell_ids[1]));
+    const nk = num_cartesian_from_bas(data, @intCast(shell_ids[2]));
+    const nl = num_cartesian_from_bas(data, @intCast(shell_ids[3]));
+    _ = cint_fns.int2e_cart(
+        buf.ptr,
+        null,
+        shls,
+        data.atm.ptr,
+        data.natm,
+        data.bas.ptr,
+        data.nbas,
+        data.env.ptr,
+        null,
+        null,
+    );
+    const oi = data.shell_offsets[@intCast(shell_ids[0])];
+    const oj = data.shell_offsets[@intCast(shell_ids[1])];
+    const ok = data.shell_offsets[@intCast(shell_ids[2])];
+    const ol = data.shell_offsets[@intCast(shell_ids[3])];
+    for (0..ni) |ii| {
+        for (0..nj) |jj| {
+            for (0..nk) |kk| {
+                for (0..nl) |ll| {
+                    const cidx = ii + jj * ni + kk * ni * nj + ll * ni * nj * nk;
+                    const mu = oi + ii;
+                    const nu = oj + jj;
+                    const lam = ok + kk;
+                    const sig = ol + ll;
+                    const norm_mn = cart_norms[mu] * cart_norms[nu];
+                    const norm_ls = cart_norms[lam] * cart_norms[sig];
+                    const norm = norm_mn * norm_ls;
+                    eri[mu * n * n * n + nu * n * n + lam * n + sig] = buf[cidx] * norm;
+                }
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -678,26 +695,26 @@ pub fn buildEriTensor(alloc: std.mem.Allocator, data: LibcintData) ![]f64 {
 ///
 /// Returns a [3][]f64 array: one n×n matrix per Cartesian direction (x, y, z).
 /// Each matrix gives d/dR_i <i|j> for shell i.
-pub fn buildOverlapGradient(alloc: std.mem.Allocator, data: LibcintData) ![3][]f64 {
+pub fn build_overlap_gradient(alloc: std.mem.Allocator, data: LibcintData) ![3][]f64 {
     if (!enable_libcint) return error.LibcintNotAvailable;
-    return buildOneElectronGradient(alloc, data, cint_fns.int1e_ipovlp_cart);
+    return build_one_electron_gradient(alloc, data, cint_fns.int1e_ipovlp_cart);
 }
 
 /// Compute kinetic gradient integrals <NABLA i|T|j> using libcint.
-pub fn buildKineticGradient(alloc: std.mem.Allocator, data: LibcintData) ![3][]f64 {
+pub fn build_kinetic_gradient(alloc: std.mem.Allocator, data: LibcintData) ![3][]f64 {
     if (!enable_libcint) return error.LibcintNotAvailable;
-    return buildOneElectronGradient(alloc, data, cint_fns.int1e_ipkin_cart);
+    return build_one_electron_gradient(alloc, data, cint_fns.int1e_ipkin_cart);
 }
 
 /// Compute nuclear gradient integrals <NABLA i|V|j> using libcint.
-pub fn buildNuclearGradient(alloc: std.mem.Allocator, data: LibcintData) ![3][]f64 {
+pub fn build_nuclear_gradient(alloc: std.mem.Allocator, data: LibcintData) ![3][]f64 {
     if (!enable_libcint) return error.LibcintNotAvailable;
-    return buildOneElectronGradient(alloc, data, cint_fns.int1e_ipnuc_cart);
+    return build_one_electron_gradient(alloc, data, cint_fns.int1e_ipnuc_cart);
 }
 
 /// Generic 1-electron gradient integral builder.
 /// The ip (NABLA) integrals have 3 components (x, y, z).
-fn buildOneElectronGradient(
+fn build_one_electron_gradient(
     alloc: std.mem.Allocator,
     data: LibcintData,
     comptime integral_fn: anytype,
@@ -710,7 +727,7 @@ fn buildOneElectronGradient(
     }
 
     // Build Cartesian normalization correction factors
-    const cart_norms = try buildCartNormFactors(alloc, data);
+    const cart_norms = try build_cart_norm_factors(alloc, data);
     defer alloc.free(cart_norms);
 
     // Buffer for 3 components × shell pair (max: 3 × 15 × 15 = 675)
@@ -724,10 +741,10 @@ fn buildOneElectronGradient(
             shls[0] = i;
             shls[1] = j;
 
-            const ni = basis_mod.numCartesian(
+            const ni = basis_mod.num_cartesian(
                 @intCast(data.bas[@as(usize, @intCast(i)) * BAS_SLOTS + ANG_OF]),
             );
-            const nj = basis_mod.numCartesian(
+            const nj = basis_mod.num_cartesian(
                 @intCast(data.bas[@as(usize, @intCast(j)) * BAS_SLOTS + ANG_OF]),
             );
 
@@ -774,7 +791,7 @@ fn buildOneElectronGradient(
 /// Returns 3 × ni × nj × nk × nl values in the buffer.
 /// Layout: buf[comp * ni*nj*nk*nl + i + j*ni + k*ni*nj + l*ni*nj*nk]
 /// comp = 0(x), 1(y), 2(z)
-pub fn shellQuartetEriGradient(
+pub fn shell_quartet_eri_gradient(
     data: LibcintData,
     shell_i: usize,
     shell_j: usize,
@@ -791,10 +808,10 @@ pub fn shellQuartetEriGradient(
         @intCast(shell_l),
     };
 
-    const ni = basis_mod.numCartesian(@intCast(data.bas[shell_i * BAS_SLOTS + ANG_OF]));
-    const nj = basis_mod.numCartesian(@intCast(data.bas[shell_j * BAS_SLOTS + ANG_OF]));
-    const nk = basis_mod.numCartesian(@intCast(data.bas[shell_k * BAS_SLOTS + ANG_OF]));
-    const nl = basis_mod.numCartesian(@intCast(data.bas[shell_l * BAS_SLOTS + ANG_OF]));
+    const ni = basis_mod.num_cartesian(@intCast(data.bas[shell_i * BAS_SLOTS + ANG_OF]));
+    const nj = basis_mod.num_cartesian(@intCast(data.bas[shell_j * BAS_SLOTS + ANG_OF]));
+    const nk = basis_mod.num_cartesian(@intCast(data.bas[shell_k * BAS_SLOTS + ANG_OF]));
+    const nl = basis_mod.num_cartesian(@intCast(data.bas[shell_l * BAS_SLOTS + ANG_OF]));
 
     const size = 3 * ni * nj * nk * nl;
     std.debug.assert(buf.len >= size);
@@ -841,7 +858,7 @@ const ShellQuartetInfo = struct {
     na_nb_nc: usize,
 };
 
-fn buildDensityScreening(
+fn build_density_screening(
     alloc: std.mem.Allocator,
     data: LibcintData,
     nbas: usize,
@@ -851,10 +868,10 @@ fn buildDensityScreening(
     const d_max = try alloc.alloc(f64, nbas * nbas);
     for (0..nbas) |si| {
         const oi = data.shell_offsets[si];
-        const ni = numCartesianFromBas(data, si);
+        const ni = num_cartesian_from_bas(data, si);
         for (0..nbas) |sj| {
             const oj = data.shell_offsets[sj];
-            const nj = numCartesianFromBas(data, sj);
+            const nj = num_cartesian_from_bas(data, sj);
             var max_p: f64 = 0.0;
             for (0..ni) |ii| {
                 for (0..nj) |jj| {
@@ -868,7 +885,7 @@ fn buildDensityScreening(
     return d_max;
 }
 
-fn shellQuartetDensityBound(
+fn shell_quartet_density_bound(
     d_max: []const f64,
     nbas: usize,
     sa: usize,
@@ -885,7 +902,7 @@ fn shellQuartetDensityBound(
     );
 }
 
-fn initShellQuartetInfo(
+fn init_shell_quartet_info(
     data: LibcintData,
     sa: usize,
     sb: usize,
@@ -894,10 +911,10 @@ fn initShellQuartetInfo(
     ab_pair: usize,
     cd_pair: usize,
 ) ShellQuartetInfo {
-    const na = numCartesianFromBas(data, sa);
-    const nb = numCartesianFromBas(data, sb);
-    const nc = numCartesianFromBas(data, sc);
-    const nd = numCartesianFromBas(data, sd);
+    const na = num_cartesian_from_bas(data, sa);
+    const nb = num_cartesian_from_bas(data, sb);
+    const nc = num_cartesian_from_bas(data, sc);
+    const nd = num_cartesian_from_bas(data, sd);
     return .{
         .na = na,
         .nb = nb,
@@ -915,7 +932,7 @@ fn initShellQuartetInfo(
     };
 }
 
-fn computeShellQuartetEri(
+fn compute_shell_quartet_eri(
     data: LibcintData,
     opt: ?*c.CINTOpt,
     shls: *[4]c_int,
@@ -941,10 +958,10 @@ fn computeShellQuartetEri(
         opt,
         null,
     );
-    return initShellQuartetInfo(data, sa, sb, sc, sd, pairIndex(sa, sb), pairIndex(sc, sd));
+    return init_shell_quartet_info(data, sa, sb, sc, sd, pair_index(sa, sb), pair_index(sc, sd));
 }
 
-fn accumulateShellQuartetJK(
+fn accumulate_shell_quartet_jk(
     j_matrix: []f64,
     k_matrix: []f64,
     density: []const f64,
@@ -1019,7 +1036,7 @@ fn accumulateShellQuartetJK(
 ///
 /// Create once before the SCF loop. The Schwarz table and CINTOpt are
 /// density-independent and can be reused across iterations. Only the density
-/// screening table needs to be rebuilt each iteration (done inside buildJK).
+/// screening table needs to be rebuilt each iteration (done inside build_jk).
 pub const LibcintJKBuilder = struct {
     data: LibcintData,
     cart_norms: []f64,
@@ -1040,7 +1057,7 @@ pub const LibcintJKBuilder = struct {
         const n = data.nao();
 
         // Build cart norms
-        const cart_norms = try buildCartNormFactors(alloc, data);
+        const cart_norms = try build_cart_norm_factors(alloc, data);
 
         // CINTOpt
         var opt: ?*c.CINTOpt = null;
@@ -1053,49 +1070,7 @@ pub const LibcintJKBuilder = struct {
             data.env.ptr,
         );
 
-        // Schwarz table
-        const schwarz = try alloc.alloc(f64, nbas * nbas);
-        {
-            const max_buf_size = 50625;
-            var buf: [max_buf_size]f64 = undefined;
-            var shls: [4]c_int = undefined;
-
-            for (0..nbas) |si| {
-                var sj: usize = 0;
-                while (sj <= si) : (sj += 1) {
-                    shls[0] = @intCast(si);
-                    shls[1] = @intCast(sj);
-                    shls[2] = @intCast(si);
-                    shls[3] = @intCast(sj);
-
-                    const ni = numCartesianFromBas(data, si);
-                    const nj = numCartesianFromBas(data, sj);
-                    const size = ni * nj * ni * nj;
-
-                    _ = cint_fns.int2e_cart(
-                        &buf,
-                        null,
-                        &shls,
-                        data.atm.ptr,
-                        data.natm,
-                        data.bas.ptr,
-                        data.nbas,
-                        data.env.ptr,
-                        opt,
-                        null,
-                    );
-
-                    var max_val: f64 = 0.0;
-                    for (0..size) |idx| {
-                        const abs_val = @abs(buf[idx]);
-                        if (abs_val > max_val) max_val = abs_val;
-                    }
-                    const q = @sqrt(max_val);
-                    schwarz[si * nbas + sj] = q;
-                    schwarz[sj * nbas + si] = q;
-                }
-            }
-        }
+        const schwarz = try build_schwarz_table(alloc, data, nbas, opt);
 
         return .{
             .data = data,
@@ -1117,7 +1092,7 @@ pub const LibcintJKBuilder = struct {
     }
 
     /// Build J and K matrices for the given density matrix.
-    pub fn buildJK(
+    pub fn build_jk(
         self: *const LibcintJKBuilder,
         alloc: std.mem.Allocator,
         density: []const f64,
@@ -1134,7 +1109,7 @@ pub const LibcintJKBuilder = struct {
         @memset(j_matrix, 0.0);
         @memset(k_matrix, 0.0);
 
-        const d_max = try buildDensityScreening(alloc, data, nbas, n, density);
+        const d_max = try build_density_screening(alloc, data, nbas, n, density);
         defer alloc.free(d_max);
 
         const max_buf_size = 50625;
@@ -1146,20 +1121,20 @@ pub const LibcintJKBuilder = struct {
                 const q_ab = schwarz[sa * nbas + sb];
                 if (q_ab == 0.0) continue;
 
-                const ab_pair = pairIndex(sa, sb);
+                const ab_pair = pair_index(sa, sb);
 
                 for (0..nbas) |sc| {
                     for (0..sc + 1) |sd| {
-                        const cd_pair = pairIndex(sc, sd);
+                        const cd_pair = pair_index(sc, sd);
                         if (cd_pair > ab_pair) continue;
 
                         // Schwarz screening
                         const q_cd = schwarz[sc * nbas + sd];
                         const q_bound = q_ab * q_cd;
                         if (q_bound < schwarz_threshold) continue;
-                        const d_max_abcd = shellQuartetDensityBound(d_max, nbas, sa, sb, sc, sd);
+                        const d_max_abcd = shell_quartet_density_bound(d_max, nbas, sa, sb, sc, sd);
                         if (d_max_abcd * q_bound < schwarz_threshold) continue;
-                        const quartet = computeShellQuartetEri(
+                        const quartet = compute_shell_quartet_eri(
                             data,
                             self.opt,
                             &shls,
@@ -1169,7 +1144,7 @@ pub const LibcintJKBuilder = struct {
                             sc,
                             sd,
                         );
-                        accumulateShellQuartetJK(
+                        accumulate_shell_quartet_jk(
                             j_matrix,
                             k_matrix,
                             density,
@@ -1187,11 +1162,62 @@ pub const LibcintJKBuilder = struct {
     }
 };
 
+fn build_schwarz_table(
+    alloc: std.mem.Allocator,
+    data: LibcintData,
+    nbas: usize,
+    opt: ?*c.CINTOpt,
+) ![]f64 {
+    const schwarz = try alloc.alloc(f64, nbas * nbas);
+    const max_buf_size = 50625;
+    var buf: [max_buf_size]f64 = undefined;
+    var shls: [4]c_int = undefined;
+
+    for (0..nbas) |si| {
+        var sj: usize = 0;
+        while (sj <= si) : (sj += 1) {
+            const q = compute_schwarz_pair(data, opt, si, sj, buf[0..], &shls);
+            schwarz[si * nbas + sj] = q;
+            schwarz[sj * nbas + si] = q;
+        }
+    }
+    return schwarz;
+}
+
+fn compute_schwarz_pair(
+    data: LibcintData,
+    opt: ?*c.CINTOpt,
+    si: usize,
+    sj: usize,
+    buf: []f64,
+    shls: *[4]c_int,
+) f64 {
+    shls.* = .{ @intCast(si), @intCast(sj), @intCast(si), @intCast(sj) };
+    const ni = num_cartesian_from_bas(data, si);
+    const nj = num_cartesian_from_bas(data, sj);
+    const size = ni * nj * ni * nj;
+    _ = cint_fns.int2e_cart(
+        buf.ptr,
+        null,
+        shls,
+        data.atm.ptr,
+        data.natm,
+        data.bas.ptr,
+        data.nbas,
+        data.env.ptr,
+        opt,
+        null,
+    );
+    var max_val: f64 = 0.0;
+    for (0..size) |idx| max_val = @max(max_val, @abs(buf[idx]));
+    return @sqrt(max_val);
+}
+
 /// Build J (Coulomb) and K (exchange) matrices using direct libcint ERIs.
 ///
 /// This is the simple one-shot version (no pre-computed screening).
 /// For SCF loops, prefer LibcintJKBuilder which reuses CINTOpt + Schwarz table.
-pub fn buildJKDirect(
+pub fn build_jk_direct(
     alloc: std.mem.Allocator,
     data: LibcintData,
     density: []const f64,
@@ -1201,35 +1227,35 @@ pub fn buildJKDirect(
     var builder = try LibcintJKBuilder.init(alloc, data, 1e-14);
     defer builder.deinit(alloc);
 
-    return builder.buildJK(alloc, density);
+    return builder.build_jk(alloc, density);
 }
 
 /// Pair index for shell pairs: maps (a, b) with a >= b to a*(a+1)/2 + b.
-fn pairIndex(a: usize, b: usize) usize {
+fn pair_index(a: usize, b: usize) usize {
     if (a >= b) return a * (a + 1) / 2 + b;
     return b * (b + 1) / 2 + a;
 }
 
 /// Get number of Cartesian functions for a shell in the libcint data.
-fn numCartesianFromBas(data: LibcintData, shell_idx: usize) usize {
-    return basis_mod.numCartesian(@intCast(data.bas[shell_idx * BAS_SLOTS + ANG_OF]));
+fn num_cartesian_from_bas(data: LibcintData, shell_idx: usize) usize {
+    return basis_mod.num_cartesian(@intCast(data.bas[shell_idx * BAS_SLOTS + ANG_OF]));
 }
 
 // ============================================================================
 // Tests
 // ============================================================================
 
-test "gtoNorm matches PySCF" {
+test "gto_norm matches PySCF" {
     const testing = std.testing;
 
     // PySCF reference: gto.gto_norm(0, 3.42525091) = 6.36113067148303
-    try testing.expectApproxEqAbs(6.36113067148303, gtoNorm(0, 3.42525091), 1e-8);
+    try testing.expectApproxEqAbs(6.36113067148303, gto_norm(0, 3.42525091), 1e-8);
 
     // gto.gto_norm(0, 0.62391373) = 1.77361124
-    try testing.expectApproxEqAbs(1.77361124, gtoNorm(0, 0.62391373), 1e-5);
+    try testing.expectApproxEqAbs(1.77361124, gto_norm(0, 0.62391373), 1e-5);
 
     // gto.gto_norm(1, 1.0) = 2.917322170855303
-    try testing.expectApproxEqAbs(2.917322170855303, gtoNorm(1, 1.0), 1e-8);
+    try testing.expectApproxEqAbs(2.917322170855303, gto_norm(1, 1.0), 1e-8);
 
     // gto.gto_norm(2, 1.0) — for d-type
     // Gamma(3.5) = 15*sqrt(pi)/8
@@ -1239,15 +1265,15 @@ test "gtoNorm matches PySCF" {
     // Let's just validate l=0 and l=1 more precisely
 }
 
-test "gammaHalfInt" {
+test "gamma_half_int" {
     const testing = std.testing;
 
     // Gamma(0.5) = sqrt(pi)
-    try testing.expectApproxEqAbs(std.math.sqrt(std.math.pi), gammaHalfInt(0), 1e-12);
+    try testing.expectApproxEqAbs(std.math.sqrt(std.math.pi), gamma_half_int(0), 1e-12);
 
     // Gamma(1.5) = 0.5 * sqrt(pi)
-    try testing.expectApproxEqAbs(0.5 * std.math.sqrt(std.math.pi), gammaHalfInt(1), 1e-12);
+    try testing.expectApproxEqAbs(0.5 * std.math.sqrt(std.math.pi), gamma_half_int(1), 1e-12);
 
     // Gamma(2.5) = 1.5 * 0.5 * sqrt(pi) = 0.75 * sqrt(pi)
-    try testing.expectApproxEqAbs(0.75 * std.math.sqrt(std.math.pi), gammaHalfInt(2), 1e-12);
+    try testing.expectApproxEqAbs(0.75 * std.math.sqrt(std.math.pi), gamma_half_int(2), 1e-12);
 }

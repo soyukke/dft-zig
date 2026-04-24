@@ -11,7 +11,7 @@ const std = @import("std");
 
 /// Thread pool wrapper carrying an `io` reference. Scheduling is handled
 /// by the underlying `std.Io.Group` implementation so worker threads are
-/// reused across `parallelFor` calls, matching pre-0.16 performance.
+/// reused across `parallel_for` calls, matching pre-0.16 performance.
 pub const ThreadPool = struct {
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -35,7 +35,7 @@ pub const ThreadPool = struct {
 
     /// Execute `func(context, idx)` for each idx in [0, count) in parallel.
     /// Blocks until all tasks complete.
-    pub fn parallelFor(
+    pub fn parallel_for(
         self: *ThreadPool,
         count: usize,
         context: anytype,
@@ -59,7 +59,7 @@ pub const ThreadPool = struct {
 
     /// Execute `func(context, idx)` for each idx in [0, count) in parallel,
     /// collecting the first error encountered. Blocks until all tasks finish.
-    pub fn parallelForWithError(
+    pub fn parallel_for_with_error(
         self: *ThreadPool,
         count: usize,
         context: anytype,
@@ -108,7 +108,7 @@ test "ThreadPool basic" {
 
     const Ctx = struct { results: *[10]usize };
 
-    pool.parallelFor(10, Ctx{ .results = &results }, struct {
+    pool.parallel_for(10, Ctx{ .results = &results }, struct {
         fn run(ctx: Ctx, idx: usize) void {
             ctx.results[idx] = idx * 2;
         }

@@ -19,7 +19,7 @@ const NlccRealLoopInputs = struct {
 };
 
 /// Accumulate the NLCC force on a single atom by summing over real-space grid points.
-fn accumulateNlccForceReal(
+fn accumulate_nlcc_force_real(
     inputs: NlccRealLoopInputs,
     entry: *const hamiltonian.SpeciesEntry,
     pos: math.Vec3,
@@ -49,7 +49,7 @@ fn accumulateNlccForceReal(
                 );
                 // Minimum-image displacement from atom to grid point
                 const delta_raw = math.Vec3.sub(rvec, pos);
-                const delta = minimumImage(
+                const delta = minimum_image(
                     inputs.grid.cell,
                     inputs.grid.recip,
                     inputs.two_pi,
@@ -58,7 +58,7 @@ fn accumulateNlccForceReal(
                 const r = math.Vec3.norm(delta);
 
                 if (r > 1e-10) {
-                    const drho = sampleRadialDerivative(entry.upf.r, entry.upf.nlcc, r);
+                    const drho = sample_radial_derivative(entry.upf.r, entry.upf.nlcc, r);
                     if (drho != 0.0) {
                         // F_{I,α} = (Ω/N) Σ_n V_xc(r_n) × ρ'(r) × d_α/r
                         const coeff = inputs.vol_per_point * inputs.vxc_r[idx] * drho / r;
@@ -81,7 +81,7 @@ fn accumulateNlccForceReal(
 ///
 /// This real-space approach is consistent with how E_xc uses the grid-sampled
 /// core density, avoiding aliasing issues with the reciprocal-space form factor.
-pub fn nlccForces(
+pub fn nlcc_forces(
     alloc: std.mem.Allocator,
     grid: Grid,
     vxc_r: []const f64,
@@ -111,14 +111,14 @@ pub fn nlccForces(
     for (atoms, 0..) |atom, atom_index| {
         const entry = &species[atom.species_index];
         if (entry.upf.nlcc.len == 0) continue;
-        forces[atom_index] = accumulateNlccForceReal(inputs, entry, atom.position);
+        forces[atom_index] = accumulate_nlcc_force_real(inputs, entry, atom.position);
     }
 
     return forces;
 }
 
 /// Sample the radial derivative dρ_core/dr using linear interpolation of the tabulated data.
-fn sampleRadialDerivative(r_mesh: []const f64, values: []const f64, r: f64) f64 {
+fn sample_radial_derivative(r_mesh: []const f64, values: []const f64, r: f64) f64 {
     if (r_mesh.len < 2 or values.len < 2) return 0.0;
     if (r >= r_mesh[r_mesh.len - 1]) return 0.0;
     if (r <= r_mesh[0]) return 0.0;
@@ -153,7 +153,7 @@ fn sampleRadialDerivative(r_mesh: []const f64, values: []const f64, r: f64) f64 
 /// The G-space approach avoids aliasing between the bandwidth-limited V_xc and
 /// the tabulated radial core charge derivative, which is critical for PAW
 /// where the compensation charge n̂ makes V_xc more structured.
-pub fn nlccForcesGSpace(
+pub fn nlcc_forces_g_space(
     alloc: std.mem.Allocator,
     grid: Grid,
     vxc_g: []const math.Complex,
@@ -192,7 +192,7 @@ pub fn nlccForcesGSpace(
             const rho_core_g = if (rho_core_tables) |tables|
                 tables[atom.species_index].eval(g_norm)
             else
-                form_factor.rhoCoreG(entry.upf.*, g_norm);
+                form_factor.rho_core_g(entry.upf.*, g_norm);
 
             if (rho_core_g != 0.0) {
                 const vxc = vxc_g[g.idx];
@@ -218,7 +218,7 @@ pub fn nlccForcesGSpace(
 }
 
 /// Apply minimum-image convention using reciprocal vectors.
-fn minimumImage(cell: math.Mat3, recip: math.Mat3, two_pi: f64, delta: math.Vec3) math.Vec3 {
+fn minimum_image(cell: math.Mat3, recip: math.Mat3, two_pi: f64, delta: math.Vec3) math.Vec3 {
     var frac_x = math.Vec3.dot(recip.row(0), delta) / two_pi;
     var frac_y = math.Vec3.dot(recip.row(1), delta) / two_pi;
     var frac_z = math.Vec3.dot(recip.row(2), delta) / two_pi;

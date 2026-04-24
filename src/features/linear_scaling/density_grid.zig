@@ -6,7 +6,65 @@ const neighbor_list = @import("neighbor_list.zig");
 const sparse = @import("sparse.zig");
 const math = @import("../math/math.zig");
 
-pub fn buildDensityGridFromCenters(
+fn init_orbitals(
+    alloc: std.mem.Allocator,
+    centers: []const math.Vec3,
+    sigma: f64,
+    cutoff: f64,
+) ![]local_orbital.Orbital {
+    const orbitals = try alloc.alloc(local_orbital.Orbital, centers.len);
+    const alpha = 1.0 / (sigma * sigma);
+    for (centers, 0..) |center, idx| {
+        orbitals[idx] = .{ .center = center, .alpha = alpha, .cutoff = cutoff };
+    }
+    return orbitals;
+}
+
+fn evaluate_grid_point_density(
+    alloc: std.mem.Allocator,
+    cell_list: *OrbitalCellList,
+    orbitals: []const local_orbital.Orbital,
+    density: sparse.CsrMatrix,
+    point: math.Vec3,
+    cell: math.Mat3,
+    inv_cell: math.Mat3,
+    pbc: neighbor_list.Pbc,
+    candidates: *std.ArrayList(usize),
+    phi_map: *std.AutoHashMap(usize, f64),
+) !f64 {
+    try cell_list.collect_candidates(alloc, point, candidates);
+    phi_map.clearRetainingCapacity();
+    for (candidates.items) |orb_idx| {
+        const phi = local_orbital_potential.orbital_value_at(
+            orbitals[orb_idx],
+            point,
+            cell,
+            inv_cell,
+            pbc,
+        );
+        if (phi == 0.0) continue;
+        try phi_map.put(orb_idx, phi);
+    }
+
+    var rho: f64 = 0.0;
+    var it = phi_map.iterator();
+    while (it.next()) |entry| {
+        const row = entry.key_ptr.*;
+        const phi_i = entry.value_ptr.*;
+        const start = density.row_ptr[row];
+        const end = density.row_ptr[row + 1];
+        var di: usize = start;
+        while (di < end) : (di += 1) {
+            const col = density.col_idx[di];
+            if (phi_map.get(col)) |phi_j| {
+                rho += density.values[di] * phi_i * phi_j;
+            }
+        }
+    }
+    return rho;
+}
+
+pub fn build_density_grid_from_centers(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
     density: sparse.CsrMatrix,
@@ -21,18 +79,13 @@ pub fn buildDensityGridFromCenters(
     const count = grid.count();
     if (count == 0) return error.InvalidGrid;
 
-    var orbitals = try alloc.alloc(local_orbital.Orbital, centers.len);
+    const orbitals = try init_orbitals(alloc, centers, sigma, cutoff);
     defer alloc.free(orbitals);
-
-    const alpha = 1.0 / (sigma * sigma);
-    for (centers, 0..) |center, idx| {
-        orbitals[idx] = .{ .center = center, .alpha = alpha, .cutoff = cutoff };
-    }
 
     var cell_list = try OrbitalCellList.init(alloc, grid.cell, pbc, centers, cutoff);
     defer cell_list.deinit(alloc);
 
-    const inv_cell = try local_orbital_potential.invertCell(grid.cell);
+    const inv_cell = try local_orbital_potential.invert_cell(grid.cell);
     const values = try alloc.alloc(f64, count);
     @memset(values, 0.0);
 
@@ -50,37 +103,18 @@ pub fn buildDensityGridFromCenters(
             var ix: usize = 0;
             while (ix < grid.dims[0]) : (ix += 1) {
                 const point = grid.point(ix, iy, iz);
-                try cell_list.collectCandidates(alloc, point, &candidates);
-                phi_map.clearRetainingCapacity();
-                for (candidates.items) |orb_idx| {
-                    const phi = local_orbital_potential.orbitalValueAt(
-                        orbitals[orb_idx],
-                        point,
-                        grid.cell,
-                        inv_cell,
-                        pbc,
-                    );
-                    if (phi == 0.0) continue;
-                    try phi_map.put(orb_idx, phi);
-                }
-
-                var rho: f64 = 0.0;
-                var it = phi_map.iterator();
-                while (it.next()) |entry| {
-                    const row = entry.key_ptr.*;
-                    const phi_i = entry.value_ptr.*;
-                    const start = density.row_ptr[row];
-                    const end = density.row_ptr[row + 1];
-                    var di: usize = start;
-                    while (di < end) : (di += 1) {
-                        const col = density.col_idx[di];
-                        if (phi_map.get(col)) |phi_j| {
-                            rho += density.values[di] * phi_i * phi_j;
-                        }
-                    }
-                }
-
-                values[idx] = rho;
+                values[idx] = try evaluate_grid_point_density(
+                    alloc,
+                    &cell_list,
+                    orbitals,
+                    density,
+                    point,
+                    grid.cell,
+                    inv_cell,
+                    pbc,
+                    &candidates,
+                    &phi_map,
+                );
                 idx += 1;
             }
         }
@@ -107,8 +141,8 @@ const OrbitalCellList = struct {
         cutoff: f64,
     ) !OrbitalCellList {
         if (cutoff <= 0.0) return error.InvalidCutoff;
-        const inv_cell = try local_orbital_potential.invertCell(cell);
-        const lengths = cellLengths(cell);
+        const inv_cell = try local_orbital_potential.invert_cell(cell);
+        const lengths = cell_lengths(cell);
         var nx = @max(@as(usize, @intFromFloat(std.math.floor(lengths.x / cutoff))), 1);
         var ny = @max(@as(usize, @intFromFloat(std.math.floor(lengths.y / cutoff))), 1);
         var nz = @max(@as(usize, @intFromFloat(std.math.floor(lengths.z / cutoff))), 1);
@@ -126,10 +160,10 @@ const OrbitalCellList = struct {
 
         var idx: usize = 0;
         while (idx < positions.len) : (idx += 1) {
-            const frac = inv_cell.mulVec(positions[idx]);
-            const ix = clampCellIndex(frac.x, nx);
-            const iy = clampCellIndex(frac.y, ny);
-            const iz = clampCellIndex(frac.z, nz);
+            const frac = inv_cell.mul_vec(positions[idx]);
+            const ix = clamp_cell_index(frac.x, nx);
+            const iy = clamp_cell_index(frac.y, ny);
+            const iz = clamp_cell_index(frac.z, nz);
             const cell_index = ix + nx * (iy + ny * iz);
             next[idx] = heads[cell_index];
             heads[cell_index] = @as(i64, @intCast(idx));
@@ -154,17 +188,17 @@ const OrbitalCellList = struct {
         self.* = undefined;
     }
 
-    pub fn collectCandidates(
+    pub fn collect_candidates(
         self: *OrbitalCellList,
         gpa: std.mem.Allocator,
         point: math.Vec3,
         list: *std.ArrayList(usize),
     ) !void {
         list.clearRetainingCapacity();
-        const frac = self.inv_cell.mulVec(point);
-        const ix = clampCellIndex(frac.x, self.nx);
-        const iy = clampCellIndex(frac.y, self.ny);
-        const iz = clampCellIndex(frac.z, self.nz);
+        const frac = self.inv_cell.mul_vec(point);
+        const ix = clamp_cell_index(frac.x, self.nx);
+        const iy = clamp_cell_index(frac.y, self.ny);
+        const iz = clamp_cell_index(frac.z, self.nz);
         var dx: i32 = -1;
         while (dx <= 1) : (dx += 1) {
             var dy: i32 = -1;
@@ -178,9 +212,9 @@ const OrbitalCellList = struct {
                     if (!self.pbc.z and (iz == 0 and dz < 0)) continue;
                     if (!self.pbc.z and (iz + 1 == self.nz and dz > 0)) continue;
 
-                    const nx_i = wrapCellIndex(ix, self.nx, dx, self.pbc.x);
-                    const ny_i = wrapCellIndex(iy, self.ny, dy, self.pbc.y);
-                    const nz_i = wrapCellIndex(iz, self.nz, dz, self.pbc.z);
+                    const nx_i = wrap_cell_index(ix, self.nx, dx, self.pbc.x);
+                    const ny_i = wrap_cell_index(iy, self.ny, dy, self.pbc.y);
+                    const nz_i = wrap_cell_index(iz, self.nz, dz, self.pbc.z);
                     const cell_index = nx_i + self.nx * (ny_i + self.ny * nz_i);
                     var atom = self.heads[cell_index];
                     while (atom >= 0) : (atom = self.next[@as(usize, @intCast(atom))]) {
@@ -192,7 +226,7 @@ const OrbitalCellList = struct {
     }
 };
 
-fn cellLengths(cell: math.Mat3) math.Vec3 {
+fn cell_lengths(cell: math.Mat3) math.Vec3 {
     return .{
         .x = math.Vec3.norm(cell.row(0)),
         .y = math.Vec3.norm(cell.row(1)),
@@ -200,7 +234,7 @@ fn cellLengths(cell: math.Mat3) math.Vec3 {
     };
 }
 
-fn clampCellIndex(frac: f64, n: usize) usize {
+fn clamp_cell_index(frac: f64, n: usize) usize {
     var t = frac - std.math.floor(frac);
     if (t < 0.0) t += 1.0;
     if (t >= 1.0) t -= 1.0;
@@ -208,7 +242,7 @@ fn clampCellIndex(frac: f64, n: usize) usize {
     return if (idx >= n) n - 1 else idx;
 }
 
-fn wrapCellIndex(index: usize, n: usize, delta: i32, enabled: bool) usize {
+fn wrap_cell_index(index: usize, n: usize, delta: i32, enabled: bool) usize {
     if (!enabled) return index;
     const ni = @as(i32, @intCast(n));
     const idx = @mod(@as(i32, @intCast(index)) + delta, ni);
@@ -217,7 +251,7 @@ fn wrapCellIndex(index: usize, n: usize, delta: i32, enabled: bool) usize {
 
 test "density grid integrates to one for normalized orbital" {
     const alloc = std.testing.allocator;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 6.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 6.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 6.0 },
@@ -233,10 +267,10 @@ test "density grid integrates to one for normalized orbital" {
     const cutoff = 4.0;
     const pbc = neighbor_list.Pbc{ .x = false, .y = false, .z = false };
     const triplets = [_]sparse.Triplet{.{ .row = 0, .col = 0, .value = 1.0 }};
-    var density_matrix = try sparse.CsrMatrix.initFromTriplets(alloc, 1, 1, triplets[0..]);
+    var density_matrix = try sparse.CsrMatrix.init_from_triplets(alloc, 1, 1, triplets[0..]);
     defer density_matrix.deinit(alloc);
 
-    const rho = try buildDensityGridFromCenters(
+    const rho = try build_density_grid_from_centers(
         alloc,
         centers[0..],
         density_matrix,

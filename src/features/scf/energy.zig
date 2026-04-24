@@ -16,10 +16,10 @@ const xc = @import("../xc/xc.zig");
 
 const Grid = grid_mod.Grid;
 
-const realToReciprocal = fft_grid.realToReciprocal;
+const real_to_reciprocal = fft_grid.real_to_reciprocal;
 
-const computeXcFields = xc_fields_mod.computeXcFields;
-const computeXcFieldsSpin = xc_fields_mod.computeXcFieldsSpin;
+const compute_xc_fields = xc_fields_mod.compute_xc_fields;
+const compute_xc_fields_spin = xc_fields_mod.compute_xc_fields_spin;
 
 pub const EnergyTerms = struct {
     total: f64,
@@ -78,7 +78,7 @@ const EnergyTermContext = struct {
         };
     }
 
-    fn evalInput(self: *const EnergyTermContext, rho: ?[]const f64) term_mod.EvalInput {
+    fn eval_input(self: *const EnergyTermContext, rho: ?[]const f64) term_mod.EvalInput {
         return .{
             .alloc = self.alloc,
             .io = self.io,
@@ -144,13 +144,13 @@ pub const EnergyInputSpin = struct {
 
 /// Compute energy terms (Hartree + XC) from density.
 /// If coulomb_r_cut is non-null, the cutoff Coulomb kernel is used for Hartree energy.
-pub fn computeEnergyTerms(in: EnergyInput) !EnergyTerms {
+pub fn compute_energy_terms(in: EnergyInput) !EnergyTerms {
     // For PAW, use augmented density (ρ̃ + n̂hat) for E_H and E_xc to ensure
     // variational consistency with the potential used in the SCF eigenvalue problem.
     // For NC pseudopotentials, rho_aug is null and we use rho (pseudo density).
     const rho_for_hxc = in.rho_aug orelse in.rho;
     const ctx = EnergyTermContext.init(in.alloc, in.io, &in.grid, in.species, in.atoms);
-    const density = try computeScalarDensityEnergyTerms(
+    const density = try compute_scalar_density_energy_terms(
         &ctx,
         rho_for_hxc,
         in.rho,
@@ -161,14 +161,14 @@ pub fn computeEnergyTerms(in: EnergyInput) !EnergyTerms {
         in.coulomb_r_cut,
         in.ecutrho,
     );
-    const ionic = try computeIonicEnergyTerms(
+    const ionic = try compute_ionic_energy_terms(
         &ctx,
         in.ewald_cfg,
         in.vdw_cfg,
         in.quiet,
         in.coulomb_r_cut,
     );
-    return assembleEnergyTerms(
+    return assemble_energy_terms(
         in.band_energy,
         in.nonlocal_energy,
         in.entropy_energy,
@@ -179,12 +179,12 @@ pub fn computeEnergyTerms(in: EnergyInput) !EnergyTerms {
 
 /// Compute energy terms for spin-polarized calculation.
 /// If coulomb_r_cut is non-null, the cutoff Coulomb kernel is used for Hartree energy.
-pub fn computeEnergyTermsSpin(in: EnergyInputSpin) !EnergyTerms {
+pub fn compute_energy_terms_spin(in: EnergyInputSpin) !EnergyTerms {
     // For PAW, use augmented density (ρ̃ + n̂) for E_H and E_xc
     const rho_up_hxc = in.rho_aug_up orelse in.rho_up;
     const rho_down_hxc = in.rho_aug_down orelse in.rho_down;
     const ctx = EnergyTermContext.init(in.alloc, in.io, &in.grid, in.species, in.atoms);
-    const density = try computeSpinDensityEnergyTerms(
+    const density = try compute_spin_density_energy_terms(
         &ctx,
         in.rho_up,
         in.rho_down,
@@ -198,14 +198,14 @@ pub fn computeEnergyTermsSpin(in: EnergyInputSpin) !EnergyTerms {
         in.coulomb_r_cut,
         in.ecutrho,
     );
-    const ionic = try computeIonicEnergyTerms(
+    const ionic = try compute_ionic_energy_terms(
         &ctx,
         in.ewald_cfg,
         in.vdw_cfg,
         in.quiet,
         in.coulomb_r_cut,
     );
-    return assembleEnergyTerms(
+    return assemble_energy_terms(
         in.band_energy,
         in.nonlocal_energy,
         in.entropy_energy,
@@ -214,7 +214,7 @@ pub fn computeEnergyTermsSpin(in: EnergyInputSpin) !EnergyTerms {
     );
 }
 
-fn computeScalarDensityEnergyTerms(
+fn compute_scalar_density_energy_terms(
     ctx: *const EnergyTermContext,
     rho_for_hxc: []const f64,
     rho: []const f64,
@@ -225,7 +225,7 @@ fn computeScalarDensityEnergyTerms(
     coulomb_r_cut: ?f64,
     ecutrho: ?f64,
 ) !DensityEnergyTerms {
-    const xc_fields = try computeXcFields(
+    const xc_fields = try compute_xc_fields(
         ctx.alloc,
         ctx.grid.*,
         rho_for_hxc,
@@ -240,14 +240,14 @@ fn computeScalarDensityEnergyTerms(
 
     const dv = ctx.grid.volume / @as(f64, @floatFromInt(ctx.grid.count()));
     return .{
-        .hartree = try computeHartreeEnergy(ctx, rho_for_hxc, coulomb_r_cut, ecutrho),
-        .local_pseudo = try computeLocalPseudoEnergy(ctx, rho, local_cfg, ecutrho),
-        .vxc_rho = integrateScalarVxcRho(xc_fields.vxc, rho_for_hxc, dv),
-        .xc = integrateExcDensity(xc_fields.exc, dv),
+        .hartree = try compute_hartree_energy(ctx, rho_for_hxc, coulomb_r_cut, ecutrho),
+        .local_pseudo = try compute_local_pseudo_energy(ctx, rho, local_cfg, ecutrho),
+        .vxc_rho = integrate_scalar_vxc_rho(xc_fields.vxc, rho_for_hxc, dv),
+        .xc = integrate_exc_density(xc_fields.exc, dv),
     };
 }
 
-fn computeSpinDensityEnergyTerms(
+fn compute_spin_density_energy_terms(
     ctx: *const EnergyTermContext,
     rho_up: []const f64,
     rho_down: []const f64,
@@ -261,10 +261,10 @@ fn computeSpinDensityEnergyTerms(
     coulomb_r_cut: ?f64,
     ecutrho: ?f64,
 ) !DensityEnergyTerms {
-    const rho_total = try buildDensitySum(ctx.alloc, rho_up_hxc, rho_down_hxc);
+    const rho_total = try build_density_sum(ctx.alloc, rho_up_hxc, rho_down_hxc);
     defer ctx.alloc.free(rho_total);
 
-    const rho_pseudo_total = try maybeBuildPseudoDensitySum(
+    const rho_pseudo_total = try maybe_build_pseudo_density_sum(
         ctx.alloc,
         rho_up,
         rho_down,
@@ -272,7 +272,7 @@ fn computeSpinDensityEnergyTerms(
     );
     defer if (rho_pseudo_total) |buf| ctx.alloc.free(buf);
 
-    const xc_fields = try computeXcFieldsSpin(
+    const xc_fields = try compute_xc_fields_spin(
         ctx.alloc,
         ctx.grid.*,
         rho_up_hxc,
@@ -289,50 +289,50 @@ fn computeSpinDensityEnergyTerms(
 
     const dv = ctx.grid.volume / @as(f64, @floatFromInt(ctx.grid.count()));
     return .{
-        .hartree = try computeHartreeEnergy(ctx, rho_total, coulomb_r_cut, ecutrho),
-        .local_pseudo = try computeLocalPseudoEnergy(
+        .hartree = try compute_hartree_energy(ctx, rho_total, coulomb_r_cut, ecutrho),
+        .local_pseudo = try compute_local_pseudo_energy(
             ctx,
             rho_pseudo_total orelse rho_total,
             local_cfg,
             ecutrho,
         ),
-        .vxc_rho = integrateSpinVxcRho(
+        .vxc_rho = integrate_spin_vxc_rho(
             xc_fields.vxc_up,
             xc_fields.vxc_down,
             rho_up_hxc,
             rho_down_hxc,
             dv,
         ),
-        .xc = integrateExcDensity(xc_fields.exc, dv),
+        .xc = integrate_exc_density(xc_fields.exc, dv),
     };
 }
 
-fn computeHartreeEnergy(
+fn compute_hartree_energy(
     ctx: *const EnergyTermContext,
     rho: []const f64,
     coulomb_r_cut: ?f64,
     ecutrho: ?f64,
 ) !f64 {
-    return try term_mod.termEnergy(.{ .hartree = .{
+    return try term_mod.term_energy(.{ .hartree = .{
         .isolated = (coulomb_r_cut != null),
         .ecutrho = ecutrho,
-    } }, ctx.evalInput(rho));
+    } }, ctx.eval_input(rho));
 }
 
-fn computeLocalPseudoEnergy(
+fn compute_local_pseudo_energy(
     ctx: *const EnergyTermContext,
     rho: []const f64,
     local_cfg: local_potential.LocalPotentialConfig,
     ecutrho: ?f64,
 ) !f64 {
-    return try term_mod.termEnergy(.{ .atomic_local = .{
+    return try term_mod.term_energy(.{ .atomic_local = .{
         .mode = local_cfg.mode,
         .explicit_alpha = local_cfg.alpha,
         .ecutrho = ecutrho,
-    } }, ctx.evalInput(rho));
+    } }, ctx.eval_input(rho));
 }
 
-fn computeIonicEnergyTerms(
+fn compute_ionic_energy_terms(
     ctx: *const EnergyTermContext,
     ewald_cfg: config.EwaldConfig,
     vdw_cfg: config.VdwConfig,
@@ -340,16 +340,16 @@ fn computeIonicEnergyTerms(
     coulomb_r_cut: ?f64,
 ) !IonicEnergyTerms {
     const ion_ion = if (coulomb_r_cut != null)
-        try computeDirectIonIonEnergy(ctx.alloc, ctx.model.species, ctx.model.atoms) * 2.0
+        try compute_direct_ion_ion_energy(ctx.alloc, ctx.model.species, ctx.model.atoms) * 2.0
     else
-        (try term_mod.termEnergy(.{ .ewald = .{
+        (try term_mod.term_energy(.{ .ewald = .{
             .alpha = ewald_cfg.alpha,
             .rcut = ewald_cfg.rcut,
             .gcut = ewald_cfg.gcut,
             .tol = ewald_cfg.tol,
             .quiet = quiet,
-        } }, ctx.evalInput(null))) * 2.0;
-    const epsatm = sumAtomicPotentialOffsets(ctx.model.species, ctx.model.atoms);
+        } }, ctx.eval_input(null))) * 2.0;
+    const epsatm = sum_atomic_potential_offsets(ctx.model.species, ctx.model.atoms);
     return .{
         .ion_ion = ion_ion,
         .psp_core = if (coulomb_r_cut != null)
@@ -357,7 +357,7 @@ fn computeIonicEnergyTerms(
         else
             epsatm.epsatm_sum * epsatm.n_elec / ctx.grid.volume,
         .dispersion = if (vdw_cfg.enabled)
-            try computeDispersionEnergy(
+            try compute_dispersion_energy(
                 ctx.alloc,
                 ctx.model.species,
                 ctx.model.atoms,
@@ -369,7 +369,7 @@ fn computeIonicEnergyTerms(
     };
 }
 
-fn assembleEnergyTerms(
+fn assemble_energy_terms(
     band_energy: f64,
     nonlocal_energy: f64,
     entropy_energy: f64,
@@ -395,7 +395,7 @@ fn assembleEnergyTerms(
     };
 }
 
-fn buildDensitySum(
+fn build_density_sum(
     alloc: std.mem.Allocator,
     lhs: []const f64,
     rhs: []const f64,
@@ -407,24 +407,24 @@ fn buildDensitySum(
     return sum;
 }
 
-fn maybeBuildPseudoDensitySum(
+fn maybe_build_pseudo_density_sum(
     alloc: std.mem.Allocator,
     rho_up: []const f64,
     rho_down: []const f64,
     has_augmented_density: bool,
 ) !?[]f64 {
     if (!has_augmented_density) return null;
-    return try buildDensitySum(alloc, rho_up, rho_down);
+    return try build_density_sum(alloc, rho_up, rho_down);
 }
 
-fn integrateExcDensity(exc_density: []const f64, dv: f64) f64 {
-    // Integrate exc directly to avoid a second computeXcFields call via termEnergy(.xc).
+fn integrate_exc_density(exc_density: []const f64, dv: f64) f64 {
+    // Integrate exc directly to avoid a second compute_xc_fields call via term_energy(.xc).
     var exc: f64 = 0.0;
     for (exc_density) |value| exc += value * dv;
     return exc;
 }
 
-fn integrateScalarVxcRho(vxc: []const f64, rho: []const f64, dv: f64) f64 {
+fn integrate_scalar_vxc_rho(vxc: []const f64, rho: []const f64, dv: f64) f64 {
     // vxc_rho = ∫V_xc(ρ_aug+core) × ρ_aug dr  (for PAW)
     //         = ∫V_xc(ρ+core) × ρ dr           (for NC)
     var vxc_rho: f64 = 0.0;
@@ -434,7 +434,7 @@ fn integrateScalarVxcRho(vxc: []const f64, rho: []const f64, dv: f64) f64 {
     return vxc_rho;
 }
 
-fn integrateSpinVxcRho(
+fn integrate_spin_vxc_rho(
     vxc_up: []const f64,
     vxc_down: []const f64,
     rho_up: []const f64,
@@ -453,7 +453,7 @@ const AtomicPotentialOffsets = struct {
     n_elec: f64,
 };
 
-fn sumAtomicPotentialOffsets(
+fn sum_atomic_potential_offsets(
     species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
 ) AtomicPotentialOffsets {
@@ -468,7 +468,7 @@ fn sumAtomicPotentialOffsets(
 
 /// Compute ion-ion energy by direct pairwise Coulomb sum (for isolated systems).
 /// Returns energy in Hartree (same convention as Ewald).
-fn computeDirectIonIonEnergy(
+fn compute_direct_ion_ion_energy(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
@@ -485,11 +485,11 @@ fn computeDirectIonIonEnergy(
         charges[i] = species[atom.species_index].z_valence;
         positions[i] = atom.position;
     }
-    return coulomb.directIonIonEnergy(charges, positions);
+    return coulomb.direct_ion_ion_energy(charges, positions);
 }
 
 /// Compute <psi|V_nl|psi> for one band.
-pub fn bandNonlocalEnergy(
+pub fn band_nonlocal_energy(
     n: usize,
     vnl: []const math.Complex,
     vectors: []const math.Complex,
@@ -512,7 +512,7 @@ pub fn bandNonlocalEnergy(
 }
 
 /// Compute DFT-D3(BJ) dispersion energy from atomic data.
-fn computeDispersionEnergy(
+fn compute_dispersion_energy(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
@@ -527,13 +527,13 @@ fn computeDispersionEnergy(
     defer alloc.free(positions);
 
     for (atoms, 0..) |atom, i| {
-        atomic_numbers[i] = d3_params.atomicNumber(species[atom.species_index].symbol) orelse 0;
+        atomic_numbers[i] = d3_params.atomic_number(species[atom.species_index].symbol) orelse 0;
         positions[i] = atom.position;
     }
 
-    const damping = getDampingParams(vdw_cfg);
+    const damping = get_damping_params(vdw_cfg);
 
-    return try d3.computeEnergy(
+    return try d3.compute_energy(
         alloc,
         atomic_numbers,
         positions,
@@ -545,7 +545,7 @@ fn computeDispersionEnergy(
 }
 
 /// Get damping parameters, applying user overrides if specified.
-pub fn getDampingParams(vdw_cfg: config.VdwConfig) d3_params.DampingParams {
+pub fn get_damping_params(vdw_cfg: config.VdwConfig) d3_params.DampingParams {
     var damping = d3_params.pbe_d3bj; // default
     if (vdw_cfg.s6) |v| damping.s6 = v;
     if (vdw_cfg.s8) |v| damping.s8 = v;

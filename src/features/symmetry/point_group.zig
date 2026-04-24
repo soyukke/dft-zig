@@ -101,7 +101,7 @@ pub const CharacterTable = struct {
     /// Get character of an operation for a given irrep.
     /// For 1D irreps, this returns the character directly.
     /// For higher-dimensional irreps, returns the trace of the representation matrix.
-    pub fn getCharacter(self: CharacterTable, irrep_idx: usize, class_idx: usize) f64 {
+    pub fn get_character(self: CharacterTable, irrep_idx: usize, class_idx: usize) f64 {
         if (irrep_idx >= self.irreps.len) return 0.0;
         const irrep = self.irreps[irrep_idx];
         if (class_idx >= irrep.characters.len) return 0.0;
@@ -250,7 +250,7 @@ pub const d6h_table = CharacterTable{
 };
 
 /// Get character table for a point group type.
-pub fn getCharacterTable(pg: PointGroupType) ?CharacterTable {
+pub fn get_character_table(pg: PointGroupType) ?CharacterTable {
     return switch (pg) {
         .cs => cs_table,
         .c2 => c2_table,
@@ -264,7 +264,7 @@ pub fn getCharacterTable(pg: PointGroupType) ?CharacterTable {
 
 /// Determine point group type from symmetry operations.
 /// This examines the rotation parts of the operations.
-pub fn identifyPointGroup(ops: []const symmetry.SymOp) PointGroupType {
+pub fn identify_point_group(ops: []const symmetry.SymOp) PointGroupType {
     const n = ops.len;
 
     // Count operation types
@@ -279,7 +279,7 @@ pub fn identifyPointGroup(ops: []const symmetry.SymOp) PointGroupType {
 
         if (det == 1) {
             // Proper rotation
-            const order = rotationOrder(trace);
+            const order = rotation_order(trace);
             if (order > max_rotation_order) {
                 max_rotation_order = order;
             }
@@ -313,7 +313,7 @@ pub fn identifyPointGroup(ops: []const symmetry.SymOp) PointGroupType {
 }
 
 /// Get rotation order from trace of rotation matrix.
-fn rotationOrder(trace: i32) i32 {
+fn rotation_order(trace: i32) i32 {
     return switch (trace) {
         3 => 1, // Identity
         2 => 6, // C6
@@ -326,7 +326,7 @@ fn rotationOrder(trace: i32) i32 {
 
 /// Classify symmetry operation into conjugacy class.
 /// Returns class index for the character table lookup.
-pub fn classifyOperation(op: symmetry.SymOp, pg: PointGroupType) usize {
+pub fn classify_operation(op: symmetry.SymOp, pg: PointGroupType) usize {
     const det = op.rot.det();
     const trace = op.rot.trace();
 
@@ -366,7 +366,7 @@ test "point group identification" {
             .trans = math.Vec3{ .x = 0, .y = 0, .z = 0 },
         },
     };
-    try testing.expectEqual(PointGroupType.c1, identifyPointGroup(&c1_ops));
+    try testing.expectEqual(PointGroupType.c1, identify_point_group(&c1_ops));
 
     // Identity + mirror -> Cs
     const cs_ops = [_]symmetry.SymOp{
@@ -381,5 +381,5 @@ test "point group identification" {
             .trans = math.Vec3{ .x = 0, .y = 0, .z = 0 },
         },
     };
-    try testing.expectEqual(PointGroupType.cs, identifyPointGroup(&cs_ops));
+    try testing.expectEqual(PointGroupType.cs, identify_point_group(&cs_ops));
 }

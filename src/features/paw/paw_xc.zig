@@ -6,12 +6,12 @@ const xc = @import("../xc/xc.zig");
 const gaunt_mod = @import("gaunt.zig");
 const GauntTable = gaunt_mod.GauntTable;
 
-const ctrapWeight = @import("../math/math.zig").radial.ctrapWeight;
+const ctrap_weight = @import("../math/math.zig").radial.ctrap_weight;
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const lebedev = @import("../grid/lebedev.zig");
 
 /// Find Q_ij^L(r) entry from paw.qijl for given (i,j,L) triplet.
-fn findQijL(paw: PawData, i: usize, j: usize, big_l: usize) ?[]const f64 {
+fn find_qij_l(paw: PawData, i: usize, j: usize, big_l: usize) ?[]const f64 {
     for (paw.qijl) |entry| {
         if (entry.angular_momentum == big_l and
             ((entry.first_index == i and entry.second_index == j) or
@@ -30,7 +30,7 @@ fn findQijL(paw: PawData, i: usize, j: usize, big_l: usize) ?[]const f64 {
 ///
 /// Formula: V_H(r) = 8π [Q_in(r)/r + Q_out(r)]
 ///   where Q_in(r) = ∫₀ʳ ρ(r')r'² dr', Q_out(r) = ∫ᵣ^∞ ρ(r')r' dr'
-fn radialHartreePotentialL0(
+fn radial_hartree_potential_l0(
     r: []const f64,
     rab: []const f64,
     rho: []const f64,
@@ -45,7 +45,7 @@ fn radialHartreePotentialL0(
     // Store q_in values for each grid point
     var q_in_vals: [4096]f64 = undefined;
     for (0..n_mesh) |k| {
-        const integrand = rho[k] * r[k] * r[k] * rab[k] * ctrapWeight(k, n_mesh);
+        const integrand = rho[k] * r[k] * r[k] * rab[k] * ctrap_weight(k, n_mesh);
         q_in += integrand;
         q_in_vals[k] = q_in;
     }
@@ -55,7 +55,7 @@ fn radialHartreePotentialL0(
     var k_rev: usize = n_mesh;
     while (k_rev > 0) {
         k_rev -= 1;
-        const integrand = rho[k_rev] * r[k_rev] * rab[k_rev] * ctrapWeight(k_rev, n_mesh);
+        const integrand = rho[k_rev] * r[k_rev] * rab[k_rev] * ctrap_weight(k_rev, n_mesh);
         q_out += integrand;
         // V_H(r) = 8π [Q_in(r)/r + Q_out(r)]
         if (r[k_rev] > 1e-10) {
@@ -80,7 +80,7 @@ fn radialHartreePotentialL0(
 ///
 /// Formula: V_L(r) = (8π/(2L+1)) × [r^{-L-1} I_in(r) + r^L I_out(r)]
 ///   where I_in(r) = ∫₀ʳ ρ(r') r'^{L+2} dr', I_out(r) = ∫ᵣ^∞ ρ(r') r'^{1-L} dr'
-fn radialHartreePotentialL(
+fn radial_hartree_potential_l(
     r: []const f64,
     rab: []const f64,
     rho: []const f64,
@@ -97,7 +97,7 @@ fn radialHartreePotentialL(
     for (0..n_mesh) |k| {
         const rp = r[k];
         const rp_pow = std.math.pow(f64, rp, fl + 2.0);
-        i_in += rho[k] * rp_pow * rab[k] * ctrapWeight(k, n_mesh);
+        i_in += rho[k] * rp_pow * rab[k] * ctrap_weight(k, n_mesh);
         i_in_vals[k] = i_in;
     }
 
@@ -108,7 +108,7 @@ fn radialHartreePotentialL(
         k_rev -= 1;
         const rp = r[k_rev];
         const rp_pow = std.math.pow(f64, rp, 1.0 - fl);
-        i_out += rho[k_rev] * rp_pow * rab[k_rev] * ctrapWeight(k_rev, n_mesh);
+        i_out += rho[k_rev] * rp_pow * rab[k_rev] * ctrap_weight(k_rev, n_mesh);
         if (rp > 1e-10) {
             const r_neg = std.math.pow(f64, rp, -(fl + 1.0));
             const r_pos = std.math.pow(f64, rp, fl);
@@ -123,7 +123,7 @@ fn radialHartreePotentialL(
 }
 
 /// Allocate per-(L,M) density array slices initialised to zero.
-fn allocLmDensities(alloc: std.mem.Allocator, n_lm: usize, n_mesh: usize) ![][]f64 {
+fn alloc_lm_densities(alloc: std.mem.Allocator, n_lm: usize, n_mesh: usize) ![][]f64 {
     const out = try alloc.alloc([]f64, n_lm);
     for (0..n_lm) |lm| {
         out[lm] = try alloc.alloc(f64, n_mesh);
@@ -132,13 +132,13 @@ fn allocLmDensities(alloc: std.mem.Allocator, n_lm: usize, n_mesh: usize) ![][]f
     return out;
 }
 
-fn freeLmDensities(alloc: std.mem.Allocator, buf: [][]f64) void {
+fn free_lm_densities(alloc: std.mem.Allocator, buf: [][]f64) void {
     for (buf) |s| alloc.free(s);
     alloc.free(buf);
 }
 
 /// Contract m-resolved rhoij with Gaunt coefficients to get rhoij_{LM}.
-fn contractRhoijLm(
+fn contract_rhoij_lm(
     rhoij_m: []const f64,
     m_total: usize,
     m_offsets: []const usize,
@@ -168,7 +168,7 @@ fn contractRhoijLm(
 }
 
 /// Accumulate u_i u_j / r² into density array rho_lm (for one (i,j) and scalar coefficient).
-fn addWfcSquaredToLm(
+fn add_wfc_squared_to_lm(
     rho_lm: []f64,
     r: []const f64,
     wfc_i: []const f64,
@@ -184,7 +184,7 @@ fn addWfcSquaredToLm(
 }
 
 /// Accumulate Q^L / r² into density array rho_lm.
-fn addAugmentationToLm(
+fn add_augmentation_to_lm(
     rho_lm: []f64,
     r: []const f64,
     q_vals: []const f64,
@@ -200,7 +200,7 @@ fn addAugmentationToLm(
 }
 
 /// Build multipole-decomposed AE and PS densities (with augmentation).
-fn buildLmDensitiesAePs(
+fn build_lm_densities_ae_ps(
     paw: PawData,
     rhoij_m: []const f64,
     m_total: usize,
@@ -227,8 +227,8 @@ fn buildLmDensitiesAePs(
                 const bl_i32: i32 = @intCast(big_l);
                 var bm: i32 = -bl_i32;
                 while (bm <= bl_i32) : (bm += 1) {
-                    const lm_idx = GauntTable.lmIndex(big_l, bm);
-                    const rhoij_lm = contractRhoijLm(
+                    const lm_idx = GauntTable.lm_index(big_l, bm);
+                    const rhoij_lm = contract_rhoij_lm(
                         rhoij_m,
                         m_total,
                         m_offsets,
@@ -241,11 +241,11 @@ fn buildLmDensitiesAePs(
                         bm,
                     );
                     if (@abs(rhoij_lm) < 1e-30) continue;
-                    addWfcSquaredToLm(rho_ae_lm[lm_idx], r, ae_i, ae_j, n_r, rhoij_lm);
-                    addWfcSquaredToLm(rho_ps_lm[lm_idx], r, ps_i, ps_j, n_r, rhoij_lm);
+                    add_wfc_squared_to_lm(rho_ae_lm[lm_idx], r, ae_i, ae_j, n_r, rhoij_lm);
+                    add_wfc_squared_to_lm(rho_ps_lm[lm_idx], r, ps_i, ps_j, n_r, rhoij_lm);
                     if (include_augmentation) {
-                        if (findQijL(paw, i, j, big_l)) |q_vals| {
-                            addAugmentationToLm(rho_ps_lm[lm_idx], r, q_vals, n_r, rhoij_lm);
+                        if (find_qij_l(paw, i, j, big_l)) |q_vals| {
+                            add_augmentation_to_lm(rho_ps_lm[lm_idx], r, q_vals, n_r, rhoij_lm);
                         }
                     }
                 }
@@ -260,7 +260,7 @@ fn buildLmDensitiesAePs(
 /// Uses full multipole expansion with Gaunt coefficients.
 /// Returns E_H^AE - E_H^PS (including Q contributions in PS density).
 /// Accumulate E_H = ½ ∫ V_H ρ r² dr for a single (L,M) density channel.
-fn accumulateHartreeChannelEnergy(
+fn accumulate_hartree_channel_energy(
     r: []const f64,
     rab: []const f64,
     rho_lm: []const f64,
@@ -268,16 +268,16 @@ fn accumulateHartreeChannelEnergy(
     n_mesh: usize,
     big_l: usize,
 ) f64 {
-    radialHartreePotentialL(r, rab, rho_lm, vh, n_mesh, big_l);
+    radial_hartree_potential_l(r, rab, rho_lm, vh, n_mesh, big_l);
     var sum: f64 = 0.0;
     for (0..n_mesh) |k| {
-        const w = rab[k] * ctrapWeight(k, n_mesh);
+        const w = rab[k] * ctrap_weight(k, n_mesh);
         sum += 0.5 * vh[k] * rho_lm[k] * r[k] * r[k] * w;
     }
     return sum;
 }
 
-pub fn computePawEhOnsiteMultiL(
+pub fn compute_paw_eh_onsite_multi_l(
     alloc: std.mem.Allocator,
     paw: PawData,
     rhoij_m: []const f64,
@@ -297,13 +297,13 @@ pub fn computePawEhOnsiteMultiL(
     const lmax_aug = gaunt_table.lmax_aug;
     const n_lm_aug = (lmax_aug + 1) * (lmax_aug + 1);
 
-    const rho_ae_lm = try allocLmDensities(alloc, n_lm_aug, n_mesh);
-    defer freeLmDensities(alloc, rho_ae_lm);
+    const rho_ae_lm = try alloc_lm_densities(alloc, n_lm_aug, n_mesh);
+    defer free_lm_densities(alloc, rho_ae_lm);
 
-    const rho_ps_lm = try allocLmDensities(alloc, n_lm_aug, n_mesh);
-    defer freeLmDensities(alloc, rho_ps_lm);
+    const rho_ps_lm = try alloc_lm_densities(alloc, n_lm_aug, n_mesh);
+    defer free_lm_densities(alloc, rho_ps_lm);
 
-    buildLmDensitiesAePs(
+    build_lm_densities_ae_ps(
         paw,
         rhoij_m,
         m_total,
@@ -325,9 +325,23 @@ pub fn computePawEhOnsiteMultiL(
         const bl_i32: i32 = @intCast(big_l);
         var bm: i32 = -bl_i32;
         while (bm <= bl_i32) : (bm += 1) {
-            const lm_idx = GauntTable.lmIndex(big_l, bm);
-            eh_ae += accumulateHartreeChannelEnergy(r, rab, rho_ae_lm[lm_idx], vh, n_mesh, big_l);
-            eh_ps += accumulateHartreeChannelEnergy(r, rab, rho_ps_lm[lm_idx], vh, n_mesh, big_l);
+            const lm_idx = GauntTable.lm_index(big_l, bm);
+            eh_ae += accumulate_hartree_channel_energy(
+                r,
+                rab,
+                rho_ae_lm[lm_idx],
+                vh,
+                n_mesh,
+                big_l,
+            );
+            eh_ps += accumulate_hartree_channel_energy(
+                r,
+                rab,
+                rho_ps_lm[lm_idx],
+                vh,
+                n_mesh,
+                big_l,
+            );
         }
     }
     return eh_ae - eh_ps;
@@ -341,7 +355,7 @@ pub fn computePawEhOnsiteMultiL(
 /// Allocate per-(L,M) potential arrays and solve the radial Poisson equation
 /// for every (L,M) channel covered by the augmentation expansion. Unused
 /// channels are filled with zero so subsequent loops can blindly read them.
-fn allocAndSolveLmPotentials(
+fn alloc_and_solve_lm_potentials(
     alloc: std.mem.Allocator,
     r: []const f64,
     rab: []const f64,
@@ -359,15 +373,15 @@ fn allocAndSolveLmPotentials(
         const bl_i32: i32 = @intCast(big_l);
         var bm: i32 = -bl_i32;
         while (bm <= bl_i32) : (bm += 1) {
-            const lm_idx = GauntTable.lmIndex(big_l, bm);
-            radialHartreePotentialL(r, rab, rho_lm[lm_idx], vh_lm[lm_idx], n_mesh, big_l);
+            const lm_idx = GauntTable.lm_index(big_l, bm);
+            radial_hartree_potential_l(r, rab, rho_lm[lm_idx], vh_lm[lm_idx], n_mesh, big_l);
         }
     }
     return vh_lm;
 }
 
 /// Compute ∫ V × u_i u_j dr and its Q augmentation addition (used for Dij^H).
-fn computeHartreeRadialIntegrals(
+fn compute_hartree_radial_integrals(
     r: []const f64,
     rab: []const f64,
     n_mesh: usize,
@@ -387,14 +401,14 @@ fn computeHartreeRadialIntegrals(
     var int_ae: f64 = 0.0;
     var int_ps: f64 = 0.0;
     for (0..n_r) |k| {
-        const w = rab[k] * ctrapWeight(k, n_mesh);
+        const w = rab[k] * ctrap_weight(k, n_mesh);
         int_ae += vh_ae_lm[k] * ae_i[k] * ae_j[k] * w;
         int_ps += vh_ps_lm[k] * ps_i[k] * ps_j[k] * w;
     }
-    if (findQijL(paw, i, j, big_l)) |q_vals| {
+    if (find_qij_l(paw, i, j, big_l)) |q_vals| {
         const n_q = @min(n_r, q_vals.len);
         for (0..n_q) |k| {
-            const w = rab[k] * ctrapWeight(k, n_mesh);
+            const w = rab[k] * ctrap_weight(k, n_mesh);
             int_ps += vh_ps_lm[k] * q_vals[k] * w;
         }
     }
@@ -402,7 +416,7 @@ fn computeHartreeRadialIntegrals(
 }
 
 /// Distribute scalar Δ over m-resolved D block using Gaunt(li,mi,lj,mj,L,M).
-fn distributeGauntToDij(
+fn distribute_gaunt_to_dij(
     dij_h: []f64,
     m_total: usize,
     m_offsets: []const usize,
@@ -434,7 +448,7 @@ fn distributeGauntToDij(
 
 /// Build ρ^AE, ρ^PS multipole densities and solve Poisson for V^AE, V^PS.
 /// Returns the allocated vh_ae / vh_ps arrays; caller is responsible for free.
-fn buildPawHartreePotentials(
+fn build_paw_hartree_potentials(
     alloc: std.mem.Allocator,
     paw: PawData,
     rhoij_m: []const f64,
@@ -447,9 +461,9 @@ fn buildPawHartreePotentials(
     n_lm_aug: usize,
     gaunt_table: *const GauntTable,
 ) !struct { vh_ae: [][]f64, vh_ps: [][]f64, rho_ae: [][]f64, rho_ps: [][]f64 } {
-    const rho_ae_lm = try allocLmDensities(alloc, n_lm_aug, n_mesh);
-    const rho_ps_lm = try allocLmDensities(alloc, n_lm_aug, n_mesh);
-    buildLmDensitiesAePs(
+    const rho_ae_lm = try alloc_lm_densities(alloc, n_lm_aug, n_mesh);
+    const rho_ps_lm = try alloc_lm_densities(alloc, n_lm_aug, n_mesh);
+    build_lm_densities_ae_ps(
         paw,
         rhoij_m,
         m_total,
@@ -461,7 +475,7 @@ fn buildPawHartreePotentials(
         rho_ps_lm,
         true,
     );
-    const vh_ae_lm = try allocAndSolveLmPotentials(
+    const vh_ae_lm = try alloc_and_solve_lm_potentials(
         alloc,
         r,
         rab,
@@ -470,7 +484,7 @@ fn buildPawHartreePotentials(
         lmax_aug,
         n_lm_aug,
     );
-    const vh_ps_lm = try allocAndSolveLmPotentials(
+    const vh_ps_lm = try alloc_and_solve_lm_potentials(
         alloc,
         r,
         rab,
@@ -482,7 +496,7 @@ fn buildPawHartreePotentials(
     return .{ .vh_ae = vh_ae_lm, .vh_ps = vh_ps_lm, .rho_ae = rho_ae_lm, .rho_ps = rho_ps_lm };
 }
 
-pub fn computePawDijHartreeMultiL(
+pub fn compute_paw_dij_hartree_multi_l(
     alloc: std.mem.Allocator,
     dij_h: []f64,
     paw: PawData,
@@ -503,7 +517,7 @@ pub fn computePawDijHartreeMultiL(
     const lmax_aug = gaunt_table.lmax_aug;
     const n_lm_aug = (lmax_aug + 1) * (lmax_aug + 1);
 
-    const bundle = try buildPawHartreePotentials(
+    const bundle = try build_paw_hartree_potentials(
         alloc,
         paw,
         rhoij_m,
@@ -516,13 +530,13 @@ pub fn computePawDijHartreeMultiL(
         n_lm_aug,
         gaunt_table,
     );
-    defer freeLmDensities(alloc, bundle.rho_ae);
-    defer freeLmDensities(alloc, bundle.rho_ps);
-    defer freeLmDensities(alloc, bundle.vh_ae);
-    defer freeLmDensities(alloc, bundle.vh_ps);
+    defer free_lm_densities(alloc, bundle.rho_ae);
+    defer free_lm_densities(alloc, bundle.rho_ps);
+    defer free_lm_densities(alloc, bundle.vh_ae);
+    defer free_lm_densities(alloc, bundle.vh_ps);
 
     @memset(dij_h, 0.0);
-    try accumulatePawDijHartreePairs(
+    try accumulate_paw_dij_hartree_pairs(
         dij_h,
         paw,
         m_total,
@@ -537,7 +551,7 @@ pub fn computePawDijHartreeMultiL(
     );
 }
 
-fn accumulatePawDijHartreePairs(
+fn accumulate_paw_dij_hartree_pairs(
     dij_h: []f64,
     paw: PawData,
     m_total: usize,
@@ -567,8 +581,8 @@ fn accumulatePawDijHartreePairs(
                 const bl_i32: i32 = @intCast(big_l);
                 var bm: i32 = -bl_i32;
                 while (bm <= bl_i32) : (bm += 1) {
-                    const lm_idx = GauntTable.lmIndex(big_l, bm);
-                    const ints = computeHartreeRadialIntegrals(
+                    const lm_idx = GauntTable.lm_index(big_l, bm);
+                    const ints = compute_hartree_radial_integrals(
                         r,
                         rab,
                         n_mesh,
@@ -586,7 +600,7 @@ fn accumulatePawDijHartreePairs(
                     );
                     const int_diff = ints.int_ae - ints.int_ps;
                     if (@abs(int_diff) < 1e-30) continue;
-                    distributeGauntToDij(
+                    distribute_gaunt_to_dij(
                         dij_h,
                         m_total,
                         m_offsets,
@@ -617,7 +631,7 @@ const N_ANG: usize = 110;
 ///
 /// Key difference from ∇Y_lm: terms like (3z²-1) in Y_20 become (2z²-x²-y²) in S_20,
 /// because S_20 = c0(3z²-r²) is homogeneous while Y_20 = c0(3z²-1) is not.
-fn gradSolidHarmonicL1(m: i32) [3]f64 {
+fn grad_solid_harmonic_l1(m: i32) [3]f64 {
     const pi = std.math.pi;
     const c = @sqrt(3.0 / (4.0 * pi));
     return switch (m) {
@@ -628,7 +642,7 @@ fn gradSolidHarmonicL1(m: i32) [3]f64 {
     };
 }
 
-fn gradSolidHarmonicL2(m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
+fn grad_solid_harmonic_l2(m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
     const pi = std.math.pi;
     const c0 = @sqrt(5.0 / (16.0 * pi));
     const c1 = @sqrt(15.0 / (4.0 * pi));
@@ -643,7 +657,7 @@ fn gradSolidHarmonicL2(m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
     };
 }
 
-fn gradSolidHarmonicL3(m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
+fn grad_solid_harmonic_l3(m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
     const pi = std.math.pi;
     return switch (m) {
         -3 => blk: {
@@ -690,12 +704,12 @@ fn gradSolidHarmonicL3(m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
     };
 }
 
-fn gradSolidHarmonic(l: i32, m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
+fn grad_solid_harmonic(l: i32, m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
     return switch (l) {
         0 => .{ 0.0, 0.0, 0.0 },
-        1 => gradSolidHarmonicL1(m),
-        2 => gradSolidHarmonicL2(m, nx, ny, nz),
-        3 => gradSolidHarmonicL3(m, nx, ny, nz),
+        1 => grad_solid_harmonic_l1(m),
+        2 => grad_solid_harmonic_l2(m, nx, ny, nz),
+        3 => grad_solid_harmonic_l3(m, nx, ny, nz),
         else => .{ 0.0, 0.0, 0.0 },
     };
 }
@@ -704,9 +718,9 @@ fn gradSolidHarmonic(l: i32, m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
 /// ∇_S Y_{lm} = ∇S_{lm} - l × Y_{lm} × r̂
 /// where S_lm is the solid harmonic (homogeneous polynomial of degree l).
 /// Euler's theorem: r̂ · ∇S = l × S = l × Y on the unit sphere.
-fn surfGradYlm(l: i32, m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
-    const grad = gradSolidHarmonic(l, m, nx, ny, nz);
-    const ylm = nonlocal.realSphericalHarmonic(l, m, nx, ny, nz);
+fn surf_grad_ylm(l: i32, m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
+    const grad = grad_solid_harmonic(l, m, nx, ny, nz);
+    const ylm = nonlocal.real_spherical_harmonic(l, m, nx, ny, nz);
     const fl: f64 = @floatFromInt(l);
     return .{
         grad[0] - fl * ylm * nx,
@@ -716,16 +730,16 @@ fn surfGradYlm(l: i32, m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
 }
 
 /// Surface gradient of real spherical harmonic on unit sphere (general l).
-/// Uses analytical gradSolidHarmonic for l <= 3, numerical differentiation for l >= 4.
+/// Uses analytical grad_solid_harmonic for l <= 3, numerical differentiation for l >= 4.
 /// ∇_S Y_{lm} = ∇S_{lm} - l × Y_{lm} × r̂
-fn surfGradYlmGeneral(l: i32, m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
-    if (l <= 3) return surfGradYlm(l, m, nx, ny, nz);
+fn surf_grad_ylm_general(l: i32, m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
+    if (l <= 3) return surf_grad_ylm(l, m, nx, ny, nz);
 
     // Numerical gradient of solid harmonic S_lm(r) = |r|^l × Y_lm(r̂)
     // ∇S is computed via central differences at the unit-sphere point n̂.
     const delta: f64 = 1e-5;
     const fl: f64 = @floatFromInt(l);
-    const ylm = nonlocal.realSphericalHarmonic(l, m, nx, ny, nz);
+    const ylm = nonlocal.real_spherical_harmonic(l, m, nx, ny, nz);
     var grad_s: [3]f64 = undefined;
     const n = [3]f64{ nx, ny, nz };
 
@@ -739,9 +753,9 @@ fn surfGradYlmGeneral(l: i32, m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
         const rm_len = @sqrt(rm[0] * rm[0] + rm[1] * rm[1] + rm[2] * rm[2]);
 
         const s_plus = std.math.pow(f64, rp_len, fl) *
-            nonlocal.realSphericalHarmonic(l, m, rp[0] / rp_len, rp[1] / rp_len, rp[2] / rp_len);
+            nonlocal.real_spherical_harmonic(l, m, rp[0] / rp_len, rp[1] / rp_len, rp[2] / rp_len);
         const s_minus = std.math.pow(f64, rm_len, fl) *
-            nonlocal.realSphericalHarmonic(l, m, rm[0] / rm_len, rm[1] / rm_len, rm[2] / rm_len);
+            nonlocal.real_spherical_harmonic(l, m, rm[0] / rm_len, rm[1] / rm_len, rm[2] / rm_len);
 
         grad_s[d] = (s_plus - s_minus) / (2.0 * delta);
     }
@@ -755,7 +769,7 @@ fn surfGradYlmGeneral(l: i32, m: i32, nx: f64, ny: f64, nz: f64) [3]f64 {
 
 /// Pre-compute Y_{l,m}(Ω_α) and ∇_S Y_{l,m}(Ω_α) for all projector (β,m) channels
 /// over the Lebedev angular grid.
-fn precomputeProjectorYlmGrads(
+fn precompute_projector_ylm_grads(
     grid: anytype,
     paw: PawData,
     m_total: usize,
@@ -771,15 +785,15 @@ fn precomputeProjectorYlmGrads(
             for (0..m_count) |mi| {
                 const m: i32 = @as(i32, @intCast(mi)) - l;
                 const idx = alpha * m_total + m_offsets[b] + mi;
-                ylm_at[idx] = nonlocal.realSphericalHarmonic(l, m, pt.x, pt.y, pt.z);
-                grad_ylm_at[idx] = surfGradYlm(l, m, pt.x, pt.y, pt.z);
+                ylm_at[idx] = nonlocal.real_spherical_harmonic(l, m, pt.x, pt.y, pt.z);
+                grad_ylm_at[idx] = surf_grad_ylm(l, m, pt.x, pt.y, pt.z);
             }
         }
     }
 }
 
 /// Pre-compute Y_LM(Ω_α) and ∇_S Y_LM(Ω_α) for augmentation channels.
-fn precomputeAugYlmGrads(
+fn precompute_aug_ylm_grads(
     grid: anytype,
     n_l_aug: usize,
     n_lm_aug: usize,
@@ -793,14 +807,14 @@ fn precomputeAugYlmGrads(
                 const big_m: i32 = @as(i32, @intCast(bm_idx)) - bl_i32;
                 const lm_idx = big_l * big_l + bm_idx;
                 const flat = alpha_idx * n_lm_aug + lm_idx;
-                ylm_aug_at[flat] = nonlocal.realSphericalHarmonic(
+                ylm_aug_at[flat] = nonlocal.real_spherical_harmonic(
                     bl_i32,
                     big_m,
                     leb_pt.x,
                     leb_pt.y,
                     leb_pt.z,
                 );
-                grad_ylm_aug_at[flat] = surfGradYlmGeneral(
+                grad_ylm_aug_at[flat] = surf_grad_ylm_general(
                     bl_i32,
                     big_m,
                     leb_pt.x,
@@ -813,7 +827,7 @@ fn precomputeAugYlmGrads(
 }
 
 /// Fill a buffer with u_i(k) * u_j(k) / r(k)² (0 if r~0 or beyond n_r).
-fn fillWfcProductOverR2(
+fn fill_wfc_product_over_r2(
     out: []f64,
     wfc_i: []const f64,
     wfc_j: []const f64,
@@ -839,7 +853,7 @@ const UiUjBuffers = struct {
     d_ps: ?[][]f64,
 };
 
-fn precomputeUiUj(
+fn precompute_ui_uj(
     alloc: std.mem.Allocator,
     paw: PawData,
     r: []const f64,
@@ -861,15 +875,15 @@ fn precomputeUiUj(
             const ps_i = paw.ps_wfc[i].values;
             const ps_j = paw.ps_wfc[j].values;
             const n_r = @min(n_mesh, @min(@min(ae_i.len, ae_j.len), @min(ps_i.len, ps_j.len)));
-            fillWfcProductOverR2(ae_buf, ae_i, ae_j, r, n_r, n_mesh);
-            fillWfcProductOverR2(ps_buf, ps_i, ps_j, r, n_r, n_mesh);
+            fill_wfc_product_over_r2(ae_buf, ae_i, ae_j, r, n_r, n_mesh);
+            fill_wfc_product_over_r2(ps_buf, ps_i, ps_j, r, n_r, n_mesh);
             ae[i * nbeta + j] = ae_buf;
             ps[i * nbeta + j] = ps_buf;
             if (with_derivative) {
                 const ae_dbuf = try alloc.alloc(f64, n_mesh);
                 const ps_dbuf = try alloc.alloc(f64, n_mesh);
-                radialDerivative(ae_buf, ae_dbuf, r, n_mesh);
-                radialDerivative(ps_buf, ps_dbuf, r, n_mesh);
+                radial_derivative(ae_buf, ae_dbuf, r, n_mesh);
+                radial_derivative(ps_buf, ps_dbuf, r, n_mesh);
                 d_ae.?[i * nbeta + j] = ae_dbuf;
                 d_ps.?[i * nbeta + j] = ps_dbuf;
             }
@@ -878,8 +892,8 @@ fn precomputeUiUj(
     return .{ .ae = ae, .ps = ps, .d_ae = d_ae, .d_ps = d_ps };
 }
 
-/// Free buffers allocated by precomputeUiUj.
-fn freeUiUj(
+/// Free buffers allocated by precompute_ui_uj.
+fn free_ui_uj(
     alloc: std.mem.Allocator,
     buf: UiUjBuffers,
 ) void {
@@ -903,7 +917,7 @@ const AugR2Buffers = struct {
     d_vals: ?[]?[]f64,
 };
 
-fn precomputeAugR2(
+fn precompute_aug_r2(
     alloc: std.mem.Allocator,
     paw: PawData,
     r: []const f64,
@@ -922,7 +936,7 @@ fn precomputeAugR2(
         for (0..nbeta) |j| {
             for (0..n_l_aug) |big_l| {
                 const flat_idx = i * nbeta * n_l_aug + j * n_l_aug + big_l;
-                if (findQijL(paw, i, j, big_l)) |qvals| {
+                if (find_qij_l(paw, i, j, big_l)) |qvals| {
                     const buf = try alloc.alloc(f64, n_mesh);
                     const n_q = @min(n_mesh, qvals.len);
                     for (0..n_q) |k| {
@@ -932,7 +946,7 @@ fn precomputeAugR2(
                     vals[flat_idx] = buf;
                     if (with_derivative) {
                         const dbuf = try alloc.alloc(f64, n_mesh);
-                        radialDerivative(buf, dbuf, r, n_mesh);
+                        radial_derivative(buf, dbuf, r, n_mesh);
                         d_vals.?[flat_idx] = dbuf;
                     }
                 } else {
@@ -945,7 +959,7 @@ fn precomputeAugR2(
     return .{ .vals = vals, .d_vals = d_vals };
 }
 
-fn freeAugR2(
+fn free_aug_r2(
     alloc: std.mem.Allocator,
     buf: AugR2Buffers,
 ) void {
@@ -959,7 +973,7 @@ fn freeAugR2(
 
 /// Compute radial derivative of an optional core density, extended with zeros
 /// where the core array does not cover n_mesh. Writes into dcore_out.
-fn precomputeCoreDerivative(
+fn precompute_core_derivative(
     alloc: std.mem.Allocator,
     rho_core: ?[]const f64,
     r: []const f64,
@@ -973,7 +987,7 @@ fn precomputeCoreDerivative(
         const nc = @min(n_mesh, core.len);
         @memcpy(buf[0..nc], core[0..nc]);
         for (nc..n_mesh) |k| buf[k] = 0.0;
-        radialDerivative(buf, dcore_out, r, n_mesh);
+        radial_derivative(buf, dcore_out, r, n_mesh);
     } else {
         @memset(dcore_out, 0.0);
     }
@@ -981,11 +995,11 @@ fn precomputeCoreDerivative(
 
 /// Compute explicit V_xc(r) for GGA from density and radial gradient.
 /// V_xc = df/dn - (1/r²) d/dr[r² × 2(df/dσ) × dρ/dr]
-fn computeVxcRadial(
+fn compute_vxc_radial(
     rho: []const f64,
     drho: []const f64,
     r_grid: []const f64,
-    _: []const f64, // rab_grid (unused, radialDerivative now uses r_grid directly)
+    _: []const f64, // rab_grid (unused, radial_derivative now uses r_grid directly)
     n: usize,
     xc_func: xc.Functional,
     vxc_out: []f64,
@@ -997,7 +1011,7 @@ fn computeVxcRadial(
     for (0..n) |k| {
         const n_val = @max(rho[k], 1e-30);
         const sigma = drho[k] * drho[k];
-        const eval_pt = xc.evalPoint(xc_func, n_val, sigma);
+        const eval_pt = xc.eval_point(xc_func, n_val, sigma);
         vxc_out[k] = eval_pt.df_dn;
         h_work[k] = 2.0 * eval_pt.df_dg2 * drho[k];
     }
@@ -1006,7 +1020,7 @@ fn computeVxcRadial(
         r2h_work[k] = r_grid[k] * r_grid[k] * h_work[k];
     }
     // Step 3: d(r²h)/dr
-    radialDerivative(r2h_work, dr2h_work, r_grid, n);
+    radial_derivative(r2h_work, dr2h_work, r_grid, n);
     // Step 4: V_xc = df/dn - (1/r²) d(r²h)/dr
     for (0..n) |k| {
         if (r_grid[k] > 1e-10) {
@@ -1028,7 +1042,7 @@ fn computeVxcRadial(
 /// m_offsets: m offset for each radial projector
 /// Build AE and PS densities (with angular gradients) at a single Lebedev point.
 /// Writes into rho_ae/rho_ps and grad_s_rho_ae/grad_s_rho_ps in-place.
-fn addWfcPairToDensity(
+fn add_wfc_pair_to_density(
     rij: f64,
     yi: f64,
     yj: f64,
@@ -1086,7 +1100,7 @@ const DensityAccumCtx = struct {
     grad_s_rho_ps: [][3]f64,
 };
 
-fn addMjPairDensityContribution(
+fn add_mj_pair_density_contribution(
     ctx: *const DensityAccumCtx,
     i: usize,
     j: usize,
@@ -1109,7 +1123,7 @@ fn addMjPairDensityContribution(
     const idx_j = ylm_base + ctx.m_offsets[j] + mj;
     const yj = ctx.ylm_at[idx_j];
     const gyj = ctx.grad_ylm_at[idx_j];
-    addWfcPairToDensity(
+    add_wfc_pair_to_density(
         rij,
         yi,
         yj,
@@ -1124,7 +1138,7 @@ fn addMjPairDensityContribution(
         ctx.grad_s_rho_ps,
     );
     const mj_val: i32 = @as(i32, @intCast(mj)) - lj;
-    addAugmentationDensityContribution(
+    add_augmentation_density_contribution(
         rij,
         mi_val,
         mj_val,
@@ -1147,7 +1161,7 @@ fn addMjPairDensityContribution(
     );
 }
 
-fn addIjPairDensityContribution(ctx: *const DensityAccumCtx, i: usize, j: usize) void {
+fn add_ij_pair_density_contribution(ctx: *const DensityAccumCtx, i: usize, j: usize) void {
     const nbeta = ctx.paw.number_of_proj;
     const li = ctx.paw.ae_wfc[i].l;
     const li_u: usize = @intCast(li);
@@ -1163,7 +1177,7 @@ fn addIjPairDensityContribution(ctx: *const DensityAccumCtx, i: usize, j: usize)
         const yi = ctx.ylm_at[idx_i];
         const gyi = ctx.grad_ylm_at[idx_i];
         for (0..mj_count) |mj| {
-            addMjPairDensityContribution(
+            add_mj_pair_density_contribution(
                 ctx,
                 i,
                 j,
@@ -1183,7 +1197,7 @@ fn addIjPairDensityContribution(ctx: *const DensityAccumCtx, i: usize, j: usize)
     }
 }
 
-fn buildDensityAtAngularPoint(ctx: *const DensityAccumCtx) void {
+fn build_density_at_angular_point(ctx: *const DensityAccumCtx) void {
     const nbeta = ctx.paw.number_of_proj;
     @memset(ctx.rho_ae, 0.0);
     @memset(ctx.rho_ps, 0.0);
@@ -1192,12 +1206,12 @@ fn buildDensityAtAngularPoint(ctx: *const DensityAccumCtx) void {
 
     for (0..nbeta) |i| {
         for (0..nbeta) |j| {
-            addIjPairDensityContribution(ctx, i, j);
+            add_ij_pair_density_contribution(ctx, i, j);
         }
     }
 }
 
-fn addAugmentationDensityContribution(
+fn add_augmentation_density_contribution(
     rij: f64,
     mi_val: i32,
     mj_val: i32,
@@ -1247,7 +1261,7 @@ fn addAugmentationDensityContribution(
 
 /// Add core density (and its radial derivative) to the given ρ/dρ arrays.
 /// Core is assumed spherical and so does not contribute to the angular gradient.
-fn addCoreDensity(
+fn add_core_density(
     rho: []f64,
     drho: []f64,
     core_opt: ?[]const f64,
@@ -1267,7 +1281,7 @@ const DijXcIntegrals = struct {
     sum_ang: [3]f64,
 };
 
-fn computeGgaRadialAngularIntegrals(
+fn compute_gga_radial_angular_integrals(
     n_mesh: usize,
     r: []const f64,
     rab: []const f64,
@@ -1287,7 +1301,7 @@ fn computeGgaRadialAngularIntegrals(
     var sum_ang: [3]f64 = .{ 0.0, 0.0, 0.0 };
     for (0..n_mesh) |k| {
         const r2 = r[k] * r[k];
-        const wk = rab[k] * ctrapWeight(k, n_mesh);
+        const wk = rab[k] * ctrap_weight(k, n_mesh);
 
         const n_ae = @max(rho_ae[k], 1e-30);
         const ang_sq_ae = grad_s_rho_ae[k][0] * grad_s_rho_ae[k][0] +
@@ -1295,7 +1309,7 @@ fn computeGgaRadialAngularIntegrals(
             grad_s_rho_ae[k][2] * grad_s_rho_ae[k][2];
         const sigma_ae = drho_ae[k] * drho_ae[k] +
             if (r2 > 1e-20) ang_sq_ae / r2 else 0.0;
-        const eval_ae = xc.evalPoint(xc_func, n_ae, sigma_ae);
+        const eval_ae = xc.eval_point(xc_func, n_ae, sigma_ae);
 
         const n_ps = @max(rho_ps[k], 1e-30);
         const ang_sq_ps = grad_s_rho_ps[k][0] * grad_s_rho_ps[k][0] +
@@ -1303,7 +1317,7 @@ fn computeGgaRadialAngularIntegrals(
             grad_s_rho_ps[k][2] * grad_s_rho_ps[k][2];
         const sigma_ps = drho_ps[k] * drho_ps[k] +
             if (r2 > 1e-20) ang_sq_ps / r2 else 0.0;
-        const eval_ps = xc.evalPoint(xc_func, n_ps, sigma_ps);
+        const eval_ps = xc.eval_point(xc_func, n_ps, sigma_ps);
 
         const ae_vxc_rad = eval_ae.df_dn * ae_f[k] +
             2.0 * eval_ae.df_dg2 * drho_ae[k] * ae_df[k];
@@ -1320,7 +1334,7 @@ fn computeGgaRadialAngularIntegrals(
     return .{ .sum_rad = sum_rad, .sum_ang = sum_ang };
 }
 
-fn computeGgaAugIntegrals(
+fn compute_gga_aug_integrals(
     n_mesh: usize,
     r: []const f64,
     rab: []const f64,
@@ -1335,14 +1349,14 @@ fn computeGgaAugIntegrals(
     var a_ang: [3]f64 = .{ 0.0, 0.0, 0.0 };
     for (0..n_mesh) |k| {
         const r2 = r[k] * r[k];
-        const wk = rab[k] * ctrapWeight(k, n_mesh);
+        const wk = rab[k] * ctrap_weight(k, n_mesh);
         const n_ps = @max(rho_ps[k], 1e-30);
         const ang_sq_ps = grad_s_rho_ps[k][0] * grad_s_rho_ps[k][0] +
             grad_s_rho_ps[k][1] * grad_s_rho_ps[k][1] +
             grad_s_rho_ps[k][2] * grad_s_rho_ps[k][2];
         const sigma_ps = drho_ps[k] * drho_ps[k] +
             if (r2 > 1e-20) ang_sq_ps / r2 else 0.0;
-        const eval_ps = xc.evalPoint(xc_func, n_ps, sigma_ps);
+        const eval_ps = xc.eval_point(xc_func, n_ps, sigma_ps);
 
         a_rad += (eval_ps.df_dn * aug_f[k] +
             2.0 * eval_ps.df_dg2 * drho_ps[k] * aug_df[k]) * r2 * wk;
@@ -1387,7 +1401,7 @@ const DijXcAngularCtx = struct {
     aug_ang_integrals: [][3]f64,
 };
 
-fn writeAugIntegralsForIj(
+fn write_aug_integrals_for_ij(
     ctx: *const DijXcAngularCtx,
     i: usize,
     j: usize,
@@ -1403,7 +1417,7 @@ fn writeAugIntegralsForIj(
             continue;
         };
         const aug_df = ctx.daug_r2[aug_flat].?;
-        const aug_res = computeGgaAugIntegrals(
+        const aug_res = compute_gga_aug_integrals(
             ctx.n_mesh,
             ctx.r,
             ctx.rab,
@@ -1419,23 +1433,23 @@ fn writeAugIntegralsForIj(
     }
 }
 
-fn computeDijXcOneAngular(ctx: *const DijXcAngularCtx, dens: *const DensityAccumCtx) void {
+fn compute_dij_xc_one_angular(ctx: *const DijXcAngularCtx, dens: *const DensityAccumCtx) void {
     const nbeta = ctx.paw.number_of_proj;
     const n_ij = nbeta * nbeta;
 
-    buildDensityAtAngularPoint(dens);
+    build_density_at_angular_point(dens);
 
     @memcpy(ctx.tmp_rho, ctx.rho_ae);
-    radialDerivative(ctx.tmp_rho, ctx.drho_ae, ctx.r, ctx.n_mesh);
+    radial_derivative(ctx.tmp_rho, ctx.drho_ae, ctx.r, ctx.n_mesh);
     @memcpy(ctx.tmp_rho, ctx.rho_ps);
-    radialDerivative(ctx.tmp_rho, ctx.drho_ps, ctx.r, ctx.n_mesh);
+    radial_derivative(ctx.tmp_rho, ctx.drho_ps, ctx.r, ctx.n_mesh);
 
-    addCoreDensity(ctx.rho_ae, ctx.drho_ae, ctx.rho_core_ae, ctx.dcore_ae, ctx.n_mesh);
-    addCoreDensity(ctx.rho_ps, ctx.drho_ps, ctx.rho_core_ps, ctx.dcore_ps, ctx.n_mesh);
+    add_core_density(ctx.rho_ae, ctx.drho_ae, ctx.rho_core_ae, ctx.dcore_ae, ctx.n_mesh);
+    add_core_density(ctx.rho_ps, ctx.drho_ps, ctx.rho_core_ps, ctx.dcore_ps, ctx.n_mesh);
 
     for (0..nbeta) |i| {
         for (0..nbeta) |j| {
-            const res = computeGgaRadialAngularIntegrals(
+            const res = compute_gga_radial_angular_integrals(
                 ctx.n_mesh,
                 ctx.r,
                 ctx.rab,
@@ -1453,12 +1467,12 @@ fn computeDijXcOneAngular(ctx: *const DijXcAngularCtx, dens: *const DensityAccum
             );
             ctx.radial_integrals[ctx.alpha * n_ij + i * nbeta + j] = res.sum_rad;
             ctx.angular_integrals[ctx.alpha * n_ij + i * nbeta + j] = res.sum_ang;
-            writeAugIntegralsForIj(ctx, i, j);
+            write_aug_integrals_for_ij(ctx, i, j);
         }
     }
 }
 
-fn augmentationContribDij(
+fn augmentation_contrib_dij(
     alpha: usize,
     w_ang: f64,
     i: usize,
@@ -1528,7 +1542,7 @@ const DijXcAccumCtx = struct {
     dij_xc_m: []f64,
 };
 
-fn accumulateDijXcForIj(ctx: *const DijXcAccumCtx, i: usize, j: usize) void {
+fn accumulate_dij_xc_for_ij(ctx: *const DijXcAccumCtx, i: usize, j: usize) void {
     const nbeta = ctx.paw.number_of_proj;
     const n_ij = nbeta * nbeta;
     const ylm_base = ctx.alpha * ctx.m_total;
@@ -1557,7 +1571,7 @@ fn accumulateDijXcForIj(ctx: *const DijXcAccumCtx, i: usize, j: usize) void {
             for (0..3) |d| {
                 contrib += ctx.w_ang * I_ang[d] * (yj * gyi[d] + yi * gyj[d]);
             }
-            contrib += augmentationContribDij(
+            contrib += augmentation_contrib_dij(
                 ctx.alpha,
                 ctx.w_ang,
                 i,
@@ -1581,11 +1595,11 @@ fn accumulateDijXcForIj(ctx: *const DijXcAccumCtx, i: usize, j: usize) void {
     }
 }
 
-fn accumulateDijXcForAngular(ctx: *const DijXcAccumCtx) void {
+fn accumulate_dij_xc_for_angular(ctx: *const DijXcAccumCtx) void {
     const nbeta = ctx.paw.number_of_proj;
     for (0..nbeta) |i| {
         for (0..nbeta) |j| {
-            accumulateDijXcForIj(ctx, i, j);
+            accumulate_dij_xc_for_ij(ctx, i, j);
         }
     }
 }
@@ -1618,7 +1632,7 @@ const DijXcScratch = struct {
     aug_ang_integrals: [][3]f64,
 };
 
-fn allocDijXcScratch(
+fn alloc_dij_xc_scratch(
     alloc: std.mem.Allocator,
     n_mesh: usize,
     n_ang: usize,
@@ -1642,7 +1656,7 @@ fn allocDijXcScratch(
     };
 }
 
-fn freeDijXcScratch(alloc: std.mem.Allocator, sc: DijXcScratch) void {
+fn free_dij_xc_scratch(alloc: std.mem.Allocator, sc: DijXcScratch) void {
     alloc.free(sc.rho_ae);
     alloc.free(sc.rho_ps);
     alloc.free(sc.drho_ae);
@@ -1666,7 +1680,7 @@ const LebedevBuffers = struct {
     grad_ylm_aug_at: [][3]f64,
 };
 
-fn allocLebedevBuffers(
+fn alloc_lebedev_buffers(
     alloc: std.mem.Allocator,
     grid: anytype,
     paw: PawData,
@@ -1678,10 +1692,10 @@ fn allocLebedevBuffers(
 ) !LebedevBuffers {
     const ylm_at = try alloc.alloc(f64, n_ang * m_total);
     const grad_ylm_at = try alloc.alloc([3]f64, n_ang * m_total);
-    precomputeProjectorYlmGrads(grid, paw, m_total, m_offsets, ylm_at, grad_ylm_at);
+    precompute_projector_ylm_grads(grid, paw, m_total, m_offsets, ylm_at, grad_ylm_at);
     const ylm_aug_at = try alloc.alloc(f64, n_ang * n_lm_aug);
     const grad_ylm_aug_at = try alloc.alloc([3]f64, n_ang * n_lm_aug);
-    precomputeAugYlmGrads(grid, n_l_aug, n_lm_aug, ylm_aug_at, grad_ylm_aug_at);
+    precompute_aug_ylm_grads(grid, n_l_aug, n_lm_aug, ylm_aug_at, grad_ylm_aug_at);
     return .{
         .ylm_at = ylm_at,
         .grad_ylm_at = grad_ylm_at,
@@ -1690,7 +1704,7 @@ fn allocLebedevBuffers(
     };
 }
 
-fn freeLebedevBuffers(alloc: std.mem.Allocator, lb: LebedevBuffers) void {
+fn free_lebedev_buffers(alloc: std.mem.Allocator, lb: LebedevBuffers) void {
     alloc.free(lb.ylm_at);
     alloc.free(lb.grad_ylm_at);
     alloc.free(lb.ylm_aug_at);
@@ -1704,7 +1718,7 @@ const MeshAndAug = struct {
     n_lm_aug: usize,
 };
 
-fn computeMeshAndAug(paw: PawData, r: []const f64, rab: []const f64) MeshAndAug {
+fn compute_mesh_and_aug(paw: PawData, r: []const f64, rab: []const f64) MeshAndAug {
     const n_mesh_full = @min(r.len, rab.len);
     const n_mesh = if (paw.cutoff_r_index > 0)
         @min(n_mesh_full, paw.cutoff_r_index)
@@ -1720,7 +1734,7 @@ fn computeMeshAndAug(paw: PawData, r: []const f64, rab: []const f64) MeshAndAug 
     };
 }
 
-pub fn computePawDijXcAngular(
+pub fn compute_paw_dij_xc_angular(
     alloc: std.mem.Allocator,
     dij_xc_m: []f64,
     paw: PawData,
@@ -1735,13 +1749,13 @@ pub fn computePawDijXcAngular(
     gaunt_table: *const GauntTable,
 ) !void {
     const nbeta = paw.number_of_proj;
-    const dims = computeMeshAndAug(paw, r, rab);
-    const grid = lebedev.getLebedevGrid(N_ANG);
+    const dims = compute_mesh_and_aug(paw, r, rab);
+    const grid = lebedev.get_lebedev_grid(N_ANG);
     const n_ang = grid.len;
     const n_ij = nbeta * nbeta;
     const four_pi = 4.0 * std.math.pi;
 
-    const lb = try allocLebedevBuffers(
+    const lb = try alloc_lebedev_buffers(
         alloc,
         grid,
         paw,
@@ -1751,21 +1765,21 @@ pub fn computePawDijXcAngular(
         dims.n_l_aug,
         dims.n_lm_aug,
     );
-    defer freeLebedevBuffers(alloc, lb);
+    defer free_lebedev_buffers(alloc, lb);
 
-    const uiuj = try precomputeUiUj(alloc, paw, r, dims.n_mesh, true);
-    defer freeUiUj(alloc, uiuj);
+    const uiuj = try precompute_ui_uj(alloc, paw, r, dims.n_mesh, true);
+    defer free_ui_uj(alloc, uiuj);
 
-    const aug = try precomputeAugR2(alloc, paw, r, dims.n_mesh, dims.n_l_aug, true);
-    defer freeAugR2(alloc, aug);
+    const aug = try precompute_aug_r2(alloc, paw, r, dims.n_mesh, dims.n_l_aug, true);
+    defer free_aug_r2(alloc, aug);
 
-    const sc = try allocDijXcScratch(alloc, dims.n_mesh, n_ang, n_ij, dims.n_l_aug);
-    defer freeDijXcScratch(alloc, sc);
+    const sc = try alloc_dij_xc_scratch(alloc, dims.n_mesh, n_ang, n_ij, dims.n_l_aug);
+    defer free_dij_xc_scratch(alloc, sc);
 
-    try precomputeCoreDerivative(alloc, rho_core_ae, r, dims.n_mesh, sc.dcore_ae);
-    try precomputeCoreDerivative(alloc, rho_core_ps, r, dims.n_mesh, sc.dcore_ps);
+    try precompute_core_derivative(alloc, rho_core_ae, r, dims.n_mesh, sc.dcore_ae);
+    try precompute_core_derivative(alloc, rho_core_ps, r, dims.n_mesh, sc.dcore_ps);
 
-    try finalizePawDijXc(
+    try finalize_paw_dij_xc(
         grid,
         paw,
         rhoij_m,
@@ -1790,7 +1804,7 @@ pub fn computePawDijXcAngular(
     );
 }
 
-fn finalizePawDijXc(
+fn finalize_paw_dij_xc(
     grid: anytype,
     paw: PawData,
     rhoij_m: []const f64,
@@ -1813,7 +1827,7 @@ fn finalizePawDijXc(
     dij_xc_m: []f64,
     four_pi: f64,
 ) !void {
-    runDijXcAngularPass(
+    run_dij_xc_angular_pass(
         grid,
         paw,
         rhoij_m,
@@ -1838,7 +1852,7 @@ fn finalizePawDijXc(
         sc,
     );
     @memset(dij_xc_m[0 .. m_total * m_total], 0.0);
-    runDijXcAccumulation(
+    run_dij_xc_accumulation(
         grid,
         paw,
         m_total,
@@ -1857,7 +1871,7 @@ fn finalizePawDijXc(
     );
 }
 
-fn runDijXcAccumulation(
+fn run_dij_xc_accumulation(
     grid: anytype,
     paw: PawData,
     m_total: usize,
@@ -1895,11 +1909,11 @@ fn runDijXcAccumulation(
             .gaunt_table = gaunt_table,
             .dij_xc_m = dij_xc_m,
         };
-        accumulateDijXcForAngular(&ctx);
+        accumulate_dij_xc_for_angular(&ctx);
     }
 }
 
-fn buildDensityAccumCtx(
+fn build_density_accum_ctx(
     paw: PawData,
     rhoij_m: []const f64,
     m_total: usize,
@@ -1944,7 +1958,7 @@ fn buildDensityAccumCtx(
     };
 }
 
-fn buildDijXcAngularCtx(
+fn build_dij_xc_angular_ctx(
     alpha: usize,
     paw: PawData,
     r: []const f64,
@@ -1994,7 +2008,7 @@ fn buildDijXcAngularCtx(
     };
 }
 
-fn runDijXcAngularPass(
+fn run_dij_xc_angular_pass(
     grid: anytype,
     paw: PawData,
     rhoij_m: []const f64,
@@ -2019,7 +2033,7 @@ fn runDijXcAngularPass(
     sc: *const DijXcScratch,
 ) void {
     for (grid, 0..) |_, alpha| {
-        const dens = buildDensityAccumCtx(
+        const dens = build_density_accum_ctx(
             paw,
             rhoij_m,
             m_total,
@@ -2039,7 +2053,7 @@ fn runDijXcAngularPass(
             n_mesh,
             sc,
         );
-        const ctx = buildDijXcAngularCtx(
+        const ctx = build_dij_xc_angular_ctx(
             alpha,
             paw,
             r,
@@ -2055,7 +2069,7 @@ fn runDijXcAngularPass(
             rho_core_ps,
             sc,
         );
-        computeDijXcOneAngular(&ctx, &dens);
+        compute_dij_xc_one_angular(&ctx, &dens);
     }
 }
 
@@ -2074,7 +2088,7 @@ const ExcRadialPair = struct {
     ps: f64,
 };
 
-fn integrateExcRadial(
+fn integrate_exc_radial(
     w_ang: f64,
     n_mesh: usize,
     r: []const f64,
@@ -2091,14 +2105,14 @@ fn integrateExcRadial(
     var exc_ps: f64 = 0.0;
     for (0..n_mesh) |k| {
         const r2 = r[k] * r[k];
-        const wk = rab[k] * ctrapWeight(k, n_mesh);
+        const wk = rab[k] * ctrap_weight(k, n_mesh);
         const n_ae = @max(rho_ae[k], 1e-30);
         const ang_sq_ae = grad_s_rho_ae[k][0] * grad_s_rho_ae[k][0] +
             grad_s_rho_ae[k][1] * grad_s_rho_ae[k][1] +
             grad_s_rho_ae[k][2] * grad_s_rho_ae[k][2];
         const sigma_ae = drho_ae[k] * drho_ae[k] +
             if (r2 > 1e-20) ang_sq_ae / r2 else 0.0;
-        const eval_ae = xc.evalPoint(xc_func, n_ae, sigma_ae);
+        const eval_ae = xc.eval_point(xc_func, n_ae, sigma_ae);
         exc_ae += w_ang * eval_ae.f * r2 * wk;
 
         const n_ps = @max(rho_ps[k], 1e-30);
@@ -2107,7 +2121,7 @@ fn integrateExcRadial(
             grad_s_rho_ps[k][2] * grad_s_rho_ps[k][2];
         const sigma_ps = drho_ps[k] * drho_ps[k] +
             if (r2 > 1e-20) ang_sq_ps / r2 else 0.0;
-        const eval_ps = xc.evalPoint(xc_func, n_ps, sigma_ps);
+        const eval_ps = xc.eval_point(xc_func, n_ps, sigma_ps);
         exc_ps += w_ang * eval_ps.f * r2 * wk;
     }
     return .{ .ae = exc_ae, .ps = exc_ps };
@@ -2115,7 +2129,7 @@ fn integrateExcRadial(
 
 /// Process one Lebedev angular point for Exc: build density + integrate energy.
 /// Appends to total (exc_ae, exc_ps).
-fn processExcOneAngular(
+fn process_exc_one_angular(
     alpha: usize,
     w_ang: f64,
     dens: *const DensityAccumCtx,
@@ -2132,16 +2146,16 @@ fn processExcOneAngular(
     xc_func: xc.Functional,
 ) ExcRadialPair {
     _ = alpha;
-    buildDensityAtAngularPoint(dens);
+    build_density_at_angular_point(dens);
     @memcpy(tmp_rho, dens.rho_ae);
-    radialDerivative(tmp_rho, drho_ae, r, n_mesh);
+    radial_derivative(tmp_rho, drho_ae, r, n_mesh);
     @memcpy(tmp_rho, dens.rho_ps);
-    radialDerivative(tmp_rho, drho_ps, r, n_mesh);
+    radial_derivative(tmp_rho, drho_ps, r, n_mesh);
 
-    addCoreDensity(dens.rho_ae, drho_ae, rho_core_ae, dcore_ae, n_mesh);
-    addCoreDensity(dens.rho_ps, drho_ps, rho_core_ps, dcore_ps, n_mesh);
+    add_core_density(dens.rho_ae, drho_ae, rho_core_ae, dcore_ae, n_mesh);
+    add_core_density(dens.rho_ps, drho_ps, rho_core_ps, dcore_ps, n_mesh);
 
-    return integrateExcRadial(
+    return integrate_exc_radial(
         w_ang,
         n_mesh,
         r,
@@ -2168,7 +2182,7 @@ const ExcScratch = struct {
     dcore_ps: []f64,
 };
 
-fn allocExcScratch(alloc: std.mem.Allocator, n_mesh: usize) !ExcScratch {
+fn alloc_exc_scratch(alloc: std.mem.Allocator, n_mesh: usize) !ExcScratch {
     return .{
         .rho_ae = try alloc.alloc(f64, n_mesh),
         .rho_ps = try alloc.alloc(f64, n_mesh),
@@ -2182,7 +2196,7 @@ fn allocExcScratch(alloc: std.mem.Allocator, n_mesh: usize) !ExcScratch {
     };
 }
 
-fn buildExcDensityCtx(
+fn build_exc_density_ctx(
     paw: PawData,
     rhoij_m: []const f64,
     m_total: usize,
@@ -2220,7 +2234,7 @@ fn buildExcDensityCtx(
     };
 }
 
-fn freeExcScratch(alloc: std.mem.Allocator, sc: ExcScratch) void {
+fn free_exc_scratch(alloc: std.mem.Allocator, sc: ExcScratch) void {
     alloc.free(sc.rho_ae);
     alloc.free(sc.rho_ps);
     alloc.free(sc.drho_ae);
@@ -2232,7 +2246,7 @@ fn freeExcScratch(alloc: std.mem.Allocator, sc: ExcScratch) void {
     alloc.free(sc.dcore_ps);
 }
 
-pub fn computePawExcOnsiteAngular(
+pub fn compute_paw_exc_onsite_angular(
     alloc: std.mem.Allocator,
     paw: PawData,
     rhoij_m: []const f64,
@@ -2245,12 +2259,12 @@ pub fn computePawExcOnsiteAngular(
     xc_func: xc.Functional,
     gaunt_table: *const GauntTable,
 ) !f64 {
-    const dims = computeMeshAndAug(paw, r, rab);
-    const grid = lebedev.getLebedevGrid(N_ANG);
+    const dims = compute_mesh_and_aug(paw, r, rab);
+    const grid = lebedev.get_lebedev_grid(N_ANG);
     const n_ang = grid.len;
     const four_pi = 4.0 * std.math.pi;
 
-    const lb = try allocLebedevBuffers(
+    const lb = try alloc_lebedev_buffers(
         alloc,
         grid,
         paw,
@@ -2260,21 +2274,21 @@ pub fn computePawExcOnsiteAngular(
         dims.n_l_aug,
         dims.n_lm_aug,
     );
-    defer freeLebedevBuffers(alloc, lb);
+    defer free_lebedev_buffers(alloc, lb);
 
-    const uiuj = try precomputeUiUj(alloc, paw, r, dims.n_mesh, false);
-    defer freeUiUj(alloc, uiuj);
+    const uiuj = try precompute_ui_uj(alloc, paw, r, dims.n_mesh, false);
+    defer free_ui_uj(alloc, uiuj);
 
-    const aug = try precomputeAugR2(alloc, paw, r, dims.n_mesh, dims.n_l_aug, false);
-    defer freeAugR2(alloc, aug);
+    const aug = try precompute_aug_r2(alloc, paw, r, dims.n_mesh, dims.n_l_aug, false);
+    defer free_aug_r2(alloc, aug);
 
-    const sc = try allocExcScratch(alloc, dims.n_mesh);
-    defer freeExcScratch(alloc, sc);
+    const sc = try alloc_exc_scratch(alloc, dims.n_mesh);
+    defer free_exc_scratch(alloc, sc);
 
-    try precomputeCoreDerivative(alloc, rho_core_ae, r, dims.n_mesh, sc.dcore_ae);
-    try precomputeCoreDerivative(alloc, rho_core_ps, r, dims.n_mesh, sc.dcore_ps);
+    try precompute_core_derivative(alloc, rho_core_ae, r, dims.n_mesh, sc.dcore_ae);
+    try precompute_core_derivative(alloc, rho_core_ps, r, dims.n_mesh, sc.dcore_ps);
 
-    return runExcAngularLoop(
+    return run_exc_angular_loop(
         grid,
         paw,
         rhoij_m,
@@ -2295,7 +2309,7 @@ pub fn computePawExcOnsiteAngular(
     );
 }
 
-fn runExcAngularLoop(
+fn run_exc_angular_loop(
     grid: anytype,
     paw: PawData,
     rhoij_m: []const f64,
@@ -2317,7 +2331,7 @@ fn runExcAngularLoop(
     var exc_ae: f64 = 0.0;
     var exc_ps: f64 = 0.0;
     for (grid, 0..) |pt, alpha| {
-        const dens = buildExcDensityCtx(
+        const dens = build_exc_density_ctx(
             paw,
             rhoij_m,
             m_total,
@@ -2330,7 +2344,7 @@ fn runExcAngularLoop(
             gaunt_table,
             sc,
         );
-        const res = processExcOneAngular(
+        const res = process_exc_one_angular(
             alpha,
             pt.w * four_pi,
             &dens,
@@ -2381,16 +2395,16 @@ const SpinExcScratch = struct {
     down: ExcScratch,
 };
 
-fn allocSpinExcScratch(alloc: std.mem.Allocator, n_mesh: usize) !SpinExcScratch {
+fn alloc_spin_exc_scratch(alloc: std.mem.Allocator, n_mesh: usize) !SpinExcScratch {
     return .{
-        .up = try allocExcScratch(alloc, n_mesh),
-        .down = try allocExcScratch(alloc, n_mesh),
+        .up = try alloc_exc_scratch(alloc, n_mesh),
+        .down = try alloc_exc_scratch(alloc, n_mesh),
     };
 }
 
-fn freeSpinExcScratch(alloc: std.mem.Allocator, sc: SpinExcScratch) void {
-    freeExcScratch(alloc, sc.up);
-    freeExcScratch(alloc, sc.down);
+fn free_spin_exc_scratch(alloc: std.mem.Allocator, sc: SpinExcScratch) void {
+    free_exc_scratch(alloc, sc.up);
+    free_exc_scratch(alloc, sc.down);
 }
 
 const SpinDijXcScratch = struct {
@@ -2398,7 +2412,7 @@ const SpinDijXcScratch = struct {
     down: DijXcScratch,
 };
 
-fn allocSpinDijXcScratch(
+fn alloc_spin_dij_xc_scratch(
     alloc: std.mem.Allocator,
     n_mesh: usize,
     n_ang: usize,
@@ -2406,17 +2420,17 @@ fn allocSpinDijXcScratch(
     n_l_aug: usize,
 ) !SpinDijXcScratch {
     return .{
-        .up = try allocDijXcScratch(alloc, n_mesh, n_ang, n_ij, n_l_aug),
-        .down = try allocDijXcScratch(alloc, n_mesh, n_ang, n_ij, n_l_aug),
+        .up = try alloc_dij_xc_scratch(alloc, n_mesh, n_ang, n_ij, n_l_aug),
+        .down = try alloc_dij_xc_scratch(alloc, n_mesh, n_ang, n_ij, n_l_aug),
     };
 }
 
-fn freeSpinDijXcScratch(alloc: std.mem.Allocator, sc: SpinDijXcScratch) void {
-    freeDijXcScratch(alloc, sc.up);
-    freeDijXcScratch(alloc, sc.down);
+fn free_spin_dij_xc_scratch(alloc: std.mem.Allocator, sc: SpinDijXcScratch) void {
+    free_dij_xc_scratch(alloc, sc.up);
+    free_dij_xc_scratch(alloc, sc.down);
 }
 
-fn buildSpinGgaChannels(
+fn build_spin_gga_channels(
     rho_up: []const f64,
     rho_down: []const f64,
     drho_up: []const f64,
@@ -2434,9 +2448,9 @@ fn buildSpinGgaChannels(
     };
 }
 
-fn buildSpinDensityChannels(up: anytype, down: anytype) SpinDensityChannels {
+fn build_spin_density_channels(up: anytype, down: anytype) SpinDensityChannels {
     return .{
-        .ae = buildSpinGgaChannels(
+        .ae = build_spin_gga_channels(
             up.rho_ae,
             down.rho_ae,
             up.drho_ae,
@@ -2444,7 +2458,7 @@ fn buildSpinDensityChannels(up: anytype, down: anytype) SpinDensityChannels {
             up.grad_s_rho_ae,
             down.grad_s_rho_ae,
         ),
-        .ps = buildSpinGgaChannels(
+        .ps = build_spin_gga_channels(
             up.rho_ps,
             down.rho_ps,
             up.drho_ps,
@@ -2455,7 +2469,7 @@ fn buildSpinDensityChannels(up: anytype, down: anytype) SpinDensityChannels {
     };
 }
 
-fn precomputeSpinCoreDerivatives(
+fn precompute_spin_core_derivatives(
     alloc: std.mem.Allocator,
     rho_core_ae: ?[]const f64,
     rho_core_ps: ?[]const f64,
@@ -2464,11 +2478,11 @@ fn precomputeSpinCoreDerivatives(
     dcore_ae: []f64,
     dcore_ps: []f64,
 ) !void {
-    try precomputeCoreDerivative(alloc, rho_core_ae, r, n_mesh, dcore_ae);
-    try precomputeCoreDerivative(alloc, rho_core_ps, r, n_mesh, dcore_ps);
+    try precompute_core_derivative(alloc, rho_core_ae, r, n_mesh, dcore_ae);
+    try precompute_core_derivative(alloc, rho_core_ps, r, n_mesh, dcore_ps);
 }
 
-fn radialDerivativeDensityChannel(
+fn radial_derivative_density_channel(
     rho_ae: []const f64,
     rho_ps: []const f64,
     tmp_rho: []f64,
@@ -2478,12 +2492,12 @@ fn radialDerivativeDensityChannel(
     n_mesh: usize,
 ) void {
     @memcpy(tmp_rho, rho_ae);
-    radialDerivative(tmp_rho, drho_ae, r, n_mesh);
+    radial_derivative(tmp_rho, drho_ae, r, n_mesh);
     @memcpy(tmp_rho, rho_ps);
-    radialDerivative(tmp_rho, drho_ps, r, n_mesh);
+    radial_derivative(tmp_rho, drho_ps, r, n_mesh);
 }
 
-fn splitCoreDensity(
+fn split_core_density(
     rho_up: []f64,
     rho_down: []f64,
     drho_up: []f64,
@@ -2504,7 +2518,7 @@ fn splitCoreDensity(
     }
 }
 
-fn normSq3(v: [3]f64) f64 {
+fn norm_sq3(v: [3]f64) f64 {
     return v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
 }
 
@@ -2512,7 +2526,7 @@ fn dot3(a: [3]f64, b: [3]f64) f64 {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
-fn integrateSpinExcRadial(
+fn integrate_spin_exc_radial(
     w_ang: f64,
     n_mesh: usize,
     r: []const f64,
@@ -2524,36 +2538,36 @@ fn integrateSpinExcRadial(
     var exc_ps: f64 = 0.0;
     for (0..n_mesh) |k| {
         const r2 = r[k] * r[k];
-        const wk = rab[k] * ctrapWeight(k, n_mesh);
+        const wk = rab[k] * ctrap_weight(k, n_mesh);
         const inv_r2 = if (r2 > 1e-20) 1.0 / r2 else 0.0;
         const n_ae_u = @max(channels.ae.rho_up[k], 1e-30);
         const n_ae_d = @max(channels.ae.rho_down[k], 1e-30);
         const g2_uu_ae = channels.ae.drho_up[k] * channels.ae.drho_up[k] +
-            normSq3(channels.ae.grad_up[k]) * inv_r2;
+            norm_sq3(channels.ae.grad_up[k]) * inv_r2;
         const g2_dd_ae = channels.ae.drho_down[k] * channels.ae.drho_down[k] +
-            normSq3(channels.ae.grad_down[k]) * inv_r2;
+            norm_sq3(channels.ae.grad_down[k]) * inv_r2;
         const g2_ud_ae = channels.ae.drho_up[k] * channels.ae.drho_down[k] +
             dot3(channels.ae.grad_up[k], channels.ae.grad_down[k]) * inv_r2;
         exc_ae +=
-            w_ang * xc.evalPointSpin(xc_func, n_ae_u, n_ae_d, g2_uu_ae, g2_dd_ae, g2_ud_ae).f *
+            w_ang * xc.eval_point_spin(xc_func, n_ae_u, n_ae_d, g2_uu_ae, g2_dd_ae, g2_ud_ae).f *
             r2 * wk;
 
         const n_ps_u = @max(channels.ps.rho_up[k], 1e-30);
         const n_ps_d = @max(channels.ps.rho_down[k], 1e-30);
         const g2_uu_ps = channels.ps.drho_up[k] * channels.ps.drho_up[k] +
-            normSq3(channels.ps.grad_up[k]) * inv_r2;
+            norm_sq3(channels.ps.grad_up[k]) * inv_r2;
         const g2_dd_ps = channels.ps.drho_down[k] * channels.ps.drho_down[k] +
-            normSq3(channels.ps.grad_down[k]) * inv_r2;
+            norm_sq3(channels.ps.grad_down[k]) * inv_r2;
         const g2_ud_ps = channels.ps.drho_up[k] * channels.ps.drho_down[k] +
             dot3(channels.ps.grad_up[k], channels.ps.grad_down[k]) * inv_r2;
         exc_ps +=
-            w_ang * xc.evalPointSpin(xc_func, n_ps_u, n_ps_d, g2_uu_ps, g2_dd_ps, g2_ud_ps).f *
+            w_ang * xc.eval_point_spin(xc_func, n_ps_u, n_ps_d, g2_uu_ps, g2_dd_ps, g2_ud_ps).f *
             r2 * wk;
     }
     return .{ .ae = exc_ae, .ps = exc_ps };
 }
 
-fn computeGgaSpinRadialAngularIntegrals(
+fn compute_gga_spin_radial_angular_integrals(
     n_mesh: usize,
     r: []const f64,
     rab: []const f64,
@@ -2570,27 +2584,27 @@ fn computeGgaSpinRadialAngularIntegrals(
     var sum_ang_down: [3]f64 = .{ 0.0, 0.0, 0.0 };
     for (0..n_mesh) |k| {
         const r2 = r[k] * r[k];
-        const wk = rab[k] * ctrapWeight(k, n_mesh);
+        const wk = rab[k] * ctrap_weight(k, n_mesh);
         const inv_r2 = if (r2 > 1e-20) 1.0 / r2 else 0.0;
-        const ev_ae = xc.evalPointSpin(
+        const ev_ae = xc.eval_point_spin(
             xc_func,
             @max(channels.ae.rho_up[k], 1e-30),
             @max(channels.ae.rho_down[k], 1e-30),
             channels.ae.drho_up[k] * channels.ae.drho_up[k] +
-                normSq3(channels.ae.grad_up[k]) * inv_r2,
+                norm_sq3(channels.ae.grad_up[k]) * inv_r2,
             channels.ae.drho_down[k] * channels.ae.drho_down[k] +
-                normSq3(channels.ae.grad_down[k]) * inv_r2,
+                norm_sq3(channels.ae.grad_down[k]) * inv_r2,
             channels.ae.drho_up[k] * channels.ae.drho_down[k] +
                 dot3(channels.ae.grad_up[k], channels.ae.grad_down[k]) * inv_r2,
         );
-        const ev_ps = xc.evalPointSpin(
+        const ev_ps = xc.eval_point_spin(
             xc_func,
             @max(channels.ps.rho_up[k], 1e-30),
             @max(channels.ps.rho_down[k], 1e-30),
             channels.ps.drho_up[k] * channels.ps.drho_up[k] +
-                normSq3(channels.ps.grad_up[k]) * inv_r2,
+                norm_sq3(channels.ps.grad_up[k]) * inv_r2,
             channels.ps.drho_down[k] * channels.ps.drho_down[k] +
-                normSq3(channels.ps.grad_down[k]) * inv_r2,
+                norm_sq3(channels.ps.grad_down[k]) * inv_r2,
             channels.ps.drho_up[k] * channels.ps.drho_down[k] +
                 dot3(channels.ps.grad_up[k], channels.ps.grad_down[k]) * inv_r2,
         );
@@ -2623,7 +2637,7 @@ fn computeGgaSpinRadialAngularIntegrals(
     };
 }
 
-fn computeGgaSpinAugIntegrals(
+fn compute_gga_spin_aug_integrals(
     n_mesh: usize,
     r: []const f64,
     rab: []const f64,
@@ -2638,14 +2652,14 @@ fn computeGgaSpinAugIntegrals(
     var a_ang_down: [3]f64 = .{ 0.0, 0.0, 0.0 };
     for (0..n_mesh) |k| {
         const r2 = r[k] * r[k];
-        const wk = rab[k] * ctrapWeight(k, n_mesh);
+        const wk = rab[k] * ctrap_weight(k, n_mesh);
         const inv_r2 = if (r2 > 1e-20) 1.0 / r2 else 0.0;
-        const ev_ps = xc.evalPointSpin(
+        const ev_ps = xc.eval_point_spin(
             xc_func,
             @max(ps.rho_up[k], 1e-30),
             @max(ps.rho_down[k], 1e-30),
-            ps.drho_up[k] * ps.drho_up[k] + normSq3(ps.grad_up[k]) * inv_r2,
-            ps.drho_down[k] * ps.drho_down[k] + normSq3(ps.grad_down[k]) * inv_r2,
+            ps.drho_up[k] * ps.drho_up[k] + norm_sq3(ps.grad_up[k]) * inv_r2,
+            ps.drho_down[k] * ps.drho_down[k] + norm_sq3(ps.grad_down[k]) * inv_r2,
             ps.drho_up[k] * ps.drho_down[k] + dot3(ps.grad_up[k], ps.grad_down[k]) * inv_r2,
         );
         a_rad_up += (ev_ps.df_dn_up * aug_f[k] +
@@ -2687,13 +2701,59 @@ const SpinExcAngularCtx = struct {
     xc_func: xc.Functional,
 };
 
-fn processSpinExcOneAngular(
+fn prepare_spin_exc_density_channels(
+    ctx: *const SpinExcAngularCtx,
+    sc: *const SpinExcScratch,
+    dens_up: *DensityAccumCtx,
+    dens_down: *DensityAccumCtx,
+) void {
+    build_density_at_angular_point(dens_up);
+    build_density_at_angular_point(dens_down);
+    radial_derivative_density_channel(
+        sc.up.rho_ae,
+        sc.up.rho_ps,
+        sc.up.tmp_rho,
+        sc.up.drho_ae,
+        sc.up.drho_ps,
+        ctx.r,
+        ctx.dims.n_mesh,
+    );
+    radial_derivative_density_channel(
+        sc.down.rho_ae,
+        sc.down.rho_ps,
+        sc.down.tmp_rho,
+        sc.down.drho_ae,
+        sc.down.drho_ps,
+        ctx.r,
+        ctx.dims.n_mesh,
+    );
+    split_core_density(
+        sc.up.rho_ae,
+        sc.down.rho_ae,
+        sc.up.drho_ae,
+        sc.down.drho_ae,
+        ctx.rho_core_ae,
+        sc.up.dcore_ae,
+        ctx.dims.n_mesh,
+    );
+    split_core_density(
+        sc.up.rho_ps,
+        sc.down.rho_ps,
+        sc.up.drho_ps,
+        sc.down.drho_ps,
+        ctx.rho_core_ps,
+        sc.up.dcore_ps,
+        ctx.dims.n_mesh,
+    );
+}
+
+fn process_spin_exc_one_angular(
     alpha: usize,
     w_ang: f64,
     ctx: *const SpinExcAngularCtx,
     sc: *const SpinExcScratch,
 ) SpinExcResult {
-    var dens_up = buildExcDensityCtx(
+    var dens_up = build_exc_density_ctx(
         ctx.paw,
         ctx.rhoij_m_up,
         ctx.m_total,
@@ -2706,7 +2766,7 @@ fn processSpinExcOneAngular(
         ctx.gaunt_table,
         &sc.up,
     );
-    var dens_down = buildExcDensityCtx(
+    var dens_down = build_exc_density_ctx(
         ctx.paw,
         ctx.rhoij_m_down,
         ctx.m_total,
@@ -2719,55 +2779,18 @@ fn processSpinExcOneAngular(
         ctx.gaunt_table,
         &sc.down,
     );
-    buildDensityAtAngularPoint(&dens_up);
-    buildDensityAtAngularPoint(&dens_down);
-    radialDerivativeDensityChannel(
-        sc.up.rho_ae,
-        sc.up.rho_ps,
-        sc.up.tmp_rho,
-        sc.up.drho_ae,
-        sc.up.drho_ps,
-        ctx.r,
-        ctx.dims.n_mesh,
-    );
-    radialDerivativeDensityChannel(
-        sc.down.rho_ae,
-        sc.down.rho_ps,
-        sc.down.tmp_rho,
-        sc.down.drho_ae,
-        sc.down.drho_ps,
-        ctx.r,
-        ctx.dims.n_mesh,
-    );
-    splitCoreDensity(
-        sc.up.rho_ae,
-        sc.down.rho_ae,
-        sc.up.drho_ae,
-        sc.down.drho_ae,
-        ctx.rho_core_ae,
-        sc.up.dcore_ae,
-        ctx.dims.n_mesh,
-    );
-    splitCoreDensity(
-        sc.up.rho_ps,
-        sc.down.rho_ps,
-        sc.up.drho_ps,
-        sc.down.drho_ps,
-        ctx.rho_core_ps,
-        sc.up.dcore_ps,
-        ctx.dims.n_mesh,
-    );
-    return integrateSpinExcRadial(
+    prepare_spin_exc_density_channels(ctx, sc, &dens_up, &dens_down);
+    return integrate_spin_exc_radial(
         w_ang,
         ctx.dims.n_mesh,
         ctx.r,
         ctx.rab,
-        buildSpinDensityChannels(&sc.up, &sc.down),
+        build_spin_density_channels(&sc.up, &sc.down),
         ctx.xc_func,
     );
 }
 
-fn runSpinExcAngularLoop(
+fn run_spin_exc_angular_loop(
     grid: anytype,
     ctx: *const SpinExcAngularCtx,
     sc: *const SpinExcScratch,
@@ -2776,7 +2799,7 @@ fn runSpinExcAngularLoop(
     var exc_ae: f64 = 0.0;
     var exc_ps: f64 = 0.0;
     for (grid, 0..) |pt, alpha| {
-        const res = processSpinExcOneAngular(alpha, pt.w * four_pi, ctx, sc);
+        const res = process_spin_exc_one_angular(alpha, pt.w * four_pi, ctx, sc);
         exc_ae += res.ae;
         exc_ps += res.ps;
     }
@@ -2796,7 +2819,7 @@ const SpinDijXcAngularCtx = struct {
     down: *const DijXcScratch,
 };
 
-fn writeSpinAugIntegralsForIj(
+fn write_spin_aug_integrals_for_ij(
     ctx: *const SpinDijXcAngularCtx,
     channels: SpinDensityChannels,
     i: usize,
@@ -2814,7 +2837,7 @@ fn writeSpinAugIntegralsForIj(
             ctx.down.aug_ang_integrals[out_idx] = .{ 0.0, 0.0, 0.0 };
             continue;
         };
-        const res = computeGgaSpinAugIntegrals(
+        const res = compute_gga_spin_aug_integrals(
             ctx.dims.n_mesh,
             ctx.r,
             ctx.rab,
@@ -2830,14 +2853,14 @@ fn writeSpinAugIntegralsForIj(
     }
 }
 
-fn writeSpinDijIntegralsForIj(
+fn write_spin_dij_integrals_for_ij(
     ctx: *const SpinDijXcAngularCtx,
     channels: SpinDensityChannels,
     i: usize,
     j: usize,
 ) void {
     const nbeta = ctx.paw.number_of_proj;
-    const res = computeGgaSpinRadialAngularIntegrals(
+    const res = compute_gga_spin_radial_angular_integrals(
         ctx.dims.n_mesh,
         ctx.r,
         ctx.rab,
@@ -2853,19 +2876,19 @@ fn writeSpinDijIntegralsForIj(
     ctx.down.radial_integrals[out_idx] = res.down.sum_rad;
     ctx.up.angular_integrals[out_idx] = res.up.sum_ang;
     ctx.down.angular_integrals[out_idx] = res.down.sum_ang;
-    writeSpinAugIntegralsForIj(ctx, channels, i, j);
+    write_spin_aug_integrals_for_ij(ctx, channels, i, j);
 }
 
-fn computeSpinDijXcOneAngular(
+fn compute_spin_dij_xc_one_angular(
     ctx: *const SpinDijXcAngularCtx,
     dens_up: *const DensityAccumCtx,
     dens_down: *const DensityAccumCtx,
     rho_core_ae: ?[]const f64,
     rho_core_ps: ?[]const f64,
 ) void {
-    buildDensityAtAngularPoint(dens_up);
-    buildDensityAtAngularPoint(dens_down);
-    radialDerivativeDensityChannel(
+    build_density_at_angular_point(dens_up);
+    build_density_at_angular_point(dens_down);
+    radial_derivative_density_channel(
         ctx.up.rho_ae,
         ctx.up.rho_ps,
         ctx.up.tmp_rho,
@@ -2874,7 +2897,7 @@ fn computeSpinDijXcOneAngular(
         ctx.r,
         ctx.dims.n_mesh,
     );
-    radialDerivativeDensityChannel(
+    radial_derivative_density_channel(
         ctx.down.rho_ae,
         ctx.down.rho_ps,
         ctx.down.tmp_rho,
@@ -2883,7 +2906,7 @@ fn computeSpinDijXcOneAngular(
         ctx.r,
         ctx.dims.n_mesh,
     );
-    splitCoreDensity(
+    split_core_density(
         ctx.up.rho_ae,
         ctx.down.rho_ae,
         ctx.up.drho_ae,
@@ -2892,7 +2915,7 @@ fn computeSpinDijXcOneAngular(
         ctx.up.dcore_ae,
         ctx.dims.n_mesh,
     );
-    splitCoreDensity(
+    split_core_density(
         ctx.up.rho_ps,
         ctx.down.rho_ps,
         ctx.up.drho_ps,
@@ -2901,15 +2924,78 @@ fn computeSpinDijXcOneAngular(
         ctx.up.dcore_ps,
         ctx.dims.n_mesh,
     );
-    const channels = buildSpinDensityChannels(ctx.up, ctx.down);
+    const channels = build_spin_density_channels(ctx.up, ctx.down);
     for (0..ctx.paw.number_of_proj) |i| {
         for (0..ctx.paw.number_of_proj) |j| {
-            writeSpinDijIntegralsForIj(ctx, channels, i, j);
+            write_spin_dij_integrals_for_ij(ctx, channels, i, j);
         }
     }
 }
 
-fn runSpinDijXcAngularPass(
+const SpinDijDensityPair = struct {
+    up: DensityAccumCtx,
+    down: DensityAccumCtx,
+};
+
+fn build_spin_dij_density_pair(
+    paw: PawData,
+    rhoij_m_up: []const f64,
+    rhoij_m_down: []const f64,
+    m_total: usize,
+    m_offsets: []const usize,
+    alpha: usize,
+    lb: *const LebedevBuffers,
+    dims: MeshAndAug,
+    aug: *const AugR2Buffers,
+    uiuj: *const UiUjBuffers,
+    gaunt_table: *const GauntTable,
+    sc: *const SpinDijXcScratch,
+) SpinDijDensityPair {
+    return .{
+        .up = build_density_accum_ctx(
+            paw,
+            rhoij_m_up,
+            m_total,
+            m_offsets,
+            alpha,
+            lb.ylm_at,
+            lb.grad_ylm_at,
+            lb.ylm_aug_at,
+            lb.grad_ylm_aug_at,
+            dims.n_lm_aug,
+            dims.n_l_aug,
+            dims.lmax_aug,
+            aug.vals,
+            uiuj.ae,
+            uiuj.ps,
+            gaunt_table,
+            dims.n_mesh,
+            &sc.up,
+        ),
+        .down = build_density_accum_ctx(
+            paw,
+            rhoij_m_down,
+            m_total,
+            m_offsets,
+            alpha,
+            lb.ylm_at,
+            lb.grad_ylm_at,
+            lb.ylm_aug_at,
+            lb.grad_ylm_aug_at,
+            dims.n_lm_aug,
+            dims.n_l_aug,
+            dims.lmax_aug,
+            aug.vals,
+            uiuj.ae,
+            uiuj.ps,
+            gaunt_table,
+            dims.n_mesh,
+            &sc.down,
+        ),
+    };
+}
+
+fn run_spin_dij_xc_angular_pass(
     grid: anytype,
     paw: PawData,
     rhoij_m_up: []const f64,
@@ -2929,45 +3015,19 @@ fn runSpinDijXcAngularPass(
     xc_func: xc.Functional,
 ) void {
     for (grid, 0..) |_, alpha| {
-        const dens_up = buildDensityAccumCtx(
+        const dens = build_spin_dij_density_pair(
             paw,
             rhoij_m_up,
-            m_total,
-            m_offsets,
-            alpha,
-            lb.ylm_at,
-            lb.grad_ylm_at,
-            lb.ylm_aug_at,
-            lb.grad_ylm_aug_at,
-            dims.n_lm_aug,
-            dims.n_l_aug,
-            dims.lmax_aug,
-            aug.vals,
-            uiuj.ae,
-            uiuj.ps,
-            gaunt_table,
-            dims.n_mesh,
-            &sc.up,
-        );
-        const dens_down = buildDensityAccumCtx(
-            paw,
             rhoij_m_down,
             m_total,
             m_offsets,
             alpha,
-            lb.ylm_at,
-            lb.grad_ylm_at,
-            lb.ylm_aug_at,
-            lb.grad_ylm_aug_at,
-            dims.n_lm_aug,
-            dims.n_l_aug,
-            dims.lmax_aug,
-            aug.vals,
-            uiuj.ae,
-            uiuj.ps,
+            lb,
+            dims,
+            aug,
+            uiuj,
             gaunt_table,
-            dims.n_mesh,
-            &sc.down,
+            sc,
         );
         const ctx = SpinDijXcAngularCtx{
             .alpha = alpha,
@@ -2981,7 +3041,7 @@ fn runSpinDijXcAngularPass(
             .up = &sc.up,
             .down = &sc.down,
         };
-        computeSpinDijXcOneAngular(&ctx, &dens_up, &dens_down, rho_core_ae, rho_core_ps);
+        compute_spin_dij_xc_one_angular(&ctx, &dens.up, &dens.down, rho_core_ae, rho_core_ps);
     }
 }
 
@@ -2999,7 +3059,7 @@ const SpinDijXcAccumCtx = struct {
     dij_xc_m_down: []f64,
 };
 
-fn spinAugmentationContribDij(
+fn spin_augmentation_contrib_dij(
     ctx: *const SpinDijXcAccumCtx,
     i: usize,
     j: usize,
@@ -3035,7 +3095,7 @@ fn spinAugmentationContribDij(
     return .{ .up = sum_up, .down = sum_down };
 }
 
-fn accumulateSpinDijXcForIj(ctx: *const SpinDijXcAccumCtx, i: usize, j: usize) void {
+fn accumulate_spin_dij_xc_for_ij(ctx: *const SpinDijXcAccumCtx, i: usize, j: usize) void {
     const nbeta = ctx.paw.number_of_proj;
     const n_ij = nbeta * nbeta;
     const ylm_base = ctx.alpha * ctx.m_total;
@@ -3057,7 +3117,7 @@ fn accumulateSpinDijXcForIj(ctx: *const SpinDijXcAccumCtx, i: usize, j: usize) v
             const idx_j = ylm_base + ctx.m_offsets[j] + mj;
             const yj = ctx.lb.ylm_at[idx_j];
             const gyj = ctx.lb.grad_ylm_at[idx_j];
-            const aug = spinAugmentationContribDij(
+            const aug = spin_augmentation_contrib_dij(
                 ctx,
                 i,
                 j,
@@ -3080,7 +3140,7 @@ fn accumulateSpinDijXcForIj(ctx: *const SpinDijXcAccumCtx, i: usize, j: usize) v
     }
 }
 
-fn runSpinDijXcAccumulation(
+fn run_spin_dij_xc_accumulation(
     grid: anytype,
     paw: PawData,
     m_total: usize,
@@ -3109,17 +3169,94 @@ fn runSpinDijXcAccumulation(
         };
         for (0..paw.number_of_proj) |i| {
             for (0..paw.number_of_proj) |j| {
-                accumulateSpinDijXcForIj(&ctx, i, j);
+                accumulate_spin_dij_xc_for_ij(&ctx, i, j);
             }
         }
     }
+}
+
+fn run_spin_dij_xc_with_buffers(
+    grid: anytype,
+    paw: PawData,
+    rhoij_m_up: []const f64,
+    rhoij_m_down: []const f64,
+    m_total: usize,
+    m_offsets: []const usize,
+    gaunt_table: *const GauntTable,
+    lb: *const LebedevBuffers,
+    dims: MeshAndAug,
+    aug: *const AugR2Buffers,
+    uiuj: *const UiUjBuffers,
+    sc: *const SpinDijXcScratch,
+    r: []const f64,
+    rab: []const f64,
+    rho_core_ae: ?[]const f64,
+    rho_core_ps: ?[]const f64,
+    xc_func: xc.Functional,
+    dij_xc_m_up: []f64,
+    dij_xc_m_down: []f64,
+    four_pi: f64,
+) void {
+    @memset(dij_xc_m_up[0 .. m_total * m_total], 0.0);
+    @memset(dij_xc_m_down[0 .. m_total * m_total], 0.0);
+    run_spin_dij_xc_angular_pass(
+        grid,
+        paw,
+        rhoij_m_up,
+        rhoij_m_down,
+        m_total,
+        m_offsets,
+        gaunt_table,
+        lb,
+        dims,
+        aug,
+        uiuj,
+        sc,
+        r,
+        rab,
+        rho_core_ae,
+        rho_core_ps,
+        xc_func,
+    );
+    run_spin_dij_xc_accumulation(
+        grid,
+        paw,
+        m_total,
+        m_offsets,
+        lb,
+        dims,
+        sc,
+        gaunt_table,
+        dij_xc_m_up,
+        dij_xc_m_down,
+        four_pi,
+    );
+}
+
+fn precompute_spin_dij_core_derivatives(
+    alloc: std.mem.Allocator,
+    rho_core_ae: ?[]const f64,
+    rho_core_ps: ?[]const f64,
+    r: []const f64,
+    dims: MeshAndAug,
+    sc: *const SpinDijXcScratch,
+) !void {
+    try precompute_spin_core_derivatives(
+        alloc,
+        rho_core_ae,
+        rho_core_ps,
+        r,
+        dims.n_mesh,
+        sc.up.dcore_ae,
+        sc.up.dcore_ps,
+    );
 }
 
 /// Spin-polarized PAW D^xc: compute D^xc_up and D^xc_down from rhoij_up/down.
 /// Core density (spherical) is split equally between up and down.
 /// For non-magnetic input (rhoij_up == rhoij_down == total/2), this reduces
 /// to the same result as the non-spin version applied identically to both channels.
-pub fn computePawDijXcAngularSpin(
+pub fn compute_paw_dij_xc_angular_spin(
     alloc: std.mem.Allocator,
     dij_xc_m_up: []f64,
     dij_xc_m_down: []f64,
@@ -3136,45 +3273,34 @@ pub fn computePawDijXcAngularSpin(
     gaunt_table: *const GauntTable,
 ) !void {
     const nbeta = paw.number_of_proj;
-    const dims = computeMeshAndAug(paw, r, rab);
-    const grid = lebedev.getLebedevGrid(N_ANG);
-    const n_ang = grid.len;
+    const dims = compute_mesh_and_aug(paw, r, rab);
+    const grid = lebedev.get_lebedev_grid(N_ANG);
     const n_ij = nbeta * nbeta;
     const four_pi = 4.0 * std.math.pi;
-    const lb = try allocLebedevBuffers(
+    const lb = try alloc_lebedev_buffers(
         alloc,
         grid,
         paw,
         m_total,
         m_offsets,
-        n_ang,
+        grid.len,
         dims.n_l_aug,
         dims.n_lm_aug,
     );
-    defer freeLebedevBuffers(alloc, lb);
+    defer free_lebedev_buffers(alloc, lb);
 
-    const uiuj = try precomputeUiUj(alloc, paw, r, dims.n_mesh, true);
-    defer freeUiUj(alloc, uiuj);
+    const uiuj = try precompute_ui_uj(alloc, paw, r, dims.n_mesh, true);
+    defer free_ui_uj(alloc, uiuj);
 
-    const aug = try precomputeAugR2(alloc, paw, r, dims.n_mesh, dims.n_l_aug, true);
-    defer freeAugR2(alloc, aug);
+    const aug = try precompute_aug_r2(alloc, paw, r, dims.n_mesh, dims.n_l_aug, true);
+    defer free_aug_r2(alloc, aug);
 
-    const sc = try allocSpinDijXcScratch(alloc, dims.n_mesh, n_ang, n_ij, dims.n_l_aug);
-    defer freeSpinDijXcScratch(alloc, sc);
+    const sc = try alloc_spin_dij_xc_scratch(alloc, dims.n_mesh, grid.len, n_ij, dims.n_l_aug);
+    defer free_spin_dij_xc_scratch(alloc, sc);
 
-    try precomputeSpinCoreDerivatives(
-        alloc,
-        rho_core_ae,
-        rho_core_ps,
-        r,
-        dims.n_mesh,
-        sc.up.dcore_ae,
-        sc.up.dcore_ps,
-    );
+    try precompute_spin_dij_core_derivatives(alloc, rho_core_ae, rho_core_ps, r, dims, &sc);
 
-    @memset(dij_xc_m_up[0 .. m_total * m_total], 0.0);
-    @memset(dij_xc_m_down[0 .. m_total * m_total], 0.0);
-    runSpinDijXcAngularPass(
+    run_spin_dij_xc_with_buffers(
         grid,
         paw,
         rhoij_m_up,
@@ -3192,16 +3318,6 @@ pub fn computePawDijXcAngularSpin(
         rho_core_ae,
         rho_core_ps,
         xc_func,
-    );
-    runSpinDijXcAccumulation(
-        grid,
-        paw,
-        m_total,
-        m_offsets,
-        &lb,
-        dims,
-        &sc,
-        gaunt_table,
         dij_xc_m_up,
         dij_xc_m_down,
         four_pi,
@@ -3210,7 +3326,7 @@ pub fn computePawDijXcAngularSpin(
 
 /// Spin-polarized PAW on-site XC energy with angular Lebedev quadrature.
 /// Returns E_xc^AE(up,down) - E_xc^PS(up,down).
-pub fn computePawExcOnsiteAngularSpin(
+pub fn compute_paw_exc_onsite_angular_spin(
     alloc: std.mem.Allocator,
     paw: PawData,
     rhoij_m_up: []const f64,
@@ -3224,12 +3340,12 @@ pub fn computePawExcOnsiteAngularSpin(
     xc_func: xc.Functional,
     gaunt_table: *const GauntTable,
 ) !f64 {
-    const dims = computeMeshAndAug(paw, r, rab);
-    const grid = lebedev.getLebedevGrid(N_ANG);
+    const dims = compute_mesh_and_aug(paw, r, rab);
+    const grid = lebedev.get_lebedev_grid(N_ANG);
     const n_ang = grid.len;
     const four_pi = 4.0 * std.math.pi;
 
-    const lb = try allocLebedevBuffers(
+    const lb = try alloc_lebedev_buffers(
         alloc,
         grid,
         paw,
@@ -3239,18 +3355,18 @@ pub fn computePawExcOnsiteAngularSpin(
         dims.n_l_aug,
         dims.n_lm_aug,
     );
-    defer freeLebedevBuffers(alloc, lb);
+    defer free_lebedev_buffers(alloc, lb);
 
-    const uiuj = try precomputeUiUj(alloc, paw, r, dims.n_mesh, false);
-    defer freeUiUj(alloc, uiuj);
+    const uiuj = try precompute_ui_uj(alloc, paw, r, dims.n_mesh, false);
+    defer free_ui_uj(alloc, uiuj);
 
-    const aug = try precomputeAugR2(alloc, paw, r, dims.n_mesh, dims.n_l_aug, false);
-    defer freeAugR2(alloc, aug);
+    const aug = try precompute_aug_r2(alloc, paw, r, dims.n_mesh, dims.n_l_aug, false);
+    defer free_aug_r2(alloc, aug);
 
-    const sc = try allocSpinExcScratch(alloc, dims.n_mesh);
-    defer freeSpinExcScratch(alloc, sc);
+    const sc = try alloc_spin_exc_scratch(alloc, dims.n_mesh);
+    defer free_spin_exc_scratch(alloc, sc);
 
-    try precomputeSpinCoreDerivatives(
+    try precompute_spin_core_derivatives(
         alloc,
         rho_core_ae,
         rho_core_ps,
@@ -3277,7 +3393,7 @@ pub fn computePawExcOnsiteAngularSpin(
         .rab = rab,
         .xc_func = xc_func,
     };
-    return runSpinExcAngularLoop(grid, &ctx, &sc, four_pi);
+    return run_spin_exc_angular_loop(grid, &ctx, &sc, four_pi);
 }
 
 /// Compute radial derivative df/dr using QE-style 3-point Lagrange formula
@@ -3288,7 +3404,7 @@ pub fn computePawExcOnsiteAngularSpin(
 ///   where h1 = r[k]-r[k-1], h2 = r[k+1]-r[k]
 /// Last point: df = 0
 /// First point: linear extrapolation from interior points
-fn radialDerivative(f: []const f64, df: []f64, r_grid: []const f64, n: usize) void {
+fn radial_derivative(f: []const f64, df: []f64, r_grid: []const f64, n: usize) void {
     if (n < 3) {
         @memset(df[0..n], 0.0);
         return;
@@ -3317,14 +3433,14 @@ fn radialDerivative(f: []const f64, df: []f64, r_grid: []const f64, n: usize) vo
     }
 }
 
-test "evalPointSpin nonmagnetic consistency" {
-    // For nonmagnetic input: evalPointSpin(n/2, n/2, σ/4, σ/4, σ/4)
-    // should give df_dn_up = df_dn_down = evalPoint(n, σ).df_dn
+test "eval_point_spin nonmagnetic consistency" {
+    // For nonmagnetic input: eval_point_spin(n/2, n/2, σ/4, σ/4, σ/4)
+    // should give df_dn_up = df_dn_down = eval_point(n, σ).df_dn
     const n = 0.05;
     const sigma = 0.01;
 
-    const ns = xc.evalPoint(.pbe, n, sigma);
-    const sp = xc.evalPointSpin(.pbe, n / 2.0, n / 2.0, sigma / 4.0, sigma / 4.0, sigma / 4.0);
+    const ns = xc.eval_point(.pbe, n, sigma);
+    const sp = xc.eval_point_spin(.pbe, n / 2.0, n / 2.0, sigma / 4.0, sigma / 4.0, sigma / 4.0);
 
     // f should match
     try std.testing.expectApproxEqAbs(ns.f, sp.f, 1e-10);

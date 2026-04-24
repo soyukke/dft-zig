@@ -21,7 +21,7 @@ const F64Vec = @Vector(simd_width, f64);
 
 /// Complex inner product: <a|b> = sum(conj(a[i]) * b[i])
 /// SIMD optimized version processes 4 complex numbers at a time.
-pub fn innerProduct(a: []const Complex, b: []const Complex) Complex {
+pub fn inner_product(a: []const Complex, b: []const Complex) Complex {
     const n = @min(a.len, b.len);
     if (n == 0) return Complex.init(0.0, 0.0);
 
@@ -68,7 +68,7 @@ pub fn innerProduct(a: []const Complex, b: []const Complex) Complex {
 
 /// Vector norm: sqrt(<a|a>) = sqrt(sum(|a[i]|^2))
 /// SIMD optimized.
-pub fn vectorNorm(a: []const Complex) f64 {
+pub fn vector_norm(a: []const Complex) f64 {
     const n = a.len;
     if (n == 0) return 0.0;
 
@@ -141,7 +141,7 @@ pub fn axpy(y: []Complex, x: []const Complex, alpha: f64) void {
 }
 
 /// Complex AXPY: y = y + alpha * x where alpha is complex
-pub fn axpyComplex(y: []Complex, x: []const Complex, alpha: Complex) void {
+pub fn axpy_complex(y: []Complex, x: []const Complex, alpha: Complex) void {
     const n = @min(y.len, x.len);
     if (n == 0) return;
 
@@ -222,7 +222,7 @@ pub fn scale(y: []Complex, x: []const Complex, alpha: f64) void {
 }
 
 /// Scale vector in-place: x *= alpha
-pub fn scaleInPlace(x: []Complex, alpha: f64) void {
+pub fn scale_in_place(x: []Complex, alpha: f64) void {
     scale(x, x, alpha);
 }
 
@@ -239,7 +239,7 @@ pub fn copy(y: []Complex, x: []const Complex) void {
 
 // ============== Tests ==============
 
-test "innerProduct basic" {
+test "inner_product basic" {
     const a = [_]Complex{
         Complex.init(1.0, 2.0),
         Complex.init(3.0, 4.0),
@@ -253,12 +253,12 @@ test "innerProduct basic" {
     //       = (1-2i)*(5+6i) + (3-4i)*(7+8i)
     //       = (5+6i-10i+12) + (21+24i-28i+32)
     //       = (17-4i) + (53-4i) = 70 - 8i
-    const result = innerProduct(&a, &b);
+    const result = inner_product(&a, &b);
     try std.testing.expectApproxEqAbs(70.0, result.r, 1e-10);
     try std.testing.expectApproxEqAbs(-8.0, result.i, 1e-10);
 }
 
-test "innerProduct SIMD" {
+test "inner_product SIMD" {
     var a: [100]Complex = undefined;
     var b: [100]Complex = undefined;
 
@@ -276,17 +276,17 @@ test "innerProduct SIMD" {
         ref_im += a[i].r * b[i].i - a[i].i * b[i].r;
     }
 
-    const result = innerProduct(&a, &b);
+    const result = inner_product(&a, &b);
     try std.testing.expectApproxEqAbs(ref_re, result.r, 1e-8);
     try std.testing.expectApproxEqAbs(ref_im, result.i, 1e-8);
 }
 
-test "vectorNorm" {
+test "vector_norm" {
     const a = [_]Complex{
         Complex.init(3.0, 4.0), // |a[0]|^2 = 25
         Complex.init(0.0, 0.0),
     };
-    const norm = vectorNorm(&a);
+    const norm = vector_norm(&a);
     try std.testing.expectApproxEqAbs(5.0, norm, 1e-10);
 }
 

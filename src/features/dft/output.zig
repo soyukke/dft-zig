@@ -12,7 +12,7 @@ const xyz = @import("../structure/xyz.zig");
 pub const Timing = timing_mod.Timing;
 
 /// Write input summary for reproducibility.
-pub fn writeRunInfo(
+pub fn write_run_info(
     io: std.Io,
     dir: std.Io.Dir,
     cfg: config.Config,
@@ -26,26 +26,26 @@ pub fn writeRunInfo(
     var writer = file.writer(io, &buffer);
     const out = &writer.interface;
 
-    try writeRunInfoHeader(out, cfg);
-    try writeRunInfoScf(out, cfg);
-    try writeRunInfoBand(out, cfg);
-    try writeRunInfoAtoms(out, cfg, atoms, cell_ang);
+    try write_run_info_header(out, cfg);
+    try write_run_info_scf(out, cfg);
+    try write_run_info_band(out, cfg);
+    try write_run_info_atoms(out, cfg, atoms, cell_ang);
     try out.flush();
 }
 
-fn writeRunInfoHeader(out: anytype, cfg: config.Config) !void {
+fn write_run_info_header(out: anytype, cfg: config.Config) !void {
     try out.print("title = {s}\n", .{cfg.title});
     try out.print("xyz = {s}\n", .{cfg.xyz_path});
     try out.print("out_dir = {s}\n", .{cfg.out_dir});
-    try out.print("units = {s}\n", .{unitsName(cfg.units)});
-    try out.print("linalg_backend = {s}\n", .{linalg.backendName(cfg.linalg_backend)});
+    try out.print("units = {s}\n", .{units_name(cfg.units)});
+    try out.print("linalg_backend = {s}\n", .{linalg.backend_name(cfg.linalg_backend)});
     try out.print("threads = {d}\n", .{cfg.threads});
 }
 
-fn writeRunInfoScf(out: anytype, cfg: config.Config) !void {
-    try out.print("scf_solver = {s}\n", .{config.scfSolverName(cfg.scf.solver)});
-    try out.print("scf_xc = {s}\n", .{config.xcFunctionalName(cfg.scf.xc)});
-    try out.print("scf_smearing = {s}\n", .{config.smearingName(cfg.scf.smearing)});
+fn write_run_info_scf(out: anytype, cfg: config.Config) !void {
+    try out.print("scf_solver = {s}\n", .{config.scf_solver_name(cfg.scf.solver)});
+    try out.print("scf_xc = {s}\n", .{config.xc_functional_name(cfg.scf.xc)});
+    try out.print("scf_smearing = {s}\n", .{config.smearing_name(cfg.scf.smearing)});
     try out.print("scf_smear_ry = {d:.6}\n", .{cfg.scf.smear_ry});
     try out.print("scf_symmetry = {s}\n", .{if (cfg.scf.symmetry) "true" else "false"});
     try out.print(
@@ -75,9 +75,9 @@ fn writeRunInfoScf(out: anytype, cfg: config.Config) !void {
     try out.print("ewald_tol = {d:.6}\n", .{cfg.ewald.tol});
 }
 
-fn writeRunInfoBand(out: anytype, cfg: config.Config) !void {
+fn write_run_info_band(out: anytype, cfg: config.Config) !void {
     try out.print("band_nbands = {d}\n", .{cfg.band.nbands});
-    try out.print("band_solver = {s}\n", .{config.bandSolverName(cfg.band.solver)});
+    try out.print("band_solver = {s}\n", .{config.band_solver_name(cfg.band.solver)});
     try out.print("band_iterative_max_iter = {d}\n", .{cfg.band.iterative_max_iter});
     try out.print("band_iterative_tol = {d:.6}\n", .{cfg.band.iterative_tol});
     try out.print("band_iterative_max_subspace = {d}\n", .{cfg.band.iterative_max_subspace});
@@ -93,7 +93,7 @@ fn writeRunInfoBand(out: anytype, cfg: config.Config) !void {
     );
 }
 
-fn writeRunInfoAtoms(
+fn write_run_info_atoms(
     out: anytype,
     cfg: config.Config,
     atoms: []const xyz.Atom,
@@ -104,7 +104,7 @@ fn writeRunInfoAtoms(
     for (cfg.pseudopotentials, 0..) |p, idx| {
         try out.print(
             "pseudo[{d}] = {s},{s},{s}\n",
-            .{ idx, p.element, pseudo.formatName(p.format), p.path },
+            .{ idx, p.element, pseudo.format_name(p.format), p.path },
         );
     }
     try out.print(
@@ -120,7 +120,7 @@ fn writeRunInfoAtoms(
 }
 
 /// Write k-point path CSV.
-pub fn writeKpoints(io: std.Io, dir: std.Io.Dir, path: kpath.KPath) !void {
+pub fn write_kpoints(io: std.Io, dir: std.Io.Dir, path: kpath.KPath) !void {
     var file = try dir.createFile(io, "band_kpoints.csv", .{ .truncate = true });
     defer file.close(io);
 
@@ -149,7 +149,7 @@ pub fn writeKpoints(io: std.Io, dir: std.Io.Dir, path: kpath.KPath) !void {
 }
 
 /// Write atoms to CSV in angstrom.
-pub fn writeAtoms(io: std.Io, dir: std.Io.Dir, atoms: []const xyz.Atom, unit_scale: f64) !void {
+pub fn write_atoms(io: std.Io, dir: std.Io.Dir, atoms: []const xyz.Atom, unit_scale: f64) !void {
     var file = try dir.createFile(io, "atoms.csv", .{ .truncate = true });
     defer file.close(io);
 
@@ -169,7 +169,7 @@ pub fn writeAtoms(io: std.Io, dir: std.Io.Dir, atoms: []const xyz.Atom, unit_sca
 }
 
 /// Write atom data to CSV in angstrom.
-pub fn writeAtomsFromAtomData(
+pub fn write_atoms_from_atom_data(
     io: std.Io,
     dir: std.Io.Dir,
     atoms: []const hamiltonian.AtomData,
@@ -200,7 +200,7 @@ pub fn writeAtomsFromAtomData(
 }
 
 /// Write current feature status.
-pub fn writeStatus(
+pub fn write_status(
     io: std.Io,
     dir: std.Io.Dir,
     cfg: config.Config,
@@ -215,9 +215,9 @@ pub fn writeStatus(
 
     if (scf_result) |result| {
         try out.print("scf_enabled = true\n", .{});
-        try out.print("scf_solver = {s}\n", .{config.scfSolverName(cfg.scf.solver)});
-        try out.print("scf_xc = {s}\n", .{config.xcFunctionalName(cfg.scf.xc)});
-        try out.print("scf_smearing = {s}\n", .{config.smearingName(cfg.scf.smearing)});
+        try out.print("scf_solver = {s}\n", .{config.scf_solver_name(cfg.scf.solver)});
+        try out.print("scf_xc = {s}\n", .{config.xc_functional_name(cfg.scf.xc)});
+        try out.print("scf_smearing = {s}\n", .{config.smearing_name(cfg.scf.smearing)});
         try out.print("scf_smear_ry = {d:.6}\n", .{cfg.scf.smear_ry});
         try out.print("scf_symmetry = {s}\n", .{if (cfg.scf.symmetry) "true" else "false"});
         try out.print(
@@ -226,7 +226,7 @@ pub fn writeStatus(
         );
         try out.print(
             "scf_convergence_metric = {s}\n",
-            .{config.convergenceMetricName(cfg.scf.convergence_metric)},
+            .{config.convergence_metric_name(cfg.scf.convergence_metric)},
         );
         try out.print("scf_converged = {s}\n", .{if (result.converged) "true" else "false"});
         try out.print("scf_iterations = {d}\n", .{result.iterations});
@@ -255,9 +255,9 @@ pub fn writeStatus(
         try out.print("band_status = local_nonlocal_qij_scf\n", .{});
     } else {
         try out.print("scf_enabled = false\n", .{});
-        try out.print("scf_solver = {s}\n", .{config.scfSolverName(cfg.scf.solver)});
-        try out.print("scf_xc = {s}\n", .{config.xcFunctionalName(cfg.scf.xc)});
-        try out.print("scf_smearing = {s}\n", .{config.smearingName(cfg.scf.smearing)});
+        try out.print("scf_solver = {s}\n", .{config.scf_solver_name(cfg.scf.solver)});
+        try out.print("scf_xc = {s}\n", .{config.xc_functional_name(cfg.scf.xc)});
+        try out.print("scf_smearing = {s}\n", .{config.smearing_name(cfg.scf.smearing)});
         try out.print("scf_smear_ry = {d:.6}\n", .{cfg.scf.smear_ry});
         try out.print("scf_symmetry = {s}\n", .{if (cfg.scf.symmetry) "true" else "false"});
         try out.print(
@@ -266,12 +266,12 @@ pub fn writeStatus(
         );
         try out.print("band_status = local_nonlocal_qij_no_scf\n", .{});
     }
-    try out.print("linalg_backend = {s}\n", .{linalg.backendName(cfg.linalg_backend)});
+    try out.print("linalg_backend = {s}\n", .{linalg.backend_name(cfg.linalg_backend)});
     try out.flush();
 }
 
 /// Write parsed pseudopotential metadata.
-pub fn writePseudopotentials(io: std.Io, dir: std.Io.Dir, items: []const pseudo.Parsed) !void {
+pub fn write_pseudopotentials(io: std.Io, dir: std.Io.Dir, items: []const pseudo.Parsed) !void {
     var file = try dir.createFile(io, "pseudopotentials.csv", .{ .truncate = true });
     defer file.close(io);
 
@@ -299,7 +299,7 @@ pub fn writePseudopotentials(io: std.Io, dir: std.Io.Dir, items: []const pseudo.
             "{s},{s},{s},{s},{d:.6},{d},{d},{d},{d},{d},{d},{d},{d},{d}\n",
             .{
                 item.spec.element,
-                pseudo.formatName(item.spec.format),
+                pseudo.format_name(item.spec.format),
                 item.spec.path,
                 header_element,
                 z_valence,
@@ -319,7 +319,7 @@ pub fn writePseudopotentials(io: std.Io, dir: std.Io.Dir, items: []const pseudo.
 }
 
 /// Write timing information.
-pub fn writeTiming(io: std.Io, dir: std.Io.Dir, timing: Timing, band_kpoints: usize) !void {
+pub fn write_timing(io: std.Io, dir: std.Io.Dir, timing: Timing, band_kpoints: usize) !void {
     var file = try dir.createFile(io, "timing.txt", .{ .truncate = true });
     defer file.close(io);
 
@@ -327,29 +327,30 @@ pub fn writeTiming(io: std.Io, dir: std.Io.Dir, timing: Timing, band_kpoints: us
     var writer = file.writer(io, &buffer);
     const out = &writer.interface;
 
-    try out.print("setup_sec = {d:.3}\n", .{Timing.toSeconds(timing.setup_ns)});
-    try out.print("relax_sec = {d:.3}\n", .{Timing.toSeconds(timing.relax_ns)});
-    try out.print("scf_sec = {d:.3}\n", .{Timing.toSeconds(timing.scf_ns)});
-    try out.print("band_sec = {d:.3}\n", .{Timing.toSeconds(timing.band_ns)});
-    try out.print("total_sec = {d:.3}\n", .{Timing.toSeconds(timing.total_ns)});
-    try out.print("cpu_sec = {d:.3}\n", .{timing.cpuSeconds()});
+    try out.print("setup_sec = {d:.3}\n", .{Timing.to_seconds(timing.setup_ns)});
+    try out.print("relax_sec = {d:.3}\n", .{Timing.to_seconds(timing.relax_ns)});
+    try out.print("scf_sec = {d:.3}\n", .{Timing.to_seconds(timing.scf_ns)});
+    try out.print("band_sec = {d:.3}\n", .{Timing.to_seconds(timing.band_ns)});
+    try out.print("total_sec = {d:.3}\n", .{Timing.to_seconds(timing.total_ns)});
+    try out.print("cpu_sec = {d:.3}\n", .{timing.cpu_seconds()});
     try out.print("band_kpoints = {d}\n", .{band_kpoints});
     if (band_kpoints > 0 and timing.band_ns > 0) {
-        const per_kpoint = Timing.toSeconds(timing.band_ns) / @as(f64, @floatFromInt(band_kpoints));
+        const per_kpoint =
+            Timing.to_seconds(timing.band_ns) / @as(f64, @floatFromInt(band_kpoints));
         try out.print("band_sec_per_kpoint = {d:.6}\n", .{per_kpoint});
     }
     try out.flush();
 }
 
 /// Convert units enum to name.
-fn unitsName(units: math.Units) []const u8 {
+fn units_name(units: math.Units) []const u8 {
     return switch (units) {
         .angstrom => "angstrom",
         .bohr => "bohr",
     };
 }
 
-test "writeAtomsFromAtomData writes atom positions in angstrom" {
+test "write_atoms_from_atom_data writes atom positions in angstrom" {
     const io = std.testing.io;
     const alloc = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -370,12 +371,12 @@ test "writeAtomsFromAtomData writes atom positions in angstrom" {
         },
     };
 
-    try writeAtomsFromAtomData(
+    try write_atoms_from_atom_data(
         io,
         tmp.dir,
         atoms[0..],
         species[0..],
-        math.unitsScaleToAngstrom(.bohr),
+        math.units_scale_to_angstrom(.bohr),
     );
 
     const content = try tmp.dir.readFileAlloc(io, "atoms.csv", alloc, .limited(1024 * 1024));

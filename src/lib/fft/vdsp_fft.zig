@@ -59,7 +59,7 @@ extern fn vDSP_ztocD(
 ) void;
 
 /// Check if n is a power of two
-fn isPowerOfTwo(n: usize) bool {
+fn is_power_of_two(n: usize) bool {
     return n > 0 and (n & (n - 1)) == 0;
 }
 
@@ -86,7 +86,7 @@ pub const VdspPlan1d = struct {
 
     pub fn init(allocator: std.mem.Allocator, n: usize) !VdspPlan1d {
         if (n == 0) return error.InvalidSize;
-        if (!isPowerOfTwo(n)) return error.NotPowerOfTwo;
+        if (!is_power_of_two(n)) return error.NotPowerOfTwo;
 
         const log2n = log2(n);
         const setup = vDSP_create_fftsetupD(@intCast(log2n), kFFTRadix2);

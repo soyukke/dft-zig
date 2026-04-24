@@ -44,11 +44,11 @@ pub const SIMD_WIDTH = simd_config.vec_width;
 pub const COMPLEX_PER_VEC = simd_config.complex_per_vec;
 
 /// Check if value is power of two.
-pub fn isPowerOfTwo(n: usize) bool {
+pub fn is_power_of_two(n: usize) bool {
     return n != 0 and (n & (n - 1)) == 0;
 }
 
-fn log2Exact(n: usize) usize {
+fn log2_exact(n: usize) usize {
     var bits: usize = 0;
     var v = n;
     while (v > 1) : (v >>= 1) {
@@ -57,7 +57,7 @@ fn log2Exact(n: usize) usize {
     return bits;
 }
 
-fn reverseBits(value: usize, bits: usize) usize {
+fn reverse_bits(value: usize, bits: usize) usize {
     var x = value;
     var r: usize = 0;
     var idx: usize = 0;
@@ -75,7 +75,7 @@ const Vec = simd_config.Vec;
 const Vec2 = @Vector(2, f64);
 
 /// Complex multiplication using Vec2: (a + bi)(c + di) = (ac-bd) + (ad+bc)i
-inline fn complexMulVec2(a: Vec2, b: Vec2) Vec2 {
+inline fn complex_mul_vec2(a: Vec2, b: Vec2) Vec2 {
     // a = [re_a, im_a], b = [re_b, im_b]
     const a_re: Vec2 = @splat(a[0]);
     const a_im: Vec2 = @splat(a[1]);
@@ -98,10 +98,10 @@ pub const Plan = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, n: usize) !Plan {
-        if (!isPowerOfTwo(n)) return error.InvalidSize;
+        if (!is_power_of_two(n)) return error.InvalidSize;
         if (n == 0) return error.InvalidSize;
 
-        const bits = log2Exact(n);
+        const bits = log2_exact(n);
         const stage_count = bits;
 
         const stage_offsets = try allocator.alloc(usize, stage_count);
@@ -144,7 +144,7 @@ pub const Plan = struct {
         errdefer allocator.free(bitrev);
         var i: usize = 0;
         while (i < n) : (i += 1) {
-            bitrev[i] = reverseBits(i, bits);
+            bitrev[i] = reverse_bits(i, bits);
         }
 
         return .{
@@ -211,7 +211,7 @@ pub const Plan = struct {
                     const v = Vec2{ v_c.re, v_c.im };
 
                     // v * w (complex multiplication)
-                    const vw = complexMulVec2(v, w);
+                    const vw = complex_mul_vec2(v, w);
 
                     // Butterfly: top = u + vw, bottom = u - vw
                     const top = u + vw;

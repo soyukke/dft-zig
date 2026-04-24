@@ -17,10 +17,10 @@ const boys = @import("boys.zig");
 
 const PrimitiveGaussian = basis.PrimitiveGaussian;
 const ContractedShell = basis.ContractedShell;
-const normalizationS = basis.normalizationS;
+const normalization_s = basis.normalization_s;
 
 /// Compute a primitive (ss|ss) ERI.
-fn primitiveERI(
+fn primitive_eri(
     a: f64,
     center_a: math.Vec3,
     b: f64,
@@ -62,7 +62,7 @@ fn primitiveERI(
 }
 
 /// Compute contracted (ss|ss) ERI for four s-type shells.
-pub fn eriSSSS(
+pub fn eri_ssss(
     shell_a: ContractedShell,
     shell_b: ContractedShell,
     shell_c: ContractedShell,
@@ -74,15 +74,15 @@ pub fn eriSSSS(
     var result: f64 = 0.0;
 
     for (shell_a.primitives) |pa| {
-        const na = normalizationS(pa.alpha);
+        const na = normalization_s(pa.alpha);
         for (shell_b.primitives) |pb| {
-            const nb = normalizationS(pb.alpha);
+            const nb = normalization_s(pb.alpha);
             for (shell_c.primitives) |pc| {
-                const nc = normalizationS(pc.alpha);
+                const nc = normalization_s(pc.alpha);
                 for (shell_d.primitives) |pd| {
-                    const nd = normalizationS(pd.alpha);
+                    const nd = normalization_s(pd.alpha);
 
-                    const prim = primitiveERI(
+                    const prim = primitive_eri(
                         pa.alpha,
                         shell_a.center,
                         pb.alpha,
@@ -106,7 +106,7 @@ pub fn eriSSSS(
 /// Uses 8-fold symmetry: (ij|kl) = (ji|kl) = (ij|lk) = (kl|ij) etc.
 /// Returns a flat array of size n*(n+1)/2 × (n*(n+1)/2 + 1) / 2
 /// indexed via compoundIndex.
-pub fn buildEriTable(alloc: std.mem.Allocator, shells: []const ContractedShell) !EriTable {
+pub fn build_eri_table(alloc: std.mem.Allocator, shells: []const ContractedShell) !EriTable {
     const n = shells.len;
     const nn = n * (n + 1) / 2;
     const size = nn * (nn + 1) / 2;
@@ -115,13 +115,13 @@ pub fn buildEriTable(alloc: std.mem.Allocator, shells: []const ContractedShell) 
 
     for (0..n) |i| {
         for (0..i + 1) |j| {
-            const ij = triangularIndex(i, j);
+            const ij = triangular_index(i, j);
             for (0..n) |k| {
                 for (0..k + 1) |l| {
-                    const kl = triangularIndex(k, l);
+                    const kl = triangular_index(k, l);
                     if (kl > ij) continue; // use symmetry (ij|kl) = (kl|ij)
-                    const idx = triangularIndex(ij, kl);
-                    values[idx] = eriSSSS(shells[i], shells[j], shells[k], shells[l]);
+                    const idx = triangular_index(ij, kl);
+                    values[idx] = eri_ssss(shells[i], shells[j], shells[k], shells[l]);
                 }
             }
         }
@@ -131,7 +131,7 @@ pub fn buildEriTable(alloc: std.mem.Allocator, shells: []const ContractedShell) 
 }
 
 /// Triangular index: maps (i,j) with i >= j to i*(i+1)/2 + j.
-fn triangularIndex(i: usize, j: usize) usize {
+fn triangular_index(i: usize, j: usize) usize {
     if (i >= j) {
         return i * (i + 1) / 2 + j;
     } else {
@@ -150,9 +150,9 @@ pub const EriTable = struct {
 
     /// Get the ERI (ij|kl) using symmetry.
     pub fn get(self: EriTable, i: usize, j: usize, k: usize, l: usize) f64 {
-        const ij = triangularIndex(i, j);
-        const kl = triangularIndex(k, l);
-        const idx = triangularIndex(ij, kl);
+        const ij = triangular_index(i, j);
+        const kl = triangular_index(k, l);
+        const idx = triangular_index(ij, kl);
         return self.values[idx];
     }
 };
@@ -166,7 +166,7 @@ test "ERI (ss|ss) positive for identical shells" {
         .l = 0,
         .primitives = &sto3g.H_1s,
     };
-    const eri = eriSSSS(shell, shell, shell, shell);
+    const eri = eri_ssss(shell, shell, shell, shell);
     // (1s1s|1s1s) for H STO-3G should be positive (electron repulsion)
     try testing.expect(eri > 0.0);
     // Known value ≈ 0.7746 Hartree
@@ -187,10 +187,10 @@ test "ERI symmetry" {
         .primitives = &sto3g.H_1s,
     };
     // (ab|ab) == (ba|ab) == (ab|ba) == (ba|ba)
-    const eri1 = eriSSSS(a, b, a, b);
-    const eri2 = eriSSSS(b, a, a, b);
-    const eri3 = eriSSSS(a, b, b, a);
-    const eri4 = eriSSSS(b, a, b, a);
+    const eri1 = eri_ssss(a, b, a, b);
+    const eri2 = eri_ssss(b, a, a, b);
+    const eri3 = eri_ssss(a, b, b, a);
+    const eri4 = eri_ssss(b, a, b, a);
     try testing.expectApproxEqAbs(eri1, eri2, 1e-12);
     try testing.expectApproxEqAbs(eri1, eri3, 1e-12);
     try testing.expectApproxEqAbs(eri1, eri4, 1e-12);

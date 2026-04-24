@@ -20,14 +20,14 @@ pub const ScalarComparison = struct {
     rel: f64,
 };
 
-pub fn compareScalar(reference: f64, candidate: f64) ScalarComparison {
+pub fn compare_scalar(reference: f64, candidate: f64) ScalarComparison {
     const diff = candidate - reference;
     const abs_diff = @abs(diff);
     const denom = @max(@abs(reference), 1e-12);
     return .{ .abs = abs_diff, .rel = abs_diff / denom };
 }
 
-pub fn compareSlices(reference: []const f64, candidate: []const f64) !ComparisonResult {
+pub fn compare_slices(reference: []const f64, candidate: []const f64) !ComparisonResult {
     if (reference.len != candidate.len) return error.MismatchedLength;
     if (reference.len == 0) {
         return .{ .max_abs = 0.0, .mean_abs = 0.0, .rms = 0.0, .rel_max = 0.0, .rel_rms = 0.0 };
@@ -62,7 +62,7 @@ pub fn compareSlices(reference: []const f64, candidate: []const f64) !Comparison
     };
 }
 
-pub fn compareVec3Slices(
+pub fn compare_vec3_slices(
     reference: []const math.Vec3,
     candidate: []const math.Vec3,
 ) !ComparisonResult {
@@ -101,37 +101,37 @@ pub fn compareVec3Slices(
     };
 }
 
-pub fn withinTolerance(result: ComparisonResult, tol: ComparisonTolerance) bool {
+pub fn within_tolerance(result: ComparisonResult, tol: ComparisonTolerance) bool {
     return result.max_abs <= tol.abs or result.rel_max <= tol.rel;
 }
 
-pub fn withinScalarTolerance(result: ScalarComparison, tol: ComparisonTolerance) bool {
+pub fn within_scalar_tolerance(result: ScalarComparison, tol: ComparisonTolerance) bool {
     return result.abs <= tol.abs or result.rel <= tol.rel;
 }
 
-test "compareScalar computes absolute and relative diff" {
-    const result = compareScalar(2.0, 2.1);
+test "compare_scalar computes absolute and relative diff" {
+    const result = compare_scalar(2.0, 2.1);
     try std.testing.expectApproxEqAbs(@as(f64, 0.1), result.abs, 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.05), result.rel, 1e-12);
 }
 
-test "compareSlices identical arrays" {
+test "compare_slices identical arrays" {
     const a = [_]f64{ 1.0, 2.0, 3.0 };
-    const result = try compareSlices(a[0..], a[0..]);
+    const result = try compare_slices(a[0..], a[0..]);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), result.max_abs, 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), result.rms, 1e-12);
 }
 
-test "compareSlices simple diff" {
+test "compare_slices simple diff" {
     const ref = [_]f64{ 1.0, 2.0 };
     const cand = [_]f64{ 1.1, 1.9 };
-    const result = try compareSlices(ref[0..], cand[0..]);
+    const result = try compare_slices(ref[0..], cand[0..]);
     try std.testing.expectApproxEqAbs(@as(f64, 0.1), result.max_abs, 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.1), result.rms, 1e-12);
     try std.testing.expect(result.rel_max > 0.0);
 }
 
-test "compareVec3Slices norms" {
+test "compare_vec3_slices norms" {
     const ref = [_]math.Vec3{
         .{ .x = 0.0, .y = 0.0, .z = 0.0 },
         .{ .x = 1.0, .y = 0.0, .z = 0.0 },
@@ -140,24 +140,24 @@ test "compareVec3Slices norms" {
         .{ .x = 0.0, .y = 0.0, .z = 0.0 },
         .{ .x = 1.5, .y = 0.0, .z = 0.0 },
     };
-    const result = try compareVec3Slices(ref[0..], cand[0..]);
+    const result = try compare_vec3_slices(ref[0..], cand[0..]);
     try std.testing.expectApproxEqAbs(@as(f64, 0.5), result.max_abs, 1e-12);
 }
 
-test "withinTolerance uses abs or rel" {
+test "within_tolerance uses abs or rel" {
     const ref = [_]f64{ 10.0, 10.0 };
     const cand = [_]f64{ 10.05, 9.95 };
-    const result = try compareSlices(ref[0..], cand[0..]);
+    const result = try compare_slices(ref[0..], cand[0..]);
     const tol = ComparisonTolerance{ .abs = 0.01, .rel = 0.01 };
-    try std.testing.expect(withinTolerance(result, tol));
+    try std.testing.expect(within_tolerance(result, tol));
 }
 
-test "withinScalarTolerance uses abs or rel" {
+test "within_scalar_tolerance uses abs or rel" {
     const tol = ComparisonTolerance{ .abs = 0.05, .rel = 0.1 };
     const pass_abs = ScalarComparison{ .abs = 0.04, .rel = 0.2 };
     const pass_rel = ScalarComparison{ .abs = 0.2, .rel = 0.05 };
     const fail = ScalarComparison{ .abs = 0.2, .rel = 0.2 };
-    try std.testing.expect(withinScalarTolerance(pass_abs, tol));
-    try std.testing.expect(withinScalarTolerance(pass_rel, tol));
-    try std.testing.expect(!withinScalarTolerance(fail, tol));
+    try std.testing.expect(within_scalar_tolerance(pass_abs, tol));
+    try std.testing.expect(within_scalar_tolerance(pass_rel, tol));
+    try std.testing.expect(!within_scalar_tolerance(fail, tol));
 }

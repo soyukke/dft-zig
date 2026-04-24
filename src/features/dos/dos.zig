@@ -3,7 +3,7 @@ const math = @import("../math/math.zig");
 const scf = @import("../scf/scf.zig");
 
 /// Gaussian delta: (1/(σ√(2π))) × exp(-x²/(2σ²))
-pub inline fn gaussianDelta(x: f64, inv_sigma_sqrt2pi: f64, inv_2sigma2: f64) f64 {
+pub inline fn gaussian_delta(x: f64, inv_sigma_sqrt2pi: f64, inv_2sigma2: f64) f64 {
     return inv_sigma_sqrt2pi * @exp(-x * x * inv_2sigma2);
 }
 
@@ -20,7 +20,7 @@ pub const DosResult = struct {
 
 /// Compute electronic DOS from SCF eigenvalues using Gaussian broadening.
 /// DOS(E) = Σ_{n,k} w_k × spin_factor × (1/(σ√(2π))) × exp(-(E-ε_{n,k})²/(2σ²))
-pub fn computeDos(
+pub fn compute_dos(
     alloc: std.mem.Allocator,
     wf_data: scf.WavefunctionData,
     sigma: f64,
@@ -64,7 +64,7 @@ pub fn computeDos(
                 const diff = e - ek;
                 if (@abs(diff) <= cutoff) {
                     d += kp.weight * spin_factor *
-                        gaussianDelta(diff, inv_sigma_sqrt2pi, inv_2sigma2);
+                        gaussian_delta(diff, inv_sigma_sqrt2pi, inv_2sigma2);
                 }
             }
         }
@@ -79,11 +79,11 @@ pub fn computeDos(
 
 /// Write DOS to CSV file.
 /// If fermi_level is NaN (e.g., insulator without smearing), shifted energies use 0.
-pub fn writeDosCSV(io: std.Io, dir: std.Io.Dir, result: DosResult, fermi_level: f64) !void {
-    return writeDosCSVNamed(io, dir, result, fermi_level, "dos.csv");
+pub fn write_dos_csv(io: std.Io, dir: std.Io.Dir, result: DosResult, fermi_level: f64) !void {
+    return write_dos_csv_named(io, dir, result, fermi_level, "dos.csv");
 }
 
-pub fn writeDosCSVNamed(
+pub fn write_dos_csv_named(
     io: std.Io,
     dir: std.Io.Dir,
     result: DosResult,
@@ -109,7 +109,7 @@ pub fn writeDosCSVNamed(
     try out.flush();
 }
 
-test "computeDos basic" {
+test "compute_dos basic" {
     const alloc = std.testing.allocator;
 
     var eigenvalues1 = [_]f64{ 0.0, 0.5, 1.0 };
@@ -146,7 +146,7 @@ test "computeDos basic" {
         .fermi_level = 0.75,
     };
 
-    var result = try computeDos(alloc, wf_data, 0.05, 101, null, null, 1);
+    var result = try compute_dos(alloc, wf_data, 0.05, 101, null, null, 1);
     defer result.deinit(alloc);
 
     try std.testing.expect(result.energies.len == 101);

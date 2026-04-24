@@ -4,7 +4,7 @@ const paw_data = @import("../pseudopotential/paw_data.zig");
 const nonlocal = @import("../pseudopotential/nonlocal.zig");
 const PawData = paw_data.PawData;
 
-const ctrapWeight = @import("../math/math.zig").radial.ctrapWeight;
+const ctrap_weight = @import("../math/math.zig").radial.ctrap_weight;
 
 /// Pre-computed PAW tables for one atomic species.
 /// Built once from UPF data and reused throughout the calculation.
@@ -52,10 +52,10 @@ pub const PawTab = struct {
         const lmn2 = nbeta * nbeta;
         const n_mesh = r.len;
 
-        const sij = try buildSijTable(alloc, paw, rab, n_mesh, nbeta, lmn2);
+        const sij = try build_sij_table(alloc, paw, rab, n_mesh, nbeta, lmn2);
         errdefer alloc.free(sij);
 
-        const kij = try buildKijTable(alloc, paw, r, rab, nbeta, lmn2);
+        const kij = try build_kij_table(alloc, paw, r, rab, nbeta, lmn2);
         errdefer alloc.free(kij);
 
         const l_list = try alloc.alloc(i32, nbeta);
@@ -72,7 +72,7 @@ pub const PawTab = struct {
         const qijl_indices = try alloc.alloc(QijlIndex, n_entries);
         errdefer alloc.free(qijl_indices);
 
-        buildQijlFormFactors(paw, r, rab, n_entries, n_qpoints, dq, qijl_form, qijl_indices);
+        build_qijl_form_factors(paw, r, rab, n_entries, n_qpoints, dq, qijl_form, qijl_indices);
 
         return .{
             .sij = sij,
@@ -88,7 +88,7 @@ pub const PawTab = struct {
     }
 
     /// Evaluate Q_ij^L(G) form factor for a specific entry using linear interpolation.
-    pub fn evalQijlForm(self: *const PawTab, entry_idx: usize, g: f64) f64 {
+    pub fn eval_qijl_form(self: *const PawTab, entry_idx: usize, g: f64) f64 {
         if (entry_idx >= self.n_qijl_entries) return 0.0;
         const base = entry_idx * self.n_qpoints;
         const idx_f = g / self.dq;
@@ -99,7 +99,7 @@ pub const PawTab = struct {
     }
 
     /// Evaluate derivative dQ_ij^L(G)/dG using finite differences on the tabulated form factor.
-    pub fn evalQijlFormDeriv(self: *const PawTab, entry_idx: usize, g: f64) f64 {
+    pub fn eval_qijl_form_deriv(self: *const PawTab, entry_idx: usize, g: f64) f64 {
         if (entry_idx >= self.n_qijl_entries) return 0.0;
         const base = entry_idx * self.n_qpoints;
         const idx_f = g / self.dq;
@@ -111,7 +111,7 @@ pub const PawTab = struct {
 
     /// Find the QIJL entry index for given (i, j, L).
     /// Returns null if not found.
-    pub fn findQijlEntry(self: *const PawTab, first: usize, second: usize, l: usize) ?usize {
+    pub fn find_qijl_entry(self: *const PawTab, first: usize, second: usize, l: usize) ?usize {
         for (0..self.n_qijl_entries) |e| {
             const idx = self.qijl_indices[e];
             if (idx.first == first and idx.second == second and idx.l == l) return e;
@@ -128,7 +128,7 @@ pub const PawTab = struct {
     }
 };
 
-fn buildSijTable(
+fn build_sij_table(
     alloc: std.mem.Allocator,
     paw: PawData,
     rab: []const f64,
@@ -146,7 +146,7 @@ fn buildSijTable(
             const n = @min(n_mesh, @min(ae_i.len, @min(ae_j.len, @min(ps_i.len, ps_j.len))));
             var sum: f64 = 0.0;
             for (0..n) |k| {
-                sum += (ae_i[k] * ae_j[k] - ps_i[k] * ps_j[k]) * rab[k] * ctrapWeight(k, n);
+                sum += (ae_i[k] * ae_j[k] - ps_i[k] * ps_j[k]) * rab[k] * ctrap_weight(k, n);
             }
             const delta = if (i == j) @as(f64, 1.0) else @as(f64, 0.0);
             sij[i * nbeta + j] = delta + sum;
@@ -155,7 +155,7 @@ fn buildSijTable(
     return sij;
 }
 
-fn buildKijTable(
+fn build_kij_table(
     alloc: std.mem.Allocator,
     paw: PawData,
     r: []const f64,
@@ -166,7 +166,7 @@ fn buildKijTable(
     const kij = try alloc.alloc(f64, lmn2);
     for (0..nbeta) |i| {
         for (0..nbeta) |j| {
-            kij[i * nbeta + j] = computeKij(
+            kij[i * nbeta + j] = compute_kij(
                 paw.ae_wfc[i].values,
                 paw.ae_wfc[j].values,
                 paw.ps_wfc[i].values,
@@ -181,7 +181,7 @@ fn buildKijTable(
     return kij;
 }
 
-fn buildQijlFormFactors(
+fn build_qijl_form_factors(
     paw: PawData,
     r: []const f64,
     rab: []const f64,
@@ -206,8 +206,8 @@ fn buildQijlFormFactors(
             var sum: f64 = 0.0;
             for (0..n_r) |k| {
                 const x = g * r[k];
-                const jl = nonlocal.sphericalBessel(l_val, x);
-                sum += qdata[k] * jl * rab[k] * ctrapWeight(k, n_r);
+                const jl = nonlocal.spherical_bessel(l_val, x);
+                sum += qdata[k] * jl * rab[k] * ctrap_weight(k, n_r);
             }
             qijl_form[e * n_qpoints + qi] = 4.0 * std.math.pi * sum;
         }
@@ -220,7 +220,7 @@ fn buildQijlFormFactors(
 /// For u(r) = r*phi(r), the radial kinetic energy is:
 ///   <u_i|T|u_j> = integral[ u_i' * u_j' + l(l+1) * u_i * u_j / r² ] * dr
 /// (Rydberg units: factor 1, not 1/2 as in Hartree)
-fn computeKij(
+fn compute_kij(
     ae_i: []const f64,
     ae_j: []const f64,
     ps_i: []const f64,
@@ -262,7 +262,7 @@ fn computeKij(
         const centrifugal_ps = if (r[k] > 1e-10) ll1 * ps_i[k] * ps_j[k] / (r[k] * r[k]) else 0.0;
 
         const delta = (deriv_ae + centrifugal_ae) - (deriv_ps + centrifugal_ps);
-        sum += delta * rab[k] * ctrapWeight(k, n);
+        sum += delta * rab[k] * ctrap_weight(k, n);
     }
 
     return sum;
@@ -272,7 +272,7 @@ test "PawTab init from Si PAW UPF" {
     const io = std.testing.io;
     const pseudo = @import("../pseudopotential/pseudopotential.zig");
     const alloc = std.testing.allocator;
-    try test_support.requireFile(io, "pseudo/Si.pbe-n-kjpaw_psl.1.0.0.UPF");
+    try test_support.require_file(io, "pseudo/Si.pbe-n-kjpaw_psl.1.0.0.UPF");
 
     var parsed = try pseudo.load(alloc, io, .{
         .element = "Si",
@@ -307,9 +307,9 @@ test "PawTab init from Si PAW UPF" {
 
     // Q_ij^L form factor at G=0: Q_ij^0(0) = 4pi * integral[r² Q_ij^0(r) dr]
     // Should be related to the multipole moment
-    const entry0 = tab.findQijlEntry(0, 0, 0);
+    const entry0 = tab.find_qijl_entry(0, 0, 0);
     try std.testing.expect(entry0 != null);
-    const q0_at_0 = tab.evalQijlForm(entry0.?, 0.0);
+    const q0_at_0 = tab.eval_qijl_form(entry0.?, 0.0);
     // Just check it's finite and non-zero
     try std.testing.expect(std.math.isFinite(q0_at_0));
 }

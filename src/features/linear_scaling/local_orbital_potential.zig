@@ -15,7 +15,7 @@ pub const PotentialGrid = struct {
     }
 
     pub fn weight(self: PotentialGrid) !f64 {
-        const volume = cellVolume(self.cell);
+        const volume = cell_volume(self.cell);
         const npoints = self.count();
         if (npoints == 0) return error.InvalidGrid;
         return volume / @as(f64, @floatFromInt(npoints));
@@ -30,11 +30,11 @@ pub const PotentialGrid = struct {
             .y = (@as(f64, @floatFromInt(iy)) + 0.5) / ny,
             .z = (@as(f64, @floatFromInt(iz)) + 0.5) / nz,
         };
-        return math.fracToCart(frac, self.cell);
+        return math.frac_to_cart(frac, self.cell);
     }
 };
 
-pub fn buildLocalPotentialCsr(
+pub fn build_local_potential_csr(
     alloc: std.mem.Allocator,
     orbitals: []const local_orbital.Orbital,
     neighbors: neighbor_list.NeighborList,
@@ -46,7 +46,7 @@ pub fn buildLocalPotentialCsr(
     if (grid.values.len != grid.count()) return error.InvalidGrid;
     if (grid.count() == 0) return error.InvalidGrid;
 
-    const inv_cell = try invertCell(grid.cell);
+    const inv_cell = try invert_cell(grid.cell);
     const weight = try grid.weight();
 
     var triplets: std.ArrayList(sparse.Triplet) = .empty;
@@ -54,13 +54,13 @@ pub fn buildLocalPotentialCsr(
 
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const diag = try integratePair(orbitals[i], orbitals[i], grid, inv_cell, pbc);
+        const diag = try integrate_pair(orbitals[i], orbitals[i], grid, inv_cell, pbc);
         if (diag != 0.0) {
             try triplets.append(alloc, .{ .row = i, .col = i, .value = diag * weight });
         }
-        for (neighbors.neighborsOf(i)) |j| {
+        for (neighbors.neighbors_of(i)) |j| {
             if (j <= i) continue;
-            const value = try integratePair(orbitals[i], orbitals[j], grid, inv_cell, pbc);
+            const value = try integrate_pair(orbitals[i], orbitals[j], grid, inv_cell, pbc);
             if (value == 0.0) continue;
             const scaled = value * weight;
             try triplets.append(alloc, .{ .row = i, .col = j, .value = scaled });
@@ -68,10 +68,10 @@ pub fn buildLocalPotentialCsr(
         }
     }
 
-    return sparse.CsrMatrix.initFromTriplets(alloc, count, count, triplets.items);
+    return sparse.CsrMatrix.init_from_triplets(alloc, count, count, triplets.items);
 }
 
-pub fn buildLocalPotentialCsrFromCenters(
+pub fn build_local_potential_csr_from_centers(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
     sigma: f64,
@@ -91,10 +91,10 @@ pub fn buildLocalPotentialCsrFromCenters(
     for (centers, 0..) |center, idx| {
         orbitals[idx] = .{ .center = center, .alpha = alpha, .cutoff = cutoff };
     }
-    return buildLocalPotentialCsr(alloc, orbitals, list, grid, pbc);
+    return build_local_potential_csr(alloc, orbitals, list, grid, pbc);
 }
 
-fn integratePair(
+fn integrate_pair(
     a: local_orbital.Orbital,
     b: local_orbital.Orbital,
     grid: PotentialGrid,
@@ -112,9 +112,9 @@ fn integratePair(
                 const value = grid.values[index];
                 if (value == 0.0) continue;
                 const point = grid.point(ix, iy, iz);
-                const phi_a = orbitalValueAt(a, point, grid.cell, inv_cell, pbc);
+                const phi_a = orbital_value_at(a, point, grid.cell, inv_cell, pbc);
                 if (phi_a == 0.0) continue;
-                const phi_b = orbitalValueAt(b, point, grid.cell, inv_cell, pbc);
+                const phi_b = orbital_value_at(b, point, grid.cell, inv_cell, pbc);
                 if (phi_b == 0.0) continue;
                 sum += value * phi_a * phi_b;
             }
@@ -123,7 +123,7 @@ fn integratePair(
     return sum;
 }
 
-pub fn orbitalValueAt(
+pub fn orbital_value_at(
     orbital: local_orbital.Orbital,
     point: math.Vec3,
     cell: math.Mat3,
@@ -132,21 +132,21 @@ pub fn orbitalValueAt(
 ) f64 {
     if (orbital.alpha <= 0.0) return 0.0;
     const delta = math.Vec3.sub(point, orbital.center);
-    const dvec = minimumImageDelta(cell, inv_cell, pbc, delta);
+    const dvec = minimum_image_delta(cell, inv_cell, pbc, delta);
     const r2 = math.Vec3.dot(dvec, dvec);
     if (r2 > orbital.cutoff * orbital.cutoff) return 0.0;
-    const norm = local_orbital.gaussianNorm(orbital.alpha);
+    const norm = local_orbital.gaussian_norm(orbital.alpha);
     return norm * std.math.exp(-orbital.alpha * r2);
 }
 
-pub fn cellVolume(cell: math.Mat3) f64 {
+pub fn cell_volume(cell: math.Mat3) f64 {
     const a1 = cell.row(0);
     const a2 = cell.row(1);
     const a3 = cell.row(2);
     return @abs(math.Vec3.dot(a1, math.Vec3.cross(a2, a3)));
 }
 
-pub fn invertCell(cell: math.Mat3) !math.Mat3 {
+pub fn invert_cell(cell: math.Mat3) !math.Mat3 {
     const r0 = cell.row(0);
     const r1 = cell.row(1);
     const r2 = cell.row(2);
@@ -156,33 +156,33 @@ pub fn invertCell(cell: math.Mat3) !math.Mat3 {
     const inv_det = 1.0 / det;
     const c1 = math.Vec3.cross(r2, r0);
     const c2 = math.Vec3.cross(r0, r1);
-    return math.Mat3.fromRows(
+    return math.Mat3.from_rows(
         math.Vec3.scale(c0, inv_det),
         math.Vec3.scale(c1, inv_det),
         math.Vec3.scale(c2, inv_det),
     );
 }
 
-fn wrapFrac(value: f64) f64 {
+fn wrap_frac(value: f64) f64 {
     return value - std.math.floor(value + 0.5);
 }
 
-fn minimumImageDelta(
+fn minimum_image_delta(
     cell: math.Mat3,
     inv_cell: math.Mat3,
     pbc: neighbor_list.Pbc,
     delta: math.Vec3,
 ) math.Vec3 {
-    var frac = inv_cell.mulVec(delta);
-    if (pbc.x) frac.x = wrapFrac(frac.x);
-    if (pbc.y) frac.y = wrapFrac(frac.y);
-    if (pbc.z) frac.z = wrapFrac(frac.z);
-    return cell.mulVec(frac);
+    var frac = inv_cell.mul_vec(delta);
+    if (pbc.x) frac.x = wrap_frac(frac.x);
+    if (pbc.y) frac.y = wrap_frac(frac.y);
+    if (pbc.z) frac.z = wrap_frac(frac.z);
+    return cell.mul_vec(frac);
 }
 
 test "local potential constant matches overlap scaling" {
     const alloc = std.testing.allocator;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 10.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 10.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 10.0 },
@@ -201,7 +201,7 @@ test "local potential constant matches overlap scaling" {
     const pbc = neighbor_list.Pbc{ .x = false, .y = false, .z = false };
     const sigma = 0.5;
     const cutoff = 3.0;
-    var local = try buildLocalPotentialCsrFromCenters(
+    var local = try build_local_potential_csr_from_centers(
         alloc,
         centers[0..],
         sigma,
@@ -216,10 +216,10 @@ test "local potential constant matches overlap scaling" {
         .{ .center = centers[0], .alpha = alpha, .cutoff = cutoff },
         .{ .center = centers[1], .alpha = alpha, .cutoff = cutoff },
     };
-    const s00 = local_orbital.overlapIntegral(orbitals[0], orbitals[0]);
-    const s01 = local_orbital.overlapIntegral(orbitals[0], orbitals[1]);
+    const s00 = local_orbital.overlap_integral(orbitals[0], orbitals[0]);
+    const s01 = local_orbital.overlap_integral(orbitals[0], orbitals[1]);
     const expected00 = 0.7 * s00;
     const expected01 = 0.7 * s01;
-    try std.testing.expectApproxEqAbs(expected00, local.valueAt(0, 0), 2e-2);
-    try std.testing.expectApproxEqAbs(expected01, local.valueAt(0, 1), 2e-2);
+    try std.testing.expectApproxEqAbs(expected00, local.value_at(0, 0), 2e-2);
+    try std.testing.expectApproxEqAbs(expected01, local.value_at(0, 1), 2e-2);
 }

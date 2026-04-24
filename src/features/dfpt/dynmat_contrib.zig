@@ -16,7 +16,7 @@ const local_potential = @import("../pseudopotential/local_potential.zig");
 
 const dfpt = @import("dfpt.zig");
 const GroundState = dfpt.GroundState;
-const logDfpt = dfpt.logDfpt;
+const log_dfpt = dfpt.log_dfpt;
 
 const Grid = scf_mod.Grid;
 
@@ -40,12 +40,12 @@ const NonlocalProjectionSet = struct {
     }
 };
 
-fn zeroComplex3() [3]math.Complex {
+fn zero_complex3() [3]math.Complex {
     const zero_c = math.complex.init(0.0, 0.0);
     return .{ zero_c, zero_c, zero_c };
 }
 
-fn zeroComplex3x3() [3][3]math.Complex {
+fn zero_complex3x3() [3][3]math.Complex {
     const zero_c = math.complex.init(0.0, 0.0);
     return .{
         .{ zero_c, zero_c, zero_c },
@@ -54,7 +54,7 @@ fn zeroComplex3x3() [3][3]math.Complex {
     };
 }
 
-fn fillPhaseFactors(
+fn fill_phase_factors(
     phase: []math.Complex,
     gvecs: []const plane_wave.GVector,
     atom_position: math.Vec3,
@@ -64,7 +64,7 @@ fn fillPhaseFactors(
     }
 }
 
-fn accumulateProjectionAtG(
+fn accumulate_projection_at_g(
     base: math.Complex,
     gc: [3]f64,
     p_std: *math.Complex,
@@ -85,7 +85,7 @@ fn accumulateProjectionAtG(
     }
 }
 
-fn computeProjectionSetForBand(
+fn compute_projection_set_for_band(
     gs: GroundState,
     entry: anytype,
     psi_n: []const math.Complex,
@@ -103,14 +103,14 @@ fn computeProjectionSetForBand(
             const phi = entry.phi[phi_start .. phi_start + entry.g_count];
 
             var p_std = math.complex.init(0.0, 0.0);
-            var p_a = zeroComplex3();
-            var p_ab = zeroComplex3x3();
+            var p_a = zero_complex3();
+            var p_ab = zero_complex3x3();
             for (0..entry.g_count) |g| {
                 const gvec = gs.gvecs[g].cart;
                 const gc = [3]f64{ gvec.x, gvec.y, gvec.z };
                 const phase_psi = math.complex.mul(phase[g], psi_n[g]);
                 const base = math.complex.scale(phase_psi, phi[g]);
-                accumulateProjectionAtG(base, gc, &p_std, &p_a, &p_ab);
+                accumulate_projection_at_g(base, gc, &p_std, &p_a, &p_ab);
             }
 
             projections.proj_std[proj_idx] = p_std;
@@ -120,7 +120,7 @@ fn computeProjectionSetForBand(
     }
 }
 
-fn accumulateDynmatFromProjectionSet(
+fn accumulate_dynmat_from_projection_set(
     dyn: []f64,
     dim: usize,
     atom_idx: usize,
@@ -170,7 +170,7 @@ fn accumulateDynmatFromProjectionSet(
 /// This term only contributes to the diagonal (I=J) blocks.
 /// It represents the interaction of the ground-state density with the
 /// second derivative of the ionic potential.
-pub fn computeSelfEnergyDynmat(
+pub fn compute_self_energy_dynmat(
     alloc: std.mem.Allocator,
     grid: Grid,
     species: []const hamiltonian.SpeciesEntry,
@@ -198,7 +198,7 @@ pub fn computeSelfEnergyDynmat(
             const v_loc = if (ff_tables) |tables|
                 tables[atom.species_index].eval(g_norm)
             else
-                hamiltonian.localFormFactor(sp, g_norm, local_cfg);
+                hamiltonian.local_form_factor(sp, g_norm, local_cfg);
 
             // exp(+iG·τ_I) × ρ(G) × V_form
             const phase = math.complex.expi(math.Vec3.dot(g.gvec, atom.position));
@@ -227,7 +227,7 @@ pub fn computeSelfEnergyDynmat(
 ///
 /// where P_{βm} = Σ_G φ_β(G) exp(+iG·τ_I) ψ_n(G), etc.
 /// This contributes only to diagonal blocks (I=J).
-pub fn computeNonlocalSelfEnergyDynmat(
+pub fn compute_nonlocal_self_energy_dynmat(
     alloc: std.mem.Allocator,
     gs: GroundState,
     n_atoms: usize,
@@ -254,9 +254,9 @@ pub fn computeNonlocalSelfEnergyDynmat(
 
             for (0..gs.n_occ) |n| {
                 const psi_n = gs.wavefunctions[n];
-                fillPhaseFactors(phase, gs.gvecs, atom.position);
-                computeProjectionSetForBand(gs, entry, psi_n, phase, &projections);
-                accumulateDynmatFromProjectionSet(
+                fill_phase_factors(phase, gs.gvecs, atom.position);
+                compute_projection_set_for_band(gs, entry, psi_n, phase, &projections);
+                accumulate_dynmat_from_projection_set(
                     dyn,
                     dim,
                     atom_idx,
@@ -277,7 +277,7 @@ pub fn computeNonlocalSelfEnergyDynmat(
 ///
 /// This is the second-order term from the rigid shift of the core charge.
 /// Only contributes to diagonal (I=J) blocks.
-pub fn computeNlccSelfDynmat(
+pub fn compute_nlcc_self_dynmat(
     alloc: std.mem.Allocator,
     grid: Grid,
     species: []const hamiltonian.SpeciesEntry,
@@ -306,7 +306,7 @@ pub fn computeNlccSelfDynmat(
             const rho_core_form = if (rho_core_tables) |tables|
                 tables[atom.species_index].eval(g_norm)
             else
-                form_factor.rhoCoreG(sp.upf.*, g_norm);
+                form_factor.rho_core_g(sp.upf.*, g_norm);
 
             // exp(-iG·τ_I) — note: using -iGτ consistent with convention
             const phase_val = math.complex.expi(-math.Vec3.dot(g.gvec, atom.position));

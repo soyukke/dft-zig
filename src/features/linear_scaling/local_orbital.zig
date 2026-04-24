@@ -27,21 +27,21 @@ pub const Orbital = struct {
 };
 
 /// Normalization factor for s-type Gaussian: (2α/π)^(3/4)
-pub fn gaussianNorm(alpha: f64) f64 {
+pub fn gaussian_norm(alpha: f64) f64 {
     return std.math.pow(f64, 2.0 * alpha / std.math.pi, 0.75);
 }
 
 /// Normalization factor for p-type Gaussian: (2α/π)^(3/4) × √(4α)
 /// p-type: N_p × x × exp(-α r²), where N_p = (2α/π)^(3/4) × √(4α)
-pub fn gaussianNormP(alpha: f64) f64 {
-    return gaussianNorm(alpha) * @sqrt(4.0 * alpha);
+pub fn gaussian_norm_p(alpha: f64) f64 {
+    return gaussian_norm(alpha) * @sqrt(4.0 * alpha);
 }
 
 pub fn overlap(a: Orbital, b: Orbital) f64 {
-    return overlapIntegral(a, b);
+    return overlap_integral(a, b);
 }
 
-pub fn overlapIntegral(a: Orbital, b: Orbital) f64 {
+pub fn overlap_integral(a: Orbital, b: Orbital) f64 {
     if (a.alpha <= 0.0 or b.alpha <= 0.0) return 0.0;
     const delta = math.Vec3.sub(b.center, a.center);
     const r2 = math.Vec3.dot(delta, delta);
@@ -56,50 +56,57 @@ pub fn overlapIntegral(a: Orbital, b: Orbital) f64 {
     // Handle different angular momentum combinations
     return switch (a.angular) {
         .s => switch (b.angular) {
-            .s => overlapSS(a.alpha, b.alpha, p, pref, exp_factor),
-            .px => overlapSP(a.alpha, b.alpha, p, pref, exp_factor, delta.x),
-            .py => overlapSP(a.alpha, b.alpha, p, pref, exp_factor, delta.y),
-            .pz => overlapSP(a.alpha, b.alpha, p, pref, exp_factor, delta.z),
+            .s => overlap_ss(a.alpha, b.alpha, p, pref, exp_factor),
+            .px => overlap_sp(a.alpha, b.alpha, p, pref, exp_factor, delta.x),
+            .py => overlap_sp(a.alpha, b.alpha, p, pref, exp_factor, delta.y),
+            .pz => overlap_sp(a.alpha, b.alpha, p, pref, exp_factor, delta.z),
         },
         .px => switch (b.angular) {
-            .s => overlapSP(b.alpha, a.alpha, p, pref, exp_factor, -delta.x),
-            .px => overlapPP(a.alpha, b.alpha, p, pref, exp_factor, delta.x, delta.x),
-            .py => overlapPPoff(a.alpha, b.alpha, p, pref, exp_factor, delta.x, delta.y),
-            .pz => overlapPPoff(a.alpha, b.alpha, p, pref, exp_factor, delta.x, delta.z),
+            .s => overlap_sp(b.alpha, a.alpha, p, pref, exp_factor, -delta.x),
+            .px => overlap_pp(a.alpha, b.alpha, p, pref, exp_factor, delta.x, delta.x),
+            .py => overlap_p_poff(a.alpha, b.alpha, p, pref, exp_factor, delta.x, delta.y),
+            .pz => overlap_p_poff(a.alpha, b.alpha, p, pref, exp_factor, delta.x, delta.z),
         },
         .py => switch (b.angular) {
-            .s => overlapSP(b.alpha, a.alpha, p, pref, exp_factor, -delta.y),
-            .px => overlapPPoff(a.alpha, b.alpha, p, pref, exp_factor, delta.y, delta.x),
-            .py => overlapPP(a.alpha, b.alpha, p, pref, exp_factor, delta.y, delta.y),
-            .pz => overlapPPoff(a.alpha, b.alpha, p, pref, exp_factor, delta.y, delta.z),
+            .s => overlap_sp(b.alpha, a.alpha, p, pref, exp_factor, -delta.y),
+            .px => overlap_p_poff(a.alpha, b.alpha, p, pref, exp_factor, delta.y, delta.x),
+            .py => overlap_pp(a.alpha, b.alpha, p, pref, exp_factor, delta.y, delta.y),
+            .pz => overlap_p_poff(a.alpha, b.alpha, p, pref, exp_factor, delta.y, delta.z),
         },
         .pz => switch (b.angular) {
-            .s => overlapSP(b.alpha, a.alpha, p, pref, exp_factor, -delta.z),
-            .px => overlapPPoff(a.alpha, b.alpha, p, pref, exp_factor, delta.z, delta.x),
-            .py => overlapPPoff(a.alpha, b.alpha, p, pref, exp_factor, delta.z, delta.y),
-            .pz => overlapPP(a.alpha, b.alpha, p, pref, exp_factor, delta.z, delta.z),
+            .s => overlap_sp(b.alpha, a.alpha, p, pref, exp_factor, -delta.z),
+            .px => overlap_p_poff(a.alpha, b.alpha, p, pref, exp_factor, delta.z, delta.x),
+            .py => overlap_p_poff(a.alpha, b.alpha, p, pref, exp_factor, delta.z, delta.y),
+            .pz => overlap_pp(a.alpha, b.alpha, p, pref, exp_factor, delta.z, delta.z),
         },
     };
 }
 
 /// s-s overlap: N_s^2 × (π/p)^(3/2) × exp(-μr²)
-fn overlapSS(alpha_a: f64, alpha_b: f64, p: f64, pref: f64, exp_factor: f64) f64 {
+fn overlap_ss(alpha_a: f64, alpha_b: f64, p: f64, pref: f64, exp_factor: f64) f64 {
     _ = p;
-    const norm = gaussianNorm(alpha_a) * gaussianNorm(alpha_b);
+    const norm = gaussian_norm(alpha_a) * gaussian_norm(alpha_b);
     return norm * pref * exp_factor;
 }
 
 /// s-p overlap: N_s × N_p × (α_p × delta_i / p) × (π/p)^(3/2) × exp(-μr²)
 /// delta_i is the i-th component of (center_b - center_a)
-fn overlapSP(alpha_s: f64, alpha_p: f64, p: f64, pref: f64, exp_factor: f64, delta_i: f64) f64 {
-    const norm = gaussianNorm(alpha_s) * gaussianNormP(alpha_p);
+fn overlap_sp(
+    alpha_s: f64,
+    alpha_p: f64,
+    p: f64,
+    pref: f64,
+    exp_factor: f64,
+    delta_i: f64,
+) f64 {
+    const norm = gaussian_norm(alpha_s) * gaussian_norm_p(alpha_p);
     // The integral gives: (α_p / p) × delta_i
     return norm * pref * exp_factor * (alpha_p / p) * delta_i;
 }
 
 /// p-p overlap (same direction):
 ///   N_p^2 × [1/(2p) + (α_a α_b / p²) × delta_i²] × (π/p)^(3/2) × exp
-fn overlapPP(
+fn overlap_pp(
     alpha_a: f64,
     alpha_b: f64,
     p: f64,
@@ -108,7 +115,7 @@ fn overlapPP(
     delta_i: f64,
     _: f64,
 ) f64 {
-    const norm = gaussianNormP(alpha_a) * gaussianNormP(alpha_b);
+    const norm = gaussian_norm_p(alpha_a) * gaussian_norm_p(alpha_b);
     const term1 = 1.0 / (2.0 * p);
     const term2 = (alpha_a * alpha_b / (p * p)) * delta_i * delta_i;
     return norm * pref * exp_factor * (term1 + term2);
@@ -116,7 +123,7 @@ fn overlapPP(
 
 /// p-p overlap (different directions):
 ///   N_p^2 × (α_a α_b / p²) × delta_i × delta_j × (π/p)^(3/2) × exp
-fn overlapPPoff(
+fn overlap_p_poff(
     alpha_a: f64,
     alpha_b: f64,
     p: f64,
@@ -125,11 +132,11 @@ fn overlapPPoff(
     delta_i: f64,
     delta_j: f64,
 ) f64 {
-    const norm = gaussianNormP(alpha_a) * gaussianNormP(alpha_b);
+    const norm = gaussian_norm_p(alpha_a) * gaussian_norm_p(alpha_b);
     return norm * pref * exp_factor * (alpha_a * alpha_b / (p * p)) * delta_i * delta_j;
 }
 
-pub fn kineticIntegral(a: Orbital, b: Orbital) f64 {
+pub fn kinetic_integral(a: Orbital, b: Orbital) f64 {
     if (a.alpha <= 0.0 or b.alpha <= 0.0) return 0.0;
     const delta = math.Vec3.sub(b.center, a.center);
     const r2 = math.Vec3.dot(delta, delta);
@@ -144,42 +151,50 @@ pub fn kineticIntegral(a: Orbital, b: Orbital) f64 {
     // Handle different angular momentum combinations
     return switch (a.angular) {
         .s => switch (b.angular) {
-            .s => kineticSS(a.alpha, b.alpha, p, mu, pref, exp_factor, r2),
-            .px => kineticSP(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.x),
-            .py => kineticSP(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.y),
-            .pz => kineticSP(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.z),
+            .s => kinetic_ss(a.alpha, b.alpha, p, mu, pref, exp_factor, r2),
+            .px => kinetic_sp(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.x),
+            .py => kinetic_sp(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.y),
+            .pz => kinetic_sp(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.z),
         },
         .px => switch (b.angular) {
-            .s => kineticSP(b.alpha, a.alpha, p, mu, pref, exp_factor, -delta.x),
-            .px => kineticPP(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.x, delta.x, true),
-            .py => kineticPP(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.x, delta.y, false),
-            .pz => kineticPP(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.x, delta.z, false),
+            .s => kinetic_sp(b.alpha, a.alpha, p, mu, pref, exp_factor, -delta.x),
+            .px => kinetic_pp(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.x, delta.x, true),
+            .py => kinetic_pp(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.x, delta.y, false),
+            .pz => kinetic_pp(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.x, delta.z, false),
         },
         .py => switch (b.angular) {
-            .s => kineticSP(b.alpha, a.alpha, p, mu, pref, exp_factor, -delta.y),
-            .px => kineticPP(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.y, delta.x, false),
-            .py => kineticPP(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.y, delta.y, true),
-            .pz => kineticPP(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.y, delta.z, false),
+            .s => kinetic_sp(b.alpha, a.alpha, p, mu, pref, exp_factor, -delta.y),
+            .px => kinetic_pp(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.y, delta.x, false),
+            .py => kinetic_pp(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.y, delta.y, true),
+            .pz => kinetic_pp(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.y, delta.z, false),
         },
         .pz => switch (b.angular) {
-            .s => kineticSP(b.alpha, a.alpha, p, mu, pref, exp_factor, -delta.z),
-            .px => kineticPP(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.z, delta.x, false),
-            .py => kineticPP(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.z, delta.y, false),
-            .pz => kineticPP(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.z, delta.z, true),
+            .s => kinetic_sp(b.alpha, a.alpha, p, mu, pref, exp_factor, -delta.z),
+            .px => kinetic_pp(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.z, delta.x, false),
+            .py => kinetic_pp(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.z, delta.y, false),
+            .pz => kinetic_pp(a.alpha, b.alpha, p, mu, pref, exp_factor, delta.z, delta.z, true),
         },
     };
 }
 
 /// s-s kinetic: T = μ(3 - 2μr²) × S
-fn kineticSS(alpha_a: f64, alpha_b: f64, p: f64, mu: f64, pref: f64, exp_factor: f64, r2: f64) f64 {
+fn kinetic_ss(
+    alpha_a: f64,
+    alpha_b: f64,
+    p: f64,
+    mu: f64,
+    pref: f64,
+    exp_factor: f64,
+    r2: f64,
+) f64 {
     _ = p;
-    const norm = gaussianNorm(alpha_a) * gaussianNorm(alpha_b);
+    const norm = gaussian_norm(alpha_a) * gaussian_norm(alpha_b);
     const s = norm * pref * exp_factor;
     return mu * (3.0 - 2.0 * mu * r2) * s;
 }
 
 /// s-p kinetic: Laplacian of p-type acting on s gives derivative terms
-fn kineticSP(
+fn kinetic_sp(
     alpha_s: f64,
     alpha_p: f64,
     p: f64,
@@ -188,7 +203,7 @@ fn kineticSP(
     exp_factor: f64,
     delta_i: f64,
 ) f64 {
-    const norm = gaussianNorm(alpha_s) * gaussianNormP(alpha_p);
+    const norm = gaussian_norm(alpha_s) * gaussian_norm_p(alpha_p);
     const s_sp = norm * pref * exp_factor * (alpha_p / p) * delta_i;
     // Kinetic energy involves -1/2 ∇² acting on the Gaussian product
     // For s-p combination: T = α_p × (3 - 2μr²) × (α_p/p × delta) × S_ss
@@ -199,7 +214,7 @@ fn kineticSP(
 }
 
 /// p-p kinetic: More complex due to second derivatives
-fn kineticPP(
+fn kinetic_pp(
     alpha_a: f64,
     alpha_b: f64,
     p: f64,
@@ -210,7 +225,7 @@ fn kineticPP(
     delta_j: f64,
     same_dir: bool,
 ) f64 {
-    const norm = gaussianNormP(alpha_a) * gaussianNormP(alpha_b);
+    const norm = gaussian_norm_p(alpha_a) * gaussian_norm_p(alpha_b);
     const base = norm * pref * exp_factor;
 
     if (same_dir) {
@@ -229,7 +244,7 @@ fn kineticPP(
     }
 }
 
-pub fn buildOverlapCsr(
+pub fn build_overlap_csr(
     alloc: std.mem.Allocator,
     orbitals: []const Orbital,
     neighbors: neighbor_list.NeighborList,
@@ -243,7 +258,7 @@ pub fn buildOverlapCsr(
     var i: usize = 0;
     while (i < count) : (i += 1) {
         try triplets.append(alloc, .{ .row = i, .col = i, .value = 1.0 });
-        for (neighbors.neighborsOf(i)) |j| {
+        for (neighbors.neighbors_of(i)) |j| {
             if (j <= i) continue;
             const value = overlap(orbitals[i], orbitals[j]);
             if (value == 0.0) continue;
@@ -252,10 +267,10 @@ pub fn buildOverlapCsr(
         }
     }
 
-    return sparse.CsrMatrix.initFromTriplets(alloc, count, count, triplets.items);
+    return sparse.CsrMatrix.init_from_triplets(alloc, count, count, triplets.items);
 }
 
-pub fn buildKineticCsr(
+pub fn build_kinetic_csr(
     alloc: std.mem.Allocator,
     orbitals: []const Orbital,
     neighbors: neighbor_list.NeighborList,
@@ -268,23 +283,23 @@ pub fn buildKineticCsr(
 
     var i: usize = 0;
     while (i < count) : (i += 1) {
-        const diag = kineticIntegral(orbitals[i], orbitals[i]);
+        const diag = kinetic_integral(orbitals[i], orbitals[i]);
         if (diag != 0.0) {
             try triplets.append(alloc, .{ .row = i, .col = i, .value = diag });
         }
-        for (neighbors.neighborsOf(i)) |j| {
+        for (neighbors.neighbors_of(i)) |j| {
             if (j <= i) continue;
-            const value = kineticIntegral(orbitals[i], orbitals[j]);
+            const value = kinetic_integral(orbitals[i], orbitals[j]);
             if (value == 0.0) continue;
             try triplets.append(alloc, .{ .row = i, .col = j, .value = value });
             try triplets.append(alloc, .{ .row = j, .col = i, .value = value });
         }
     }
 
-    return sparse.CsrMatrix.initFromTriplets(alloc, count, count, triplets.items);
+    return sparse.CsrMatrix.init_from_triplets(alloc, count, count, triplets.items);
 }
 
-pub fn buildOverlapCsrFromCenters(
+pub fn build_overlap_csr_from_centers(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
     sigma: f64,
@@ -304,10 +319,10 @@ pub fn buildOverlapCsrFromCenters(
     for (centers, 0..) |center, i| {
         orbitals[i] = .{ .center = center, .alpha = alpha, .cutoff = cutoff };
     }
-    return buildOverlapCsr(alloc, orbitals, list);
+    return build_overlap_csr(alloc, orbitals, list);
 }
 
-pub fn buildKineticCsrFromCenters(
+pub fn build_kinetic_csr_from_centers(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
     sigma: f64,
@@ -327,11 +342,11 @@ pub fn buildKineticCsrFromCenters(
     for (centers, 0..) |center, i| {
         orbitals[i] = .{ .center = center, .alpha = alpha, .cutoff = cutoff };
     }
-    return buildKineticCsr(alloc, orbitals, list);
+    return build_kinetic_csr(alloc, orbitals, list);
 }
 
 /// Build orbitals from centers with s-type only
-pub fn buildOrbitalsS(
+pub fn build_orbitals_s(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
     alpha: f64,
@@ -346,7 +361,7 @@ pub fn buildOrbitalsS(
 
 /// Build orbitals from centers with sp basis (1 s + 3 p per center)
 /// Returns array of size 4 * centers.len
-pub fn buildOrbitalsSP(
+pub fn build_orbitals_sp(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
     alpha: f64,
@@ -386,7 +401,7 @@ pub const BasisType = enum {
 };
 
 /// Build orbitals from centers with specified basis type
-pub fn buildOrbitals(
+pub fn build_orbitals(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
     alpha: f64,
@@ -394,8 +409,8 @@ pub fn buildOrbitals(
     basis: BasisType,
 ) ![]Orbital {
     return switch (basis) {
-        .s_only => buildOrbitalsS(alloc, centers, alpha, cutoff),
-        .sp => buildOrbitalsSP(alloc, centers, alpha, cutoff),
+        .s_only => build_orbitals_s(alloc, centers, alpha, cutoff),
+        .sp => build_orbitals_sp(alloc, centers, alpha, cutoff),
     };
 }
 
@@ -410,15 +425,15 @@ test "overlap decays and respects cutoff" {
 
 test "overlap normalized and kinetic matches analytic value" {
     const a = Orbital{ .center = .{ .x = 0.0, .y = 0.0, .z = 0.0 }, .alpha = 0.8, .cutoff = 10.0 };
-    const value = overlapIntegral(a, a);
+    const value = overlap_integral(a, a);
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), value, 1e-12);
-    const kinetic = kineticIntegral(a, a);
+    const kinetic = kinetic_integral(a, a);
     try std.testing.expectApproxEqAbs(@as(f64, 1.2), kinetic, 1e-12);
 }
 
-test "buildOverlapCsr uses neighbor list" {
+test "build_overlap_csr uses neighbor list" {
     const alloc = std.testing.allocator;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 10.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 10.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 10.0 },
@@ -435,20 +450,20 @@ test "buildOverlapCsr uses neighbor list" {
         .{ .center = positions[0], .alpha = 1.0, .cutoff = 1.0 },
         .{ .center = positions[1], .alpha = 1.0, .cutoff = 1.0 },
     };
-    var csr = try buildOverlapCsr(alloc, orbitals[0..], list);
+    var csr = try build_overlap_csr(alloc, orbitals[0..], list);
     defer csr.deinit(alloc);
 
     const x = [_]f64{ 1.0, 1.0 };
     var out = [_]f64{ 0.0, 0.0 };
-    try csr.mulVec(x[0..], out[0..]);
+    try csr.mul_vec(x[0..], out[0..]);
     const expected = 1.0 + overlap(orbitals[0], orbitals[1]);
     try std.testing.expectApproxEqAbs(expected, out[0], 1e-12);
     try std.testing.expectApproxEqAbs(expected, out[1], 1e-12);
 }
 
-test "buildKineticCsrFromCenters uses neighbor list" {
+test "build_kinetic_csr_from_centers uses neighbor list" {
     const alloc = std.testing.allocator;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 10.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 10.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 10.0 },
@@ -458,16 +473,16 @@ test "buildKineticCsrFromCenters uses neighbor list" {
         .{ .x = 0.5, .y = 0.0, .z = 0.0 },
     };
     const pbc = neighbor_list.Pbc{ .x = false, .y = false, .z = false };
-    var csr = try buildKineticCsrFromCenters(alloc, centers[0..], 0.5, 1.1, pbc, cell);
+    var csr = try build_kinetic_csr_from_centers(alloc, centers[0..], 0.5, 1.1, pbc, cell);
     defer csr.deinit(alloc);
 
-    try std.testing.expect(csr.valueAt(0, 0) > 0.0);
-    try std.testing.expect(csr.valueAt(0, 1) > 0.0);
+    try std.testing.expect(csr.value_at(0, 0) > 0.0);
+    try std.testing.expect(csr.value_at(0, 1) > 0.0);
 }
 
-test "buildOverlapCsrFromCenters applies PBC" {
+test "build_overlap_csr_from_centers applies PBC" {
     const alloc = std.testing.allocator;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 1.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 1.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 1.0 },
@@ -477,10 +492,10 @@ test "buildOverlapCsrFromCenters applies PBC" {
         .{ .x = 0.95, .y = 0.0, .z = 0.0 },
     };
     const pbc = neighbor_list.Pbc{ .x = true, .y = false, .z = false };
-    var csr = try buildOverlapCsrFromCenters(alloc, centers[0..], 0.1, 0.2, pbc, cell);
+    var csr = try build_overlap_csr_from_centers(alloc, centers[0..], 0.1, 0.2, pbc, cell);
     defer csr.deinit(alloc);
 
-    try std.testing.expect(csr.valueAt(0, 1) > 0.0);
+    try std.testing.expect(csr.value_at(0, 1) > 0.0);
 }
 
 test "p-type Gaussian overlap orthogonality at same center" {
@@ -562,13 +577,13 @@ test "p-type Gaussian overlap non-zero at displaced centers" {
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), s_py, 1e-10);
 }
 
-test "buildOrbitalsSP creates correct number of orbitals" {
+test "build_orbitals_sp creates correct number of orbitals" {
     const alloc = std.testing.allocator;
     const centers = [_]math.Vec3{
         .{ .x = 0.0, .y = 0.0, .z = 0.0 },
         .{ .x = 1.0, .y = 0.0, .z = 0.0 },
     };
-    const orbitals = try buildOrbitalsSP(alloc, centers[0..], 1.0, 5.0);
+    const orbitals = try build_orbitals_sp(alloc, centers[0..], 1.0, 5.0);
     defer alloc.free(orbitals);
 
     try std.testing.expectEqual(@as(usize, 8), orbitals.len);

@@ -20,7 +20,7 @@ const blas = @import("../../lib/linalg/blas.zig");
 
 const ContractedShell = basis_mod.ContractedShell;
 
-fn buildCoulomb2Center(
+fn build_coulomb2_center(
     aux_shells: []const ContractedShell,
     n_aux: usize,
     coulomb_2c: []f64,
@@ -29,11 +29,11 @@ fn buildCoulomb2Center(
     var shell_buf: [MAX_SHELL_CART * MAX_SHELL_CART]f64 = undefined;
     var off_p: usize = 0;
     for (aux_shells) |sp| {
-        const np = basis_mod.numCartesian(sp.l);
+        const np = basis_mod.num_cartesian(sp.l);
         var off_q: usize = 0;
         for (aux_shells) |sq| {
-            const nq = basis_mod.numCartesian(sq.l);
-            _ = eri_df.contracted2CenterERI(sp, sq, &shell_buf);
+            const nq = basis_mod.num_cartesian(sq.l);
+            _ = eri_df.contracted2_center_eri(sp, sq, &shell_buf);
             // Copy into full matrix
             for (0..np) |ip| {
                 for (0..nq) |iq| {
@@ -47,7 +47,7 @@ fn buildCoulomb2Center(
     }
 }
 
-fn zeroUpperTriangle(n_aux: usize, coulomb_2c: []f64) void {
+fn zero_upper_triangle(n_aux: usize, coulomb_2c: []f64) void {
     for (0..n_aux) |i| {
         for (i + 1..n_aux) |j| {
             coulomb_2c[i * n_aux + j] = 0.0;
@@ -55,7 +55,7 @@ fn zeroUpperTriangle(n_aux: usize, coulomb_2c: []f64) void {
     }
 }
 
-fn build3CenterIntegrals(
+fn build3_center_integrals(
     orbital_shells: []const ContractedShell,
     aux_shells: []const ContractedShell,
     n_basis: usize,
@@ -66,14 +66,14 @@ fn build3CenterIntegrals(
     var shell_buf: [MAX_SHELL_CART * MAX_SHELL_CART * MAX_SHELL_CART]f64 = undefined;
     var off_a: usize = 0;
     for (orbital_shells) |sa| {
-        const na_s = basis_mod.numCartesian(sa.l);
+        const na_s = basis_mod.num_cartesian(sa.l);
         var off_b: usize = 0;
         for (orbital_shells) |sb| {
-            const nb_s = basis_mod.numCartesian(sb.l);
+            const nb_s = basis_mod.num_cartesian(sb.l);
             var off_p: usize = 0;
             for (aux_shells) |sp| {
-                const np_s = basis_mod.numCartesian(sp.l);
-                _ = eri_df.contracted3CenterERI(sa, sb, sp, &shell_buf);
+                const np_s = basis_mod.num_cartesian(sp.l);
+                _ = eri_df.contracted3_center_eri(sa, sb, sp, &shell_buf);
                 // Copy: eri3[(off_a+ia)*n_basis+(off_b+ib), off_p+ip]
                 for (0..na_s) |ia| {
                     for (0..nb_s) |ib| {
@@ -111,26 +111,26 @@ pub const DensityFittingContext = struct {
         orbital_shells: []const ContractedShell,
         aux_shells: []const ContractedShell,
     ) !DensityFittingContext {
-        const n_basis = obara_saika.totalBasisFunctions(orbital_shells);
-        const n_aux = obara_saika.totalBasisFunctions(aux_shells);
+        const n_basis = obara_saika.total_basis_functions(orbital_shells);
+        const n_aux = obara_saika.total_basis_functions(aux_shells);
 
         // Step 1: Build 2-center Coulomb matrix (P|Q) and Cholesky decompose
         const coulomb_2c = try alloc.alloc(f64, n_aux * n_aux);
         errdefer alloc.free(coulomb_2c);
 
         // Compute (P|Q) shell by shell
-        buildCoulomb2Center(aux_shells, n_aux, coulomb_2c);
+        build_coulomb2_center(aux_shells, n_aux, coulomb_2c);
 
         // Cholesky decomposition: (P|Q) = L * L^T
         try blas.dpotrf(n_aux, coulomb_2c);
         // Zero the upper triangle (dpotrf leaves garbage there)
-        zeroUpperTriangle(n_aux, coulomb_2c);
+        zero_upper_triangle(n_aux, coulomb_2c);
 
         // Step 2: Build 3-center integrals (μν|P)
         const eri3 = try alloc.alloc(f64, n_basis * n_basis * n_aux);
         errdefer alloc.free(eri3);
 
-        build3CenterIntegrals(orbital_shells, aux_shells, n_basis, n_aux, eri3);
+        build3_center_integrals(orbital_shells, aux_shells, n_basis, n_aux, eri3);
 
         return .{
             .n_basis = n_basis,
@@ -152,7 +152,7 @@ pub const DensityFittingContext = struct {
     ///   c_P = Σ_{λσ} P_{λσ} (λσ|P)     [contract density with 3c integrals]
     ///   Solve L * L^T * d = c            [Cholesky solve for fitting coefficients]
     ///   J_{μν} = Σ_P (μν|P) d_P          [expand with 3c integrals]
-    pub fn buildJ(
+    pub fn build_j(
         self: *const DensityFittingContext,
         alloc: std.mem.Allocator,
         p_mat: []const f64,
@@ -189,7 +189,7 @@ pub const DensityFittingContext = struct {
     ///   K_{μν} = Σ_P Σ_λ B_{μλ,P} × (Σ_σ P_{λσ} B_{νσ,P})
     ///
     /// Equivalent to: K_{μν} = Σ_P (B^P · P · B^{P T})_{μν}
-    pub fn buildK(
+    pub fn build_k(
         self: *const DensityFittingContext,
         alloc: std.mem.Allocator,
         p_mat: []const f64,
@@ -274,8 +274,8 @@ test "DF J matrix H2 STO-3G" {
     };
 
     // Simple even-tempered auxiliary basis for testing
-    const aux1 = aux_basis.buildEvenTemperedAux(nuc_positions[0], 1, 4, 0.1, 3.0);
-    const aux2 = aux_basis.buildEvenTemperedAux(nuc_positions[1], 1, 4, 0.1, 3.0);
+    const aux1 = aux_basis.build_even_tempered_aux(nuc_positions[0], 1, 4, 0.1, 3.0);
+    const aux2 = aux_basis.build_even_tempered_aux(nuc_positions[1], 1, 4, 0.1, 3.0);
 
     // Combine aux shells
     var all_aux: [aux_basis.MAX_AUX_SHELLS]ContractedShell = undefined;
@@ -296,7 +296,7 @@ test "DF J matrix H2 STO-3G" {
     const p_mat = [_]f64{ 1.0, 0.5, 0.5, 1.0 };
     var j_mat: [4]f64 = undefined;
 
-    try df_ctx.buildJ(alloc, &p_mat, &j_mat);
+    try df_ctx.build_j(alloc, &p_mat, &j_mat);
 
     // J should be symmetric
     try testing.expectApproxEqAbs(j_mat[0 * 2 + 1], j_mat[1 * 2 + 0], 1e-10);
@@ -306,7 +306,7 @@ test "DF J matrix H2 STO-3G" {
     try testing.expect(j_mat[3] > 0.0);
 
     // Compare with conventional J
-    var eri_table = try obara_saika.buildEriTable(alloc, &shells);
+    var eri_table = try obara_saika.build_eri_table(alloc, &shells);
     defer eri_table.deinit(alloc);
 
     var j_ref: [4]f64 = undefined;
@@ -345,8 +345,8 @@ test "DF K matrix H2 STO-3G" {
         .{ .center = nuc_positions[1], .l = 0, .primitives = &sto3g.H_1s },
     };
 
-    const aux1 = aux_basis.buildEvenTemperedAux(nuc_positions[0], 1, 4, 0.1, 3.0);
-    const aux2 = aux_basis.buildEvenTemperedAux(nuc_positions[1], 1, 4, 0.1, 3.0);
+    const aux1 = aux_basis.build_even_tempered_aux(nuc_positions[0], 1, 4, 0.1, 3.0);
+    const aux2 = aux_basis.build_even_tempered_aux(nuc_positions[1], 1, 4, 0.1, 3.0);
 
     var all_aux: [aux_basis.MAX_AUX_SHELLS]ContractedShell = undefined;
     var aux_count: usize = 0;
@@ -365,13 +365,13 @@ test "DF K matrix H2 STO-3G" {
     const p_mat = [_]f64{ 1.0, 0.5, 0.5, 1.0 };
     var k_mat: [4]f64 = undefined;
 
-    try df_ctx.buildK(alloc, &p_mat, &k_mat);
+    try df_ctx.build_k(alloc, &p_mat, &k_mat);
 
     // K should be symmetric
     try testing.expectApproxEqAbs(k_mat[0 * 2 + 1], k_mat[1 * 2 + 0], 1e-10);
 
     // Compare with conventional K
-    var eri_table = try obara_saika.buildEriTable(alloc, &shells);
+    var eri_table = try obara_saika.build_eri_table(alloc, &shells);
     defer eri_table.deinit(alloc);
 
     var k_ref: [4]f64 = undefined;
@@ -414,9 +414,9 @@ test "DF J/K symmetry" {
     };
 
     // Build def2-universal-jkfit auxiliary basis
-    const aux_o = aux_basis.buildDef2UniversalJkfit(8, nuc_positions[0]).?;
-    const aux_h1 = aux_basis.buildDef2UniversalJkfit(1, nuc_positions[1]).?;
-    const aux_h2 = aux_basis.buildDef2UniversalJkfit(1, nuc_positions[2]).?;
+    const aux_o = aux_basis.build_def2_universal_jkfit(8, nuc_positions[0]).?;
+    const aux_h1 = aux_basis.build_def2_universal_jkfit(1, nuc_positions[1]).?;
+    const aux_h2 = aux_basis.build_def2_universal_jkfit(1, nuc_positions[2]).?;
 
     var all_aux: [aux_basis.MAX_AUX_SHELLS * 3]ContractedShell = undefined;
     var aux_count: usize = 0;
@@ -453,8 +453,8 @@ test "DF J/K symmetry" {
     const k_mat = try alloc.alloc(f64, n * n);
     defer alloc.free(k_mat);
 
-    try df_ctx.buildJ(alloc, p_mat, j_mat);
-    try df_ctx.buildK(alloc, p_mat, k_mat);
+    try df_ctx.build_j(alloc, p_mat, j_mat);
+    try df_ctx.build_k(alloc, p_mat, k_mat);
 
     // Check symmetry
     for (0..n) |mu| {

@@ -15,7 +15,7 @@ pub const Units = enum {
 };
 
 /// Return scale factor to angstrom.
-pub fn unitsScaleToAngstrom(units: Units) f64 {
+pub fn units_scale_to_angstrom(units: Units) f64 {
     return switch (units) {
         .angstrom => 1.0,
         .bohr => 0.52917721092,
@@ -23,7 +23,7 @@ pub fn unitsScaleToAngstrom(units: Units) f64 {
 }
 
 /// Return scale factor to bohr.
-pub fn unitsScaleToBohr(units: Units) f64 {
+pub fn units_scale_to_bohr(units: Units) f64 {
     return switch (units) {
         .angstrom => 1.0 / 0.52917721092,
         .bohr => 1.0,
@@ -74,7 +74,7 @@ pub const Mat3 = struct {
     m: [3][3]f64,
 
     /// Construct a matrix from row vectors.
-    pub fn fromRows(a: Vec3, b: Vec3, c: Vec3) Mat3 {
+    pub fn from_rows(a: Vec3, b: Vec3, c: Vec3) Mat3 {
         return .{
             .m = .{
                 .{ a.x, a.y, a.z },
@@ -103,7 +103,7 @@ pub const Mat3 = struct {
     }
 
     /// Multiply matrix by vector.
-    pub fn mulVec(self: Mat3, v: Vec3) Vec3 {
+    pub fn mul_vec(self: Mat3, v: Vec3) Vec3 {
         return .{
             .x = self.m[0][0] * v.x + self.m[0][1] * v.y + self.m[0][2] * v.z,
             .y = self.m[1][0] * v.x + self.m[1][1] * v.y + self.m[1][2] * v.z,
@@ -138,14 +138,14 @@ pub fn reciprocal(cell: Mat3) Mat3 {
     const b1 = Vec3.scale(Vec3.cross(a2, a3), scale);
     const b2 = Vec3.scale(Vec3.cross(a3, a1), scale);
     const b3 = Vec3.scale(Vec3.cross(a1, a2), scale);
-    return Mat3.fromRows(b1, b2, b3);
+    return Mat3.from_rows(b1, b2, b3);
 }
 
 /// Convert fractional coordinates to Cartesian using lattice matrix.
 /// result = frac.x * row0 + frac.y * row1 + frac.z * row2
-/// Use this for k-point conversion: k_cart = fracToCart(k_frac, recip)
-/// Or for real-space: r_cart = fracToCart(r_frac, cell)
-pub fn fracToCart(frac: Vec3, lattice: Mat3) Vec3 {
+/// Use this for k-point conversion: k_cart = frac_to_cart(k_frac, recip)
+/// Or for real-space: r_cart = frac_to_cart(r_frac, cell)
+pub fn frac_to_cart(frac: Vec3, lattice: Mat3) Vec3 {
     const v0 = lattice.row(0);
     const v1 = lattice.row(1);
     const v2 = lattice.row(2);

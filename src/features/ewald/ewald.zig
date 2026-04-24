@@ -23,8 +23,8 @@ const Setup = struct {
     g: [3]i32,
 };
 
-fn resolveSetup(cell: math.Mat3, recip: math.Mat3, params: ?Params) Setup {
-    const defaults = defaultParams(cell);
+fn resolve_setup(cell: math.Mat3, recip: math.Mat3, params: ?Params) Setup {
+    const defaults = default_params(cell);
     const tol = if (params) |p| if (p.tol > 0.0) p.tol else defaults.tol else defaults.tol;
     const alpha = if (params) |p|
         if (p.alpha > 0.0) p.alpha else defaults.alpha
@@ -33,7 +33,7 @@ fn resolveSetup(cell: math.Mat3, recip: math.Mat3, params: ?Params) Setup {
     const rcut = if (params) |p| if (p.rcut > 0.0) p.rcut else defaults.rcut else defaults.rcut;
     const gcut = if (params) |p| if (p.gcut > 0.0) p.gcut else defaults.gcut else defaults.gcut;
 
-    const auto = autoCuts(alpha, tol);
+    const auto = auto_cuts(alpha, tol);
     const rcut_final = if (rcut > 0.0) rcut else auto.rcut;
     const gcut_final = if (gcut > 0.0) gcut else auto.gcut;
 
@@ -61,7 +61,7 @@ fn resolveSetup(cell: math.Mat3, recip: math.Mat3, params: ?Params) Setup {
     };
 }
 
-fn maybeWarnNonNeutral(io: std.Io, params: ?Params, qsum: f64) !void {
+fn maybe_warn_non_neutral(io: std.Io, params: ?Params, qsum: f64) !void {
     const quiet = if (params) |p| p.quiet else false;
     if (!quiet and @abs(qsum) > 1e-6) {
         const logger = runtime_logging.stderr(io, .warn);
@@ -75,7 +75,7 @@ fn maybeWarnNonNeutral(io: std.Io, params: ?Params, qsum: f64) !void {
 }
 
 /// Real-space lattice sum for the Ewald energy.
-fn ewaldEnergyRealSum(
+fn ewald_energy_real_sum(
     cell: math.Mat3,
     charges: []const f64,
     positions: []const math.Vec3,
@@ -109,7 +109,7 @@ fn ewaldEnergyRealSum(
                         );
                         const r = math.Vec3.norm(delta);
                         if (r > setup.rcut or r <= 1e-12) continue;
-                        real_sum += charges[i] * charges[j] * erfcValue(setup.alpha * r) / r;
+                        real_sum += charges[i] * charges[j] * erfc_value(setup.alpha * r) / r;
                     }
                 }
             }
@@ -119,7 +119,7 @@ fn ewaldEnergyRealSum(
 }
 
 /// Reciprocal-space lattice sum for the Ewald energy.
-fn ewaldEnergyRecipSum(
+fn ewald_energy_recip_sum(
     recip: math.Mat3,
     charges: []const f64,
     positions: []const math.Vec3,
@@ -162,7 +162,7 @@ fn ewaldEnergyRecipSum(
 }
 
 /// Compute ion-ion Ewald energy for a periodic cell.
-pub fn ionIonEnergy(
+pub fn ion_ion_energy(
     io: std.Io,
     cell: math.Mat3,
     recip: math.Mat3,
@@ -181,15 +181,15 @@ pub fn ionIonEnergy(
         qsum += q;
     }
 
-    try maybeWarnNonNeutral(io, params, qsum);
+    try maybe_warn_non_neutral(io, params, qsum);
 
-    const setup = resolveSetup(cell, recip, params);
+    const setup = resolve_setup(cell, recip, params);
     const alpha = setup.alpha;
 
-    const real_sum = ewaldEnergyRealSum(cell, charges, positions, setup);
+    const real_sum = ewald_energy_real_sum(cell, charges, positions, setup);
     const e_real = 0.5 * real_sum;
 
-    const recip_sum = ewaldEnergyRecipSum(recip, charges, positions, setup);
+    const recip_sum = ewald_energy_recip_sum(recip, charges, positions, setup);
     const e_recip = (2.0 * std.math.pi / volume) * recip_sum;
 
     var self_sum: f64 = 0.0;
@@ -207,14 +207,14 @@ pub fn ionIonEnergy(
 }
 
 /// Build default Ewald parameters.
-fn defaultParams(cell: math.Mat3) Params {
+fn default_params(cell: math.Mat3) Params {
     const n0 = math.Vec3.norm(cell.row(0));
     const n1 = math.Vec3.norm(cell.row(1));
     const n2 = math.Vec3.norm(cell.row(2));
     const lmin = @min(@min(n0, n1), n2);
     const alpha = 5.0 / lmin;
     const tol = 1e-8;
-    const cuts = autoCuts(alpha, tol);
+    const cuts = auto_cuts(alpha, tol);
     return Params{
         .alpha = alpha,
         .rcut = cuts.rcut,
@@ -230,14 +230,14 @@ const Cuts = struct {
 };
 
 /// Compute rcut/gcut from alpha and tolerance.
-fn autoCuts(alpha: f64, tol: f64) Cuts {
+fn auto_cuts(alpha: f64, tol: f64) Cuts {
     const rcut = std.math.sqrt(-@log(tol)) / alpha;
     const gcut = 2.0 * alpha * std.math.sqrt(-@log(tol));
     return Cuts{ .rcut = rcut, .gcut = gcut };
 }
 
 /// Complementary error function using std.math.erf.
-fn erfcValue(x: f64) f64 {
+fn erfc_value(x: f64) f64 {
     return c.erfc(x);
 }
 
@@ -246,7 +246,7 @@ fn erfcValue(x: f64) f64 {
 /// F_real(i) = -d/dR_i [Σ_{j,n} Z_i Z_j erfc(α|r|)/(2|r|)]
 ///           = Σ_{j,n} Z_i Z_j × [erfc(αr)/r² + 2α/√π × exp(-α²r²)/r] × (r/r)
 /// where r = R_i - R_j + n
-fn accumulateRealForces(
+fn accumulate_real_forces(
     cell: math.Mat3,
     charges: []const f64,
     positions: []const math.Vec3,
@@ -289,7 +289,7 @@ fn accumulateRealForces(
 
                         const r_inv = 1.0 / r;
                         const ar = alpha * r;
-                        const erfc_ar = erfcValue(ar);
+                        const erfc_ar = erfc_value(ar);
                         const exp_ar2 = std.math.exp(-alpha_sq * r * r);
 
                         // Force magnitude:
@@ -318,7 +318,7 @@ fn accumulateRealForces(
 ///       × Im[S(G)* exp(i G·R_i)]
 ///   = -(4π/V) × Z_i × Σ_{G≠0} [exp(-G²/4α²)/G²] × G
 ///       × [S_r sin(G·R_i) - S_i cos(G·R_i)]
-fn accumulateRecipForces(
+fn accumulate_recip_forces(
     recip: math.Mat3,
     charges: []const f64,
     positions: []const math.Vec3,
@@ -388,7 +388,7 @@ fn accumulateRecipForces(
 /// Compute ion-ion Ewald forces for a periodic cell.
 /// Returns forces on each atom in Hartree/Bohr units.
 /// (Multiply by 2 to convert to Rydberg/Bohr)
-pub fn ionIonForces(
+pub fn ion_ion_forces(
     alloc: std.mem.Allocator,
     cell: math.Mat3,
     recip: math.Mat3,
@@ -403,7 +403,7 @@ pub fn ionIonForces(
     const volume = @abs(math.Vec3.dot(cell.row(0), math.Vec3.cross(cell.row(1), cell.row(2))));
     if (volume <= 1e-12) return error.InvalidCell;
 
-    const setup = resolveSetup(cell, recip, params);
+    const setup = resolve_setup(cell, recip, params);
 
     // Allocate force array
     const forces = try alloc.alloc(math.Vec3, n_atoms);
@@ -411,8 +411,8 @@ pub fn ionIonForces(
         f.* = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
     }
 
-    accumulateRealForces(cell, charges, positions, setup, forces);
-    accumulateRecipForces(recip, charges, positions, setup, volume, forces);
+    accumulate_real_forces(cell, charges, positions, setup, forces);
+    accumulate_recip_forces(recip, charges, positions, setup, volume, forces);
 
     // Self-energy has no position dependence, so no force contribution
     // Background term also has no position dependence for uniform background
@@ -424,7 +424,7 @@ pub fn ionIonForces(
 /// σ^real_αβ = (1/2Ω) Σ_{i,j,n}' Z_i Z_j [erfc(αr)/r³ + (2α/√π)exp(-α²r²)/r²
 ///             + (4α³/√π)exp(-α²r²)] × r_α r_β
 /// (the extra 4α³ term comes from the second derivative of erfc)
-fn accumulateRealStress(
+fn accumulate_real_stress(
     cell: math.Mat3,
     charges: []const f64,
     positions: []const math.Vec3,
@@ -465,7 +465,7 @@ fn accumulateRealStress(
                         if (r > setup.rcut or r <= 1e-12) continue;
 
                         const ar = alpha * r;
-                        const erfc_ar = erfcValue(ar);
+                        const erfc_ar = erfc_value(ar);
                         const exp_ar2 = std.math.exp(-alpha_sq * r2);
                         // d/dr [erfc(αr)/r] = -erfc(αr)/r² - (2α/√π)exp(-α²r²)/r
                         // σ_αβ += Z_iZ_j × [erfc(αr)/r³ + (2α/√π)exp(-α²r²)/r²
@@ -491,7 +491,7 @@ fn accumulateRealStress(
 /// Reciprocal-space stress contribution:
 /// σ^recip_αβ = (2π/Ω²) Σ_{G≠0} |S(G)|² exp(-G²/4α²)/G² ×
 ///              [-δ_αβ + G_αG_β(1/(2α²) + 2/G²)]
-fn accumulateRecipStress(
+fn accumulate_recip_stress(
     recip: math.Mat3,
     charges: []const f64,
     positions: []const math.Vec3,
@@ -556,7 +556,7 @@ fn accumulateRecipStress(
 /// Compute Ewald stress tensor for a periodic cell.
 /// Returns stress in Hartree/Bohr³ units (multiply by 2 for Ry/Bohr³).
 /// σ_αβ = (1/Ω) ∂E_ewald/∂ε_αβ
-pub fn ionIonStress(
+pub fn ion_ion_stress(
     cell: math.Mat3,
     recip: math.Mat3,
     charges: []const f64,
@@ -575,11 +575,11 @@ pub fn ionIonStress(
     var qsum: f64 = 0.0;
     for (charges) |q| qsum += q;
 
-    const setup = resolveSetup(cell, recip, params);
+    const setup = resolve_setup(cell, recip, params);
     const alpha_sq = setup.alpha * setup.alpha;
 
-    accumulateRealStress(cell, charges, positions, setup, &sigma);
-    accumulateRecipStress(recip, charges, positions, setup, inv_volume, &sigma);
+    accumulate_real_stress(cell, charges, positions, setup, &sigma);
+    accumulate_recip_stress(recip, charges, positions, setup, inv_volume, &sigma);
 
     // Background stress (for non-neutral systems):
     // dE_bg/dε_αβ = δ_αβ × π Q² / (2α² Ω)
@@ -634,7 +634,7 @@ test "ewald forces finite difference" {
     };
 
     // Compute analytic forces
-    const forces = try ionIonForces(alloc, cell, recip, &charges, &positions, null);
+    const forces = try ion_ion_forces(alloc, cell, recip, &charges, &positions, null);
     defer alloc.free(forces);
 
     // Verify with finite difference
@@ -646,8 +646,8 @@ test "ewald forces finite difference" {
         pos_plus[atom_idx].x += delta;
         pos_minus[atom_idx].x -= delta;
 
-        const e_plus = try ionIonEnergy(io, cell, recip, &charges, &pos_plus, null);
-        const e_minus = try ionIonEnergy(io, cell, recip, &charges, &pos_minus, null);
+        const e_plus = try ion_ion_energy(io, cell, recip, &charges, &pos_plus, null);
+        const e_minus = try ion_ion_energy(io, cell, recip, &charges, &pos_minus, null);
         const f_numeric_x = -(e_plus - e_minus) / (2.0 * delta);
 
         try testing.expectApproxEqAbs(forces[atom_idx].x, f_numeric_x, 1e-5);
@@ -658,8 +658,8 @@ test "ewald forces finite difference" {
         pos_plus[atom_idx].y += delta;
         pos_minus[atom_idx].y -= delta;
 
-        const e_plus_y = try ionIonEnergy(io, cell, recip, &charges, &pos_plus, null);
-        const e_minus_y = try ionIonEnergy(io, cell, recip, &charges, &pos_minus, null);
+        const e_plus_y = try ion_ion_energy(io, cell, recip, &charges, &pos_plus, null);
+        const e_minus_y = try ion_ion_energy(io, cell, recip, &charges, &pos_minus, null);
         const f_numeric_y = -(e_plus_y - e_minus_y) / (2.0 * delta);
 
         try testing.expectApproxEqAbs(forces[atom_idx].y, f_numeric_y, 1e-5);
@@ -670,8 +670,8 @@ test "ewald forces finite difference" {
         pos_plus[atom_idx].z += delta;
         pos_minus[atom_idx].z -= delta;
 
-        const e_plus_z = try ionIonEnergy(io, cell, recip, &charges, &pos_plus, null);
-        const e_minus_z = try ionIonEnergy(io, cell, recip, &charges, &pos_minus, null);
+        const e_plus_z = try ion_ion_energy(io, cell, recip, &charges, &pos_plus, null);
+        const e_minus_z = try ion_ion_energy(io, cell, recip, &charges, &pos_minus, null);
         const f_numeric_z = -(e_plus_z - e_minus_z) / (2.0 * delta);
 
         try testing.expectApproxEqAbs(forces[atom_idx].z, f_numeric_z, 1e-5);
@@ -712,7 +712,7 @@ test "ewald forces sum to zero" {
         math.Vec3{ .x = 3.0 * a / 4.0, .y = 3.0 * a / 4.0, .z = a / 4.0 },
     };
 
-    const forces = try ionIonForces(alloc, cell, recip, &charges, &positions, null);
+    const forces = try ion_ion_forces(alloc, cell, recip, &charges, &positions, null);
     defer alloc.free(forces);
 
     // Sum of all forces should be zero

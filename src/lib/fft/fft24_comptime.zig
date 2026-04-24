@@ -80,15 +80,15 @@ const twiddles3 = Twiddles3.init();
 
 // ============== Basic operations ==============
 
-inline fn loadVec2(c: Complex) Vec2 {
+inline fn load_vec2(c: Complex) Vec2 {
     return Vec2{ c.re, c.im };
 }
 
-inline fn storeVec2(v: Vec2) Complex {
+inline fn store_vec2(v: Vec2) Complex {
     return Complex.init(v[0], v[1]);
 }
 
-inline fn complexMulVec2(a: Vec2, b: Vec2) Vec2 {
+inline fn complex_mul_vec2(a: Vec2, b: Vec2) Vec2 {
     const a_re: Vec2 = @splat(a[0]);
     const a_im: Vec2 = @splat(a[1]);
     const b_flip = Vec2{ b[1], b[0] };
@@ -97,18 +97,18 @@ inline fn complexMulVec2(a: Vec2, b: Vec2) Vec2 {
     return Vec2{ prod1[0] - prod2[0], prod1[1] + prod2[1] };
 }
 
-inline fn complexMul(a: Complex, b: Complex) Complex {
+inline fn complex_mul(a: Complex, b: Complex) Complex {
     return Complex.init(
         a.re * b.re - a.im * b.im,
         a.re * b.im + a.im * b.re,
     );
 }
 
-inline fn complexAdd(a: Complex, b: Complex) Complex {
+inline fn complex_add(a: Complex, b: Complex) Complex {
     return Complex.init(a.re + b.re, a.im + b.im);
 }
 
-inline fn complexSub(a: Complex, b: Complex) Complex {
+inline fn complex_sub(a: Complex, b: Complex) Complex {
     return Complex.init(a.re - b.re, a.im - b.im);
 }
 
@@ -120,9 +120,9 @@ inline fn dft3(x0: Complex, x1: Complex, x2: Complex, inv: bool) [3]Complex {
     const w2 = if (inv) twiddles3.w2_inv else twiddles3.w2;
 
     return .{
-        complexAdd(complexAdd(x0, x1), x2),
-        complexAdd(complexAdd(x0, complexMul(x1, w1)), complexMul(x2, w2)),
-        complexAdd(complexAdd(x0, complexMul(x1, w2)), complexMul(x2, w1)),
+        complex_add(complex_add(x0, x1), x2),
+        complex_add(complex_add(x0, complex_mul(x1, w1)), complex_mul(x2, w2)),
+        complex_add(complex_add(x0, complex_mul(x1, w2)), complex_mul(x2, w1)),
     };
 }
 
@@ -134,36 +134,36 @@ inline fn dft8(input: *const [8]Complex, inv: bool) [8]Complex {
 
     // Stage 1: 4 butterflies
     var s1: [8]Complex = undefined;
-    s1[0] = complexAdd(input[0], input[4]);
-    s1[1] = complexAdd(input[1], input[5]);
-    s1[2] = complexAdd(input[2], input[6]);
-    s1[3] = complexAdd(input[3], input[7]);
-    s1[4] = complexSub(input[0], input[4]);
-    s1[5] = complexMul(complexSub(input[1], input[5]), w[1]);
-    s1[6] = complexMul(complexSub(input[2], input[6]), w[2]);
-    s1[7] = complexMul(complexSub(input[3], input[7]), w[3]);
+    s1[0] = complex_add(input[0], input[4]);
+    s1[1] = complex_add(input[1], input[5]);
+    s1[2] = complex_add(input[2], input[6]);
+    s1[3] = complex_add(input[3], input[7]);
+    s1[4] = complex_sub(input[0], input[4]);
+    s1[5] = complex_mul(complex_sub(input[1], input[5]), w[1]);
+    s1[6] = complex_mul(complex_sub(input[2], input[6]), w[2]);
+    s1[7] = complex_mul(complex_sub(input[3], input[7]), w[3]);
 
     // Stage 2: 4 butterflies
     var s2: [8]Complex = undefined;
-    s2[0] = complexAdd(s1[0], s1[2]);
-    s2[1] = complexAdd(s1[1], s1[3]);
-    s2[2] = complexSub(s1[0], s1[2]);
-    s2[3] = complexMul(complexSub(s1[1], s1[3]), w[2]);
-    s2[4] = complexAdd(s1[4], s1[6]);
-    s2[5] = complexAdd(s1[5], s1[7]);
-    s2[6] = complexSub(s1[4], s1[6]);
-    s2[7] = complexMul(complexSub(s1[5], s1[7]), w[2]);
+    s2[0] = complex_add(s1[0], s1[2]);
+    s2[1] = complex_add(s1[1], s1[3]);
+    s2[2] = complex_sub(s1[0], s1[2]);
+    s2[3] = complex_mul(complex_sub(s1[1], s1[3]), w[2]);
+    s2[4] = complex_add(s1[4], s1[6]);
+    s2[5] = complex_add(s1[5], s1[7]);
+    s2[6] = complex_sub(s1[4], s1[6]);
+    s2[7] = complex_mul(complex_sub(s1[5], s1[7]), w[2]);
 
     // Stage 3: 4 butterflies
     var result: [8]Complex = undefined;
-    result[0] = complexAdd(s2[0], s2[1]);
-    result[4] = complexSub(s2[0], s2[1]);
-    result[2] = complexAdd(s2[2], s2[3]);
-    result[6] = complexSub(s2[2], s2[3]);
-    result[1] = complexAdd(s2[4], s2[5]);
-    result[5] = complexSub(s2[4], s2[5]);
-    result[3] = complexAdd(s2[6], s2[7]);
-    result[7] = complexSub(s2[6], s2[7]);
+    result[0] = complex_add(s2[0], s2[1]);
+    result[4] = complex_sub(s2[0], s2[1]);
+    result[2] = complex_add(s2[2], s2[3]);
+    result[6] = complex_sub(s2[2], s2[3]);
+    result[1] = complex_add(s2[4], s2[5]);
+    result[5] = complex_sub(s2[4], s2[5]);
+    result[3] = complex_add(s2[6], s2[7]);
+    result[7] = complex_sub(s2[6], s2[7]);
 
     return result;
 }
@@ -194,7 +194,7 @@ pub fn fft24(data: []Complex, inv: bool) void {
             const exp = n1 * k2;
             if (exp != 0) {
                 const tw_idx = exp % 24;
-                y[n1][k2] = complexMul(y[n1][k2], w[tw_idx]);
+                y[n1][k2] = complex_mul(y[n1][k2], w[tw_idx]);
             }
         }
     }
@@ -255,7 +255,7 @@ pub fn fft24_alt(data: []Complex, inv: bool) void {
             const exp = n1 * k2;
             if (exp != 0) {
                 const tw_idx = exp % 24;
-                y[n1][k2] = complexMul(y[n1][k2], w[tw_idx]);
+                y[n1][k2] = complex_mul(y[n1][k2], w[tw_idx]);
             }
         }
     }
@@ -288,7 +288,7 @@ pub fn fft24_alt(data: []Complex, inv: bool) void {
 
 // ============== Tests ==============
 
-fn dftDirect(input: []const Complex, output: []Complex, inv: bool) void {
+fn dft_direct(input: []const Complex, output: []Complex, inv: bool) void {
     const n = input.len;
     const sign: f64 = if (inv) 1.0 else -1.0;
     const angle_base = sign * 2.0 * std.math.pi / @as(f64, @floatFromInt(n));
@@ -297,7 +297,7 @@ fn dftDirect(input: []const Complex, output: []Complex, inv: bool) void {
         var sum = Complex.init(0, 0);
         for (0..n) |j| {
             const angle = angle_base * @as(f64, @floatFromInt(k * j));
-            sum = complexAdd(sum, complexMul(input[j], Complex.init(@cos(angle), @sin(angle))));
+            sum = complex_add(sum, complex_mul(input[j], Complex.init(@cos(angle), @sin(angle))));
         }
         output[k] = sum;
     }
@@ -310,7 +310,7 @@ test "fft24 vs direct" {
     }
 
     var expected: [24]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
     fft24(&data, false);
 
@@ -343,7 +343,7 @@ test "fft24_alt vs direct" {
     }
 
     var expected: [24]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
     fft24_alt(&data, false);
 

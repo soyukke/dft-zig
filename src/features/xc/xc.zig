@@ -16,16 +16,16 @@ pub const XcPoint = struct {
     df_dg2: f64,
 };
 
-pub fn functionalName(xc: Functional) []const u8 {
+pub fn functional_name(xc: Functional) []const u8 {
     return switch (xc) {
         .lda_pz => "lda_pz",
         .pbe => "pbe",
     };
 }
 
-pub fn evalPoint(xc: Functional, n: f64, g2: f64) XcPoint {
+pub fn eval_point(xc: Functional, n: f64, g2: f64) XcPoint {
     return switch (xc) {
-        .lda_pz => ldaPz(n),
+        .lda_pz => lda_pz(n),
         .pbe => pbe(n, g2),
     };
 }
@@ -48,27 +48,27 @@ pub const XcKernelPoint = struct {
 /// Evaluate XC kernel for DFPT.
 /// For LDA, g2 is ignored (no gradient dependence).
 /// For PBE, g2 = |∇n|² is needed for gradient-dependent kernel terms.
-pub fn evalKernel(xc_func: Functional, n: f64, g2: f64) XcKernelPoint {
+pub fn eval_kernel(xc_func: Functional, n: f64, g2: f64) XcKernelPoint {
     return switch (xc_func) {
-        .lda_pz => ldaPzKernel(n),
-        .pbe => pbeKernel(n, g2),
+        .lda_pz => lda_pz_kernel(n),
+        .pbe => pbe_kernel(n, g2),
     };
 }
 
 /// PBE XC kernel: second derivatives of n*eps_xc(n,σ) via numerical finite differences.
-/// Returns f_nn, f_nσ, f_σσ, v_σ in Rydberg units (evalPoint already returns Ry).
-fn pbeKernel(n: f64, g2: f64) XcKernelPoint {
+/// Returns f_nn, f_nσ, f_σσ, v_σ in Rydberg units (eval_point already returns Ry).
+fn pbe_kernel(n: f64, g2: f64) XcKernelPoint {
     if (n <= 1e-12) return .{ .fxc = 0, .f_ns = 0, .f_ss = 0, .v_s = 0 };
 
-    // v_σ = d(n·ε)/dσ = df/dσ  (directly from evalPoint)
-    const pt0 = evalPoint(.pbe, n, g2);
+    // v_σ = d(n·ε)/dσ = df/dσ  (directly from eval_point)
+    const pt0 = eval_point(.pbe, n, g2);
     const v_s = pt0.df_dg2;
 
     // f_nn = d²(n·ε)/dn² ≈ (V_xc(n+δ) - V_xc(n-δ)) / (2δ)
     // where V_xc = d(n·ε)/dn = df/dn
     const delta_n = @max(1e-6, @abs(n) * 1e-5);
-    const pt_np = evalPoint(.pbe, n + delta_n, g2);
-    const pt_nm = evalPoint(.pbe, n - delta_n, g2);
+    const pt_np = eval_point(.pbe, n + delta_n, g2);
+    const pt_nm = eval_point(.pbe, n - delta_n, g2);
     const f_nn = (pt_np.df_dn - pt_nm.df_dn) / (2.0 * delta_n);
 
     // f_nσ = d²(n·ε)/(dn dσ) ≈ (df_dg2(n+δ) - df_dg2(n-δ)) / (2δ)
@@ -76,8 +76,8 @@ fn pbeKernel(n: f64, g2: f64) XcKernelPoint {
 
     // f_σσ = d²(n·ε)/dσ² ≈ (df_dg2(σ+δ) - df_dg2(σ-δ)) / (2δ)
     const delta_s = @max(1e-10, @abs(g2) * 1e-5);
-    const pt_sp = evalPoint(.pbe, n, g2 + delta_s);
-    const pt_sm = evalPoint(.pbe, n, @max(0.0, g2 - delta_s));
+    const pt_sp = eval_point(.pbe, n, g2 + delta_s);
+    const pt_sm = eval_point(.pbe, n, @max(0.0, g2 - delta_s));
     const f_ss = (pt_sp.df_dg2 - pt_sm.df_dg2) / (2.0 * delta_s);
 
     return .{ .fxc = f_nn, .f_ns = f_ns, .f_ss = f_ss, .v_s = v_s };
@@ -85,7 +85,7 @@ fn pbeKernel(n: f64, g2: f64) XcKernelPoint {
 
 /// LDA PZ XC kernel: f_xc = dV_xc/dn (Rydberg units).
 /// f_xc = f_xc_exchange + f_xc_correlation
-fn ldaPzKernel(n: f64) XcKernelPoint {
+fn lda_pz_kernel(n: f64) XcKernelPoint {
     if (n <= 1e-12) return .{ .fxc = 0.0 };
     const pi = std.math.pi;
     const to_ry = 2.0;
@@ -98,14 +98,14 @@ fn ldaPzKernel(n: f64) XcKernelPoint {
     const fxc_x = (4.0 / 9.0) * c_x * n_m23;
 
     // Correlation kernel
-    const fxc_c = ldaCorrelationPzKernel(n);
+    const fxc_c = lda_correlation_pz_kernel(n);
 
     return .{ .fxc = to_ry * (fxc_x + fxc_c) };
 }
 
 /// LDA PZ correlation kernel: dV_c/dn (Hartree units).
 /// Uses chain rule: dV_c/dn = dV_c/drs × drs/dn, where drs/dn = -rs/(3n).
-fn ldaCorrelationPzKernel(n: f64) f64 {
+fn lda_correlation_pz_kernel(n: f64) f64 {
     const pi = std.math.pi;
     const rs = std.math.pow(f64, 3.0 / (4.0 * pi * n), 1.0 / 3.0);
     const drs_dn = -rs / (3.0 * n);
@@ -178,7 +178,7 @@ const xc_point_spin_zero = XcPointSpin{
 
 /// Evaluate spin-polarized XC energy density and potentials at a single point.
 /// All inputs/outputs in Hartree internally, converted to Rydberg on output.
-pub fn evalPointSpin(
+pub fn eval_point_spin(
     xc_func: Functional,
     n_up: f64,
     n_down: f64,
@@ -187,20 +187,20 @@ pub fn evalPointSpin(
     g2_ud: f64,
 ) XcPointSpin {
     return switch (xc_func) {
-        .lda_pz => ldaPzSpin(n_up, n_down),
-        .pbe => pbeSpin(n_up, n_down, g2_uu, g2_dd, g2_ud),
+        .lda_pz => lda_pz_spin(n_up, n_down),
+        .pbe => pbe_spin(n_up, n_down, g2_uu, g2_dd, g2_ud),
     };
 }
 
-fn ldaPz(n: f64) XcPoint {
+fn lda_pz(n: f64) XcPoint {
     if (n <= 1e-12) return .{ .f = 0.0, .df_dn = 0.0, .df_dg2 = 0.0 };
     const pi = std.math.pi;
     const n13 = std.math.pow(f64, n, 1.0 / 3.0);
     const c_x = -0.75 * std.math.pow(f64, 3.0 / pi, 1.0 / 3.0);
     const eps_x = c_x * n13;
     const ex = n * eps_x;
-    const eps_c = ldaCorrelationPzEnergy(n);
-    const v_c = ldaCorrelationPzPotential(n);
+    const eps_c = lda_correlation_pz_energy(n);
+    const v_c = lda_correlation_pz_potential(n);
     const ec = n * eps_c;
     const to_ry = 2.0;
     return .{
@@ -213,8 +213,8 @@ fn ldaPz(n: f64) XcPoint {
 fn pbe(n: f64, g2: f64) XcPoint {
     if (n <= 1e-12) return .{ .f = 0.0, .df_dn = 0.0, .df_dg2 = 0.0 };
 
-    const ex = pbeExchange(n, g2);
-    const ec = pbeCorrelation(n, g2);
+    const ex = pbe_exchange(n, g2);
+    const ec = pbe_correlation(n, g2);
     const to_ry = 2.0;
     return .{
         .f = to_ry * (ex.f + ec.f),
@@ -223,7 +223,7 @@ fn pbe(n: f64, g2: f64) XcPoint {
     };
 }
 
-fn pbeExchange(n: f64, g2: f64) XcPoint {
+fn pbe_exchange(n: f64, g2: f64) XcPoint {
     const pi = std.math.pi;
     const mu = 0.2195149727645171;
     const kappa = 0.804;
@@ -253,13 +253,13 @@ fn pbeExchange(n: f64, g2: f64) XcPoint {
     };
 }
 
-fn pbeCorrelation(n: f64, g2: f64) XcPoint {
+fn pbe_correlation(n: f64, g2: f64) XcPoint {
     const pi = std.math.pi;
     const beta = 0.06672455060314922;
     const gamma = 0.031090690869654895;
 
     const rs = std.math.pow(f64, 3.0 / (4.0 * pi * n), 1.0 / 3.0);
-    const corr = pw92Correlation(rs);
+    const corr = pw92_correlation(rs);
     const eps_c = corr.eps;
     const deps_drs = corr.deps_drs;
     const v_c = corr.v_c;
@@ -317,7 +317,7 @@ const CorrResult = struct {
     v_c: f64,
 };
 
-fn pw92Correlation(rs: f64) CorrResult {
+fn pw92_correlation(rs: f64) CorrResult {
     if (rs <= 1e-12) return .{ .eps = 0.0, .deps_drs = 0.0, .v_c = 0.0 };
     const a = 0.031091;
     const a1 = 0.21370;
@@ -341,7 +341,7 @@ fn pw92Correlation(rs: f64) CorrResult {
     return .{ .eps = eps, .deps_drs = deps_drs, .v_c = v_c };
 }
 
-fn ldaCorrelationPzEnergy(n: f64) f64 {
+fn lda_correlation_pz_energy(n: f64) f64 {
     const rs = std.math.pow(f64, 3.0 / (4.0 * std.math.pi * n), 1.0 / 3.0);
     if (rs < 1.0) {
         const a = 0.0311;
@@ -360,7 +360,7 @@ fn ldaCorrelationPzEnergy(n: f64) f64 {
     }
 }
 
-fn ldaCorrelationPzPotential(n: f64) f64 {
+fn lda_correlation_pz_potential(n: f64) f64 {
     const rs = std.math.pow(f64, 3.0 / (4.0 * std.math.pi * n), 1.0 / 3.0);
     if (rs < 1.0) {
         const a = 0.0311;
@@ -389,7 +389,7 @@ fn ldaCorrelationPzPotential(n: f64) f64 {
 
 /// PZ ferromagnetic correlation energy (rs >= 1).
 /// Parameters from Perdew & Zunger, Phys. Rev. B 23, 5048 (1981).
-fn pzFerroCorrelation(rs: f64) CorrResult {
+fn pz_ferro_correlation(rs: f64) CorrResult {
     if (rs <= 1e-12) return .{ .eps = 0.0, .deps_drs = 0.0, .v_c = 0.0 };
     if (rs < 1.0) {
         const a = 0.01555;
@@ -415,7 +415,7 @@ fn pzFerroCorrelation(rs: f64) CorrResult {
 }
 
 /// PZ paramagnetic correlation (wraps existing ldaCorrelation* for CorrResult).
-fn pzParaCorrelation(rs: f64) CorrResult {
+fn pz_para_correlation(rs: f64) CorrResult {
     if (rs <= 1e-12) return .{ .eps = 0.0, .deps_drs = 0.0, .v_c = 0.0 };
     if (rs < 1.0) {
         const a = 0.0311;
@@ -443,7 +443,7 @@ fn pzParaCorrelation(rs: f64) CorrResult {
 const SpinInterp = struct { f_z: f64, df_dz: f64 };
 
 /// Spin-interpolation function f(zeta) = [(1+zeta)^(4/3) + (1-zeta)^(4/3) - 2] / [2(2^(1/3) - 1)]
-fn spinInterpolation(zeta: f64) SpinInterp {
+fn spin_interpolation(zeta: f64) SpinInterp {
     const two13 = std.math.pow(f64, 2.0, 1.0 / 3.0);
     const denom = 2.0 * (two13 - 1.0);
     const zp = 1.0 + zeta;
@@ -458,7 +458,7 @@ fn spinInterpolation(zeta: f64) SpinInterp {
 /// Spin-polarized LDA PZ.
 /// Exchange: spin scaling E_x[n_up,n_down] = (E_x[2n_up] + E_x[2n_down])/2
 /// Correlation: PZ para/ferro interpolation with f(zeta)
-fn ldaPzSpin(n_up: f64, n_down: f64) XcPointSpin {
+fn lda_pz_spin(n_up: f64, n_down: f64) XcPointSpin {
     const n = n_up + n_down;
     if (n <= 1e-12) return xc_point_spin_zero;
 
@@ -490,11 +490,11 @@ fn ldaPzSpin(n_up: f64, n_down: f64) XcPointSpin {
 
     // Correlation: PZ with spin interpolation
     const rs = std.math.pow(f64, 3.0 / (4.0 * pi * n), 1.0 / 3.0);
-    const para = pzParaCorrelation(rs);
-    const ferro = pzFerroCorrelation(rs);
+    const para = pz_para_correlation(rs);
+    const ferro = pz_ferro_correlation(rs);
 
     const zeta = std.math.clamp((n_up - n_down) / n, -1.0, 1.0);
-    const fz = spinInterpolation(zeta);
+    const fz = spin_interpolation(zeta);
 
     const eps_c = para.eps + (ferro.eps - para.eps) * fz.f_z;
     const deps_drs = para.deps_drs + (ferro.deps_drs - para.deps_drs) * fz.f_z;
@@ -540,7 +540,7 @@ const PW92Params = struct {
     b4: f64,
 };
 
-fn pw92CorrelationGeneric(rs: f64, params: PW92Params) CorrResult {
+fn pw92_correlation_generic(rs: f64, params: PW92Params) CorrResult {
     if (rs <= 1e-12) return .{ .eps = 0.0, .deps_drs = 0.0, .v_c = 0.0 };
     const sqrt_rs = std.math.sqrt(rs);
     const rs32 = rs * sqrt_rs;
@@ -587,7 +587,7 @@ const pw92_alpha = PW92Params{
 };
 
 /// Spin-polarized PBE.
-fn pbeSpin(n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64) XcPointSpin {
+fn pbe_spin(n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64) XcPointSpin {
     const n = n_up + n_down;
     if (n <= 1e-12) return xc_point_spin_zero;
 
@@ -595,8 +595,8 @@ fn pbeSpin(n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64) XcPointSp
 
     // Exchange: spin scaling E_x = (E_x[2n_up, 4g2_uu] + E_x[2n_down, 4g2_dd]) / 2
     const zero_xc = XcPoint{ .f = 0.0, .df_dn = 0.0, .df_dg2 = 0.0 };
-    const ex_up = if (n_up > 1e-15) pbeExchange(2.0 * n_up, 4.0 * g2_uu) else zero_xc;
-    const ex_down = if (n_down > 1e-15) pbeExchange(2.0 * n_down, 4.0 * g2_dd) else zero_xc;
+    const ex_up = if (n_up > 1e-15) pbe_exchange(2.0 * n_up, 4.0 * g2_uu) else zero_xc;
+    const ex_down = if (n_down > 1e-15) pbe_exchange(2.0 * n_down, 4.0 * g2_dd) else zero_xc;
 
     const f_ex = (ex_up.f + ex_down.f) / 2.0;
     // V_x_sigma = d(E_x)/d(n_sigma) = d(E_x[2n_sigma, 4g2_ss])/d(n_sigma) / 2
@@ -608,7 +608,7 @@ fn pbeSpin(n_up: f64, n_down: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64) XcPointSp
     const dfx_dg2_dd = 2.0 * ex_down.df_dg2;
 
     // Correlation: spin-polarized PBE
-    const ec = pbeCorrelationSpin(n_up, n_down, g2_uu, g2_dd, g2_ud);
+    const ec = pbe_correlation_spin(n_up, n_down, g2_uu, g2_dd, g2_ud);
 
     return .{
         .f = to_ry * (f_ex + ec.f),
@@ -679,7 +679,7 @@ const PbeSpinState = struct {
 /// Spin-polarization basis: phi(zeta), phi^2, phi^3, dphi/dzeta.
 const PhiSet = struct { phi: f64, phi2: f64, phi3: f64, dphi_dzeta: f64 };
 
-fn computePhiSet(zeta: f64) PhiSet {
+fn compute_phi_set(zeta: f64) PhiSet {
     // phi(zeta) = ((1+zeta)^(2/3) + (1-zeta)^(2/3)) / 2
     const zp = 1.0 + zeta;
     const zm = 1.0 - zeta;
@@ -700,7 +700,7 @@ fn computePhiSet(zeta: f64) PhiSet {
 /// and its denominator denom_t for later chain-rule use.
 const PbeT2 = struct { g2: f64, denom_t: f64, t2: f64 };
 
-fn computePbeT2(n: f64, phi2: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64) PbeT2 {
+fn compute_pbe_t2(n: f64, phi2: f64, g2_uu: f64, g2_dd: f64, g2_ud: f64) PbeT2 {
     const pi = std.math.pi;
     const g2 = g2_uu + 2.0 * g2_ud + g2_dd;
 
@@ -731,7 +731,7 @@ const PbeHPieces = struct {
     dH_dt2: f64,
 };
 
-fn computePbeH(eps_c: f64, phi3: f64, t2: f64) PbeHPieces {
+fn compute_pbe_h(eps_c: f64, phi3: f64, t2: f64) PbeHPieces {
     // H = gamma * phi^3 * ln{1 + (beta/gamma) * t^2 * [(1+At^2)/(1+At^2+A^2*t^4)]}
     // A = (beta/gamma) / {exp(-ec/(gamma * phi^3)) - 1}
     const beta = 0.06672455060314922;
@@ -773,7 +773,7 @@ fn computePbeH(eps_c: f64, phi3: f64, t2: f64) PbeHPieces {
     };
 }
 
-fn pbeSpinState(
+fn pbe_spin_state(
     n_up: f64,
     n_down: f64,
     g2_uu: f64,
@@ -788,12 +788,12 @@ fn pbeSpinState(
     const rs = std.math.pow(f64, 3.0 / (4.0 * pi * n), 1.0 / 3.0);
 
     // ec0 (paramagnetic), ec1 (ferromagnetic), alpha_c
-    const ec0 = pw92CorrelationGeneric(rs, pw92_para);
-    const ec1 = pw92CorrelationGeneric(rs, pw92_ferro);
-    const ac = pw92CorrelationGeneric(rs, pw92_alpha);
+    const ec0 = pw92_correlation_generic(rs, pw92_para);
+    const ec1 = pw92_correlation_generic(rs, pw92_ferro);
+    const ac = pw92_correlation_generic(rs, pw92_alpha);
 
     // f(zeta) and phi(zeta)
-    const fz = spinInterpolation(zeta);
+    const fz = spin_interpolation(zeta);
     const fdd0 = 1.709921; // f''(0) = 4/(9*(2^(1/3)-1))
 
     // eps_c(rs, zeta) = ec0 - ac(rs) * f(zeta) / f''(0) * (1 - zeta^4)
@@ -802,9 +802,9 @@ fn pbeSpinState(
     const z4 = zeta * zeta * zeta * zeta;
     const eps_c = ec0.eps - ac.eps * fz.f_z / fdd0 * (1.0 - z4) + (ec1.eps - ec0.eps) * fz.f_z * z4;
 
-    const phi_set = computePhiSet(zeta);
-    const t = computePbeT2(n, phi_set.phi2, g2_uu, g2_dd, g2_ud);
-    const h = computePbeH(eps_c, phi_set.phi3, t.t2);
+    const phi_set = compute_phi_set(zeta);
+    const t = compute_pbe_t2(n, phi_set.phi2, g2_uu, g2_dd, g2_ud);
+    const h = compute_pbe_h(eps_c, phi_set.phi3, t.t2);
 
     return .{
         .n = n,
@@ -853,7 +853,7 @@ const LdaVc = struct {
     dzeta_dn_down: f64,
 };
 
-fn pbeLdaVc(s: PbeSpinState) LdaVc {
+fn pbe_lda_vc(s: PbeSpinState) LdaVc {
     // Potential: V_c_sigma = d(n*eps_c)/dn_sigma + d(n*H)/dn_sigma
     // LDA part: d(n*eps_c)/dn_sigma
     const drs_dn = -s.rs / (3.0 * s.n);
@@ -887,7 +887,7 @@ fn pbeLdaVc(s: PbeSpinState) LdaVc {
     };
 }
 
-fn pbeGgaDHdn(s: PbeSpinState, lda: LdaVc) struct { up: f64, down: f64 } {
+fn pbe_gga_d_hdn(s: PbeSpinState, lda: LdaVc) struct { up: f64, down: f64 } {
     // GGA H part: d(n*H)/dn_sigma
     // H = gamma_c * phi^3 * ln(arg), where arg depends on t^2 and A
     // A = (beta/gamma) / (exp(-eps_c/(gamma*phi^3)) - 1)
@@ -952,14 +952,14 @@ fn pbeGgaDHdn(s: PbeSpinState, lda: LdaVc) struct { up: f64, down: f64 } {
 }
 
 /// Spin-polarized PBE correlation (Hartree units internally).
-fn pbeCorrelationSpin(
+fn pbe_correlation_spin(
     n_up: f64,
     n_down: f64,
     g2_uu: f64,
     g2_dd: f64,
     g2_ud: f64,
 ) PbeCorrelationSpinResult {
-    const s = pbeSpinState(n_up, n_down, g2_uu, g2_dd, g2_ud);
+    const s = pbe_spin_state(n_up, n_down, g2_uu, g2_dd, g2_ud);
 
     // Energy density
     const f_c = s.n * (s.eps_c + s.H);
@@ -974,8 +974,8 @@ fn pbeCorrelationSpin(
     const df_dg2_dd = s.n * dH_dg2;
     const df_dg2_ud = 2.0 * s.n * dH_dg2;
 
-    const lda = pbeLdaVc(s);
-    const dH_dn = pbeGgaDHdn(s, lda);
+    const lda = pbe_lda_vc(s);
+    const dH_dn = pbe_gga_d_hdn(s, lda);
 
     // d(n*H)/dn_sigma = H + n * dH/dn_sigma
     const df_dn_up = lda.up + s.H + s.n * dH_dn.up;
@@ -1008,10 +1008,10 @@ test "LDA PZ XC kernel matches finite difference of V_xc" {
     const delta: f64 = 1e-6;
 
     for (test_densities) |n| {
-        const kernel = evalKernel(.lda_pz, n, 0.0);
+        const kernel = eval_kernel(.lda_pz, n, 0.0);
         // Finite difference: (V_xc(n+δ) - V_xc(n-δ)) / (2δ)
-        const vxc_plus = evalPoint(.lda_pz, n + delta, 0.0).df_dn;
-        const vxc_minus = evalPoint(.lda_pz, n - delta, 0.0).df_dn;
+        const vxc_plus = eval_point(.lda_pz, n + delta, 0.0).df_dn;
+        const vxc_minus = eval_point(.lda_pz, n - delta, 0.0).df_dn;
         const fxc_num = (vxc_plus - vxc_minus) / (2.0 * delta);
         try testing.expectApproxEqRel(kernel.fxc, fxc_num, 1e-4);
     }
@@ -1028,9 +1028,9 @@ test "LDA PZ XC kernel at rs=1 boundary" {
     const n_above = n_boundary - 0.01; // rs > 1
 
     for ([_]f64{ n_below, n_above }) |n| {
-        const kernel = evalKernel(.lda_pz, n, 0.0);
-        const vxc_plus = evalPoint(.lda_pz, n + delta, 0.0).df_dn;
-        const vxc_minus = evalPoint(.lda_pz, n - delta, 0.0).df_dn;
+        const kernel = eval_kernel(.lda_pz, n, 0.0);
+        const vxc_plus = eval_point(.lda_pz, n + delta, 0.0).df_dn;
+        const vxc_minus = eval_point(.lda_pz, n - delta, 0.0).df_dn;
         const fxc_num = (vxc_plus - vxc_minus) / (2.0 * delta);
         try testing.expectApproxEqRel(kernel.fxc, fxc_num, 1e-4);
     }
@@ -1038,7 +1038,7 @@ test "LDA PZ XC kernel at rs=1 boundary" {
 
 test "LDA PZ XC kernel is negative for physical densities" {
     // The XC kernel should be negative (attractive) for physical densities
-    const kernel = evalKernel(.lda_pz, 0.1, 0.0);
+    const kernel = eval_kernel(.lda_pz, 0.1, 0.0);
     try testing.expect(kernel.fxc < 0.0);
 }
 
@@ -1049,7 +1049,7 @@ test "PBE exchange matches libxc" {
     // Test at rho=0.1, sigma=0.01 (libxc reference values)
     const rho: f64 = 0.1;
     const sigma: f64 = 0.01;
-    const result = pbeExchange(rho, sigma);
+    const result = pbe_exchange(rho, sigma);
 
     // libxc PBE exchange reference (Hartree units)
     const libxc_exc: f64 = -0.3516400536;
@@ -1070,7 +1070,7 @@ test "PBE correlation matches libxc" {
     // Test at rho=0.1, sigma=0.01 (libxc reference values)
     const rho: f64 = 0.1;
     const sigma: f64 = 0.01;
-    const result = pbeCorrelation(rho, sigma);
+    const result = pbe_correlation(rho, sigma);
 
     // libxc PBE correlation reference (Hartree units)
     const libxc_exc: f64 = -0.0452782280;
@@ -1092,10 +1092,10 @@ test "PBE correlation matches libxc" {
 test "PBE total XC matches libxc" {
     const rho: f64 = 0.1;
     const sigma: f64 = 0.01;
-    const result = evalPoint(.pbe, rho, sigma);
+    const result = eval_point(.pbe, rho, sigma);
 
     // libxc total PBE (exchange + correlation)
-    // Note: evalPoint returns in Rydberg, libxc is in Hartree
+    // Note: eval_point returns in Rydberg, libxc is in Hartree
     const libxc_exc_total: f64 = -0.3516400536 + -0.0452782280; // -0.3969182816 Ha
     const libxc_vsigma_total: f64 = -0.0854846156 + 0.0697928401; // -0.0156917755 Ha
 
@@ -1110,7 +1110,7 @@ test "PBE total XC matches libxc" {
 test "LDA PZ correlation matches reference" {
     // Test Perdew-Zunger LDA correlation at rs=2.0
     const rho: f64 = 0.1;
-    const result = ldaPz(rho);
+    const result = lda_pz(rho);
 
     // The result should be non-zero for positive density
     try testing.expect(result.f < 0);
@@ -1124,8 +1124,8 @@ test "LDA PZ correlation matches reference" {
 
 test "Spin-polarized LDA PZ reduces to unpolarized for n_up = n_down" {
     const rho: f64 = 0.1;
-    const unpol = ldaPz(rho);
-    const spin = ldaPzSpin(rho / 2.0, rho / 2.0);
+    const unpol = lda_pz(rho);
+    const spin = lda_pz_spin(rho / 2.0, rho / 2.0);
 
     // Energy density should match
     try testing.expectApproxEqRel(spin.f, unpol.f, 1e-10);
@@ -1145,7 +1145,7 @@ test "Spin-polarized PBE reduces to unpolarized for n_up = n_down" {
     //   = sigma_uu + 2*sigma_ud + sigma_dd
     // For uniform spin: grad n_up = grad n_down = grad n / 2
     // sigma_uu = sigma_dd = sigma/4, sigma_ud = sigma/4
-    const spin = pbeSpin(rho / 2.0, rho / 2.0, sigma / 4.0, sigma / 4.0, sigma / 4.0);
+    const spin = pbe_spin(rho / 2.0, rho / 2.0, sigma / 4.0, sigma / 4.0, sigma / 4.0);
 
     // Energy density should match
     try testing.expectApproxEqRel(spin.f, unpol.f, 1e-8);
@@ -1157,7 +1157,7 @@ test "Spin-polarized PBE reduces to unpolarized for n_up = n_down" {
 test "Spin-polarized LDA PZ fully polarized (ferromagnetic)" {
     // All electrons in spin-up: n_down = 0
     const n_up: f64 = 0.1;
-    const result = ldaPzSpin(n_up, 0.0);
+    const result = lda_pz_spin(n_up, 0.0);
 
     // Energy should be negative
     try testing.expect(result.f < 0);
@@ -1175,7 +1175,7 @@ test "Spin-polarized PBE: libxc spin reference values" {
     const g2_ud: f64 = 0.003;
     const g2_dd: f64 = 0.002;
 
-    const result = evalPointSpin(.pbe, n_up, n_down, g2_uu, g2_dd, g2_ud);
+    const result = eval_point_spin(.pbe, n_up, n_down, g2_uu, g2_dd, g2_ud);
     const n = n_up + n_down;
 
     // Convert to Hartree for comparison
@@ -1201,23 +1201,23 @@ test "Spin-polarized PBE: numerical derivative check" {
     const g2_dd: f64 = 0.002;
     const delta: f64 = 1e-6;
 
-    const result = evalPointSpin(.pbe, n_up, n_down, g2_uu, g2_dd, g2_ud);
-    const result_p = evalPointSpin(.pbe, n_up + delta, n_down, g2_uu, g2_dd, g2_ud);
-    const result_m = evalPointSpin(.pbe, n_up - delta, n_down, g2_uu, g2_dd, g2_ud);
+    const result = eval_point_spin(.pbe, n_up, n_down, g2_uu, g2_dd, g2_ud);
+    const result_p = eval_point_spin(.pbe, n_up + delta, n_down, g2_uu, g2_dd, g2_ud);
+    const result_m = eval_point_spin(.pbe, n_up - delta, n_down, g2_uu, g2_dd, g2_ud);
     const num_deriv_up = (result_p.f - result_m.f) / (2.0 * delta);
 
     // Should match analytical derivative (0.1% tolerance for finite diff)
     try testing.expectApproxEqRel(num_deriv_up, result.df_dn_up, 5e-4);
 
     // Same for n_down
-    const result_p2 = evalPointSpin(.pbe, n_up, n_down + delta, g2_uu, g2_dd, g2_ud);
-    const result_m2 = evalPointSpin(.pbe, n_up, n_down - delta, g2_uu, g2_dd, g2_ud);
+    const result_p2 = eval_point_spin(.pbe, n_up, n_down + delta, g2_uu, g2_dd, g2_ud);
+    const result_m2 = eval_point_spin(.pbe, n_up, n_down - delta, g2_uu, g2_dd, g2_ud);
     const num_deriv_down = (result_p2.f - result_m2.f) / (2.0 * delta);
     try testing.expectApproxEqRel(num_deriv_down, result.df_dn_down, 5e-4);
 
     // df/dg2_uu by finite difference
-    const result_g_p = evalPointSpin(.pbe, n_up, n_down, g2_uu + delta, g2_dd, g2_ud);
-    const result_g_m = evalPointSpin(.pbe, n_up, n_down, g2_uu - delta, g2_dd, g2_ud);
+    const result_g_p = eval_point_spin(.pbe, n_up, n_down, g2_uu + delta, g2_dd, g2_ud);
+    const result_g_m = eval_point_spin(.pbe, n_up, n_down, g2_uu - delta, g2_dd, g2_ud);
     const num_deriv_g2uu = (result_g_p.f - result_g_m.f) / (2.0 * delta);
     try testing.expectApproxEqRel(num_deriv_g2uu, result.df_dg2_uu, 5e-4);
 }
@@ -1227,15 +1227,15 @@ test "Spin-polarized LDA PZ: numerical derivative check" {
     const n_down: f64 = 0.04;
     const delta: f64 = 1e-6;
 
-    const result = ldaPzSpin(n_up, n_down);
-    const result_p = ldaPzSpin(n_up + delta, n_down);
-    const result_m = ldaPzSpin(n_up - delta, n_down);
+    const result = lda_pz_spin(n_up, n_down);
+    const result_p = lda_pz_spin(n_up + delta, n_down);
+    const result_m = lda_pz_spin(n_up - delta, n_down);
     const num_deriv_up = (result_p.f - result_m.f) / (2.0 * delta);
 
     try testing.expectApproxEqRel(num_deriv_up, result.df_dn_up, 1e-4);
 
-    const result_p2 = ldaPzSpin(n_up, n_down + delta);
-    const result_m2 = ldaPzSpin(n_up, n_down - delta);
+    const result_p2 = lda_pz_spin(n_up, n_down + delta);
+    const result_m2 = lda_pz_spin(n_up, n_down - delta);
     const num_deriv_down = (result_p2.f - result_m2.f) / (2.0 * delta);
     try testing.expectApproxEqRel(num_deriv_down, result.df_dn_down, 1e-4);
 }
@@ -1247,20 +1247,20 @@ test "PBE XC kernel f_nn matches finite difference of V_xc" {
 
     for (test_densities) |n| {
         for (test_sigmas) |sigma| {
-            const kernel = evalKernel(.pbe, n, sigma);
-            const vxc_plus = evalPoint(.pbe, n + delta, sigma).df_dn;
-            const vxc_minus = evalPoint(.pbe, n - delta, sigma).df_dn;
+            const kernel = eval_kernel(.pbe, n, sigma);
+            const vxc_plus = eval_point(.pbe, n + delta, sigma).df_dn;
+            const vxc_minus = eval_point(.pbe, n - delta, sigma).df_dn;
             const fxc_num = (vxc_plus - vxc_minus) / (2.0 * delta);
             try testing.expectApproxEqRel(kernel.fxc, fxc_num, 1e-3);
         }
     }
 }
 
-test "PBE XC kernel v_s matches evalPoint df_dg2" {
+test "PBE XC kernel v_s matches eval_point df_dg2" {
     const n: f64 = 0.1;
     const sigma: f64 = 0.01;
-    const kernel = evalKernel(.pbe, n, sigma);
-    const pt = evalPoint(.pbe, n, sigma);
+    const kernel = eval_kernel(.pbe, n, sigma);
+    const pt = eval_point(.pbe, n, sigma);
     try testing.expectApproxEqRel(kernel.v_s, pt.df_dg2, 1e-10);
 }
 
@@ -1268,9 +1268,9 @@ test "PBE XC kernel f_ns matches finite difference" {
     const n: f64 = 0.1;
     const sigma: f64 = 0.01;
     const delta: f64 = 1e-6;
-    const kernel = evalKernel(.pbe, n, sigma);
-    const vs_plus = evalPoint(.pbe, n + delta, sigma).df_dg2;
-    const vs_minus = evalPoint(.pbe, n - delta, sigma).df_dg2;
+    const kernel = eval_kernel(.pbe, n, sigma);
+    const vs_plus = eval_point(.pbe, n + delta, sigma).df_dg2;
+    const vs_minus = eval_point(.pbe, n - delta, sigma).df_dg2;
     const f_ns_num = (vs_plus - vs_minus) / (2.0 * delta);
     try testing.expectApproxEqRel(kernel.f_ns, f_ns_num, 1e-3);
 }
@@ -1279,17 +1279,17 @@ test "PBE XC kernel f_ss matches finite difference" {
     const n: f64 = 0.1;
     const sigma: f64 = 0.01;
     const delta: f64 = 1e-6;
-    const kernel = evalKernel(.pbe, n, sigma);
-    const vs_plus = evalPoint(.pbe, n, sigma + delta).df_dg2;
-    const vs_minus = evalPoint(.pbe, n, sigma - delta).df_dg2;
+    const kernel = eval_kernel(.pbe, n, sigma);
+    const vs_plus = eval_point(.pbe, n, sigma + delta).df_dg2;
+    const vs_minus = eval_point(.pbe, n, sigma - delta).df_dg2;
     const f_ss_num = (vs_plus - vs_minus) / (2.0 * delta);
     try testing.expectApproxEqRel(kernel.f_ss, f_ss_num, 1e-3);
 }
 
 test "PBE XC kernel reduces to LDA at zero gradient" {
     const n: f64 = 0.1;
-    const pbe_kernel = evalKernel(.pbe, n, 0.0);
+    const kernel = eval_kernel(.pbe, n, 0.0);
     // f_ns and f_ss should be small (but not exactly zero due to PBE enhancement)
     // v_s should be zero at sigma=0
-    try testing.expectApproxEqAbs(pbe_kernel.v_s, evalPoint(.pbe, n, 0.0).df_dg2, 1e-15);
+    try testing.expectApproxEqAbs(kernel.v_s, eval_point(.pbe, n, 0.0).df_dg2, 1e-15);
 }

@@ -1,7 +1,7 @@
 const std = @import("std");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 
-pub fn nextPow2(value: usize) usize {
+pub fn next_pow2(value: usize) usize {
     if (value <= 1) return 1;
     var v = value - 1;
     v |= v >> 1;
@@ -14,7 +14,7 @@ pub fn nextPow2(value: usize) usize {
 }
 
 /// Compute RMS density difference.
-pub fn densityDiff(rho: []f64, rho_new: []f64) f64 {
+pub fn density_diff(rho: []f64, rho_new: []f64) f64 {
     var sum: f64 = 0.0;
     for (rho, 0..) |value, i| {
         const diff = rho_new[i] - value;
@@ -24,7 +24,7 @@ pub fn densityDiff(rho: []f64, rho_new: []f64) f64 {
 }
 
 /// Check if any species has nonlocal coefficients.
-pub fn hasNonlocal(species: []const hamiltonian.SpeciesEntry) bool {
+pub fn has_nonlocal(species: []const hamiltonian.SpeciesEntry) bool {
     for (species) |entry| {
         if (entry.upf.dij.len > 0) return true;
     }
@@ -32,7 +32,7 @@ pub fn hasNonlocal(species: []const hamiltonian.SpeciesEntry) bool {
 }
 
 /// Check if any species has QIJ coefficients.
-pub fn hasQij(species: []const hamiltonian.SpeciesEntry) bool {
+pub fn has_qij(species: []const hamiltonian.SpeciesEntry) bool {
     for (species) |entry| {
         if (entry.upf.qij.len > 0) return true;
     }
@@ -40,7 +40,7 @@ pub fn hasQij(species: []const hamiltonian.SpeciesEntry) bool {
 }
 
 /// Check if any species uses PAW.
-pub fn hasPaw(species: []const hamiltonian.SpeciesEntry) bool {
+pub fn has_paw(species: []const hamiltonian.SpeciesEntry) bool {
     for (species) |entry| {
         if (entry.upf.paw != null) return true;
     }
@@ -48,7 +48,7 @@ pub fn hasPaw(species: []const hamiltonian.SpeciesEntry) bool {
 }
 
 /// Compute total valence electrons in the cell.
-pub fn totalElectrons(
+pub fn total_electrons(
     species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
 ) f64 {

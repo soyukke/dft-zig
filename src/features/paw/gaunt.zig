@@ -31,7 +31,7 @@ pub const GauntTable = struct {
 
     /// Convert (l, m) to flat lm index: lm = l*l + l + m.
     /// m ranges from -l to +l.
-    pub fn lmIndex(l: usize, m: i32) usize {
+    pub fn lm_index(l: usize, m: i32) usize {
         return l * l + @as(usize, @intCast(@as(i64, @intCast(l)) + m));
     }
 
@@ -46,9 +46,9 @@ pub const GauntTable = struct {
         big_l: usize,
         big_m: i32,
     ) f64 {
-        const lm1 = lmIndex(l1, m1);
-        const lm2 = lmIndex(l2, m2);
-        const lm3 = lmIndex(big_l, big_m);
+        const lm1 = lm_index(l1, m1);
+        const lm2 = lm_index(l2, m2);
+        const lm3 = lm_index(big_l, big_m);
         if (lm1 >= self.n_lm_proj or lm2 >= self.n_lm_proj or lm3 >= self.n_lm_aug) return 0.0;
         return self.values[(lm1 * self.n_lm_proj + lm2) * self.n_lm_aug + lm3];
     }
@@ -56,7 +56,7 @@ pub const GauntTable = struct {
     /// Iterate over all non-zero Gaunt coefficients for a given (l1, m1, l2, m2) pair.
     /// Calls callback with (L, M, gaunt_value) for each non-zero entry.
     /// This avoids iterating over all (L, M) when most are zero due to selection rules.
-    pub fn iterNonZero(
+    pub fn iter_non_zero(
         self: *const GauntTable,
         l1: usize,
         m1: i32,
@@ -65,8 +65,8 @@ pub const GauntTable = struct {
         context: anytype,
         comptime callback: fn (@TypeOf(context), usize, i32, f64) void,
     ) void {
-        const lm1 = lmIndex(l1, m1);
-        const lm2 = lmIndex(l2, m2);
+        const lm1 = lm_index(l1, m1);
+        const lm2 = lm_index(l2, m2);
         if (lm1 >= self.n_lm_proj or lm2 >= self.n_lm_proj) return;
         const base = (lm1 * self.n_lm_proj + lm2) * self.n_lm_aug;
         for (0..self.n_lm_aug) |lm3| {
@@ -74,7 +74,7 @@ pub const GauntTable = struct {
             if (val != 0.0) {
                 // Recover (L, M) from flat index lm3
                 // lm3 = L*L + L + M => L = floor(sqrt(lm3)), M = lm3 - L*L - L
-                const big_l = lFromLmIndex(lm3);
+                const big_l = l_from_lm_index(lm3);
                 const big_m: i32 = @intCast(
                     @as(i64, @intCast(lm3)) - @as(i64, @intCast(big_l * big_l + big_l)),
                 );
@@ -85,7 +85,7 @@ pub const GauntTable = struct {
 
     /// Recover l from a flat lm index.
     /// lm = l^2 + l + m, so l = floor(sqrt(lm)).
-    fn lFromLmIndex(lm: usize) usize {
+    fn l_from_lm_index(lm: usize) usize {
         const s = @sqrt(@as(f64, @floatFromInt(lm)));
         return @intFromFloat(@floor(s));
     }
@@ -109,7 +109,7 @@ pub const GauntTable = struct {
 
         const values = try alloc.alloc(f64, n_total);
         @memset(values, 0.0);
-        accumulateGauntOverSphere(values, lmax_proj, lmax_aug, n_lm_proj, n_lm_aug);
+        accumulate_gaunt_over_sphere(values, lmax_proj, lmax_aug, n_lm_proj, n_lm_aug);
         for (values) |*v| {
             if (@abs(v.*) < 1e-14) v.* = 0.0;
         }
@@ -127,7 +127,7 @@ pub const GauntTable = struct {
     }
 };
 
-fn accumulateGauntOverSphere(
+fn accumulate_gaunt_over_sphere(
     values: []f64,
     lmax_proj: usize,
     lmax_aug: usize,
@@ -135,13 +135,13 @@ fn accumulateGauntOverSphere(
     n_lm_aug: usize,
 ) void {
     const max_lm = 25;
-    const grid = lebedev.getLebedevGrid(302);
+    const grid = lebedev.get_lebedev_grid(302);
     for (grid) |pt| {
         const w = pt.w * 4.0 * std.math.pi;
         var ylm_proj: [max_lm]f64 = undefined;
-        evalAllRealYlm(lmax_proj, pt.x, pt.y, pt.z, &ylm_proj);
+        eval_all_real_ylm(lmax_proj, pt.x, pt.y, pt.z, &ylm_proj);
         var ylm_aug: [max_lm]f64 = undefined;
-        evalAllRealYlm(lmax_aug, pt.x, pt.y, pt.z, &ylm_aug);
+        eval_all_real_ylm(lmax_aug, pt.x, pt.y, pt.z, &ylm_aug);
         for (0..n_lm_proj) |lm1| {
             const y1 = ylm_proj[lm1];
             if (@abs(y1) < 1e-30) continue;
@@ -158,12 +158,12 @@ fn accumulateGauntOverSphere(
     }
 }
 
-fn evalAllRealYlm(lmax: usize, x: f64, y: f64, z: f64, out: []f64) void {
+fn eval_all_real_ylm(lmax: usize, x: f64, y: f64, z: f64, out: []f64) void {
     for (0..lmax + 1) |l| {
         const l_i32: i32 = @intCast(l);
         var m: i32 = -l_i32;
         while (m <= l_i32) : (m += 1) {
-            out[GauntTable.lmIndex(l, m)] = nonlocal.realSphericalHarmonic(l_i32, m, x, y, z);
+            out[GauntTable.lm_index(l, m)] = nonlocal.real_spherical_harmonic(l_i32, m, x, y, z);
         }
     }
 }
@@ -172,17 +172,17 @@ fn evalAllRealYlm(lmax: usize, x: f64, y: f64, z: f64, out: []f64) void {
 // Tests
 // ============================================================================
 
-test "lmIndex round-trip" {
+test "lm_index round-trip" {
     // l=0, m=0 => 0
-    try std.testing.expectEqual(@as(usize, 0), GauntTable.lmIndex(0, 0));
+    try std.testing.expectEqual(@as(usize, 0), GauntTable.lm_index(0, 0));
     // l=1, m=-1 => 1, m=0 => 2, m=1 => 3
-    try std.testing.expectEqual(@as(usize, 1), GauntTable.lmIndex(1, -1));
-    try std.testing.expectEqual(@as(usize, 2), GauntTable.lmIndex(1, 0));
-    try std.testing.expectEqual(@as(usize, 3), GauntTable.lmIndex(1, 1));
+    try std.testing.expectEqual(@as(usize, 1), GauntTable.lm_index(1, -1));
+    try std.testing.expectEqual(@as(usize, 2), GauntTable.lm_index(1, 0));
+    try std.testing.expectEqual(@as(usize, 3), GauntTable.lm_index(1, 1));
     // l=2, m=-2 => 4
-    try std.testing.expectEqual(@as(usize, 4), GauntTable.lmIndex(2, -2));
+    try std.testing.expectEqual(@as(usize, 4), GauntTable.lm_index(2, -2));
     // l=2, m=2 => 8
-    try std.testing.expectEqual(@as(usize, 8), GauntTable.lmIndex(2, 2));
+    try std.testing.expectEqual(@as(usize, 8), GauntTable.lm_index(2, 2));
 }
 
 test "Gaunt G(0,0, 0,0, 0,0) = 1/sqrt(4*pi)" {

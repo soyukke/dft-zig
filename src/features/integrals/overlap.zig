@@ -11,10 +11,10 @@ const basis = @import("../basis/basis.zig");
 
 const PrimitiveGaussian = basis.PrimitiveGaussian;
 const ContractedShell = basis.ContractedShell;
-const normalizationS = basis.normalizationS;
+const normalization_s = basis.normalization_s;
 
 /// Compute overlap integral between two contracted s-type shells.
-pub fn overlapSS(shell_a: ContractedShell, shell_b: ContractedShell) f64 {
+pub fn overlap_ss(shell_a: ContractedShell, shell_b: ContractedShell) f64 {
     std.debug.assert(shell_a.l == 0 and shell_b.l == 0);
 
     var result: f64 = 0.0;
@@ -22,9 +22,9 @@ pub fn overlapSS(shell_a: ContractedShell, shell_b: ContractedShell) f64 {
     const r2 = math.Vec3.dot(diff, diff);
 
     for (shell_a.primitives) |prim_a| {
-        const na = normalizationS(prim_a.alpha);
+        const na = normalization_s(prim_a.alpha);
         for (shell_b.primitives) |prim_b| {
-            const nb = normalizationS(prim_b.alpha);
+            const nb = normalization_s(prim_b.alpha);
             const p = prim_a.alpha + prim_b.alpha;
             const prefactor = std.math.pow(f64, std.math.pi / p, 1.5);
             const exponential = @exp(-prim_a.alpha * prim_b.alpha / p * r2);
@@ -36,13 +36,13 @@ pub fn overlapSS(shell_a: ContractedShell, shell_b: ContractedShell) f64 {
 
 /// Build the full overlap matrix S for a set of s-type shells.
 /// Returns a flat row-major n×n matrix.
-pub fn buildOverlapMatrix(alloc: std.mem.Allocator, shells: []const ContractedShell) ![]f64 {
+pub fn build_overlap_matrix(alloc: std.mem.Allocator, shells: []const ContractedShell) ![]f64 {
     const n = shells.len;
     const mat = try alloc.alloc(f64, n * n);
     for (0..n) |i| {
         for (0..n) |j| {
             if (j >= i) {
-                mat[i * n + j] = overlapSS(shells[i], shells[j]);
+                mat[i * n + j] = overlap_ss(shells[i], shells[j]);
                 mat[j * n + i] = mat[i * n + j]; // symmetric
             }
         }
@@ -59,7 +59,7 @@ test "overlap self-overlap is 1.0 for normalized STO-3G H" {
         .l = 0,
         .primitives = &sto3g.H_1s,
     };
-    const s = overlapSS(shell, shell);
+    const s = overlap_ss(shell, shell);
     // Self-overlap of a properly normalized contracted shell should be ~1.0
     try testing.expectApproxEqAbs(s, 1.0, 1e-4);
 }
@@ -82,8 +82,8 @@ test "overlap decreases with distance" {
         .l = 0,
         .primitives = &sto3g.H_1s,
     };
-    const s_near = overlapSS(a, b_near);
-    const s_far = overlapSS(a, b_far);
+    const s_near = overlap_ss(a, b_near);
+    const s_far = overlap_ss(a, b_far);
     try testing.expect(s_near > s_far);
     try testing.expect(s_far >= 0.0);
 }

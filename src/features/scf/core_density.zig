@@ -6,13 +6,13 @@ const math = @import("../math/math.zig");
 const nonlocal_mod = @import("../pseudopotential/nonlocal.zig");
 const UpfData = @import("../pseudopotential/pseudopotential.zig").UpfData;
 
-const ctrapWeight = math.radial.ctrapWeight;
-const reciprocalToReal = fft_grid.reciprocalToReal;
+const ctrap_weight = math.radial.ctrap_weight;
+const reciprocal_to_real = fft_grid.reciprocal_to_real;
 
 const Grid = grid_mod.Grid;
 
 /// Check if any species provides NLCC data.
-pub fn hasNlcc(species: []const hamiltonian.SpeciesEntry) bool {
+pub fn has_nlcc(species: []const hamiltonian.SpeciesEntry) bool {
     for (species) |entry| {
         if (entry.upf.nlcc.len > 0) return true;
     }
@@ -20,7 +20,7 @@ pub fn hasNlcc(species: []const hamiltonian.SpeciesEntry) bool {
 }
 
 /// Build core density on the real-space grid (assumes PP_NLCC stores rho_c(r)).
-pub fn buildCoreDensity(
+pub fn build_core_density(
     alloc: std.mem.Allocator,
     grid: Grid,
     species: []const hamiltonian.SpeciesEntry,
@@ -52,13 +52,13 @@ pub fn buildCoreDensity(
                 for (atoms) |atom| {
                     const entry = &species[atom.species_index];
                     if (entry.upf.nlcc.len == 0) continue;
-                    const delta = minimumImage(
+                    const delta = minimum_image(
                         grid.cell,
                         grid.recip,
                         math.Vec3.sub(rvec, atom.position),
                     );
                     const r = math.Vec3.norm(delta);
-                    sum += sampleRadial(entry.upf.r, entry.upf.nlcc, r);
+                    sum += sample_radial(entry.upf.r, entry.upf.nlcc, r);
                 }
                 rho_core[idx] = sum;
                 idx += 1;
@@ -70,7 +70,7 @@ pub fn buildCoreDensity(
 }
 
 /// Sample radial function with linear interpolation.
-fn sampleRadial(r_mesh: []f64, values: []f64, r: f64) f64 {
+fn sample_radial(r_mesh: []f64, values: []f64, r: f64) f64 {
     if (r_mesh.len == 0 or values.len == 0) return 0.0;
     if (r <= r_mesh[0]) return values[0];
     if (r >= r_mesh[r_mesh.len - 1]) return 0.0;
@@ -92,7 +92,7 @@ fn sampleRadial(r_mesh: []f64, values: []f64, r: f64) f64 {
 }
 
 /// Apply minimum-image convention using reciprocal vectors.
-fn minimumImage(cell: math.Mat3, recip: math.Mat3, delta: math.Vec3) math.Vec3 {
+fn minimum_image(cell: math.Mat3, recip: math.Mat3, delta: math.Vec3) math.Vec3 {
     const two_pi = 2.0 * std.math.pi;
     var fx = math.Vec3.dot(recip.row(0), delta) / two_pi;
     var fy = math.Vec3.dot(recip.row(1), delta) / two_pi;
@@ -111,14 +111,14 @@ fn minimumImage(cell: math.Mat3, recip: math.Mat3, delta: math.Vec3) math.Vec3 {
 
 /// Compute atomic density form factor: ∫ rho_atom(r) × j₀(Gr) × rab(r) dr
 /// UPF rho_atom includes 4πr² factor, so no extra r² needed.
-fn rhoAtomFormFactor(upf: *const UpfData, g: f64) f64 {
+fn rho_atom_form_factor(upf: *const UpfData, g: f64) f64 {
     if (upf.rho_atom.len == 0) return 0.0;
     const n = @min(upf.rho_atom.len, @min(upf.r.len, upf.rab.len));
     var sum: f64 = 0.0;
     for (0..n) |i| {
         const x = g * upf.r[i];
-        const j0 = nonlocal_mod.sphericalBessel(0, x);
-        sum += upf.rho_atom[i] * j0 * upf.rab[i] * ctrapWeight(i, n);
+        const j0 = nonlocal_mod.spherical_bessel(0, x);
+        sum += upf.rho_atom[i] * j0 * upf.rab[i] * ctrap_weight(i, n);
     }
     return sum;
 }
@@ -126,7 +126,7 @@ fn rhoAtomFormFactor(upf: *const UpfData, g: f64) f64 {
 /// Build initial density from superposition of atomic pseudo-charge densities.
 /// ρ_init(G) = (1/Ω) Σ_atom ρ_atom_form(|G|) × exp(-iG·R_atom)
 /// Then inverse FFT to real space.
-pub fn buildAtomicDensity(
+pub fn build_atomic_density(
     alloc: std.mem.Allocator,
     grid: Grid,
     species: []const hamiltonian.SpeciesEntry,
@@ -163,7 +163,7 @@ pub fn buildAtomicDensity(
                 var sum_r: f64 = 0.0;
                 var sum_i: f64 = 0.0;
                 for (atoms) |atom| {
-                    const rho_g_val = rhoAtomFormFactor(species[atom.species_index].upf, g_norm);
+                    const rho_g_val = rho_atom_form_factor(species[atom.species_index].upf, g_norm);
                     const g_dot_r = math.Vec3.dot(gvec, atom.position);
                     sum_r += rho_g_val * @cos(g_dot_r);
                     sum_i -= rho_g_val * @sin(g_dot_r);
@@ -175,6 +175,6 @@ pub fn buildAtomicDensity(
     }
 
     // Inverse FFT to real space
-    const rho_r = try reciprocalToReal(alloc, grid, rho_g);
+    const rho_r = try reciprocal_to_real(alloc, grid, rho_g);
     return rho_r;
 }

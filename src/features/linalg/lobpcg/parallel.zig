@@ -110,28 +110,28 @@ pub fn solve(
             idx.* = i;
         }
         std.sort.block(usize, order, diag, struct {
-            fn lessThan(ctx: []const f64, a: usize, b: usize) bool {
+            fn less_than(ctx: []const f64, a: usize, b: usize) bool {
                 return ctx[a] < ctx[b];
             }
-        }.lessThan);
+        }.less_than);
         @memset(v[0 .. op.n * m], math.complex.init(0.0, 0.0));
         for (0..m) |col| {
             const idx = order[col];
             v[idx + col * op.n] = math.complex.init(1.0, 0.0);
         }
     } else {
-        common.initRandomVectors(op.n, v, m, &seed);
+        common.init_random_vectors(op.n, v, m, &seed);
     }
 
     if (opts.base.init_vectors) |init_vecs| {
         const count = op.n * init_cols;
         @memcpy(v[0..count], init_vecs[0..count]);
     }
-    try common.orthonormalizeAll(op.n, v, m, &seed);
+    try common.orthonormalize_all(op.n, v, m, &seed);
 
     // Apply operator to initial vectors (PARALLEL)
-    try applyOperatorParallel(pool, op, v, w, m);
-    if (has_overlap) try applySParallel(pool, op, v, sv.?, m);
+    try apply_operator_parallel(pool, op, v, w, m);
+    if (has_overlap) try apply_s_parallel(pool, op, v, sv.?, m);
 
     const t = try alloc.alloc(math.Complex, max_subspace * max_subspace);
     defer alloc.free(t);
@@ -149,20 +149,20 @@ pub fn solve(
     var iter: usize = 0;
     while (iter < opts.base.max_iter) : (iter += 1) {
         // Build projected matrix T = V† * W (PARALLEL)
-        buildProjectedParallel(pool, op.n, v, w, t, m);
+        build_projected_parallel(pool, op.n, v, w, t, m);
 
         var eig: linalg.EigenDecomp = undefined;
         if (has_overlap) {
-            buildProjectedParallel(pool, op.n, v, sv.?, ts.?, m);
+            build_projected_parallel(pool, op.n, v, sv.?, ts.?, m);
             const th_slice = t[0 .. m * m];
             const ts_slice = ts.?[0 .. m * m];
-            eig = try common.hermitianGeneralizedEigenDecompSmall(alloc, m, th_slice, ts_slice);
+            eig = try common.hermitian_generalized_eigen_decomp_small(alloc, m, th_slice, ts_slice);
         } else {
             const t_slice = t[0 .. m * m];
             eig = if (m <= 64)
-                try common.hermitianEigenDecompSmall(alloc, m, t_slice)
+                try common.hermitian_eigen_decomp_small(alloc, m, t_slice)
             else
-                try linalg.hermitianEigenDecomp(alloc, backend, m, t_slice);
+                try linalg.hermitian_eigen_decomp(alloc, backend, m, t_slice);
         }
         defer eig.deinit(alloc);
 
@@ -171,27 +171,27 @@ pub fn solve(
         // Compute Ritz vectors and residuals
         var max_residual: f64 = 0.0;
         if (has_overlap) {
-            common.combineColumnsMatrix(op.n, v, m, eig.vectors, nbands, ritz);
-            common.combineColumnsMatrix(op.n, w, m, eig.vectors, nbands, residuals);
-            common.combineColumnsMatrix(op.n, sv.?, m, eig.vectors, nbands, s_ritz.?);
+            common.combine_columns_matrix(op.n, v, m, eig.vectors, nbands, ritz);
+            common.combine_columns_matrix(op.n, w, m, eig.vectors, nbands, residuals);
+            common.combine_columns_matrix(op.n, sv.?, m, eig.vectors, nbands, s_ritz.?);
             for (0..nbands) |b| {
                 const lambda = eig.values[b];
                 const sr = common.column(s_ritz.?, op.n, b);
                 const r = common.column(residuals, op.n, b);
                 common.axpy(op.n, r, sr, -lambda);
-                const norm = common.vectorNorm(op.n, r);
+                const norm = common.vector_norm(op.n, r);
                 if (norm > max_residual) max_residual = norm;
             }
         } else {
             for (0..nbands) |b| {
                 const lambda = eig.values[b];
-                const y = common.columnConst(eig.vectors, m, b);
+                const y = common.column_const(eig.vectors, m, b);
                 const x = common.column(ritz, op.n, b);
                 const r = common.column(residuals, op.n, b);
-                common.combineColumns(op.n, v, m, y, x);
-                common.combineColumns(op.n, w, m, y, r);
+                common.combine_columns(op.n, v, m, y, x);
+                common.combine_columns(op.n, w, m, y, r);
                 common.axpy(op.n, r, x, -lambda);
-                const norm = common.vectorNorm(op.n, r);
+                const norm = common.vector_norm(op.n, r);
                 if (norm > max_residual) max_residual = norm;
             }
         }
@@ -218,20 +218,20 @@ pub fn solve(
         for (0..nbands) |b| {
             if (m + added >= max_subspace) break;
             const r = common.column(residuals, op.n, b);
-            const res_norm = common.vectorNorm(op.n, r);
+            const res_norm = common.vector_norm(op.n, r);
             if (res_norm < opts.base.tol) continue;
             const lambda = eig.values[b];
             const q = common.column(v, op.n, m + added);
             common.precondition(op.n, diag, lambda, r, q);
-            const norm = common.orthonormalizeVector(op.n, q, v, m + added);
+            const norm = common.orthonormalize_vector(op.n, q, v, m + added);
             if (norm < 1e-8) continue;
             added += 1;
         }
 
         // Apply operator to new vectors (PARALLEL if multiple)
         if (added > 0) {
-            try applyOperatorParallelRange(pool, op, v, w, m, added);
-            if (has_overlap) try applySParallelRange(pool, op, v, sv.?, m, added);
+            try apply_operator_parallel_range(pool, op, v, w, m, added);
+            if (has_overlap) try apply_s_parallel_range(pool, op, v, sv.?, m, added);
         }
 
         // If no vectors were added, all residuals are below tol individually.
@@ -247,9 +247,9 @@ pub fn solve(
         if (m + added >= max_subspace) {
             @memcpy(v[0 .. op.n * nbands], ritz[0 .. op.n * nbands]);
             m = nbands;
-            try common.orthonormalizeAll(op.n, v, m, &seed);
-            try applyOperatorParallel(pool, op, v, w, m);
-            if (has_overlap) try applySParallel(pool, op, v, sv.?, m);
+            try common.orthonormalize_all(op.n, v, m, &seed);
+            try apply_operator_parallel(pool, op, v, w, m);
+            if (has_overlap) try apply_s_parallel(pool, op, v, sv.?, m);
             continue;
         }
 
@@ -265,7 +265,7 @@ pub fn solve(
 }
 
 /// Apply operator to columns [0, count) in parallel
-fn applyOperatorParallel(
+fn apply_operator_parallel(
     pool: *ThreadPool,
     op: Operator,
     v: []const math.Complex,
@@ -277,7 +277,7 @@ fn applyOperatorParallel(
     // For small count, sequential may be faster due to thread overhead
     if (count < 4) {
         for (0..count) |col| {
-            try op.apply(op.ctx, common.columnConst(v, op.n, col), common.column(w, op.n, col));
+            try op.apply(op.ctx, common.column_const(v, op.n, col), common.column(w, op.n, col));
         }
         return;
     }
@@ -289,9 +289,9 @@ fn applyOperatorParallel(
     };
     const ctx = Ctx{ .op = op, .v = v, .w = w };
 
-    try pool.parallelForWithError(count, ctx, struct {
+    try pool.parallel_for_with_error(count, ctx, struct {
         fn run(c: Ctx, col: usize) anyerror!void {
-            const v_col = common.columnConst(c.v, c.op.n, col);
+            const v_col = common.column_const(c.v, c.op.n, col);
             const w_col = common.column(c.w, c.op.n, col);
             try c.op.apply(c.op.ctx, v_col, w_col);
         }
@@ -299,7 +299,7 @@ fn applyOperatorParallel(
 }
 
 /// Apply S operator to columns [0, count) in parallel
-fn applySParallel(
+fn apply_s_parallel(
     pool: *ThreadPool,
     op: Operator,
     v: []const math.Complex,
@@ -311,7 +311,7 @@ fn applySParallel(
 
     if (count < 4) {
         for (0..count) |col| {
-            try apply_s_fn(op.ctx, common.columnConst(v, op.n, col), common.column(sv, op.n, col));
+            try apply_s_fn(op.ctx, common.column_const(v, op.n, col), common.column(sv, op.n, col));
         }
         return;
     }
@@ -329,9 +329,9 @@ fn applySParallel(
     };
     const ctx = Ctx{ .apply_fn = apply_s_fn, .ctx_ptr = op.ctx, .n = op.n, .v = v, .sv = sv };
 
-    try pool.parallelForWithError(count, ctx, struct {
+    try pool.parallel_for_with_error(count, ctx, struct {
         fn run(c: Ctx, col: usize) anyerror!void {
-            const v_col = common.columnConst(c.v, c.n, col);
+            const v_col = common.column_const(c.v, c.n, col);
             const sv_col = common.column(c.sv, c.n, col);
             try c.apply_fn(c.ctx_ptr, v_col, sv_col);
         }
@@ -339,7 +339,7 @@ fn applySParallel(
 }
 
 /// Build projected matrix T[i,j] = <v[i]|w[j]> in parallel
-fn buildProjectedParallel(
+fn build_projected_parallel(
     pool: *ThreadPool,
     n: usize,
     v: []const math.Complex,
@@ -349,7 +349,7 @@ fn buildProjectedParallel(
 ) void {
     // For small m, serial is faster
     if (m < 8) {
-        common.buildProjected(n, v, w, out, m);
+        common.build_projected(n, v, w, out, m);
         return;
     }
 
@@ -363,12 +363,12 @@ fn buildProjectedParallel(
     };
     const ctx = Ctx{ .n = n, .m = m, .v = v, .w = w, .out = out };
 
-    pool.parallelFor(m, ctx, struct {
+    pool.parallel_for(m, ctx, struct {
         fn run(c: Ctx, j: usize) void {
             for (0..j + 1) |i| {
-                const col_v = common.columnConst(c.v, c.n, i);
-                const col_w = common.columnConst(c.w, c.n, j);
-                const val = common.innerProduct(c.n, col_v, col_w);
+                const col_v = common.column_const(c.v, c.n, i);
+                const col_w = common.column_const(c.w, c.n, j);
+                const val = common.inner_product(c.n, col_v, col_w);
                 c.out[i + j * c.m] = val;
                 if (i != j) {
                     c.out[j + i * c.m] = math.complex.conj(val);
@@ -379,7 +379,7 @@ fn buildProjectedParallel(
 }
 
 /// Apply operator to columns [start, start+count) in parallel
-fn applyOperatorParallelRange(
+fn apply_operator_parallel_range(
     pool: *ThreadPool,
     op: Operator,
     v: []const math.Complex,
@@ -393,7 +393,7 @@ fn applyOperatorParallelRange(
     if (count < 4) {
         for (0..count) |i| {
             const col = start + i;
-            try op.apply(op.ctx, common.columnConst(v, op.n, col), common.column(w, op.n, col));
+            try op.apply(op.ctx, common.column_const(v, op.n, col), common.column(w, op.n, col));
         }
         return;
     }
@@ -406,10 +406,10 @@ fn applyOperatorParallelRange(
     };
     const ctx = Ctx{ .op = op, .v = v, .w = w, .start = start };
 
-    try pool.parallelForWithError(count, ctx, struct {
+    try pool.parallel_for_with_error(count, ctx, struct {
         fn run(c: Ctx, i: usize) anyerror!void {
             const col = c.start + i;
-            const v_col = common.columnConst(c.v, c.op.n, col);
+            const v_col = common.column_const(c.v, c.op.n, col);
             const w_col = common.column(c.w, c.op.n, col);
             try c.op.apply(c.op.ctx, v_col, w_col);
         }
@@ -417,7 +417,7 @@ fn applyOperatorParallelRange(
 }
 
 /// Apply S operator to columns [start, start+count) in parallel
-fn applySParallelRange(
+fn apply_s_parallel_range(
     pool: *ThreadPool,
     op: Operator,
     v: []const math.Complex,
@@ -431,7 +431,7 @@ fn applySParallelRange(
     if (count < 4) {
         for (0..count) |i| {
             const col = start + i;
-            try apply_s_fn(op.ctx, common.columnConst(v, op.n, col), common.column(sv, op.n, col));
+            try apply_s_fn(op.ctx, common.column_const(v, op.n, col), common.column(sv, op.n, col));
         }
         return;
     }
@@ -457,10 +457,10 @@ fn applySParallelRange(
         .start = start,
     };
 
-    try pool.parallelForWithError(count, ctx, struct {
+    try pool.parallel_for_with_error(count, ctx, struct {
         fn run(c: Ctx, i: usize) anyerror!void {
             const col = c.start + i;
-            const v_col = common.columnConst(c.v, c.n, col);
+            const v_col = common.column_const(c.v, c.n, col);
             const sv_col = common.column(c.sv, c.n, col);
             try c.apply_fn(c.ctx_ptr, v_col, sv_col);
         }

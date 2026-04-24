@@ -184,12 +184,12 @@ pub const RealPlan3d = struct {
     }
 
     /// Get the complex output size
-    pub fn complexSize(self: *const RealPlan3d) usize {
+    pub fn complex_size(self: *const RealPlan3d) usize {
         return self.nx_complex * self.ny * self.nz;
     }
 
     /// Get the real input size
-    pub fn realSize(self: *const RealPlan3d) usize {
+    pub fn real_size(self: *const RealPlan3d) usize {
         return self.nx * self.ny * self.nz;
     }
 };

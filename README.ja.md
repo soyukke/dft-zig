@@ -409,6 +409,10 @@ just test             # 全テスト実行
 just test-unit        # ユニットテストのみ
 just test-regression  # 回帰テスト（ABINIT比較）
 just fmt              # ソースコードフォーマット
+just fmt-check        # Zig のフォーマット差分だけ確認
+just lint             # baseline と比較して style checker を実行
+just lint-strict      # 現在の style 違反をすべて列挙
+just lint-update-baseline  # style baseline を更新
 ```
 
 ## License

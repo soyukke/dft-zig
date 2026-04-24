@@ -21,9 +21,32 @@ const PerturbationResult = dfpt.PerturbationResult;
 
 const Grid = scf_mod.Grid;
 
+fn reciprocal_to_complex_copy(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    source_g: []const math.Complex,
+) ![]math.Complex {
+    const source_copy = try alloc.alloc(math.Complex, source_g.len);
+    errdefer alloc.free(source_copy);
+    @memcpy(source_copy, source_g);
+
+    const result_r = try alloc.alloc(math.Complex, source_g.len);
+    errdefer alloc.free(result_r);
+
+    try scf_mod.fft_reciprocal_to_complex_in_place(
+        alloc,
+        grid,
+        source_copy,
+        result_r,
+        null,
+    );
+    alloc.free(source_copy);
+    return result_r;
+}
+
 /// Compute the electronic contribution to the dynamical matrix element (complex, q≠0).
 /// D^elec_{Iα,Jβ} = Σ_G conj(V^(1)_{Iα}(G)) × ρ^(1)_{Jβ}(G) × Ω
-pub fn computeElecDynmatElementQ(
+pub fn compute_elec_dynmat_element_q(
     vloc1_g: []const math.Complex,
     rho1_g: []const math.Complex,
     volume: f64,
@@ -38,7 +61,7 @@ pub fn computeElecDynmatElementQ(
 /// Compute the nonlocal response contribution to the dynamical matrix for q≠0.
 /// D(Iα,Jβ) = 2 × Σ_n ⟨dV_nl_{Iα,q} ψ^(0)_n | δψ_{n,Jβ}⟩
 /// Monochromatic convention: +q only. Hermitianization at total level.
-pub fn computeNonlocalResponseDynmatQ(
+pub fn compute_nonlocal_response_dynmat_q(
     alloc: std.mem.Allocator,
     gs: GroundState,
     pert_results: []PerturbationResult,
@@ -65,7 +88,7 @@ pub fn computeNonlocalResponseDynmatQ(
         const dir_a = i % 3;
         for (0..gs.n_occ) |n| {
             // Apply dV_nl_{Iα,q} to ψ^(0)_{n,k}: k-basis → k+q-basis
-            try perturbation.applyNonlocalPerturbationQ(
+            try perturbation.apply_nonlocal_perturbation_q(
                 alloc,
                 gs.gvecs,
                 gvecs_kq,
@@ -105,7 +128,7 @@ pub fn computeNonlocalResponseDynmatQ(
 /// For LDA this reduces to ∫ f_xc × ρ^(1)_core,I × ρ^(1)_total,J dr.
 /// For GGA, V_xc^(1) includes gradient-dependent terms.
 /// For q≠0, ρ^(1)(r) is complex, so result is complex.
-pub fn computeNlccCrossDynmatQ(
+pub fn compute_nlcc_cross_dynmat_q(
     alloc: std.mem.Allocator,
     grid: Grid,
     gs: GroundState,
@@ -122,47 +145,24 @@ pub fn computeNlccCrossDynmatQ(
     const dv = grid.volume / @as(f64, @floatFromInt(total));
 
     for (0..dim) |i| {
-        // Get ρ^(1)_core,Iα(r) in complex form
-        const rho1_core_i_copy = try alloc.alloc(math.Complex, total);
-        defer alloc.free(rho1_core_i_copy);
-
-        @memcpy(rho1_core_i_copy, rho1_core_gs[i]);
-        const rho1_core_i_r = try alloc.alloc(math.Complex, total);
+        const rho1_core_i_r = try reciprocal_to_complex_copy(alloc, grid, rho1_core_gs[i]);
         defer alloc.free(rho1_core_i_r);
 
-        const ri_in = rho1_core_i_copy;
-        const ri_out = rho1_core_i_r;
-        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, ri_in, ri_out, null);
-
-        // Build V_xc^(1)[ρ^(1)_core,I] using GGA-aware kernel
-        const vxc1_core_i = try perturbation.buildXcPerturbationFullComplex(alloc, gs, ri_out);
+        const vxc1_core_i = try perturbation.build_xc_perturbation_full_complex(
+            alloc,
+            gs,
+            rho1_core_i_r,
+        );
         defer alloc.free(vxc1_core_i);
 
         for (0..dim) |j| {
             if (!irr_info.is_irreducible[j / 3]) continue;
-            // Get ρ^(1)_val,Jβ(r)
-            const rho1_val_g_copy = try alloc.alloc(math.Complex, total);
-            defer alloc.free(rho1_val_g_copy);
-
-            @memcpy(rho1_val_g_copy, rho1_val_gs[j]);
-            const work_r_j = try alloc.alloc(math.Complex, total);
+            const work_r_j = try reciprocal_to_complex_copy(alloc, grid, rho1_val_gs[j]);
             defer alloc.free(work_r_j);
 
-            try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rho1_val_g_copy, work_r_j, null);
-
-            // Get ρ^(1)_core,Jβ(r)
-            const rho1_core_j_copy = try alloc.alloc(math.Complex, total);
-            defer alloc.free(rho1_core_j_copy);
-
-            @memcpy(rho1_core_j_copy, rho1_core_gs[j]);
-            const rho1_core_j_r = try alloc.alloc(math.Complex, total);
+            const rho1_core_j_r = try reciprocal_to_complex_copy(alloc, grid, rho1_core_gs[j]);
             defer alloc.free(rho1_core_j_r);
 
-            const rj_in = rho1_core_j_copy;
-            const rj_out = rho1_core_j_r;
-            try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rj_in, rj_out, null);
-
-            // D(I,J) = ∫ conj(V_xc^(1)[ρ^(1)_core,I]) × ρ^(1)_total,J dr
             var sum = math.complex.init(0.0, 0.0);
             for (0..total) |r| {
                 const rho1_total_j = math.complex.add(work_r_j[r], rho1_core_j_r[r]);

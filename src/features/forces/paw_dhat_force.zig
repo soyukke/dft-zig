@@ -10,7 +10,7 @@ const Vec3 = math.Vec3;
 const Complex = math.Complex;
 
 /// Accumulate the PAW D^hat force contribution from a single G-vector for one atom.
-fn accumulatePawDhatForceG(
+fn accumulate_paw_dhat_force_g(
     g_vec: Vec3,
     g_abs: f64,
     prod_im: f64,
@@ -28,7 +28,7 @@ fn accumulatePawDhatForceG(
         const i = qidx.first;
         const j = qidx.second;
 
-        const qijl_g = tab.evalQijlForm(e, g_abs);
+        const qijl_g = tab.eval_qijl_form(e, g_abs);
         if (@abs(qijl_g) < 1e-30) continue;
 
         // Y_00 = 1/√(4π), Gaunt = 1/√(4π) for m-summed L=0
@@ -65,7 +65,7 @@ fn accumulatePawDhatForceG(
 /// Only L=0 contributes (m-summed rhoij).
 ///
 /// Returns forces in Rydberg/Bohr units.
-pub fn pawDhatForces(
+pub fn paw_dhat_forces(
     alloc: std.mem.Allocator,
     grid: Grid,
     potential: []const Complex,
@@ -114,7 +114,7 @@ pub fn pawDhatForces(
             // Im[V_eff × exp(+iGR)] = V_eff.r × sf_im + V_eff.i × sf_re
             const prod_im = v_eff.r * sf_im + v_eff.i * sf_re;
 
-            accumulatePawDhatForceG(g.gvec, g_abs, prod_im, tab, atom_rij, nb, &fx, &fy, &fz);
+            accumulate_paw_dhat_force_g(g.gvec, g_abs, prod_im, tab, atom_rij, nb, &fx, &fy, &fz);
         }
 
         forces[ai] = Vec3{ .x = fx, .y = fy, .z = fz };

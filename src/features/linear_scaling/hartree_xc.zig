@@ -33,7 +33,7 @@ pub const LocalPotentialResult = struct {
     }
 };
 
-pub fn buildHartreeXc(
+pub fn build_hartree_xc(
     alloc: std.mem.Allocator,
     grid: local_orbital_potential.PotentialGrid,
     density: []const f64,
@@ -47,12 +47,12 @@ pub fn buildHartreeXc(
     const exc = try alloc.alloc(f64, count);
     errdefer alloc.free(exc);
     for (density, 0..) |value, idx| {
-        const eval = xc.evalPoint(xc_func, value, 0.0);
+        const eval = xc.eval_point(xc_func, value, 0.0);
         vxc[idx] = eval.df_dn;
         exc[idx] = eval.f;
     }
 
-    const hartree = try computeHartreePotential(alloc, grid, density);
+    const hartree = try compute_hartree_potential(alloc, grid, density);
     errdefer alloc.free(hartree);
 
     const dv = try grid.weight();
@@ -76,7 +76,7 @@ pub fn buildHartreeXc(
     };
 }
 
-pub fn buildLocalPotential(
+pub fn build_local_potential(
     alloc: std.mem.Allocator,
     ionic: ?[]const f64,
     hartree: []const f64,
@@ -97,17 +97,17 @@ pub fn buildLocalPotential(
     return values;
 }
 
-pub fn buildLocalPotentialGrid(
+pub fn build_local_potential_grid(
     alloc: std.mem.Allocator,
     grid: local_orbital_potential.PotentialGrid,
     density: []const f64,
     xc_func: xc.Functional,
     ionic: ?[]const f64,
 ) !LocalPotentialResult {
-    var fields = try buildHartreeXc(alloc, grid, density, xc_func);
+    var fields = try build_hartree_xc(alloc, grid, density, xc_func);
     defer fields.deinit(alloc);
 
-    const values = try buildLocalPotential(alloc, ionic, fields.hartree, fields.vxc);
+    const values = try build_local_potential(alloc, ionic, fields.hartree, fields.vxc);
     return .{
         .values = values,
         .energy_hartree = fields.energy_hartree,
@@ -116,7 +116,7 @@ pub fn buildLocalPotentialGrid(
     };
 }
 
-fn computeHartreePotential(
+fn compute_hartree_potential(
     alloc: std.mem.Allocator,
     grid: local_orbital_potential.PotentialGrid,
     density: []const f64,
@@ -124,7 +124,7 @@ fn computeHartreePotential(
     const total = grid.count();
     if (density.len != total) return error.InvalidGrid;
 
-    var rho_g = try fftRealToReciprocal(alloc, grid, density);
+    var rho_g = try fft_real_to_reciprocal(alloc, grid, density);
     defer alloc.free(rho_g);
 
     const recip = math.reciprocal(grid.cell);
@@ -138,9 +138,9 @@ fn computeHartreePotential(
         while (iy < grid.dims[1]) : (iy += 1) {
             var ix: usize = 0;
             while (ix < grid.dims[0]) : (ix += 1) {
-                const gh = indexToFreq(ix, grid.dims[0]);
-                const gk = indexToFreq(iy, grid.dims[1]);
-                const gl = indexToFreq(iz, grid.dims[2]);
+                const gh = index_to_freq(ix, grid.dims[0]);
+                const gk = index_to_freq(iy, grid.dims[1]);
+                const gl = index_to_freq(iz, grid.dims[2]);
                 const gvec = math.Vec3.add(
                     math.Vec3.add(
                         math.Vec3.scale(b1, @as(f64, @floatFromInt(gh))),
@@ -159,10 +159,10 @@ fn computeHartreePotential(
         }
     }
 
-    return fftReciprocalToReal(alloc, grid, rho_g);
+    return fft_reciprocal_to_real(alloc, grid, rho_g);
 }
 
-fn fftRealToReciprocal(
+fn fft_real_to_reciprocal(
     alloc: std.mem.Allocator,
     grid: local_orbital_potential.PotentialGrid,
     values: []const f64,
@@ -174,7 +174,7 @@ fn fftRealToReciprocal(
     for (values, 0..) |v, i| {
         data[i] = math.complex.init(v, 0.0);
     }
-    try fft.fft3dForwardInPlace(alloc, data, grid.dims[0], grid.dims[1], grid.dims[2]);
+    try fft.fft3d_forward_in_place(alloc, data, grid.dims[0], grid.dims[1], grid.dims[2]);
     const scale = 1.0 / @as(f64, @floatFromInt(total));
     for (data) |*v| {
         v.* = math.complex.scale(v.*, scale);
@@ -182,7 +182,7 @@ fn fftRealToReciprocal(
     return data;
 }
 
-fn fftReciprocalToReal(
+fn fft_reciprocal_to_real(
     alloc: std.mem.Allocator,
     grid: local_orbital_potential.PotentialGrid,
     values: []const math.Complex,
@@ -196,7 +196,7 @@ fn fftReciprocalToReal(
     for (values, 0..) |v, i| {
         data[i] = math.complex.scale(v, scale);
     }
-    try fft.fft3dInverseInPlace(alloc, data, grid.dims[0], grid.dims[1], grid.dims[2]);
+    try fft.fft3d_inverse_in_place(alloc, data, grid.dims[0], grid.dims[1], grid.dims[2]);
     const out = try alloc.alloc(f64, total);
     errdefer alloc.free(out);
     for (data, 0..) |v, i| {
@@ -205,7 +205,7 @@ fn fftReciprocalToReal(
     return out;
 }
 
-fn indexToFreq(index: usize, n: usize) i32 {
+fn index_to_freq(index: usize, n: usize) i32 {
     const half = @as(i32, @intCast(n / 2));
     const idx = @as(i32, @intCast(index));
     return if (idx <= half) idx else idx - @as(i32, @intCast(n));
@@ -213,7 +213,7 @@ fn indexToFreq(index: usize, n: usize) i32 {
 
 test "hartree potential of uniform density is zero" {
     const alloc = std.testing.allocator;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 8.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 8.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 8.0 },
@@ -229,7 +229,7 @@ test "hartree potential of uniform density is zero" {
         .dims = dims,
         .values = &[_]f64{},
     };
-    const hartree = try computeHartreePotential(alloc, grid, density);
+    const hartree = try compute_hartree_potential(alloc, grid, density);
     defer alloc.free(hartree);
 
     var max_abs: f64 = 0.0;
@@ -241,7 +241,7 @@ test "hartree potential of uniform density is zero" {
 
 test "xc fields are uniform for uniform density" {
     const alloc = std.testing.allocator;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 6.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 6.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 6.0 },
@@ -257,23 +257,23 @@ test "xc fields are uniform for uniform density" {
         .dims = dims,
         .values = &[_]f64{},
     };
-    var fields = try buildHartreeXc(alloc, grid, density, .lda_pz);
+    var fields = try build_hartree_xc(alloc, grid, density, .lda_pz);
     defer fields.deinit(alloc);
 
-    const eval = xc.evalPoint(.lda_pz, 0.2, 0.0);
+    const eval = xc.eval_point(.lda_pz, 0.2, 0.0);
     try std.testing.expectApproxEqAbs(eval.df_dn, fields.vxc[0], 1e-12);
     var max_diff: f64 = 0.0;
     for (fields.vxc) |value| {
         max_diff = @max(max_diff, @abs(value - fields.vxc[0]));
     }
     try std.testing.expect(max_diff < 1e-12);
-    const volume = local_orbital_potential.cellVolume(cell);
+    const volume = local_orbital_potential.cell_volume(cell);
     try std.testing.expectApproxEqAbs(eval.f * volume, fields.energy_xc, 1e-8);
 }
 
 test "local potential combines ionic and xc" {
     const alloc = std.testing.allocator;
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 4.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 4.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 4.0 },
@@ -293,10 +293,10 @@ test "local potential combines ionic and xc" {
         .dims = dims,
         .values = &[_]f64{},
     };
-    var fields = try buildHartreeXc(alloc, grid, density, .lda_pz);
+    var fields = try build_hartree_xc(alloc, grid, density, .lda_pz);
     defer fields.deinit(alloc);
 
-    const local = try buildLocalPotential(alloc, ionic, fields.hartree, fields.vxc);
+    const local = try build_local_potential(alloc, ionic, fields.hartree, fields.vxc);
     defer alloc.free(local);
 
     const expected = ionic[0] + fields.vxc[0] + fields.hartree[0];

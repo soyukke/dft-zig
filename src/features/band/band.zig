@@ -17,12 +17,12 @@ const thread_pool = @import("../thread_pool.zig");
 
 const ThreadPool = thread_pool.ThreadPool;
 
-fn logStep(io: std.Io, msg: []const u8) !void {
+fn log_step(io: std.Io, msg: []const u8) !void {
     const logger = runtime_logging.stderr(io, .info);
     try logger.print(.info, "{s}\n", .{msg});
 }
 
-fn bandThreadCount(total: usize, cfg_threads: usize) usize {
+fn band_thread_count(total: usize, cfg_threads: usize) usize {
     if (total <= 1) return 1;
     if (cfg_threads > 0) return @min(total, cfg_threads);
     const cpu_count = std.Thread.getCpuCount() catch 1;
@@ -30,12 +30,12 @@ fn bandThreadCount(total: usize, cfg_threads: usize) usize {
     return @min(total, cpu_count);
 }
 
-fn logBandKpoint(io: std.Io, idx: usize, total: usize) void {
+fn log_band_kpoint(io: std.Io, idx: usize, total: usize) void {
     const logger = runtime_logging.stderr(io, .info);
     logger.print(.info, "band kpoint {d}/{d}\n", .{ idx + 1, total }) catch {};
 }
 
-fn logBandTiming(io: std.Io, idx: usize, total: usize, ns: u64) void {
+fn log_band_timing(io: std.Io, idx: usize, total: usize, ns: u64) void {
     const ms = @as(f64, @floatFromInt(ns)) / 1e6;
     const logger = runtime_logging.stderr(io, .info);
     logger.print(
@@ -45,7 +45,7 @@ fn logBandTiming(io: std.Io, idx: usize, total: usize, ns: u64) void {
     ) catch {};
 }
 
-fn logBandDebug(io: std.Io, comptime fmt: []const u8, args: anytype) !void {
+fn log_band_debug(io: std.Io, comptime fmt: []const u8, args: anytype) !void {
     const logger = runtime_logging.stderr(io, .debug);
     try logger.print(.debug, fmt, args);
 }
@@ -99,7 +99,7 @@ const BandRadialTables = struct {
     }
 };
 
-fn copyBandPawDij(
+fn copy_band_paw_dij(
     alloc: std.mem.Allocator,
     paw_dij: []const []const f64,
 ) ![][]f64 {
@@ -119,7 +119,7 @@ fn copyBandPawDij(
     return dij_copy;
 }
 
-fn attachBandPawData(
+fn attach_band_paw_data(
     alloc: std.mem.Allocator,
     ctx: *scf.BandIterativeContext,
     paw_tabs: ?[]const paw_mod.PawTab,
@@ -129,11 +129,11 @@ fn attachBandPawData(
         ctx.paw_tabs = tabs;
     }
     if (paw_dij) |dij| {
-        ctx.paw_dij = try copyBandPawDij(alloc, dij);
+        ctx.paw_dij = try copy_band_paw_dij(alloc, dij);
     }
 }
 
-fn initOptionalBandContext(
+fn init_optional_band_context(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
@@ -147,7 +147,7 @@ fn initOptionalBandContext(
 ) !?scf.BandIterativeContext {
     if (extra == null) return null;
 
-    const ctx_result = scf.initBandIterativeContext(
+    const ctx_result = scf.init_band_iterative_context(
         alloc,
         io,
         cfg,
@@ -160,7 +160,7 @@ fn initOptionalBandContext(
     if (ctx_result) |ctx| {
         var band_ctx = ctx;
         errdefer band_ctx.deinit(alloc);
-        try attachBandPawData(alloc, &band_ctx, paw_tabs, paw_dij);
+        try attach_band_paw_data(alloc, &band_ctx, paw_tabs, paw_dij);
         return band_ctx;
     } else |err| {
         if (err == error.InvalidGrid) return null;
@@ -168,14 +168,14 @@ fn initOptionalBandContext(
     }
 }
 
-fn initBandFftPlan(
+fn init_band_fft_plan(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
     band_ctx: ?*const scf.BandIterativeContext,
 ) !?fft.Fft3dPlan {
     if (band_ctx) |ctx| {
-        return try fft.Fft3dPlan.initWithBackend(
+        return try fft.Fft3dPlan.init_with_backend(
             alloc,
             io,
             ctx.grid.nx,
@@ -187,7 +187,7 @@ fn initBandFftPlan(
     return null;
 }
 
-fn computeSpinBandPointEigenvalues(
+fn compute_spin_band_point_eigenvalues(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
@@ -206,7 +206,7 @@ fn computeSpinBandPointEigenvalues(
     radial_tables: ?[]const nonlocal.RadialTableSet,
 ) ![]f64 {
     if (band_ctx) |ctx| {
-        const result = scf.bandEigenvaluesIterativeExt(
+        const result = scf.band_eigenvalues_iterative_ext(
             alloc,
             io,
             cfg,
@@ -234,7 +234,7 @@ fn computeSpinBandPointEigenvalues(
 
     const inv_volume = 1.0 / volume_bohr;
     const extra_grid = if (extra) |ptr| ptr.* else null;
-    const h = try hamiltonian.buildHamiltonian(
+    const h = try hamiltonian.build_hamiltonian(
         alloc,
         basis.gvecs,
         species,
@@ -245,7 +245,7 @@ fn computeSpinBandPointEigenvalues(
     );
     defer alloc.free(h);
 
-    return linalg.hermitianEigenvalues(
+    return linalg.hermitian_eigenvalues(
         alloc,
         cfg.linalg_backend,
         basis.gvecs.len,
@@ -253,7 +253,7 @@ fn computeSpinBandPointEigenvalues(
     );
 }
 
-fn computeSpinBandResults(
+fn compute_spin_band_results(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
@@ -271,7 +271,7 @@ fn computeSpinBandResults(
     var results = try alloc.alloc(f64, path.points.len * nbands);
     errdefer alloc.free(results);
 
-    var band_fft_plan = try initBandFftPlan(alloc, io, cfg, band_ctx);
+    var band_fft_plan = try init_band_fft_plan(alloc, io, cfg, band_ctx);
     defer if (band_fft_plan) |*plan| plan.deinit(alloc);
 
     var cache = scf.BandVectorCache{};
@@ -281,7 +281,7 @@ fn computeSpinBandResults(
     defer pool.deinit();
 
     for (path.points, 0..) |kp, idx| {
-        const eigvals = try computeSpinBandPointEigenvalues(
+        const eigvals = try compute_spin_band_point_eigenvalues(
             alloc,
             io,
             cfg,
@@ -307,7 +307,7 @@ fn computeSpinBandResults(
     return results;
 }
 
-fn writeBandCsv(
+fn write_band_csv(
     io: std.Io,
     dir: std.Io.Dir,
     filename: []const u8,
@@ -341,7 +341,7 @@ fn writeBandCsv(
     try out.flush();
 }
 
-fn setParallelBandError(shared: anytype, err: anyerror) void {
+fn set_parallel_band_error(shared: anytype, err: anyerror) void {
     shared.err_mutex.lockUncancelable(shared.io);
     defer shared.err_mutex.unlock(shared.io);
 
@@ -350,7 +350,7 @@ fn setParallelBandError(shared: anytype, err: anyerror) void {
     }
 }
 
-fn computeParallelIterativeBandValues(
+fn compute_parallel_iterative_band_values(
     kalloc: std.mem.Allocator,
     shared: anytype,
     kp: kpath.KPoint,
@@ -366,7 +366,7 @@ fn computeParallelIterativeBandValues(
         &shared.caches[thread_index]
     else
         null;
-    const result = scf.bandEigenvaluesIterativeExt(
+    const result = scf.band_eigenvalues_iterative_ext(
         kalloc,
         shared.io,
         shared.cfg.*,
@@ -393,7 +393,7 @@ fn computeParallelIterativeBandValues(
     }
 }
 
-fn computeParallelDenseBandValues(
+fn compute_parallel_dense_band_values(
     kalloc: std.mem.Allocator,
     shared: anytype,
     kp: kpath.KPoint,
@@ -407,7 +407,7 @@ fn computeParallelDenseBandValues(
     defer basis.deinit(kalloc);
 
     const inv_volume = 1.0 / shared.volume;
-    const h = try hamiltonian.buildHamiltonian(
+    const h = try hamiltonian.build_hamiltonian(
         kalloc,
         basis.gvecs,
         shared.species,
@@ -417,8 +417,8 @@ fn computeParallelDenseBandValues(
         shared.extra,
     );
 
-    if (hasQij(shared.species)) {
-        return buildAndSolveGeneralized(
+    if (has_qij(shared.species)) {
+        return build_and_solve_generalized(
             kalloc,
             shared.cfg.linalg_backend,
             basis.gvecs,
@@ -429,7 +429,7 @@ fn computeParallelDenseBandValues(
         );
     }
     if (shared.cfg.band.use_symmetry and shared.sym_ops.len > 0) {
-        return symmetry.symmetry_basis.computeBandEigenvalues(
+        return symmetry.symmetry_basis.compute_band_eigenvalues(
             kalloc,
             shared.cfg.linalg_backend,
             basis.gvecs,
@@ -439,7 +439,7 @@ fn computeParallelDenseBandValues(
             shared.sym_ops,
         );
     }
-    return linalg.hermitianEigenvalues(
+    return linalg.hermitian_eigenvalues(
         kalloc,
         shared.cfg.linalg_backend,
         basis.gvecs.len,
@@ -447,7 +447,7 @@ fn computeParallelDenseBandValues(
     );
 }
 
-fn processParallelBandWorkItem(
+fn process_parallel_band_work_item(
     kalloc: std.mem.Allocator,
     shared: anytype,
     thread_index: usize,
@@ -455,8 +455,8 @@ fn processParallelBandWorkItem(
 ) !void {
     const kp = shared.points[idx];
     const eigvals =
-        (try computeParallelIterativeBandValues(kalloc, shared, kp, thread_index)) orelse
-        try computeParallelDenseBandValues(kalloc, shared, kp);
+        (try compute_parallel_iterative_band_values(kalloc, shared, kp, thread_index)) orelse
+        try compute_parallel_dense_band_values(kalloc, shared, kp);
     if (eigvals.len < shared.nbands) return error.InvalidBandConfig;
 
     const offset = idx * shared.nbands;
@@ -465,7 +465,7 @@ fn processParallelBandWorkItem(
 }
 
 /// Write band energies for k-path.
-pub fn writeBandEnergies(
+pub fn write_band_energies(
     alloc: std.mem.Allocator,
     io: std.Io,
     dir: std.Io.Dir,
@@ -484,7 +484,7 @@ pub fn writeBandEnergies(
     const volume_bohr = model.volume_bohr;
     // For nspin=2, compute bands for each spin channel separately
     if (cfg.scf.nspin == 2 and extra != null and extra_down != null) {
-        try writeBandEnergiesForSpin(
+        try write_band_energies_for_spin(
             alloc,
             io,
             dir,
@@ -496,7 +496,7 @@ pub fn writeBandEnergies(
             paw_tabs,
             paw_dij,
         );
-        try writeBandEnergiesForSpin(
+        try write_band_energies_for_spin(
             alloc,
             io,
             dir,
@@ -515,12 +515,12 @@ pub fn writeBandEnergies(
 
     const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, cell_bohr);
 
-    const min_npw = try minPlaneWaves(alloc, cfg.scf.ecut_ry, path, recip);
+    const min_npw = try min_plane_waves(alloc, cfg.scf.ecut_ry, path, recip);
     if (min_npw == 0) return error.NoPlaneWaves;
     const nbands = @min(cfg.band.nbands, min_npw);
 
     const sym_ops = if (cfg.band.use_symmetry)
-        try symmetry.getSymmetryOps(alloc, cell_bohr, atoms, 1e-6)
+        try symmetry.get_symmetry_ops(alloc, cell_bohr, atoms, 1e-6)
     else
         try alloc.alloc(symmetry.SymOp, 0);
     defer alloc.free(sym_ops);
@@ -534,10 +534,10 @@ pub fn writeBandEnergies(
     var band_ctx: ?scf.BandIterativeContext = null;
     if (use_iterative) {
         if (extra == null) {
-            try logStep(io, "band: iterative solver disabled (no SCF potential)");
+            try log_step(io, "band: iterative solver disabled (no SCF potential)");
             use_iterative = false;
         } else {
-            const ctx_result = scf.initBandIterativeContext(
+            const ctx_result = scf.init_band_iterative_context(
                 alloc,
                 io,
                 cfg,
@@ -568,7 +568,7 @@ pub fn writeBandEnergies(
                 }
             } else |err| {
                 if (err == error.InvalidGrid) {
-                    try logStep(io, "band: iterative solver disabled (grid mismatch)");
+                    try log_step(io, "band: iterative solver disabled (grid mismatch)");
                     use_iterative = false;
                 } else {
                     return err;
@@ -579,7 +579,7 @@ pub fn writeBandEnergies(
     defer if (band_ctx) |*ctx| ctx.deinit(alloc);
 
     const total_points = path.points.len;
-    const thread_count = bandThreadCount(total_points, cfg.band.kpoint_threads);
+    const thread_count = band_thread_count(total_points, cfg.band.kpoint_threads);
 
     var results = try alloc.alloc(f64, total_points * nbands);
     defer alloc.free(results);
@@ -628,7 +628,7 @@ pub fn writeBandEnergies(
         // expensive FFTW plan creation for each k-point
         var band_fft_plan: ?fft.Fft3dPlan = null;
         if (band_ctx) |ctx| {
-            band_fft_plan = try fft.Fft3dPlan.initWithBackend(
+            band_fft_plan = try fft.Fft3dPlan.init_with_backend(
                 alloc,
                 io,
                 ctx.grid.nx,
@@ -647,7 +647,7 @@ pub fn writeBandEnergies(
             var eigvals_opt: ?[]f64 = null;
             const band_start_ts = std.Io.Clock.Timestamp.now(io, .awake);
             if (use_iterative) {
-                const result = scf.bandEigenvaluesIterativeExt(
+                const result = scf.band_eigenvalues_iterative_ext(
                     alloc,
                     io,
                     cfg,
@@ -669,13 +669,13 @@ pub fn writeBandEnergies(
                 );
                 const band_ns: u64 = @intCast(band_start_ts.untilNow(io).raw.nanoseconds);
                 if (idx < 5 or idx % 20 == 0) {
-                    logBandTiming(io, idx, total_points, band_ns);
+                    log_band_timing(io, idx, total_points, band_ns);
                 }
                 if (result) |values| {
                     eigvals_opt = values;
                 } else |err| {
                     if (err == error.InvalidGrid) {
-                        try logStep(
+                        try log_step(
                             io,
                             "band: iterative solver disabled (grid too small)," ++
                                 " falling back to dense",
@@ -693,7 +693,7 @@ pub fn writeBandEnergies(
 
                 const inv_volume = 1.0 / volume_bohr;
                 const extra_grid = if (extra) |ptr| ptr.* else null;
-                const h = try hamiltonian.buildHamiltonian(
+                const h = try hamiltonian.build_hamiltonian(
                     alloc,
                     basis.gvecs,
                     species,
@@ -704,8 +704,8 @@ pub fn writeBandEnergies(
                 );
                 defer alloc.free(h);
 
-                if (hasQij(species)) {
-                    eigvals_opt = try buildAndSolveGeneralized(
+                if (has_qij(species)) {
+                    eigvals_opt = try build_and_solve_generalized(
                         alloc,
                         cfg.linalg_backend,
                         basis.gvecs,
@@ -715,7 +715,7 @@ pub fn writeBandEnergies(
                         h,
                     );
                 } else if (cfg.band.use_symmetry and sym_ops.len > 0) {
-                    eigvals_opt = try symmetry.symmetry_basis.computeBandEigenvalues(
+                    eigvals_opt = try symmetry.symmetry_basis.compute_band_eigenvalues(
                         alloc,
                         cfg.linalg_backend,
                         basis.gvecs,
@@ -725,7 +725,7 @@ pub fn writeBandEnergies(
                         sym_ops,
                     );
                 } else {
-                    eigvals_opt = try linalg.hermitianEigenvalues(
+                    eigvals_opt = try linalg.hermitian_eigenvalues(
                         alloc,
                         cfg.linalg_backend,
                         basis.gvecs.len,
@@ -771,7 +771,7 @@ pub fn writeBandEnergies(
 
         const setBandError = struct {
             fn run(shared: *BandWork, err: anyerror) void {
-                setParallelBandError(shared, err);
+                set_parallel_band_error(shared, err);
             }
         }.run;
 
@@ -788,13 +788,13 @@ pub fn writeBandEnergies(
 
                     shared.log_mutex.lockUncancelable(shared.io);
                     if (idx % 10 == 0 or idx + 1 == shared.points.len) {
-                        logBandKpoint(shared.io, idx, shared.points.len);
+                        log_band_kpoint(shared.io, idx, shared.points.len);
                     }
                     shared.log_mutex.unlock(shared.io);
 
                     _ = arena.reset(.retain_capacity);
                     const kalloc = arena.allocator();
-                    processParallelBandWorkItem(
+                    process_parallel_band_work_item(
                         kalloc,
                         shared,
                         worker.thread_index,
@@ -881,7 +881,7 @@ pub fn writeBandEnergies(
         if (gamma_index) |idx| {
             const offset = idx * nbands;
             const eigvals = results[offset .. offset + nbands];
-            try logEigenvalues(io, "band", "gamma", eigvals, nbands);
+            try log_eigenvalues(io, "band", "gamma", eigvals, nbands);
 
             var basis = try plane_wave.generate(
                 alloc,
@@ -893,7 +893,7 @@ pub fn writeBandEnergies(
 
             const inv_volume = 1.0 / volume_bohr;
             const extra_grid = if (extra) |ptr| ptr.* else null;
-            const h = try hamiltonian.buildHamiltonian(
+            const h = try hamiltonian.build_hamiltonian(
                 alloc,
                 basis.gvecs,
                 species,
@@ -904,7 +904,7 @@ pub fn writeBandEnergies(
             );
             defer alloc.free(h);
 
-            var eig_dense = try linalg.hermitianEigenDecomp(
+            var eig_dense = try linalg.hermitian_eigen_decomp(
                 alloc,
                 cfg.linalg_backend,
                 basis.gvecs.len,
@@ -913,9 +913,9 @@ pub fn writeBandEnergies(
             defer eig_dense.deinit(alloc);
 
             const count = @min(nbands, eig_dense.values.len);
-            try logEigenvalues(io, "band", "gamma_dense", eig_dense.values, count);
+            try log_eigenvalues(io, "band", "gamma_dense", eig_dense.values, count);
         } else {
-            try logBandDebug(io, "band: eig gamma not found\n", .{});
+            try log_band_debug(io, "band: eig gamma not found\n", .{});
         }
         var min_energy = std.math.inf(f64);
         var max_energy = -std.math.inf(f64);
@@ -923,7 +923,7 @@ pub fn writeBandEnergies(
             min_energy = @min(min_energy, value);
             max_energy = @max(max_energy, value);
         }
-        try logBandDebug(
+        try log_band_debug(
             io,
             "band: eig min={d:.6} max={d:.6} nbands={d} points={d}\n",
             .{ min_energy, max_energy, nbands, total_points },
@@ -957,7 +957,7 @@ pub fn writeBandEnergies(
 }
 
 /// Write band energies for a single spin channel.
-fn writeBandEnergiesForSpin(
+fn write_band_energies_for_spin(
     alloc: std.mem.Allocator,
     io: std.Io,
     dir: std.Io.Dir,
@@ -979,11 +979,11 @@ fn writeBandEnergiesForSpin(
     if (species.len == 0) return error.MissingPseudopotential;
 
     const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, cell_bohr);
-    const min_npw = try minPlaneWaves(alloc, cfg.scf.ecut_ry, path, recip);
+    const min_npw = try min_plane_waves(alloc, cfg.scf.ecut_ry, path, recip);
     if (min_npw == 0) return error.NoPlaneWaves;
     const nbands = @min(cfg.band.nbands, min_npw);
 
-    var band_ctx = try initOptionalBandContext(
+    var band_ctx = try init_optional_band_context(
         alloc,
         io,
         cfg,
@@ -1005,7 +1005,7 @@ fn writeBandEnergiesForSpin(
     );
     defer radial_tables.deinit(alloc);
 
-    const results = try computeSpinBandResults(
+    const results = try compute_spin_band_results(
         alloc,
         io,
         cfg,
@@ -1022,10 +1022,10 @@ fn writeBandEnergiesForSpin(
     );
     defer alloc.free(results);
 
-    try writeBandCsv(io, dir, filename, path, nbands, results);
+    try write_band_csv(io, dir, filename, path, nbands, results);
 }
 
-fn logEigenvalues(
+fn log_eigenvalues(
     io: std.Io,
     prefix: []const u8,
     label: []const u8,
@@ -1033,21 +1033,21 @@ fn logEigenvalues(
     count: usize,
 ) !void {
     const limit = @min(count, 8);
-    try logBandDebug(io, "{s}: eig {s} nbands={d}", .{ prefix, label, count });
+    try log_band_debug(io, "{s}: eig {s} nbands={d}", .{ prefix, label, count });
     var i: usize = 0;
     while (i < limit) : (i += 1) {
-        try logBandDebug(io, " {d:.6}", .{values[i]});
+        try log_band_debug(io, " {d:.6}", .{values[i]});
     }
     if (count > limit) {
         const logger = runtime_logging.stderr(io, .debug);
-        try logger.writeAll(.debug, " ...");
+        try logger.write_all(.debug, " ...");
     }
     const logger = runtime_logging.stderr(io, .debug);
-    try logger.writeAll(.debug, "\n");
+    try logger.write_all(.debug, "\n");
 }
 
 /// Check if any species has QIJ coefficients.
-fn hasQij(species: []const hamiltonian.SpeciesEntry) bool {
+fn has_qij(species: []const hamiltonian.SpeciesEntry) bool {
     for (species) |entry| {
         if (entry.upf.qij.len > 0) return true;
     }
@@ -1055,7 +1055,7 @@ fn hasQij(species: []const hamiltonian.SpeciesEntry) bool {
 }
 
 /// Count minimal plane waves across k-path.
-fn minPlaneWaves(
+fn min_plane_waves(
     alloc: std.mem.Allocator,
     ecut_ry: f64,
     path: kpath.KPath,
@@ -1072,7 +1072,7 @@ fn minPlaneWaves(
 }
 
 /// Build overlap matrix and solve generalized eigenvalues.
-fn buildAndSolveGeneralized(
+fn build_and_solve_generalized(
     alloc: std.mem.Allocator,
     backend: linalg.Backend,
     gvecs: []plane_wave.GVector,
@@ -1081,9 +1081,9 @@ fn buildAndSolveGeneralized(
     inv_volume: f64,
     h: []math.Complex,
 ) ![]f64 {
-    const s = try hamiltonian.buildOverlapMatrix(alloc, gvecs, species, atoms, inv_volume);
+    const s = try hamiltonian.build_overlap_matrix(alloc, gvecs, species, atoms, inv_volume);
     errdefer alloc.free(s);
-    const eigvals = try linalg.hermitianGenEigenvalues(alloc, backend, gvecs.len, h, s);
+    const eigvals = try linalg.hermitian_gen_eigenvalues(alloc, backend, gvecs.len, h, s);
     alloc.free(s);
     return eigvals;
 }

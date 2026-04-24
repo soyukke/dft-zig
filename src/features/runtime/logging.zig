@@ -16,7 +16,7 @@ pub fn name(level: Level) []const u8 {
     };
 }
 
-pub fn parseLevel(value: []const u8) !Level {
+pub fn parse_level(value: []const u8) !Level {
     if (std.mem.eql(u8, value, "error")) return .err;
     if (std.mem.eql(u8, value, "warn") or
         std.mem.eql(u8, value, "warning") or
@@ -47,7 +47,7 @@ pub const Logger = struct {
         try out.flush();
     }
 
-    pub fn writeAll(self: Logger, level: Level, msg: []const u8) !void {
+    pub fn write_all(self: Logger, level: Level, msg: []const u8) !void {
         if (!enabled(self.max_level, level)) return;
         var buffer: [1024]u8 = undefined;
         var writer = std.Io.File.stderr().writer(self.io, &buffer);
@@ -61,7 +61,7 @@ pub fn stderr(io: std.Io, max_level: Level) Logger {
     return Logger.init(io, max_level);
 }
 
-pub fn debugPrint(max_level: Level, level: Level, comptime fmt: []const u8, args: anytype) void {
+pub fn debug_print(max_level: Level, level: Level, comptime fmt: []const u8, args: anytype) void {
     if (!enabled(max_level, level)) return;
     var buffer: [256]u8 = undefined;
     const locked_stderr = std.debug.lockStderr(&buffer);
@@ -70,11 +70,11 @@ pub fn debugPrint(max_level: Level, level: Level, comptime fmt: []const u8, args
     locked_stderr.file_writer.interface.print(fmt, args) catch return;
 }
 
-test "parseLevel supports common aliases" {
-    try std.testing.expectEqual(.warn, try parseLevel("warn"));
-    try std.testing.expectEqual(.warn, try parseLevel("quiet"));
-    try std.testing.expectEqual(.info, try parseLevel("normal"));
-    try std.testing.expectEqual(.debug, try parseLevel("verbose"));
+test "parse_level supports common aliases" {
+    try std.testing.expectEqual(.warn, try parse_level("warn"));
+    try std.testing.expectEqual(.warn, try parse_level("quiet"));
+    try std.testing.expectEqual(.info, try parse_level("normal"));
+    try std.testing.expectEqual(.debug, try parse_level("verbose"));
 }
 
 test "enabled gates by max level" {

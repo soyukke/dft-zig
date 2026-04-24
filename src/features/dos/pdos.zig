@@ -7,7 +7,7 @@ const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
 const plane_wave = @import("../plane_wave/basis.zig");
 const dos = @import("dos.zig");
 
-const gaussianDelta = dos.gaussianDelta;
+const gaussian_delta = dos.gaussian_delta;
 
 /// A single PDOS projection channel.
 pub const PdosProjection = struct {
@@ -44,7 +44,7 @@ const BroadeningParams = struct {
     inv_volume: f64,
 };
 
-fn broadeningParams(sigma: f64, volume: f64, nspin: usize) BroadeningParams {
+fn broadening_params(sigma: f64, volume: f64, nspin: usize) BroadeningParams {
     return .{
         .inv_sigma_sqrt2pi = 1.0 / (sigma * std.math.sqrt(2.0 * std.math.pi)),
         .inv_2sigma2 = 1.0 / (2.0 * sigma * sigma),
@@ -57,7 +57,7 @@ fn broadeningParams(sigma: f64, volume: f64, nspin: usize) BroadeningParams {
 }
 
 /// Build an `npoints`-sized energy grid [emin, emax] covering all eigenvalues.
-fn buildEnergyGrid(
+fn build_energy_grid(
     alloc: std.mem.Allocator,
     wf_data: scf.WavefunctionData,
     sigma: f64,
@@ -87,7 +87,7 @@ fn buildEnergyGrid(
 }
 
 /// Allocate and initialize an empty PdosProjection per (atom, atomic_wfc).
-fn initProjectionChannels(
+fn init_projection_channels(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
@@ -122,7 +122,7 @@ fn initProjectionChannels(
 }
 
 /// Build radial tables for every atomic wavefunction of every species.
-fn buildWfcRadialTables(
+fn build_wfc_radial_tables(
     alloc: std.mem.Allocator,
     species: []const hamiltonian.SpeciesEntry,
     g_max: f64,
@@ -158,7 +158,7 @@ fn buildWfcRadialTables(
 }
 
 /// Compute <φ_{a,l,m}|ψ_n> = Σ_G conj(φ(k+G)) × c_n(G) as (real, imag).
-fn projectBandChannel(
+fn project_band_channel(
     coefficients: []const math.Complex,
     gvecs: []const plane_wave.GVector,
     atom: hamiltonian.AtomData,
@@ -183,11 +183,11 @@ fn projectBandChannel(
         if (kpg_norm < 1e-12) {
             // At G=0: Y_00 = 1/√(4π), Y_{l>0} = 0
             ylm = if (l == 0 and m == 0)
-                nonlocal.realSphericalHarmonic(0, 0, 0, 0, 1.0)
+                nonlocal.real_spherical_harmonic(0, 0, 0, 0, 1.0)
             else
                 0.0;
         } else {
-            ylm = nonlocal.realSphericalHarmonic(l, m, kpg.x, kpg.y, kpg.z);
+            ylm = nonlocal.real_spherical_harmonic(l, m, kpg.x, kpg.y, kpg.z);
         }
 
         const four_pi = 4.0 * std.math.pi;
@@ -216,7 +216,7 @@ fn projectBandChannel(
 
 /// Accumulate PDOS contribution of one (atom, l, m) channel over all bands of
 /// a single k-point.
-fn accumulateChannelAtKpoint(
+fn accumulate_channel_at_kpoint(
     kp: scf.KpointWavefunction,
     gvecs: []const plane_wave.GVector,
     atom: hamiltonian.AtomData,
@@ -242,7 +242,7 @@ fn accumulateChannelAtKpoint(
 
     // For each band, compute <φ|ψ_n> and broaden onto the PDOS grid.
     for (0..kp.nbands) |n| {
-        const proj = projectBandChannel(
+        const proj = project_band_channel(
             kp.coefficients,
             gvecs,
             atom,
@@ -264,7 +264,7 @@ fn accumulateChannelAtKpoint(
             const diff = energies[ie] - ek;
             if (@abs(diff) <= bp.cutoff) {
                 pdos[ie] += kp.weight * bp.spin_factor * proj_sq *
-                    gaussianDelta(diff, bp.inv_sigma_sqrt2pi, bp.inv_2sigma2);
+                    gaussian_delta(diff, bp.inv_sigma_sqrt2pi, bp.inv_2sigma2);
             }
         }
     }
@@ -272,7 +272,7 @@ fn accumulateChannelAtKpoint(
 
 /// Accumulate PDOS contributions from a single k-point across all
 /// (atom, wfc, m) projection channels.
-fn accumulatePdosAtKpoint(
+fn accumulate_pdos_at_kpoint(
     alloc: std.mem.Allocator,
     kp: scf.KpointWavefunction,
     species: []const hamiltonian.SpeciesEntry,
@@ -300,7 +300,7 @@ fn accumulatePdosAtKpoint(
 
             var m: i32 = -l;
             while (m <= l) : (m += 1) {
-                accumulateChannelAtKpoint(
+                accumulate_channel_at_kpoint(
                     kp,
                     gvecs,
                     atom,
@@ -317,7 +317,7 @@ fn accumulatePdosAtKpoint(
     }
 }
 
-fn freeWfcTables(alloc: std.mem.Allocator, wfc_tables: [][]nonlocal.RadialTable) void {
+fn free_wfc_tables(alloc: std.mem.Allocator, wfc_tables: [][]nonlocal.RadialTable) void {
     for (wfc_tables) |tables| {
         for (tables) |*t| {
             @constCast(t).deinit(alloc);
@@ -327,7 +327,7 @@ fn freeWfcTables(alloc: std.mem.Allocator, wfc_tables: [][]nonlocal.RadialTable)
     alloc.free(wfc_tables);
 }
 
-pub fn computePdos(
+pub fn compute_pdos(
     alloc: std.mem.Allocator,
     wf_data: scf.WavefunctionData,
     species: []const hamiltonian.SpeciesEntry,
@@ -340,10 +340,10 @@ pub fn computePdos(
     emax_opt: ?f64,
     nspin: usize,
 ) !PdosResult {
-    const energies = try buildEnergyGrid(alloc, wf_data, sigma, npoints, emin_opt, emax_opt);
+    const energies = try build_energy_grid(alloc, wf_data, sigma, npoints, emin_opt, emax_opt);
     errdefer alloc.free(energies);
 
-    const projections = try initProjectionChannels(alloc, species, atoms, npoints);
+    const projections = try init_projection_channels(alloc, species, atoms, npoints);
     if (projections.len == 0) {
         return PdosResult{ .energies = energies, .projections = projections };
     }
@@ -351,14 +351,14 @@ pub fn computePdos(
 
     // Compute g_max from ecut (generous margin)
     const g_max = std.math.sqrt(wf_data.ecut_ry) * 2.0;
-    const wfc_tables = try buildWfcRadialTables(alloc, species, g_max);
-    defer freeWfcTables(alloc, wfc_tables);
+    const wfc_tables = try build_wfc_radial_tables(alloc, species, g_max);
+    defer free_wfc_tables(alloc, wfc_tables);
 
-    const bp = broadeningParams(sigma, volume, nspin);
+    const bp = broadening_params(sigma, volume, nspin);
 
     // For each k-point: generate basis, project bands onto every channel.
     for (wf_data.kpoints) |kp| {
-        try accumulatePdosAtKpoint(
+        try accumulate_pdos_at_kpoint(
             alloc,
             kp,
             species,
@@ -379,7 +379,7 @@ pub fn computePdos(
 }
 
 /// Write PDOS to CSV file.
-pub fn writePdosCSV(io: std.Io, dir: std.Io.Dir, result: PdosResult, fermi_level: f64) !void {
+pub fn write_pdos_csv(io: std.Io, dir: std.Io.Dir, result: PdosResult, fermi_level: f64) !void {
     const file = try dir.createFile(io, "pdos.csv", .{});
     defer file.close(io);
 

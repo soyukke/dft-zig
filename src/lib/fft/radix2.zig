@@ -2,7 +2,7 @@ const std = @import("std");
 const Complex = @import("complex.zig").Complex;
 
 /// Check if value is power of two.
-pub fn isPowerOfTwo(n: usize) bool {
+pub fn is_power_of_two(n: usize) bool {
     return n != 0 and (n & (n - 1)) == 0;
 }
 
@@ -59,7 +59,7 @@ pub fn fft1d(data: []Complex, inverse: bool) void {
     }
 }
 
-fn log2Exact(n: usize) usize {
+fn log2_exact(n: usize) usize {
     var bits: usize = 0;
     var v = n;
     while (v > 1) : (v >>= 1) {
@@ -68,7 +68,7 @@ fn log2Exact(n: usize) usize {
     return bits;
 }
 
-fn reverseBits(value: usize, bits: usize) usize {
+fn reverse_bits(value: usize, bits: usize) usize {
     var x = value;
     var r: usize = 0;
     var idx: usize = 0;
@@ -89,10 +89,10 @@ pub const Plan = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, n: usize) !Plan {
-        if (!isPowerOfTwo(n)) return error.InvalidSize;
+        if (!is_power_of_two(n)) return error.InvalidSize;
         if (n == 0) return error.InvalidSize;
 
-        const bits = log2Exact(n);
+        const bits = log2_exact(n);
         const stage_count = bits;
 
         const stage_offsets = try allocator.alloc(usize, stage_count);
@@ -131,7 +131,7 @@ pub const Plan = struct {
         errdefer allocator.free(bitrev);
         var i: usize = 0;
         while (i < n) : (i += 1) {
-            bitrev[i] = reverseBits(i, bits);
+            bitrev[i] = reverse_bits(i, bits);
         }
 
         return .{
@@ -207,18 +207,18 @@ pub const Plan = struct {
 
 // ============== Tests ==============
 
-test "isPowerOfTwo" {
-    try std.testing.expect(isPowerOfTwo(1));
-    try std.testing.expect(isPowerOfTwo(2));
-    try std.testing.expect(isPowerOfTwo(4));
-    try std.testing.expect(isPowerOfTwo(8));
-    try std.testing.expect(isPowerOfTwo(1024));
+test "is_power_of_two" {
+    try std.testing.expect(is_power_of_two(1));
+    try std.testing.expect(is_power_of_two(2));
+    try std.testing.expect(is_power_of_two(4));
+    try std.testing.expect(is_power_of_two(8));
+    try std.testing.expect(is_power_of_two(1024));
 
-    try std.testing.expect(!isPowerOfTwo(0));
-    try std.testing.expect(!isPowerOfTwo(3));
-    try std.testing.expect(!isPowerOfTwo(5));
-    try std.testing.expect(!isPowerOfTwo(6));
-    try std.testing.expect(!isPowerOfTwo(24));
+    try std.testing.expect(!is_power_of_two(0));
+    try std.testing.expect(!is_power_of_two(3));
+    try std.testing.expect(!is_power_of_two(5));
+    try std.testing.expect(!is_power_of_two(6));
+    try std.testing.expect(!is_power_of_two(24));
 }
 
 test "radix2 fft1d basic" {

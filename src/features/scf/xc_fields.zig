@@ -7,8 +7,8 @@ const xc = @import("../xc/xc.zig");
 
 pub const Grid = grid_mod.Grid;
 
-const realToReciprocal = fft_grid.realToReciprocal;
-const reciprocalToReal = fft_grid.reciprocalToReal;
+const real_to_reciprocal = fft_grid.real_to_reciprocal;
+const reciprocal_to_real = fft_grid.reciprocal_to_real;
 
 pub const XcFields = struct {
     vxc: []f64,
@@ -39,7 +39,7 @@ pub const Gradient = struct {
     }
 };
 
-fn allocGradient(alloc: std.mem.Allocator, total: usize) !Gradient {
+fn alloc_gradient(alloc: std.mem.Allocator, total: usize) !Gradient {
     const x = try alloc.alloc(f64, total);
     errdefer alloc.free(x);
     const y = try alloc.alloc(f64, total);
@@ -49,7 +49,7 @@ fn allocGradient(alloc: std.mem.Allocator, total: usize) !Gradient {
     return .{ .x = x, .y = y, .z = z };
 }
 
-fn allocDensityWithCore(
+fn alloc_density_with_core(
     alloc: std.mem.Allocator,
     rho: []const f64,
     rho_core: ?[]const f64,
@@ -62,7 +62,7 @@ fn allocDensityWithCore(
     return density;
 }
 
-fn computeLdaXcFields(
+fn compute_lda_xc_fields(
     alloc: std.mem.Allocator,
     rho: []const f64,
     rho_core: ?[]const f64,
@@ -76,14 +76,14 @@ fn computeLdaXcFields(
     for (rho, 0..) |value, i| {
         const core = if (rho_core) |rc| rc[i] else 0.0;
         const n = value + core;
-        const eval = xc.evalPoint(.lda_pz, n, 0.0);
+        const eval = xc.eval_point(.lda_pz, n, 0.0);
         vxc[i] = eval.df_dn;
         exc[i] = eval.f;
     }
     return .{ .vxc = vxc, .exc = exc };
 }
 
-fn fillGgaXcFields(
+fn fill_gga_xc_fields(
     density: []const f64,
     grad: Gradient,
     xc_func: xc.Functional,
@@ -96,7 +96,7 @@ fn fillGgaXcFields(
         const gy = grad.y[i];
         const gz = grad.z[i];
         const g2 = gx * gx + gy * gy + gz * gz;
-        const eval = xc.evalPoint(xc_func, value, g2);
+        const eval = xc.eval_point(xc_func, value, g2);
         vxc[i] = eval.df_dn;
         exc[i] = eval.f;
         b.x[i] = eval.df_dg2 * gx;
@@ -105,7 +105,7 @@ fn fillGgaXcFields(
     }
 }
 
-fn computeGgaXcFields(
+fn compute_gga_xc_fields(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho: []const f64,
@@ -119,20 +119,20 @@ fn computeGgaXcFields(
     const exc = try alloc.alloc(f64, total);
     errdefer alloc.free(exc);
 
-    const rho_total = try allocDensityWithCore(alloc, rho, rho_core);
+    const rho_total = try alloc_density_with_core(alloc, rho, rho_core);
     defer if (rho_total) |values| alloc.free(values);
 
     const density = rho_total orelse rho;
 
-    var grad = try gradientFromReal(alloc, grid, density, use_rfft);
+    var grad = try gradient_from_real(alloc, grid, density, use_rfft);
     defer grad.deinit(alloc);
 
-    var b = try allocGradient(alloc, total);
+    var b = try alloc_gradient(alloc, total);
     defer b.deinit(alloc);
 
-    fillGgaXcFields(density, grad, xc_func, vxc, exc, &b);
+    fill_gga_xc_fields(density, grad, xc_func, vxc, exc, &b);
 
-    const div = try divergenceFromReal(alloc, grid, b.x, b.y, b.z, use_rfft);
+    const div = try divergence_from_real(alloc, grid, b.x, b.y, b.z, use_rfft);
     defer alloc.free(div);
 
     for (vxc, 0..) |*value, idx| {
@@ -141,7 +141,7 @@ fn computeGgaXcFields(
     return .{ .vxc = vxc, .exc = exc };
 }
 
-fn computeLdaXcFieldsSpin(
+fn compute_lda_xc_fields_spin(
     alloc: std.mem.Allocator,
     rho_up: []const f64,
     rho_down: []const f64,
@@ -159,7 +159,7 @@ fn computeLdaXcFieldsSpin(
         const core_half = if (rho_core) |rc| rc[i] / 2.0 else 0.0;
         const n_up = rho_up[i] + core_half;
         const n_down = rho_down[i] + core_half;
-        const eval = xc.evalPointSpin(.lda_pz, n_up, n_down, 0.0, 0.0, 0.0);
+        const eval = xc.eval_point_spin(.lda_pz, n_up, n_down, 0.0, 0.0, 0.0);
         vxc_up[i] = eval.df_dn_up;
         vxc_down[i] = eval.df_dn_down;
         exc[i] = eval.f;
@@ -177,7 +177,7 @@ const SpinDensity = struct {
     }
 };
 
-fn buildSpinDensityWithCore(
+fn build_spin_density_with_core(
     alloc: std.mem.Allocator,
     rho_up: []const f64,
     rho_down: []const f64,
@@ -197,7 +197,7 @@ fn buildSpinDensityWithCore(
     return .{ .up = density_up, .down = density_down };
 }
 
-fn fillGgaSpinXcFields(
+fn fill_gga_spin_xc_fields(
     density: SpinDensity,
     grad_up: Gradient,
     grad_down: Gradient,
@@ -218,7 +218,7 @@ fn fillGgaSpinXcFields(
         const g2_uu = gux * gux + guy * guy + guz * guz;
         const g2_dd = gdx * gdx + gdy * gdy + gdz * gdz;
         const g2_ud = gux * gdx + guy * gdy + guz * gdz;
-        const eval = xc.evalPointSpin(
+        const eval = xc.eval_point_spin(
             xc_func,
             density.up[i],
             density.down[i],
@@ -239,7 +239,7 @@ fn fillGgaSpinXcFields(
     }
 }
 
-fn computeGgaXcFieldsSpin(
+fn compute_gga_xc_fields_spin(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho_up: []const f64,
@@ -256,22 +256,22 @@ fn computeGgaXcFieldsSpin(
     const exc = try alloc.alloc(f64, total);
     errdefer alloc.free(exc);
 
-    var density = try buildSpinDensityWithCore(alloc, rho_up, rho_down, rho_core);
+    var density = try build_spin_density_with_core(alloc, rho_up, rho_down, rho_core);
     defer density.deinit(alloc);
 
-    var grad_up = try gradientFromReal(alloc, grid, density.up, use_rfft);
+    var grad_up = try gradient_from_real(alloc, grid, density.up, use_rfft);
     defer grad_up.deinit(alloc);
 
-    var grad_down = try gradientFromReal(alloc, grid, density.down, use_rfft);
+    var grad_down = try gradient_from_real(alloc, grid, density.down, use_rfft);
     defer grad_down.deinit(alloc);
 
-    var b_up = try allocGradient(alloc, total);
+    var b_up = try alloc_gradient(alloc, total);
     defer b_up.deinit(alloc);
 
-    var b_down = try allocGradient(alloc, total);
+    var b_down = try alloc_gradient(alloc, total);
     defer b_down.deinit(alloc);
 
-    fillGgaSpinXcFields(
+    fill_gga_spin_xc_fields(
         density,
         grad_up,
         grad_down,
@@ -283,10 +283,10 @@ fn computeGgaXcFieldsSpin(
         &b_down,
     );
 
-    const div_up = try divergenceFromReal(alloc, grid, b_up.x, b_up.y, b_up.z, use_rfft);
+    const div_up = try divergence_from_real(alloc, grid, b_up.x, b_up.y, b_up.z, use_rfft);
     defer alloc.free(div_up);
 
-    const div_down = try divergenceFromReal(
+    const div_down = try divergence_from_real(
         alloc,
         grid,
         b_down.x,
@@ -303,13 +303,13 @@ fn computeGgaXcFieldsSpin(
     return .{ .vxc_up = vxc_up, .vxc_down = vxc_down, .exc = exc };
 }
 
-pub fn gradientFromReal(
+pub fn gradient_from_real(
     alloc: std.mem.Allocator,
     grid: Grid,
     values: []const f64,
     use_rfft: bool,
 ) !Gradient {
-    const values_g = try realToReciprocal(alloc, grid, values, use_rfft);
+    const values_g = try real_to_reciprocal(alloc, grid, values, use_rfft);
     defer alloc.free(values_g);
 
     const total = grid.count();
@@ -329,16 +329,16 @@ pub fn gradientFromReal(
         gz_g[g.idx] = math.complex.scale(i_rho, g.gvec.z);
     }
 
-    const gx = try reciprocalToReal(alloc, grid, gx_g);
-    const gy = try reciprocalToReal(alloc, grid, gy_g);
-    const gz = try reciprocalToReal(alloc, grid, gz_g);
+    const gx = try reciprocal_to_real(alloc, grid, gx_g);
+    const gy = try reciprocal_to_real(alloc, grid, gy_g);
+    const gz = try reciprocal_to_real(alloc, grid, gz_g);
     alloc.free(gx_g);
     alloc.free(gy_g);
     alloc.free(gz_g);
     return .{ .x = gx, .y = gy, .z = gz };
 }
 
-pub fn divergenceFromReal(
+pub fn divergence_from_real(
     alloc: std.mem.Allocator,
     grid: Grid,
     bx: []const f64,
@@ -346,13 +346,13 @@ pub fn divergenceFromReal(
     bz: []const f64,
     use_rfft: bool,
 ) ![]f64 {
-    const bx_g = try realToReciprocal(alloc, grid, bx, use_rfft);
+    const bx_g = try real_to_reciprocal(alloc, grid, bx, use_rfft);
     defer alloc.free(bx_g);
 
-    const by_g = try realToReciprocal(alloc, grid, by, use_rfft);
+    const by_g = try real_to_reciprocal(alloc, grid, by, use_rfft);
     defer alloc.free(by_g);
 
-    const bz_g = try realToReciprocal(alloc, grid, bz, use_rfft);
+    const bz_g = try real_to_reciprocal(alloc, grid, bz, use_rfft);
     defer alloc.free(bz_g);
 
     const total = grid.count();
@@ -369,12 +369,12 @@ pub fn divergenceFromReal(
         div_g[g.idx] = math.complex.mul(sum, i_unit);
     }
 
-    const div = try reciprocalToReal(alloc, grid, div_g);
+    const div = try reciprocal_to_real(alloc, grid, div_g);
     alloc.free(div_g);
     return div;
 }
 
-pub fn computeXcFields(
+pub fn compute_xc_fields(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho: []const f64,
@@ -382,13 +382,13 @@ pub fn computeXcFields(
     use_rfft: bool,
     xc_func: xc.Functional,
 ) !XcFields {
-    if (xc_func == .lda_pz) return computeLdaXcFields(alloc, rho, rho_core);
-    return computeGgaXcFields(alloc, grid, rho, rho_core, use_rfft, xc_func);
+    if (xc_func == .lda_pz) return compute_lda_xc_fields(alloc, rho, rho_core);
+    return compute_gga_xc_fields(alloc, grid, rho, rho_core, use_rfft, xc_func);
 }
 
 /// Compute spin-polarized XC fields (V_xc_up, V_xc_down, exc).
 /// NLCC core density is split equally between up and down channels.
-pub fn computeXcFieldsSpin(
+pub fn compute_xc_fields_spin(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho_up: []const f64,
@@ -397,6 +397,6 @@ pub fn computeXcFieldsSpin(
     use_rfft: bool,
     xc_func: xc.Functional,
 ) !XcFieldsSpin {
-    if (xc_func == .lda_pz) return computeLdaXcFieldsSpin(alloc, rho_up, rho_down, rho_core);
-    return computeGgaXcFieldsSpin(alloc, grid, rho_up, rho_down, rho_core, use_rfft, xc_func);
+    if (xc_func == .lda_pz) return compute_lda_xc_fields_spin(alloc, rho_up, rho_down, rho_core);
+    return compute_gga_xc_fields_spin(alloc, grid, rho_up, rho_down, rho_core, use_rfft, xc_func);
 }

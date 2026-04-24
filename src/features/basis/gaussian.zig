@@ -30,13 +30,13 @@ pub const ContractedShell = struct {
     primitives: []const PrimitiveGaussian,
 
     /// Number of primitives in the contraction.
-    pub fn numPrimitives(self: ContractedShell) usize {
+    pub fn num_primitives(self: ContractedShell) usize {
         return self.primitives.len;
     }
 
     /// Number of Cartesian functions in this shell: (l+1)(l+2)/2.
-    pub fn numCartesianFunctions(self: ContractedShell) usize {
-        return numCartesian(self.l);
+    pub fn num_cartesian_functions(self: ContractedShell) usize {
+        return num_cartesian(self.l);
     }
 };
 
@@ -53,7 +53,7 @@ pub const AngularMomentum = struct {
 };
 
 /// Number of Cartesian components for angular momentum l: (l+1)(l+2)/2.
-pub fn numCartesian(l: u32) usize {
+pub fn num_cartesian(l: u32) usize {
     return @as(usize, (l + 1) * (l + 2) / 2);
 }
 
@@ -62,7 +62,7 @@ pub fn numCartesian(l: u32) usize {
 /// s: (0,0,0)
 /// p: (1,0,0), (0,1,0), (0,0,1)
 /// d: (2,0,0), (1,1,0), (1,0,1), (0,2,0), (0,1,1), (0,0,2)
-pub fn cartesianExponents(l: u32) [MAX_CART]AngularMomentum {
+pub fn cartesian_exponents(l: u32) [MAX_CART]AngularMomentum {
     var result: [MAX_CART]AngularMomentum = undefined;
     var idx: usize = 0;
     var ax: u32 = l;
@@ -108,7 +108,7 @@ pub const BasisFunction = struct {
 
 /// Normalization constant for a primitive s-type Gaussian.
 /// N = (2α/π)^(3/4)
-pub fn normalizationS(alpha: f64) f64 {
+pub fn normalization_s(alpha: f64) f64 {
     return std.math.pow(f64, 2.0 * alpha / std.math.pi, 0.75);
 }
 
@@ -122,13 +122,13 @@ pub fn normalization(alpha: f64, ax: u32, ay: u32, az: u32) f64 {
     const l_total = ax + ay + az;
     const s_norm = std.math.pow(f64, 2.0 * alpha / std.math.pi, 0.75);
     const angular_factor = std.math.pow(f64, 4.0 * alpha, @as(f64, @floatFromInt(l_total)) / 2.0);
-    const df = doubleFactorial(ax) * doubleFactorial(ay) * doubleFactorial(az);
+    const df = double_factorial(ax) * double_factorial(ay) * double_factorial(az);
     return s_norm * angular_factor / @sqrt(df);
 }
 
 /// Compute (2n-1)!! = 1 × 3 × 5 × ... × (2n-1).
-/// Convention: (-1)!! = 1, (0-1)!! = 1, so doubleFactorial(0) = 1.
-pub fn doubleFactorial(n: u32) f64 {
+/// Convention: (-1)!! = 1, (0-1)!! = 1, so double_factorial(0) = 1.
+pub fn double_factorial(n: u32) f64 {
     if (n == 0) return 1.0;
     var result: f64 = 1.0;
     var k: u32 = 1;
@@ -141,7 +141,7 @@ pub fn doubleFactorial(n: u32) f64 {
 /// Compute the overlap between two primitive s-type Gaussians
 /// centered at A and B with exponents a and b.
 /// S = (π / (a+b))^(3/2) × exp(-a×b/(a+b) × |A-B|²)
-pub fn primitiveOverlapSS(a: f64, center_a: math.Vec3, b: f64, center_b: math.Vec3) f64 {
+pub fn primitive_overlap_ss(a: f64, center_a: math.Vec3, b: f64, center_b: math.Vec3) f64 {
     const p = a + b;
     const diff = math.Vec3.sub(center_a, center_b);
     const r2 = math.Vec3.dot(diff, diff);
@@ -152,15 +152,15 @@ pub fn primitiveOverlapSS(a: f64, center_a: math.Vec3, b: f64, center_b: math.Ve
 test "normalization s-type" {
     const testing = std.testing;
     // For alpha=1.0: N = (2/π)^(3/4) ≈ 0.71271
-    const n = normalizationS(1.0);
+    const n = normalization_s(1.0);
     try testing.expectApproxEqAbs(0.71270547036, n, 1e-6);
 }
 
-test "normalization general s equals normalizationS" {
+test "normalization general s equals normalization_s" {
     const testing = std.testing;
-    // normalization(alpha, 0,0,0) should equal normalizationS(alpha)
+    // normalization(alpha, 0,0,0) should equal normalization_s(alpha)
     const alpha = 1.5;
-    const ns = normalizationS(alpha);
+    const ns = normalization_s(alpha);
     const ng = normalization(alpha, 0, 0, 0);
     try testing.expectApproxEqAbs(ns, ng, 1e-12);
 }
@@ -174,23 +174,23 @@ test "normalization p-type" {
     try testing.expectApproxEqAbs(expected, n, 1e-10);
 }
 
-test "cartesianExponents s/p/d" {
+test "cartesian_exponents s/p/d" {
     const testing = std.testing;
     // s: 1 component
-    try testing.expectEqual(@as(usize, 1), numCartesian(0));
+    try testing.expectEqual(@as(usize, 1), num_cartesian(0));
     // p: 3 components
-    try testing.expectEqual(@as(usize, 3), numCartesian(1));
+    try testing.expectEqual(@as(usize, 3), num_cartesian(1));
     // d: 6 components (Cartesian)
-    try testing.expectEqual(@as(usize, 6), numCartesian(2));
+    try testing.expectEqual(@as(usize, 6), num_cartesian(2));
 
     // Check s exponents
-    const s_exp = cartesianExponents(0);
+    const s_exp = cartesian_exponents(0);
     try testing.expectEqual(@as(u32, 0), s_exp[0].x);
     try testing.expectEqual(@as(u32, 0), s_exp[0].y);
     try testing.expectEqual(@as(u32, 0), s_exp[0].z);
 
     // Check p exponents: should be (1,0,0), (0,1,0), (0,0,1)
-    const p_exp = cartesianExponents(1);
+    const p_exp = cartesian_exponents(1);
     try testing.expectEqual(@as(u32, 1), p_exp[0].x);
     try testing.expectEqual(@as(u32, 0), p_exp[1].x);
     try testing.expectEqual(@as(u32, 0), p_exp[2].x);
@@ -199,16 +199,16 @@ test "cartesianExponents s/p/d" {
     try testing.expectEqual(@as(u32, 1), p_exp[2].z);
 }
 
-test "doubleFactorial" {
+test "double_factorial" {
     const testing = std.testing;
     // (2*0-1)!! = (-1)!! = 1 by convention
-    try testing.expectApproxEqAbs(@as(f64, 1.0), doubleFactorial(0), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), double_factorial(0), 1e-12);
     // (2*1-1)!! = 1!! = 1
-    try testing.expectApproxEqAbs(@as(f64, 1.0), doubleFactorial(1), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 1.0), double_factorial(1), 1e-12);
     // (2*2-1)!! = 3!! = 1*3 = 3
-    try testing.expectApproxEqAbs(@as(f64, 3.0), doubleFactorial(2), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 3.0), double_factorial(2), 1e-12);
     // (2*3-1)!! = 5!! = 1*3*5 = 15
-    try testing.expectApproxEqAbs(@as(f64, 15.0), doubleFactorial(3), 1e-12);
+    try testing.expectApproxEqAbs(@as(f64, 15.0), double_factorial(3), 1e-12);
 }
 
 test "primitive overlap identical" {
@@ -216,6 +216,6 @@ test "primitive overlap identical" {
     const center = math.Vec3{ .x = 0.0, .y = 0.0, .z = 0.0 };
     // Two identical s primitives with alpha=1.0 at origin
     // S = (π/2)^(3/2) ≈ 2.4674
-    const s = primitiveOverlapSS(1.0, center, 1.0, center);
+    const s = primitive_overlap_ss(1.0, center, 1.0, center);
     try testing.expectApproxEqAbs(std.math.pow(f64, std.math.pi / 2.0, 1.5), s, 1e-10);
 }

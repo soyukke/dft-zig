@@ -192,6 +192,84 @@ const QuartetNormTables = struct {
     norm_d: []const f64,
 };
 
+const PreparedQuartetPairs = struct {
+    n_bra: usize,
+    n_ket: usize,
+};
+
+fn fill_quartet_norm_tables(
+    setup: QuartetSetup,
+    shell_a: ContractedShell,
+    shell_b: ContractedShell,
+    shell_c: ContractedShell,
+    shell_d: ContractedShell,
+    norm_a: []f64,
+    norm_b: []f64,
+    norm_c: []f64,
+    norm_d: []f64,
+    max_norm_a: []f64,
+    max_norm_b: []f64,
+    max_norm_c: []f64,
+    max_norm_d: []f64,
+) void {
+    fill_normalization_table_and_max(shell_a, setup.na, &setup.cart_a, norm_a, max_norm_a);
+    fill_normalization_table_and_max(shell_b, setup.nb, &setup.cart_b, norm_b, max_norm_b);
+    fill_normalization_table_and_max(shell_c, setup.nc, &setup.cart_c, norm_c, max_norm_c);
+    fill_normalization_table_and_max(shell_d, setup.nd, &setup.cart_d, norm_d, max_norm_d);
+}
+
+fn prepare_quartet_pairs(
+    setup: QuartetSetup,
+    shell_a: ContractedShell,
+    shell_b: ContractedShell,
+    shell_c: ContractedShell,
+    shell_d: ContractedShell,
+    norm_a: []f64,
+    norm_b: []f64,
+    norm_c: []f64,
+    norm_d: []f64,
+    max_norm_a: []f64,
+    max_norm_b: []f64,
+    max_norm_c: []f64,
+    max_norm_d: []f64,
+    bra_pairs: []BraPair,
+    ket_pairs: []KetPair,
+) PreparedQuartetPairs {
+    fill_quartet_norm_tables(
+        setup,
+        shell_a,
+        shell_b,
+        shell_c,
+        shell_d,
+        norm_a,
+        norm_b,
+        norm_c,
+        norm_d,
+        max_norm_a,
+        max_norm_b,
+        max_norm_c,
+        max_norm_d,
+    );
+    return .{
+        .n_bra = prepare_bra_pairs(
+            shell_a,
+            shell_b,
+            max_norm_a[0..shell_a.primitives.len],
+            max_norm_b[0..shell_b.primitives.len],
+            setup.r2_ab,
+            bra_pairs,
+        ),
+        .n_ket = prepare_ket_pairs(
+            shell_c,
+            shell_d,
+            max_norm_c[0..shell_c.primitives.len],
+            max_norm_d[0..shell_d.primitives.len],
+            setup.r2_cd,
+            ket_pairs,
+        ),
+    };
+}
+
 // ============================================================================
 // 2D Recurrence (per axis, per Rys root)
 // ============================================================================
@@ -223,7 +301,7 @@ const QuartetNormTables = struct {
 ///   b01: array[nroots] of 0.5/akl * (1 - aij/(aij+akl)*t)
 ///   b00: array[nroots] of 0.5/(aij+akl) * t
 ///   g: output table of size nroots * dim_ij * dim_kl
-fn buildG2d(
+fn build_g2d(
     nroots: usize,
     dim_ij: usize,
     dim_kl: usize,
@@ -288,7 +366,7 @@ fn buildG2d(
 
 /// Build the 2D recurrence table for the z-axis, which includes the
 /// Rys weight * prefactor in the base case.
-fn buildG2dWeighted(
+fn build_g2d_weighted(
     nroots: usize,
     dim_ij: usize,
     dim_kl: usize,
@@ -347,7 +425,7 @@ fn buildG2dWeighted(
     }
 }
 
-fn initQuartetSetup(
+fn init_quartet_setup(
     shell_a: ContractedShell,
     shell_b: ContractedShell,
     shell_c: ContractedShell,
@@ -360,10 +438,10 @@ fn initQuartetSetup(
     const lc: usize = @intCast(shell_c.l);
     const ld: usize = @intCast(shell_d.l);
 
-    const na = basis_mod.numCartesian(shell_a.l);
-    const nb = basis_mod.numCartesian(shell_b.l);
-    const nc = basis_mod.numCartesian(shell_c.l);
-    const nd = basis_mod.numCartesian(shell_d.l);
+    const na = basis_mod.num_cartesian(shell_a.l);
+    const nb = basis_mod.num_cartesian(shell_b.l);
+    const nc = basis_mod.num_cartesian(shell_c.l);
+    const nd = basis_mod.num_cartesian(shell_d.l);
     const total_out = na * nb * nc * nd;
     std.debug.assert(output.len >= total_out);
     @memset(output[0..total_out], 0.0);
@@ -387,23 +465,15 @@ fn initQuartetSetup(
         .nc = nc,
         .nd = nd,
         .total_out = total_out,
-        .cart_a = basis_mod.cartesianExponents(shell_a.l),
-        .cart_b = basis_mod.cartesianExponents(shell_b.l),
-        .cart_c = basis_mod.cartesianExponents(shell_c.l),
-        .cart_d = basis_mod.cartesianExponents(shell_d.l),
+        .cart_a = basis_mod.cartesian_exponents(shell_a.l),
+        .cart_b = basis_mod.cartesian_exponents(shell_b.l),
+        .cart_c = basis_mod.cartesian_exponents(shell_c.l),
+        .cart_d = basis_mod.cartesian_exponents(shell_d.l),
         .dim_ij = dim_ij,
         .dim_kl = dim_kl,
         .nroots = nroots,
-        .ab = .{
-            shell_a.center.x - shell_b.center.x,
-            shell_a.center.y - shell_b.center.y,
-            shell_a.center.z - shell_b.center.z,
-        },
-        .cd = .{
-            shell_c.center.x - shell_d.center.x,
-            shell_c.center.y - shell_d.center.y,
-            shell_c.center.z - shell_d.center.z,
-        },
+        .ab = .{ diff_ab.x, diff_ab.y, diff_ab.z },
+        .cd = .{ diff_cd.x, diff_cd.y, diff_cd.z },
         .r2_ab = math.Vec3.dot(diff_ab, diff_ab),
         .r2_cd = math.Vec3.dot(diff_cd, diff_cd),
         .a_hr_count = la + 1 + a_order_extra,
@@ -420,7 +490,7 @@ fn initQuartetSetup(
     };
 }
 
-fn fillNormalizationTable(
+fn fill_normalization_table(
     shell: ContractedShell,
     n_cart: usize,
     cart: *const [MAX_CART]AngularMomentum,
@@ -434,7 +504,7 @@ fn fillNormalizationTable(
     }
 }
 
-fn fillNormalizationTableAndMax(
+fn fill_normalization_table_and_max(
     shell: ContractedShell,
     n_cart: usize,
     cart: *const [MAX_CART]AngularMomentum,
@@ -453,7 +523,7 @@ fn fillNormalizationTableAndMax(
     }
 }
 
-fn prepareBraPairs(
+fn prepare_bra_pairs(
     shell_a: ContractedShell,
     shell_b: ContractedShell,
     max_norm_a: []const f64,
@@ -493,7 +563,7 @@ fn prepareBraPairs(
     return n_bra;
 }
 
-fn prepareKetPairs(
+fn prepare_ket_pairs(
     shell_c: ContractedShell,
     shell_d: ContractedShell,
     max_norm_c: []const f64,
@@ -532,7 +602,33 @@ fn prepareKetPairs(
     return n_ket;
 }
 
-fn preparePrimitiveQuartet(
+fn fill_primitive_quartet_root_data(
+    workspace: *RecurrenceWorkspace,
+    nroots: usize,
+    pq: f64,
+    bra: BraPair,
+    ket: KetPair,
+    wx: f64,
+    wy: f64,
+    wz: f64,
+    prefactor: f64,
+) void {
+    for (0..nroots) |r| {
+        const t2 = workspace.rys_roots[r];
+        workspace.b00_arr[r] = 0.5 / pq * t2;
+        workspace.b10_arr[r] = bra.inv_2p * (1.0 - ket.q / pq * t2);
+        workspace.b01_arr[r] = ket.inv_2q * (1.0 - bra.p / pq * t2);
+        workspace.c00x[r] = bra.pax + (wx - bra.px) * t2;
+        workspace.c00y[r] = bra.pay + (wy - bra.py) * t2;
+        workspace.c00z[r] = bra.paz + (wz - bra.pz) * t2;
+        workspace.c0px[r] = ket.qcx + (wx - ket.qx) * t2;
+        workspace.c0py[r] = ket.qcy + (wy - ket.qy) * t2;
+        workspace.c0pz[r] = ket.qcz + (wz - ket.qz) * t2;
+        workspace.w_pref[r] = workspace.rys_weights[r] * prefactor;
+    }
+}
+
+fn prepare_primitive_quartet(
     workspace: *RecurrenceWorkspace,
     setup: QuartetSetup,
     bra: BraPair,
@@ -554,28 +650,16 @@ fn preparePrimitiveQuartet(
     const dpqz = bra.pz - ket.qz;
     const rho = bra.p * ket.q / pq;
 
-    rys_roots_mod.rysRoots(
+    rys_roots_mod.rys_roots(
         setup.nroots,
         rho * (dpqx * dpqx + dpqy * dpqy + dpqz * dpqz),
         &workspace.rys_roots,
         &workspace.rys_weights,
     );
-    for (0..setup.nroots) |r| {
-        const t2 = workspace.rys_roots[r];
-        workspace.b00_arr[r] = 0.5 / pq * t2;
-        workspace.b10_arr[r] = bra.inv_2p * (1.0 - ket.q / pq * t2);
-        workspace.b01_arr[r] = ket.inv_2q * (1.0 - bra.p / pq * t2);
-        workspace.c00x[r] = bra.pax + (wx - bra.px) * t2;
-        workspace.c00y[r] = bra.pay + (wy - bra.py) * t2;
-        workspace.c00z[r] = bra.paz + (wz - bra.pz) * t2;
-        workspace.c0px[r] = ket.qcx + (wx - ket.qx) * t2;
-        workspace.c0py[r] = ket.qcy + (wy - ket.qy) * t2;
-        workspace.c0pz[r] = ket.qcz + (wz - ket.qz) * t2;
-        workspace.w_pref[r] = workspace.rys_weights[r] * prefactor;
-    }
+    fill_primitive_quartet_root_data(workspace, setup.nroots, pq, bra, ket, wx, wy, wz, prefactor);
 
     const g_axis_size = setup.nroots * setup.dim_ij * setup.dim_kl;
-    buildG2d(
+    build_g2d(
         setup.nroots,
         setup.dim_ij,
         setup.dim_kl,
@@ -586,7 +670,7 @@ fn preparePrimitiveQuartet(
         &workspace.b00_arr,
         workspace.gx[0..g_axis_size],
     );
-    buildG2d(
+    build_g2d(
         setup.nroots,
         setup.dim_ij,
         setup.dim_kl,
@@ -597,7 +681,7 @@ fn preparePrimitiveQuartet(
         &workspace.b00_arr,
         workspace.gy[0..g_axis_size],
     );
-    buildG2dWeighted(
+    build_g2d_weighted(
         setup.nroots,
         setup.dim_ij,
         setup.dim_kl,
@@ -612,7 +696,7 @@ fn preparePrimitiveQuartet(
     return coeff_abcd;
 }
 
-fn buildHrAxis(
+fn build_hr_axis(
     setup: QuartetSetup,
     g_axis: []const f64,
     ket_hr: []f64,
@@ -667,7 +751,7 @@ fn buildHrAxis(
     }
 }
 
-fn buildQuartetHrTables(
+fn build_quartet_hr_tables(
     setup: QuartetSetup,
     workspace: *RecurrenceWorkspace,
     ket_hr_x: []f64,
@@ -680,7 +764,7 @@ fn buildQuartetHrTables(
 ) void {
     const g_axis_size = setup.nroots * setup.dim_ij * setup.dim_kl;
     const g2d_base = root * setup.dim_ij * setup.dim_kl;
-    buildHrAxis(
+    build_hr_axis(
         setup,
         workspace.gx[0..g_axis_size],
         ket_hr_x,
@@ -689,7 +773,7 @@ fn buildQuartetHrTables(
         setup.ab[0],
         setup.cd[0],
     );
-    buildHrAxis(
+    build_hr_axis(
         setup,
         workspace.gy[0..g_axis_size],
         ket_hr_y,
@@ -698,7 +782,7 @@ fn buildQuartetHrTables(
         setup.ab[1],
         setup.cd[1],
     );
-    buildHrAxis(
+    build_hr_axis(
         setup,
         workspace.gz[0..g_axis_size],
         ket_hr_z,
@@ -709,7 +793,7 @@ fn buildQuartetHrTables(
     );
 }
 
-fn accumulateEnergyRootContribution(
+fn accumulate_energy_root_contribution(
     setup: QuartetSetup,
     prim_eri: []f64,
     hr4d_x: []const f64,
@@ -762,7 +846,62 @@ fn accumulateEnergyRootContribution(
     }
 }
 
-fn accumulateDerivativeRootContribution(
+fn accumulate_derivative_components(
+    alpha_a: f64,
+    setup: QuartetSetup,
+    prim_deriv_x: []f64,
+    prim_deriv_y: []f64,
+    prim_deriv_z: []f64,
+    idx: usize,
+    gx_idx: usize,
+    gy_idx: usize,
+    gz_idx: usize,
+    exps_x: [4]usize,
+    exps_y: [4]usize,
+    exps_z: [4]usize,
+    hr4d_x: []const f64,
+    hr4d_y: []const f64,
+    hr4d_z: []const f64,
+) void {
+    const gx_val = hr4d_x[gx_idx];
+    const gy_val = hr4d_y[gy_idx];
+    const gz_val = hr4d_z[gz_idx];
+    prim_deriv_x[idx] += derivative_axis_contribution(
+        alpha_a,
+        exps_x[0],
+        exps_x[1],
+        exps_x[2],
+        exps_x[3],
+        gy_val,
+        gz_val,
+        hr4d_x,
+        setup,
+    );
+    prim_deriv_y[idx] += derivative_axis_contribution(
+        alpha_a,
+        exps_y[0],
+        exps_y[1],
+        exps_y[2],
+        exps_y[3],
+        gx_val,
+        gz_val,
+        hr4d_y,
+        setup,
+    );
+    prim_deriv_z[idx] += derivative_axis_contribution(
+        alpha_a,
+        exps_z[0],
+        exps_z[1],
+        exps_z[2],
+        exps_z[3],
+        gx_val,
+        gy_val,
+        hr4d_z,
+        setup,
+    );
+}
+
+fn accumulate_derivative_root_contribution(
     setup: QuartetSetup,
     alpha_a: f64,
     prim_deriv_x: []f64,
@@ -804,41 +943,22 @@ fn accumulateDerivativeRootContribution(
                     const gz_idx = az * setup.hr4d_a_stride +
                         bz * setup.hr4d_b_stride +
                         cz * setup.hr4d_c_stride + dz;
-                    const gx_val = hr4d_x[gx_idx];
-                    const gy_val = hr4d_y[gy_idx];
-                    const gz_val = hr4d_z[gz_idx];
-                    prim_deriv_x[idx] += derivativeAxisContribution(
+                    accumulate_derivative_components(
                         alpha_a,
-                        ax,
-                        bx,
-                        cx,
-                        dx,
-                        gy_val,
-                        gz_val,
+                        setup,
+                        prim_deriv_x,
+                        prim_deriv_y,
+                        prim_deriv_z,
+                        idx,
+                        gx_idx,
+                        gy_idx,
+                        gz_idx,
+                        .{ ax, bx, cx, dx },
+                        .{ ay, by, cy, dy },
+                        .{ az, bz, cz, dz },
                         hr4d_x,
-                        setup,
-                    );
-                    prim_deriv_y[idx] += derivativeAxisContribution(
-                        alpha_a,
-                        ay,
-                        by,
-                        cy,
-                        dy,
-                        gx_val,
-                        gz_val,
                         hr4d_y,
-                        setup,
-                    );
-                    prim_deriv_z[idx] += derivativeAxisContribution(
-                        alpha_a,
-                        az,
-                        bz,
-                        cz,
-                        dz,
-                        gx_val,
-                        gy_val,
                         hr4d_z,
-                        setup,
                     );
                 }
             }
@@ -846,7 +966,7 @@ fn accumulateDerivativeRootContribution(
     }
 }
 
-fn derivativeAxisContribution(
+fn derivative_axis_contribution(
     alpha_a: f64,
     a_exp: usize,
     b_exp: usize,
@@ -871,7 +991,7 @@ fn derivativeAxisContribution(
     return value;
 }
 
-fn contractEnergyPrimitive(
+fn contract_energy_primitive(
     setup: QuartetSetup,
     coeff_abcd: f64,
     bra: BraPair,
@@ -898,7 +1018,7 @@ fn contractEnergyPrimitive(
     }
 }
 
-fn contractDerivativePrimitive(
+fn contract_derivative_primitive(
     setup: QuartetSetup,
     coeff_abcd: f64,
     bra: BraPair,
@@ -932,7 +1052,7 @@ fn contractDerivativePrimitive(
     }
 }
 
-fn accumulateEnergyPrimitivePair(
+fn accumulate_energy_primitive_pair(
     workspace: *EnergyWorkspace,
     setup: QuartetSetup,
     bra: BraPair,
@@ -941,10 +1061,10 @@ fn accumulateEnergyPrimitivePair(
     output: []f64,
 ) void {
     const coeff_abcd =
-        preparePrimitiveQuartet(&workspace.recurrence, setup, bra, ket) orelse return;
+        prepare_primitive_quartet(&workspace.recurrence, setup, bra, ket) orelse return;
     @memset(workspace.prim_eri[0..setup.total_out], 0.0);
     for (0..setup.nroots) |root| {
-        buildQuartetHrTables(
+        build_quartet_hr_tables(
             setup,
             &workspace.recurrence,
             workspace.ket_hr_x[0..setup.ket_size],
@@ -955,7 +1075,7 @@ fn accumulateEnergyPrimitivePair(
             workspace.hr4d_z[0..setup.hr4d_size],
             root,
         );
-        accumulateEnergyRootContribution(
+        accumulate_energy_root_contribution(
             setup,
             workspace.prim_eri[0..setup.total_out],
             workspace.hr4d_x[0..setup.hr4d_size],
@@ -963,7 +1083,7 @@ fn accumulateEnergyPrimitivePair(
             workspace.hr4d_z[0..setup.hr4d_size],
         );
     }
-    contractEnergyPrimitive(
+    contract_energy_primitive(
         setup,
         coeff_abcd,
         bra,
@@ -974,7 +1094,7 @@ fn accumulateEnergyPrimitivePair(
     );
 }
 
-fn accumulateDerivativePrimitivePair(
+fn accumulate_derivative_primitive_pair(
     workspace: *DerivativeWorkspace,
     setup: QuartetSetup,
     bra: BraPair,
@@ -985,12 +1105,12 @@ fn accumulateDerivativePrimitivePair(
     deriv_z: []f64,
 ) void {
     const coeff_abcd =
-        preparePrimitiveQuartet(&workspace.recurrence, setup, bra, ket) orelse return;
+        prepare_primitive_quartet(&workspace.recurrence, setup, bra, ket) orelse return;
     @memset(workspace.prim_deriv_x[0..setup.total_out], 0.0);
     @memset(workspace.prim_deriv_y[0..setup.total_out], 0.0);
     @memset(workspace.prim_deriv_z[0..setup.total_out], 0.0);
     for (0..setup.nroots) |root| {
-        buildQuartetHrTables(
+        build_quartet_hr_tables(
             setup,
             &workspace.recurrence,
             workspace.ket_hr_x[0..setup.ket_size],
@@ -1001,7 +1121,7 @@ fn accumulateDerivativePrimitivePair(
             workspace.hr4d_z[0..setup.hr4d_size],
             root,
         );
-        accumulateDerivativeRootContribution(
+        accumulate_derivative_root_contribution(
             setup,
             bra.alpha_a,
             workspace.prim_deriv_x[0..setup.total_out],
@@ -1012,7 +1132,7 @@ fn accumulateDerivativePrimitivePair(
             workspace.hr4d_z[0..setup.hr4d_size],
         );
     }
-    contractDerivativePrimitive(
+    contract_derivative_primitive(
         setup,
         coeff_abcd,
         bra,
@@ -1048,14 +1168,14 @@ fn accumulateDerivativePrimitivePair(
 /// Output layout: output[ia * nb*nc*nd + ib * nc*nd + ic * nd + id]
 ///
 /// Returns the number of ERIs computed (na * nb * nc * nd).
-pub fn contractedShellQuartetERI(
+pub fn contracted_shell_quartet_eri(
     shell_a: ContractedShell,
     shell_b: ContractedShell,
     shell_c: ContractedShell,
     shell_d: ContractedShell,
     output: []f64,
 ) usize {
-    const setup = initQuartetSetup(shell_a, shell_b, shell_c, shell_d, output, 0);
+    const setup = init_quartet_setup(shell_a, shell_b, shell_c, shell_d, output, 0);
     var norm_a: [MAX_NORM_TABLE]f64 = undefined;
     var norm_b: [MAX_NORM_TABLE]f64 = undefined;
     var norm_c: [MAX_NORM_TABLE]f64 = undefined;
@@ -1068,25 +1188,21 @@ pub fn contractedShellQuartetERI(
     var ket_pairs: [MAX_PRIM_PAIRS]KetPair = undefined;
     var workspace: EnergyWorkspace = undefined;
 
-    fillNormalizationTableAndMax(shell_a, setup.na, &setup.cart_a, norm_a[0..], max_norm_a[0..]);
-    fillNormalizationTableAndMax(shell_b, setup.nb, &setup.cart_b, norm_b[0..], max_norm_b[0..]);
-    fillNormalizationTableAndMax(shell_c, setup.nc, &setup.cart_c, norm_c[0..], max_norm_c[0..]);
-    fillNormalizationTableAndMax(shell_d, setup.nd, &setup.cart_d, norm_d[0..], max_norm_d[0..]);
-
-    const n_bra = prepareBraPairs(
+    const pairs = prepare_quartet_pairs(
+        setup,
         shell_a,
         shell_b,
-        max_norm_a[0..shell_a.primitives.len],
-        max_norm_b[0..shell_b.primitives.len],
-        setup.r2_ab,
-        bra_pairs[0..],
-    );
-    const n_ket = prepareKetPairs(
         shell_c,
         shell_d,
-        max_norm_c[0..shell_c.primitives.len],
-        max_norm_d[0..shell_d.primitives.len],
-        setup.r2_cd,
+        norm_a[0..],
+        norm_b[0..],
+        norm_c[0..],
+        norm_d[0..],
+        max_norm_a[0..],
+        max_norm_b[0..],
+        max_norm_c[0..],
+        max_norm_d[0..],
+        bra_pairs[0..],
         ket_pairs[0..],
     );
     const norms = QuartetNormTables{
@@ -1095,9 +1211,9 @@ pub fn contractedShellQuartetERI(
         .norm_c = norm_c[0..],
         .norm_d = norm_d[0..],
     };
-    for (bra_pairs[0..n_bra]) |bra| {
-        for (ket_pairs[0..n_ket]) |ket| {
-            accumulateEnergyPrimitivePair(&workspace, setup, bra, ket, norms, output);
+    for (bra_pairs[0..pairs.n_bra]) |bra| {
+        for (ket_pairs[0..pairs.n_ket]) |ket| {
+            accumulate_energy_primitive_pair(&workspace, setup, bra, ket, norms, output);
         }
     }
     return setup.total_out;
@@ -1123,7 +1239,7 @@ pub fn contractedShellQuartetERI(
 /// differentiation formula can be applied inside the primitive loop.
 ///
 /// Returns the number of derivative elements per component (na * nb * nc * nd).
-pub fn contractedShellQuartetEriDeriv(
+pub fn contracted_shell_quartet_eri_deriv(
     shell_a: ContractedShell,
     shell_b: ContractedShell,
     shell_c: ContractedShell,
@@ -1132,7 +1248,7 @@ pub fn contractedShellQuartetEriDeriv(
     deriv_y: []f64,
     deriv_z: []f64,
 ) usize {
-    const setup = initQuartetSetup(shell_a, shell_b, shell_c, shell_d, deriv_x, 1);
+    const setup = init_quartet_setup(shell_a, shell_b, shell_c, shell_d, deriv_x, 1);
     std.debug.assert(deriv_y.len >= setup.total_out);
     std.debug.assert(deriv_z.len >= setup.total_out);
     @memset(deriv_y[0..setup.total_out], 0.0);
@@ -1150,25 +1266,21 @@ pub fn contractedShellQuartetEriDeriv(
     var ket_pairs: [MAX_PRIM_PAIRS]KetPair = undefined;
     var workspace: DerivativeWorkspace = undefined;
 
-    fillNormalizationTableAndMax(shell_a, setup.na, &setup.cart_a, norm_a[0..], max_norm_a[0..]);
-    fillNormalizationTableAndMax(shell_b, setup.nb, &setup.cart_b, norm_b[0..], max_norm_b[0..]);
-    fillNormalizationTableAndMax(shell_c, setup.nc, &setup.cart_c, norm_c[0..], max_norm_c[0..]);
-    fillNormalizationTableAndMax(shell_d, setup.nd, &setup.cart_d, norm_d[0..], max_norm_d[0..]);
-
-    const n_bra = prepareBraPairs(
+    const pairs = prepare_quartet_pairs(
+        setup,
         shell_a,
         shell_b,
-        max_norm_a[0..shell_a.primitives.len],
-        max_norm_b[0..shell_b.primitives.len],
-        setup.r2_ab,
-        bra_pairs[0..],
-    );
-    const n_ket = prepareKetPairs(
         shell_c,
         shell_d,
-        max_norm_c[0..shell_c.primitives.len],
-        max_norm_d[0..shell_d.primitives.len],
-        setup.r2_cd,
+        norm_a[0..],
+        norm_b[0..],
+        norm_c[0..],
+        norm_d[0..],
+        max_norm_a[0..],
+        max_norm_b[0..],
+        max_norm_c[0..],
+        max_norm_d[0..],
+        bra_pairs[0..],
         ket_pairs[0..],
     );
     const norms = QuartetNormTables{
@@ -1177,9 +1289,9 @@ pub fn contractedShellQuartetEriDeriv(
         .norm_c = norm_c[0..],
         .norm_d = norm_d[0..],
     };
-    for (bra_pairs[0..n_bra]) |bra| {
-        for (ket_pairs[0..n_ket]) |ket| {
-            accumulateDerivativePrimitivePair(
+    for (bra_pairs[0..pairs.n_bra]) |bra| {
+        for (ket_pairs[0..pairs.n_ket]) |ket| {
+            accumulate_derivative_primitive_pair(
                 &workspace,
                 setup,
                 bra,
@@ -1223,8 +1335,8 @@ test "rys ERI vs OS: (ss|ss) H2 case" {
     var output_rys: [1]f64 = undefined;
     var output_os: [1]f64 = undefined;
 
-    _ = contractedShellQuartetERI(shell_a, shell_b, shell_a, shell_b, &output_rys);
-    _ = obara_saika.contractedShellQuartetERI(shell_a, shell_b, shell_a, shell_b, &output_os);
+    _ = contracted_shell_quartet_eri(shell_a, shell_b, shell_a, shell_b, &output_rys);
+    _ = obara_saika.contracted_shell_quartet_eri(shell_a, shell_b, shell_a, shell_b, &output_os);
 
     try testing.expectApproxEqAbs(output_os[0], output_rys[0], tol);
 }
@@ -1250,14 +1362,14 @@ test "rys ERI vs OS: (sp|sp) case" {
         },
     };
 
-    const na = basis_mod.numCartesian(0); // 1
-    const nb = basis_mod.numCartesian(1); // 3
+    const na = basis_mod.num_cartesian(0); // 1
+    const nb = basis_mod.num_cartesian(1); // 3
     const total = na * nb * na * nb; // 9
     var output_rys: [9]f64 = undefined;
     var output_os: [9]f64 = undefined;
 
-    _ = contractedShellQuartetERI(shell_s, shell_p, shell_s, shell_p, &output_rys);
-    _ = obara_saika.contractedShellQuartetERI(shell_s, shell_p, shell_s, shell_p, &output_os);
+    _ = contracted_shell_quartet_eri(shell_s, shell_p, shell_s, shell_p, &output_rys);
+    _ = obara_saika.contracted_shell_quartet_eri(shell_s, shell_p, shell_s, shell_p, &output_os);
 
     for (0..total) |i| {
         try testing.expectApproxEqAbs(output_os[i], output_rys[i], tol);
@@ -1285,13 +1397,19 @@ test "rys ERI vs OS: (pp|pp) case" {
         },
     };
 
-    const np = basis_mod.numCartesian(1); // 3
+    const np = basis_mod.num_cartesian(1); // 3
     const total = np * np * np * np; // 81
     var output_rys: [81]f64 = undefined;
     var output_os: [81]f64 = undefined;
 
-    _ = contractedShellQuartetERI(shell_p1, shell_p2, shell_p1, shell_p2, &output_rys);
-    _ = obara_saika.contractedShellQuartetERI(shell_p1, shell_p2, shell_p1, shell_p2, &output_os);
+    _ = contracted_shell_quartet_eri(shell_p1, shell_p2, shell_p1, shell_p2, &output_rys);
+    _ = obara_saika.contracted_shell_quartet_eri(
+        shell_p1,
+        shell_p2,
+        shell_p1,
+        shell_p2,
+        &output_os,
+    );
 
     for (0..total) |i| {
         try testing.expectApproxEqAbs(output_os[i], output_rys[i], tol);
@@ -1317,13 +1435,19 @@ test "rys ERI vs OS: (dd|dd) case" {
         },
     };
 
-    const nd = basis_mod.numCartesian(2); // 6
+    const nd = basis_mod.num_cartesian(2); // 6
     const total = nd * nd * nd * nd; // 1296
     var output_rys: [1296]f64 = undefined;
     var output_os: [1296]f64 = undefined;
 
-    _ = contractedShellQuartetERI(shell_d1, shell_d2, shell_d1, shell_d2, &output_rys);
-    _ = obara_saika.contractedShellQuartetERI(shell_d1, shell_d2, shell_d1, shell_d2, &output_os);
+    _ = contracted_shell_quartet_eri(shell_d1, shell_d2, shell_d1, shell_d2, &output_rys);
+    _ = obara_saika.contracted_shell_quartet_eri(
+        shell_d1,
+        shell_d2,
+        shell_d1,
+        shell_d2,
+        &output_os,
+    );
 
     for (0..total) |i| {
         try testing.expectApproxEqAbs(output_os[i], output_rys[i], tol);
@@ -1356,15 +1480,15 @@ test "rys ERI vs OS: (sd|ps) mixed angular momentum" {
         },
     };
 
-    const ns = basis_mod.numCartesian(0); // 1
-    const np = basis_mod.numCartesian(1); // 3
-    const nd = basis_mod.numCartesian(2); // 6
+    const ns = basis_mod.num_cartesian(0); // 1
+    const np = basis_mod.num_cartesian(1); // 3
+    const nd = basis_mod.num_cartesian(2); // 6
     const total = ns * nd * np * ns; // 1*6*3*1 = 18
     var output_rys: [18]f64 = undefined;
     var output_os: [18]f64 = undefined;
 
-    _ = contractedShellQuartetERI(shell_s, shell_d, shell_p, shell_s, &output_rys);
-    _ = obara_saika.contractedShellQuartetERI(shell_s, shell_d, shell_p, shell_s, &output_os);
+    _ = contracted_shell_quartet_eri(shell_s, shell_d, shell_p, shell_s, &output_rys);
+    _ = obara_saika.contracted_shell_quartet_eri(shell_s, shell_d, shell_p, shell_s, &output_os);
 
     for (0..total) |i| {
         try testing.expectApproxEqAbs(output_os[i], output_rys[i], tol);
@@ -1394,7 +1518,7 @@ test "rys ERI deriv vs FD: (ss|ss) case" {
     var dx_buf: [1]f64 = undefined;
     var dy_buf: [1]f64 = undefined;
     var dz_buf: [1]f64 = undefined;
-    _ = contractedShellQuartetEriDeriv(
+    _ = contracted_shell_quartet_eri_deriv(
         shell_a,
         shell_b,
         shell_a,
@@ -1425,8 +1549,8 @@ test "rys ERI deriv vs FD: (ss|ss) case" {
         };
         var eri_p: [1]f64 = undefined;
         var eri_m: [1]f64 = undefined;
-        _ = contractedShellQuartetERI(shell_a_p, shell_b, shell_a, shell_b, &eri_p);
-        _ = contractedShellQuartetERI(shell_a_m, shell_b, shell_a, shell_b, &eri_m);
+        _ = contracted_shell_quartet_eri(shell_a_p, shell_b, shell_a, shell_b, &eri_p);
+        _ = contracted_shell_quartet_eri(shell_a_m, shell_b, shell_a, shell_b, &eri_m);
         const fd = (eri_p[0] - eri_m[0]) / (2.0 * delta);
         try testing.expectApproxEqAbs(fd, analytical[i], tol);
     }
@@ -1454,14 +1578,14 @@ test "rys ERI deriv vs FD: (sp|sp) case" {
         },
     };
 
-    const ns = basis_mod.numCartesian(0);
-    const np_val = basis_mod.numCartesian(1);
+    const ns = basis_mod.num_cartesian(0);
+    const np_val = basis_mod.num_cartesian(1);
     const total = ns * np_val * ns * np_val;
 
     var dx_arr: [9]f64 = undefined;
     var dy_arr: [9]f64 = undefined;
     var dz_arr: [9]f64 = undefined;
-    _ = contractedShellQuartetEriDeriv(
+    _ = contracted_shell_quartet_eri_deriv(
         shell_s,
         shell_p,
         shell_s,
@@ -1485,8 +1609,8 @@ test "rys ERI deriv vs FD: (sp|sp) case" {
 
     var eri_p: [9]f64 = undefined;
     var eri_m: [9]f64 = undefined;
-    _ = contractedShellQuartetERI(shell_s_p, shell_p, shell_s, shell_p, &eri_p);
-    _ = contractedShellQuartetERI(shell_s_m, shell_p, shell_s, shell_p, &eri_m);
+    _ = contracted_shell_quartet_eri(shell_s_p, shell_p, shell_s, shell_p, &eri_p);
+    _ = contracted_shell_quartet_eri(shell_s_m, shell_p, shell_s, shell_p, &eri_m);
 
     for (0..total) |i| {
         const fd = (eri_p[i] - eri_m[i]) / (2.0 * delta);
@@ -1516,13 +1640,13 @@ test "rys ERI deriv vs FD: (pp|pp) case" {
         },
     };
 
-    const np_v = basis_mod.numCartesian(1);
+    const np_v = basis_mod.num_cartesian(1);
     const total = np_v * np_v * np_v * np_v;
 
     var dx_arr: [81]f64 = undefined;
     var dy_arr: [81]f64 = undefined;
     var dz_arr: [81]f64 = undefined;
-    _ = contractedShellQuartetEriDeriv(
+    _ = contracted_shell_quartet_eri_deriv(
         shell_p1,
         shell_p2,
         shell_p1,
@@ -1546,8 +1670,8 @@ test "rys ERI deriv vs FD: (pp|pp) case" {
 
     var eri_p: [81]f64 = undefined;
     var eri_m: [81]f64 = undefined;
-    _ = contractedShellQuartetERI(shell_p1_p, shell_p2, shell_p1, shell_p2, &eri_p);
-    _ = contractedShellQuartetERI(shell_p1_m, shell_p2, shell_p1, shell_p2, &eri_m);
+    _ = contracted_shell_quartet_eri(shell_p1_p, shell_p2, shell_p1, shell_p2, &eri_p);
+    _ = contracted_shell_quartet_eri(shell_p1_m, shell_p2, shell_p1, shell_p2, &eri_m);
 
     for (0..total) |i| {
         const fd = (eri_p[i] - eri_m[i]) / (2.0 * delta);
@@ -1582,15 +1706,15 @@ test "rys ERI deriv vs FD: (sd|ps) mixed case" {
         },
     };
 
-    const ns = basis_mod.numCartesian(0);
-    const np_val = basis_mod.numCartesian(1);
-    const nd = basis_mod.numCartesian(2);
+    const ns = basis_mod.num_cartesian(0);
+    const np_val = basis_mod.num_cartesian(1);
+    const nd = basis_mod.num_cartesian(2);
     const total = ns * nd * np_val * ns;
 
     var dx_arr: [18]f64 = undefined;
     var dy_arr: [18]f64 = undefined;
     var dz_arr: [18]f64 = undefined;
-    _ = contractedShellQuartetEriDeriv(
+    _ = contracted_shell_quartet_eri_deriv(
         shell_s,
         shell_d,
         shell_p,
@@ -1614,8 +1738,8 @@ test "rys ERI deriv vs FD: (sd|ps) mixed case" {
 
     var eri_p: [18]f64 = undefined;
     var eri_m: [18]f64 = undefined;
-    _ = contractedShellQuartetERI(shell_s_p, shell_d, shell_p, shell_s, &eri_p);
-    _ = contractedShellQuartetERI(shell_s_m, shell_d, shell_p, shell_s, &eri_m);
+    _ = contracted_shell_quartet_eri(shell_s_p, shell_d, shell_p, shell_s, &eri_p);
+    _ = contracted_shell_quartet_eri(shell_s_m, shell_d, shell_p, shell_s, &eri_m);
 
     for (0..total) |i| {
         const fd = (eri_p[i] - eri_m[i]) / (2.0 * delta);

@@ -59,7 +59,7 @@ const SpWeights = struct {
     p: f64,
 };
 
-fn initOrbitalSet(
+fn init_orbital_set(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
     alpha: f64,
@@ -67,15 +67,15 @@ fn initOrbitalSet(
     basis: local_orbital.BasisType,
 ) !OrbitalSet {
     return .{
-        .s_orbitals = try local_orbital.buildOrbitalsS(alloc, centers, alpha, cutoff),
+        .s_orbitals = try local_orbital.build_orbitals_s(alloc, centers, alpha, cutoff),
         .sp_orbitals = if (basis == .sp)
-            try local_orbital.buildOrbitalsSP(alloc, centers, alpha, cutoff)
+            try local_orbital.build_orbitals_sp(alloc, centers, alpha, cutoff)
         else
             null,
     };
 }
 
-fn initProjectorReferenceValues(
+fn init_projector_reference_values(
     alloc: std.mem.Allocator,
     ion: IonSite,
 ) ![]f64 {
@@ -83,7 +83,7 @@ fn initProjectorReferenceValues(
     var pw_projectors = try alloc.alloc(f64, upf.beta.len);
     for (upf.beta, 0..) |beta, b| {
         const l = beta.l orelse 0;
-        pw_projectors[b] = pw_nonlocal.radialProjector(
+        pw_projectors[b] = pw_nonlocal.radial_projector(
             beta.values,
             upf.r,
             upf.rab,
@@ -94,7 +94,7 @@ fn initProjectorReferenceValues(
     return pw_projectors;
 }
 
-fn computeOrbitalProjectorOverlaps(
+fn compute_orbital_projector_overlaps(
     alloc: std.mem.Allocator,
     orbitals: []const local_orbital.Orbital,
     ion: IonSite,
@@ -111,7 +111,7 @@ fn computeOrbitalProjectorOverlaps(
     for (orbitals, 0..) |orb, i| {
         for (upf.beta, 0..) |beta, b| {
             const l = beta.l orelse 0;
-            overlaps[i * upf.beta.len + b] = computeProjectorOverlap(
+            overlaps[i * upf.beta.len + b] = compute_projector_overlap(
                 orb,
                 ion.position,
                 upf.r,
@@ -130,7 +130,7 @@ fn computeOrbitalProjectorOverlaps(
     return overlaps;
 }
 
-fn computePProjectorOverlaps(
+fn compute_p_projector_overlaps(
     alloc: std.mem.Allocator,
     sp_orbitals: ?[]const local_orbital.Orbital,
     n_orb: usize,
@@ -152,7 +152,7 @@ fn computePProjectorOverlaps(
             var p_sum: f64 = 0.0;
             for (1..4) |p_idx| {
                 const orb_idx = center_idx * 4 + p_idx;
-                const overlap_val = computeProjectorOverlap(
+                const overlap_val = compute_projector_overlap(
                     orbitals[orb_idx],
                     ion.position,
                     upf.r,
@@ -174,7 +174,7 @@ fn computePProjectorOverlaps(
     return overlaps;
 }
 
-fn initIonOverlapData(
+fn init_ion_overlap_data(
     alloc: std.mem.Allocator,
     orbitals: OrbitalSet,
     ion: IonSite,
@@ -187,10 +187,10 @@ fn initIonOverlapData(
     const n_beta = upf.beta.len;
     if (n_beta == 0 or upf.dij.len != n_beta * n_beta) return null;
 
-    const pw_projectors = try initProjectorReferenceValues(alloc, ion);
+    const pw_projectors = try init_projector_reference_values(alloc, ion);
     defer alloc.free(pw_projectors);
 
-    const s_overlaps = try computeOrbitalProjectorOverlaps(
+    const s_overlaps = try compute_orbital_projector_overlaps(
         alloc,
         orbitals.s_orbitals,
         ion,
@@ -205,7 +205,7 @@ fn initIonOverlapData(
     return .{
         .n_beta = n_beta,
         .s_overlaps = s_overlaps,
-        .p_overlaps = try computePProjectorOverlaps(
+        .p_overlaps = try compute_p_projector_overlaps(
             alloc,
             if (orbitals.sp_orbitals) |sp_orbitals| sp_orbitals else null,
             orbitals.s_orbitals.len,
@@ -219,14 +219,14 @@ fn initIonOverlapData(
     };
 }
 
-fn basisOverlapWeights(basis: local_orbital.BasisType) SpWeights {
+fn basis_overlap_weights(basis: local_orbital.BasisType) SpWeights {
     return if (basis == .sp)
         .{ .s = 0.25, .p = 0.75 }
     else
         .{ .s = 1.0, .p = 0.0 };
 }
 
-fn pOverlapAt(
+fn p_overlap_at(
     p_overlaps: ?[]const f64,
     n_beta: usize,
     center_idx: usize,
@@ -236,7 +236,7 @@ fn pOverlapAt(
     return overlaps[center_idx * n_beta + beta_idx];
 }
 
-fn projectorPairContribution(
+fn projector_pair_contribution(
     d_val: f64,
     s_proj_i: f64,
     s_proj_j: f64,
@@ -251,7 +251,7 @@ fn projectorPairContribution(
     return value;
 }
 
-fn appendIonNonlocalTriplets(
+fn append_ion_nonlocal_triplets(
     alloc: std.mem.Allocator,
     triplets: *std.ArrayList(sparse.Triplet),
     n_orb: usize,
@@ -261,7 +261,7 @@ fn appendIonNonlocalTriplets(
     threshold: f64,
 ) !void {
     const upf = ion.upf;
-    const weights = basisOverlapWeights(basis);
+    const weights = basis_overlap_weights(basis);
 
     for (0..n_orb) |i| {
         for (0..n_orb) |j| {
@@ -271,12 +271,12 @@ fn appendIonNonlocalTriplets(
                     const d_val = upf.dij[b * overlap_data.n_beta + bp];
                     const s_proj_i = overlap_data.s_overlaps[i * overlap_data.n_beta + b];
                     const s_proj_j = overlap_data.s_overlaps[j * overlap_data.n_beta + bp];
-                    value += projectorPairContribution(
+                    value += projector_pair_contribution(
                         d_val,
                         s_proj_i,
                         s_proj_j,
-                        pOverlapAt(overlap_data.p_overlaps, overlap_data.n_beta, i, b),
-                        pOverlapAt(overlap_data.p_overlaps, overlap_data.n_beta, j, bp),
+                        p_overlap_at(overlap_data.p_overlaps, overlap_data.n_beta, i, b),
+                        p_overlap_at(overlap_data.p_overlaps, overlap_data.n_beta, j, bp),
                         weights,
                     );
                 }
@@ -288,7 +288,7 @@ fn appendIonNonlocalTriplets(
     }
 }
 
-fn emptyNonlocalCsr(
+fn empty_nonlocal_csr(
     alloc: std.mem.Allocator,
     n_orb: usize,
 ) !sparse.CsrMatrix {
@@ -309,7 +309,7 @@ fn emptyNonlocalCsr(
 /// For sp basis mode, the matrix size is still N×N (one per center),
 /// but both s-wave and p-wave projector contributions are included
 /// with sp³ hybridization weighting (25% s, 75% p).
-pub fn buildNonlocalCsr(
+pub fn build_nonlocal_csr(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
     ions: []const IonSite,
@@ -321,16 +321,16 @@ pub fn buildNonlocalCsr(
 
     const n_orb = centers.len;
     const alpha = 1.0 / (opts.sigma * opts.sigma);
-    var orbitals = try initOrbitalSet(alloc, centers, alpha, opts.cutoff, opts.basis);
+    var orbitals = try init_orbital_set(alloc, centers, alpha, opts.cutoff, opts.basis);
     defer orbitals.deinit(alloc);
 
     var triplets: std.ArrayList(sparse.Triplet) = .empty;
     defer triplets.deinit(alloc);
 
-    const inv_cell = try invertCell(cell);
+    const inv_cell = try invert_cell(cell);
 
     for (ions) |ion| {
-        const overlap_data = try initIonOverlapData(
+        const overlap_data = try init_ion_overlap_data(
             alloc,
             orbitals,
             ion,
@@ -341,7 +341,7 @@ pub fn buildNonlocalCsr(
         ) orelse continue;
         defer overlap_data.deinit(alloc);
 
-        try appendIonNonlocalTriplets(
+        try append_ion_nonlocal_triplets(
             alloc,
             &triplets,
             n_orb,
@@ -353,16 +353,16 @@ pub fn buildNonlocalCsr(
     }
 
     if (triplets.items.len == 0) {
-        return emptyNonlocalCsr(alloc, n_orb);
+        return empty_nonlocal_csr(alloc, n_orb);
     }
 
-    return sparse.CsrMatrix.initFromTriplets(alloc, n_orb, n_orb, triplets.items);
+    return sparse.CsrMatrix.init_from_triplets(alloc, n_orb, n_orb, triplets.items);
 }
 
 /// Compute overlap integral <φ|β_lm> via numerical integration
 /// φ(r) = N f(r) Y_lm_orb is a Gaussian orbital (s or p type)
 /// β_lm(r) = f_l(r) Y_lm(θ,φ) is a KB projector centered at R_I
-fn computeProjectorOverlap(
+fn compute_projector_overlap(
     orb: local_orbital.Orbital,
     ion_pos: math.Vec3,
     r_grid: []const f64,
@@ -380,7 +380,7 @@ fn computeProjectorOverlap(
 
     // Vector from ion to orbital center
     var delta = math.Vec3.sub(orb.center, ion_pos);
-    delta = minimumImageDelta(cell, inv_cell, pbc, delta);
+    delta = minimum_image_delta(cell, inv_cell, pbc, delta);
     const dist = @sqrt(math.Vec3.dot(delta, delta));
 
     // Cutoff: if orbital is too far from ion, overlap is negligible
@@ -394,7 +394,7 @@ fn computeProjectorOverlap(
     // Match orbital angular momentum with projector angular momentum.
     // Selection rules determine which combinations give significant overlap.
     const l_orb = orb.angular.l();
-    const overlap_fn = selectOverlapFn(l_orb, l_proj) orelse return 0.0;
+    const overlap_fn = select_overlap_fn(l_orb, l_proj) orelse return 0.0;
     return overlap_fn(orb, dist, delta, r_grid, rab_grid, beta_data, pw_projector);
 }
 
@@ -408,17 +408,17 @@ const ProjectorOverlapFn = *const fn (
     pw_projector: f64,
 ) f64;
 
-fn selectOverlapFn(l_orb: i32, l_proj: i32) ?ProjectorOverlapFn {
-    if (l_orb == 0 and l_proj == 0) return computeProjectorOverlapSS;
-    if (l_orb == 0 and l_proj == 1) return computeProjectorOverlapSP;
-    if (l_orb == 1 and l_proj == 0) return computeProjectorOverlapPS;
-    if (l_orb == 1 and l_proj == 1) return computeProjectorOverlapPP;
+fn select_overlap_fn(l_orb: i32, l_proj: i32) ?ProjectorOverlapFn {
+    if (l_orb == 0 and l_proj == 0) return compute_projector_overlap_ss;
+    if (l_orb == 0 and l_proj == 1) return compute_projector_overlap_sp;
+    if (l_orb == 1 and l_proj == 0) return compute_projector_overlap_ps;
+    if (l_orb == 1 and l_proj == 1) return compute_projector_overlap_pp;
     return null;
 }
 
 /// s-orbital with s-projector overlap
 /// <φ_s|β_s> where both have l=0
-fn computeProjectorOverlapSS(
+fn compute_projector_overlap_ss(
     orb: local_orbital.Orbital,
     dist: f64,
     delta: math.Vec3,
@@ -438,7 +438,7 @@ fn computeProjectorOverlapSS(
 
         const rab = rab_grid[i];
         const r_beta = beta_data[i];
-        const gauss_radial = gaussianRadialIntegrand(orb.alpha, r, dist);
+        const gauss_radial = gaussian_radial_integrand(orb.alpha, r, dist);
 
         sum += gauss_radial * r_beta * r * rab;
         pw_sum += r_beta * r * rab;
@@ -450,7 +450,7 @@ fn computeProjectorOverlapSS(
 
 /// s-orbital with p-projector overlap
 /// <φ_s|β_p> - small due to angular mismatch
-fn computeProjectorOverlapSP(
+fn compute_projector_overlap_sp(
     orb: local_orbital.Orbital,
     dist: f64,
     delta: math.Vec3,
@@ -480,8 +480,8 @@ fn computeProjectorOverlapSP(
         const r_beta = beta_data[i];
 
         // Use j_1 for p-projector
-        const j1 = pw_nonlocal.sphericalBessel(1, k_eff * r);
-        const gauss_radial = gaussianRadialIntegrand(orb.alpha, r, dist);
+        const j1 = pw_nonlocal.spherical_bessel(1, k_eff * r);
+        const gauss_radial = gaussian_radial_integrand(orb.alpha, r, dist);
 
         sum += gauss_radial * r_beta * r * j1 * rab;
         pw_sum += r_beta * r * j1 * rab;
@@ -498,7 +498,7 @@ fn computeProjectorOverlapSP(
 
 /// p-orbital with s-projector overlap
 /// <φ_p|β_s> - small due to angular mismatch
-fn computeProjectorOverlapPS(
+fn compute_projector_overlap_ps(
     orb: local_orbital.Orbital,
     dist: f64,
     delta: math.Vec3,
@@ -518,7 +518,7 @@ fn computeProjectorOverlapPS(
 
         const rab = rab_grid[i];
         const r_beta = beta_data[i];
-        const gauss_radial = gaussianRadialIntegrand(orb.alpha, r, dist);
+        const gauss_radial = gaussian_radial_integrand(orb.alpha, r, dist);
 
         sum += gauss_radial * r_beta * r * rab;
         pw_sum += r_beta * r * rab;
@@ -539,7 +539,7 @@ fn computeProjectorOverlapPS(
 
 /// p-orbital with p-projector overlap
 /// <φ_p|β_p> - good overlap when directions match
-fn computeProjectorOverlapPP(
+fn compute_projector_overlap_pp(
     orb: local_orbital.Orbital,
     dist: f64,
     delta: math.Vec3,
@@ -565,8 +565,8 @@ fn computeProjectorOverlapPP(
         const r_beta = beta_data[i];
 
         // Use j_1 for p-projector
-        const j1 = pw_nonlocal.sphericalBessel(1, k_eff * r);
-        const gauss_radial = gaussianRadialIntegrand(orb.alpha, r, dist);
+        const j1 = pw_nonlocal.spherical_bessel(1, k_eff * r);
+        const gauss_radial = gaussian_radial_integrand(orb.alpha, r, dist);
 
         sum += gauss_radial * r_beta * r * j1 * rab;
         pw_sum += r_beta * r * j1 * rab;
@@ -594,7 +594,7 @@ fn computeProjectorOverlapPP(
 }
 
 /// Gaussian radial integrand approximation
-fn gaussianRadialIntegrand(alpha: f64, r: f64, dist: f64) f64 {
+fn gaussian_radial_integrand(alpha: f64, r: f64, dist: f64) f64 {
     // Simplified: use expansion in terms of modified spherical Bessel functions
     // For a Gaussian centered at distance 'dist', integrate over sphere at radius r
     // Result involves I_0(2*alpha*r*dist) * exp(-alpha*(r²+dist²))
@@ -612,21 +612,21 @@ fn gaussianRadialIntegrand(alpha: f64, r: f64, dist: f64) f64 {
     return bessel_i0 * exp_factor;
 }
 
-fn invertCell(cell: math.Mat3) !math.Mat3 {
-    return local_orbital_potential.invertCell(cell);
+fn invert_cell(cell: math.Mat3) !math.Mat3 {
+    return local_orbital_potential.invert_cell(cell);
 }
 
-fn minimumImageDelta(
+fn minimum_image_delta(
     cell: math.Mat3,
     inv_cell: math.Mat3,
     pbc: neighbor_list.Pbc,
     delta: math.Vec3,
 ) math.Vec3 {
-    var frac = inv_cell.mulVec(delta);
+    var frac = inv_cell.mul_vec(delta);
     if (pbc.x) frac.x -= @round(frac.x);
     if (pbc.y) frac.y -= @round(frac.y);
     if (pbc.z) frac.z -= @round(frac.z);
-    return cell.mulVec(frac);
+    return cell.mul_vec(frac);
 }
 
 test "nonlocal matrix is symmetric" {
@@ -637,7 +637,7 @@ test "nonlocal matrix is symmetric" {
         .{ .x = 0.0, .y = 0.0, .z = 0.0 },
         .{ .x = 2.0, .y = 0.0, .z = 0.0 },
     };
-    const cell = math.Mat3.fromRows(
+    const cell = math.Mat3.from_rows(
         .{ .x = 10.0, .y = 0.0, .z = 0.0 },
         .{ .x = 0.0, .y = 10.0, .z = 0.0 },
         .{ .x = 0.0, .y = 0.0, .z = 10.0 },
@@ -678,11 +678,11 @@ test "nonlocal matrix is symmetric" {
         .threshold = 0.0,
     };
 
-    var result = try buildNonlocalCsr(alloc, centers[0..], ions[0..], cell, pbc, opts);
+    var result = try build_nonlocal_csr(alloc, centers[0..], ions[0..], cell, pbc, opts);
     defer result.deinit(alloc);
 
     // Check symmetry: V(0,1) should equal V(1,0)
-    const v01 = result.valueAt(0, 1);
-    const v10 = result.valueAt(1, 0);
+    const v01 = result.value_at(0, 1);
+    const v10 = result.value_at(1, 0);
     try std.testing.expectApproxEqAbs(v01, v10, 1e-10);
 }

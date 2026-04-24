@@ -6,7 +6,7 @@ pub const Triplet = struct {
     value: f64,
 };
 
-fn emptyCsr(alloc: std.mem.Allocator, nrows: usize, ncols: usize) !CsrMatrix {
+fn empty_csr(alloc: std.mem.Allocator, nrows: usize, ncols: usize) !CsrMatrix {
     const row_ptr = try alloc.alloc(usize, nrows + 1);
     @memset(row_ptr, 0);
     return .{
@@ -25,20 +25,20 @@ pub const CsrMatrix = struct {
     col_idx: []usize,
     values: []f64,
 
-    pub fn initFromTriplets(
+    pub fn init_from_triplets(
         alloc: std.mem.Allocator,
         nrows: usize,
         ncols: usize,
         triplets: []const Triplet,
     ) !CsrMatrix {
         if (nrows == 0 or ncols == 0) return error.InvalidShape;
-        if (triplets.len == 0) return emptyCsr(alloc, nrows, ncols);
+        if (triplets.len == 0) return empty_csr(alloc, nrows, ncols);
 
         const sorted = try alloc.alloc(Triplet, triplets.len);
         defer alloc.free(sorted);
 
         @memcpy(sorted, triplets);
-        std.sort.block(Triplet, sorted, {}, tripletLess);
+        std.sort.block(Triplet, sorted, {}, triplet_less);
 
         var merged: std.ArrayList(Triplet) = .empty;
         defer merged.deinit(alloc);
@@ -100,7 +100,7 @@ pub const CsrMatrix = struct {
         self.* = undefined;
     }
 
-    pub fn valueAt(self: *const CsrMatrix, row: usize, col: usize) f64 {
+    pub fn value_at(self: *const CsrMatrix, row: usize, col: usize) f64 {
         if (row >= self.nrows or col >= self.ncols) return 0.0;
         const start = self.row_ptr[row];
         const end = self.row_ptr[row + 1];
@@ -111,7 +111,7 @@ pub const CsrMatrix = struct {
         return 0.0;
     }
 
-    pub fn mulVec(self: *const CsrMatrix, x: []const f64, out: []f64) !void {
+    pub fn mul_vec(self: *const CsrMatrix, x: []const f64, out: []f64) !void {
         if (x.len != self.ncols or out.len != self.nrows) return error.InvalidShape;
         @memset(out, 0.0);
         var row: usize = 0;
@@ -128,7 +128,7 @@ pub const CsrMatrix = struct {
     }
 };
 
-pub fn diagonalValues(alloc: std.mem.Allocator, matrix: CsrMatrix) ![]f64 {
+pub fn diagonal_values(alloc: std.mem.Allocator, matrix: CsrMatrix) ![]f64 {
     if (matrix.nrows == 0 or matrix.ncols == 0) return error.InvalidShape;
     const n = @min(matrix.nrows, matrix.ncols);
     const out = try alloc.alloc(f64, n);
@@ -148,7 +148,7 @@ pub fn diagonalValues(alloc: std.mem.Allocator, matrix: CsrMatrix) ![]f64 {
     return out;
 }
 
-pub fn scaleInPlace(matrix: *CsrMatrix, factor: f64) void {
+pub fn scale_in_place(matrix: *CsrMatrix, factor: f64) void {
     var idx: usize = 0;
     while (idx < matrix.values.len) : (idx += 1) {
         matrix.values[idx] *= factor;
@@ -174,7 +174,7 @@ pub fn trace(matrix: CsrMatrix) f64 {
     return sum;
 }
 
-pub fn traceProduct(a: CsrMatrix, b: CsrMatrix) !f64 {
+pub fn trace_product(a: CsrMatrix, b: CsrMatrix) !f64 {
     if (a.ncols != b.nrows or a.nrows != b.ncols) return error.InvalidShape;
     var sum: f64 = 0.0;
     var row: usize = 0;
@@ -184,7 +184,7 @@ pub fn traceProduct(a: CsrMatrix, b: CsrMatrix) !f64 {
         var idx: usize = start;
         while (idx < end) : (idx += 1) {
             const col = a.col_idx[idx];
-            const b_value = b.valueAt(col, row);
+            const b_value = b.value_at(col, row);
             if (b_value != 0.0) {
                 sum += a.values[idx] * b_value;
             }
@@ -230,7 +230,7 @@ pub fn clone(alloc: std.mem.Allocator, matrix: CsrMatrix) !CsrMatrix {
     };
 }
 
-pub fn addScaled(
+pub fn add_scaled(
     alloc: std.mem.Allocator,
     a: CsrMatrix,
     alpha: f64,
@@ -255,7 +255,7 @@ pub fn addScaled(
             var idx: usize = start;
             while (idx < end) : (idx += 1) {
                 const value = alpha * a.values[idx];
-                try addToMap(&row_accum, a.col_idx[idx], value);
+                try add_to_map(&row_accum, a.col_idx[idx], value);
             }
         }
         if (beta != 0.0) {
@@ -264,7 +264,7 @@ pub fn addScaled(
             var idx: usize = start;
             while (idx < end) : (idx += 1) {
                 const value = beta * b.values[idx];
-                try addToMap(&row_accum, b.col_idx[idx], value);
+                try add_to_map(&row_accum, b.col_idx[idx], value);
             }
         }
         var it = row_accum.iterator();
@@ -274,7 +274,7 @@ pub fn addScaled(
             try triplets.append(alloc, .{ .row = row, .col = entry.key_ptr.*, .value = value });
         }
     }
-    return CsrMatrix.initFromTriplets(alloc, a.nrows, a.ncols, triplets.items);
+    return CsrMatrix.init_from_triplets(alloc, a.nrows, a.ncols, triplets.items);
 }
 
 pub fn mul(
@@ -305,7 +305,7 @@ pub fn mul(
             var j: usize = b_start;
             while (j < b_end) : (j += 1) {
                 const value = a_val * b.values[j];
-                try addToMap(&row_accum, b.col_idx[j], value);
+                try add_to_map(&row_accum, b.col_idx[j], value);
             }
         }
         var it = row_accum.iterator();
@@ -315,10 +315,10 @@ pub fn mul(
             try triplets.append(alloc, .{ .row = row, .col = entry.key_ptr.*, .value = value });
         }
     }
-    return CsrMatrix.initFromTriplets(alloc, a.nrows, b.ncols, triplets.items);
+    return CsrMatrix.init_from_triplets(alloc, a.nrows, b.ncols, triplets.items);
 }
 
-fn addToMap(map: *std.AutoHashMap(usize, f64), col: usize, value: f64) !void {
+fn add_to_map(map: *std.AutoHashMap(usize, f64), col: usize, value: f64) !void {
     if (value == 0.0) return;
     const entry = try map.getOrPut(col);
     if (entry.found_existing) {
@@ -328,7 +328,7 @@ fn addToMap(map: *std.AutoHashMap(usize, f64), col: usize, value: f64) !void {
     }
 }
 
-fn tripletLess(_: void, a: Triplet, b: Triplet) bool {
+fn triplet_less(_: void, a: Triplet, b: Triplet) bool {
     if (a.row < b.row) return true;
     if (a.row > b.row) return false;
     return a.col < b.col;
@@ -342,7 +342,7 @@ test "csr merges duplicate triplets" {
         .{ .row = 0, .col = 2, .value = 4.0 },
         .{ .row = 1, .col = 1, .value = 3.0 },
     };
-    var csr = try CsrMatrix.initFromTriplets(alloc, 2, 3, triplets[0..]);
+    var csr = try CsrMatrix.init_from_triplets(alloc, 2, 3, triplets[0..]);
     defer csr.deinit(alloc);
 
     try std.testing.expectEqual(@as(usize, 0), csr.row_ptr[0]);
@@ -361,12 +361,12 @@ test "csr mul vec" {
         .{ .row = 0, .col = 2, .value = 4.0 },
         .{ .row = 1, .col = 1, .value = 3.0 },
     };
-    var csr = try CsrMatrix.initFromTriplets(alloc, 2, 3, triplets[0..]);
+    var csr = try CsrMatrix.init_from_triplets(alloc, 2, 3, triplets[0..]);
     defer csr.deinit(alloc);
 
     const x = [_]f64{ 1.0, 2.0, 3.0 };
     var out = [_]f64{ 0.0, 0.0 };
-    try csr.mulVec(x[0..], out[0..]);
+    try csr.mul_vec(x[0..], out[0..]);
     try std.testing.expectApproxEqAbs(@as(f64, 15.0), out[0], 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 6.0), out[1], 1e-12);
 }
@@ -377,19 +377,19 @@ test "csr trace and diagonal" {
     defer diag.deinit(alloc);
 
     try std.testing.expectApproxEqAbs(@as(f64, 6.0), trace(diag), 1e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 2.0), diag.valueAt(1, 1), 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), diag.value_at(1, 1), 1e-12);
 }
 
-test "csr scaleInPlace" {
+test "csr scale_in_place" {
     const alloc = std.testing.allocator;
     var diag = try diagonal(alloc, 2, 4.0);
     defer diag.deinit(alloc);
 
-    scaleInPlace(&diag, 0.5);
+    scale_in_place(&diag, 0.5);
     try std.testing.expectApproxEqAbs(@as(f64, 4.0), trace(diag), 1e-12);
 }
 
-test "csr traceProduct" {
+test "csr trace_product" {
     const alloc = std.testing.allocator;
     const a_triplets = [_]Triplet{
         .{ .row = 0, .col = 0, .value = 1.0 },
@@ -402,27 +402,27 @@ test "csr traceProduct" {
         .{ .row = 1, .col = 0, .value = 6.0 },
         .{ .row = 1, .col = 1, .value = 7.0 },
     };
-    var a = try CsrMatrix.initFromTriplets(alloc, 2, 2, a_triplets[0..]);
+    var a = try CsrMatrix.init_from_triplets(alloc, 2, 2, a_triplets[0..]);
     defer a.deinit(alloc);
 
-    var b = try CsrMatrix.initFromTriplets(alloc, 2, 2, b_triplets[0..]);
+    var b = try CsrMatrix.init_from_triplets(alloc, 2, 2, b_triplets[0..]);
     defer b.deinit(alloc);
 
-    const result = try traceProduct(a, b);
+    const result = try trace_product(a, b);
     try std.testing.expectApproxEqAbs(@as(f64, 37.0), result, 1e-12);
 }
 
-test "csr diagonalValues" {
+test "csr diagonal_values" {
     const alloc = std.testing.allocator;
     const triplets = [_]Triplet{
         .{ .row = 0, .col = 0, .value = 1.0 },
         .{ .row = 1, .col = 1, .value = 3.0 },
         .{ .row = 2, .col = 1, .value = 2.0 },
     };
-    var csr = try CsrMatrix.initFromTriplets(alloc, 3, 3, triplets[0..]);
+    var csr = try CsrMatrix.init_from_triplets(alloc, 3, 3, triplets[0..]);
     defer csr.deinit(alloc);
 
-    const diag = try diagonalValues(alloc, csr);
+    const diag = try diagonal_values(alloc, csr);
     defer alloc.free(diag);
 
     try std.testing.expectApproxEqAbs(@as(f64, 1.0), diag[0], 1e-12);
@@ -430,27 +430,27 @@ test "csr diagonalValues" {
     try std.testing.expectApproxEqAbs(@as(f64, 0.0), diag[2], 1e-12);
 }
 
-test "csr valueAt and clone" {
+test "csr value_at and clone" {
     const alloc = std.testing.allocator;
     const triplets = [_]Triplet{
         .{ .row = 0, .col = 1, .value = 2.0 },
         .{ .row = 1, .col = 0, .value = 3.0 },
     };
-    var csr = try CsrMatrix.initFromTriplets(alloc, 2, 2, triplets[0..]);
+    var csr = try CsrMatrix.init_from_triplets(alloc, 2, 2, triplets[0..]);
     defer csr.deinit(alloc);
 
-    try std.testing.expectApproxEqAbs(@as(f64, 2.0), csr.valueAt(0, 1), 1e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 0.0), csr.valueAt(0, 0), 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), csr.value_at(0, 1), 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 0.0), csr.value_at(0, 0), 1e-12);
 
     var copy = try clone(alloc, csr);
     defer copy.deinit(alloc);
 
     copy.values[0] = 4.0;
-    try std.testing.expectApproxEqAbs(@as(f64, 2.0), csr.valueAt(0, 1), 1e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 4.0), copy.valueAt(0, 1), 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 2.0), csr.value_at(0, 1), 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 4.0), copy.value_at(0, 1), 1e-12);
 }
 
-test "csr addScaled" {
+test "csr add_scaled" {
     const alloc = std.testing.allocator;
     const a_triplets = [_]Triplet{
         .{ .row = 0, .col = 0, .value = 1.0 },
@@ -460,17 +460,17 @@ test "csr addScaled" {
         .{ .row = 0, .col = 0, .value = 3.0 },
         .{ .row = 1, .col = 1, .value = -1.0 },
     };
-    var a = try CsrMatrix.initFromTriplets(alloc, 2, 2, a_triplets[0..]);
+    var a = try CsrMatrix.init_from_triplets(alloc, 2, 2, a_triplets[0..]);
     defer a.deinit(alloc);
 
-    var b = try CsrMatrix.initFromTriplets(alloc, 2, 2, b_triplets[0..]);
+    var b = try CsrMatrix.init_from_triplets(alloc, 2, 2, b_triplets[0..]);
     defer b.deinit(alloc);
 
-    var out = try addScaled(alloc, a, 1.0, b, 1.0, 0.0);
+    var out = try add_scaled(alloc, a, 1.0, b, 1.0, 0.0);
     defer out.deinit(alloc);
 
-    try std.testing.expectApproxEqAbs(@as(f64, 4.0), out.valueAt(0, 0), 1e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 1.0), out.valueAt(1, 1), 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 4.0), out.value_at(0, 0), 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 1.0), out.value_at(1, 1), 1e-12);
 }
 
 test "csr mul" {
@@ -485,17 +485,17 @@ test "csr mul" {
         .{ .row = 1, .col = 0, .value = 5.0 },
         .{ .row = 1, .col = 1, .value = 6.0 },
     };
-    var a = try CsrMatrix.initFromTriplets(alloc, 2, 2, a_triplets[0..]);
+    var a = try CsrMatrix.init_from_triplets(alloc, 2, 2, a_triplets[0..]);
     defer a.deinit(alloc);
 
-    var b = try CsrMatrix.initFromTriplets(alloc, 2, 2, b_triplets[0..]);
+    var b = try CsrMatrix.init_from_triplets(alloc, 2, 2, b_triplets[0..]);
     defer b.deinit(alloc);
 
     var out = try mul(alloc, a, b, 0.0);
     defer out.deinit(alloc);
 
-    try std.testing.expectApproxEqAbs(@as(f64, 14.0), out.valueAt(0, 0), 1e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 12.0), out.valueAt(0, 1), 1e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 15.0), out.valueAt(1, 0), 1e-12);
-    try std.testing.expectApproxEqAbs(@as(f64, 18.0), out.valueAt(1, 1), 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 14.0), out.value_at(0, 0), 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 12.0), out.value_at(0, 1), 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 15.0), out.value_at(1, 0), 1e-12);
+    try std.testing.expectApproxEqAbs(@as(f64, 18.0), out.value_at(1, 1), 1e-12);
 }

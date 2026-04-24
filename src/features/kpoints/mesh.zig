@@ -2,7 +2,7 @@ const std = @import("std");
 const math = @import("../math/math.zig");
 const symmetry = @import("../symmetry/symmetry.zig");
 
-pub fn generateKmesh(
+pub fn generate_kmesh(
     alloc: std.mem.Allocator,
     kmesh: [3]usize,
     recip: math.Mat3,
@@ -19,11 +19,11 @@ pub fn generateKmesh(
         while (j < kmesh[1]) : (j += 1) {
             var k: usize = 0;
             while (k < kmesh[2]) : (k += 1) {
-                const fx = fracFromIndex(@as(i32, @intCast(i)), kmesh[0], shift.x);
-                const fy = fracFromIndex(@as(i32, @intCast(j)), kmesh[1], shift.y);
-                const fz = fracFromIndex(@as(i32, @intCast(k)), kmesh[2], shift.z);
+                const fx = frac_from_index(@as(i32, @intCast(i)), kmesh[0], shift.x);
+                const fy = frac_from_index(@as(i32, @intCast(j)), kmesh[1], shift.y);
+                const fz = frac_from_index(@as(i32, @intCast(k)), kmesh[2], shift.z);
                 const k_frac = math.Vec3{ .x = fx, .y = fy, .z = fz };
-                const k_cart = math.fracToCart(k_frac, recip);
+                const k_cart = math.frac_to_cart(k_frac, recip);
                 list[idx] = .{
                     .k_frac = k_frac,
                     .k_cart = k_cart,
@@ -36,12 +36,12 @@ pub fn generateKmesh(
     return list;
 }
 
-pub fn fracFromIndex(index: i32, n: usize, shift: f64) f64 {
+pub fn frac_from_index(index: i32, n: usize, shift: f64) f64 {
     const nf = @as(f64, @floatFromInt(n));
     const value = (@as(f64, @floatFromInt(index)) + shift) / nf;
-    return wrapCenteredScalar(value);
+    return wrap_centered_scalar(value);
 }
 
-fn wrapCenteredScalar(value: f64) f64 {
+fn wrap_centered_scalar(value: f64) f64 {
     return value - std.math.round(value);
 }

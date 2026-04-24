@@ -43,44 +43,47 @@ pub const EnergyTermsToleranceResult = struct {
     all: bool,
 };
 
-pub fn compareEnergyTerms(reference: scf.EnergyTerms, candidate: scf.EnergyTerms) EnergyComparison {
+pub fn compare_energy_terms(
+    reference: scf.EnergyTerms,
+    candidate: scf.EnergyTerms,
+) EnergyComparison {
     return .{
-        .total = compare.compareScalar(reference.total, candidate.total),
-        .band = compare.compareScalar(reference.band, candidate.band),
-        .hartree = compare.compareScalar(reference.hartree, candidate.hartree),
-        .vxc_rho = compare.compareScalar(reference.vxc_rho, candidate.vxc_rho),
-        .xc = compare.compareScalar(reference.xc, candidate.xc),
-        .ion_ion = compare.compareScalar(reference.ion_ion, candidate.ion_ion),
-        .psp_core = compare.compareScalar(reference.psp_core, candidate.psp_core),
-        .double_counting = compare.compareScalar(
+        .total = compare.compare_scalar(reference.total, candidate.total),
+        .band = compare.compare_scalar(reference.band, candidate.band),
+        .hartree = compare.compare_scalar(reference.hartree, candidate.hartree),
+        .vxc_rho = compare.compare_scalar(reference.vxc_rho, candidate.vxc_rho),
+        .xc = compare.compare_scalar(reference.xc, candidate.xc),
+        .ion_ion = compare.compare_scalar(reference.ion_ion, candidate.ion_ion),
+        .psp_core = compare.compare_scalar(reference.psp_core, candidate.psp_core),
+        .double_counting = compare.compare_scalar(
             reference.double_counting,
             candidate.double_counting,
         ),
-        .local_pseudo = compare.compareScalar(reference.local_pseudo, candidate.local_pseudo),
-        .nonlocal_pseudo = compare.compareScalar(
+        .local_pseudo = compare.compare_scalar(reference.local_pseudo, candidate.local_pseudo),
+        .nonlocal_pseudo = compare.compare_scalar(
             reference.nonlocal_pseudo,
             candidate.nonlocal_pseudo,
         ),
     };
 }
 
-pub fn withinEnergyTolerance(
+pub fn within_energy_tolerance(
     report: EnergyComparison,
     tol: EnergyTermsTolerance,
 ) EnergyTermsToleranceResult {
-    const total = compare.withinScalarTolerance(report.total, tol.total);
-    const band = compare.withinScalarTolerance(report.band, tol.band);
-    const hartree = compare.withinScalarTolerance(report.hartree, tol.hartree);
-    const vxc_rho = compare.withinScalarTolerance(report.vxc_rho, tol.vxc_rho);
-    const xc = compare.withinScalarTolerance(report.xc, tol.xc);
-    const ion_ion = compare.withinScalarTolerance(report.ion_ion, tol.ion_ion);
-    const psp_core = compare.withinScalarTolerance(report.psp_core, tol.psp_core);
-    const double_counting = compare.withinScalarTolerance(
+    const total = compare.within_scalar_tolerance(report.total, tol.total);
+    const band = compare.within_scalar_tolerance(report.band, tol.band);
+    const hartree = compare.within_scalar_tolerance(report.hartree, tol.hartree);
+    const vxc_rho = compare.within_scalar_tolerance(report.vxc_rho, tol.vxc_rho);
+    const xc = compare.within_scalar_tolerance(report.xc, tol.xc);
+    const ion_ion = compare.within_scalar_tolerance(report.ion_ion, tol.ion_ion);
+    const psp_core = compare.within_scalar_tolerance(report.psp_core, tol.psp_core);
+    const double_counting = compare.within_scalar_tolerance(
         report.double_counting,
         tol.double_counting,
     );
-    const local_pseudo = compare.withinScalarTolerance(report.local_pseudo, tol.local_pseudo);
-    const nonlocal_pseudo = compare.withinScalarTolerance(
+    const local_pseudo = compare.within_scalar_tolerance(report.local_pseudo, tol.local_pseudo);
+    const nonlocal_pseudo = compare.within_scalar_tolerance(
         report.nonlocal_pseudo,
         tol.nonlocal_pseudo,
     );
@@ -101,7 +104,7 @@ pub fn withinEnergyTolerance(
     };
 }
 
-test "compareEnergyTerms uses scalar comparisons" {
+test "compare_energy_terms uses scalar comparisons" {
     const ref = scf.EnergyTerms{
         .total = 1.0,
         .band = 2.0,
@@ -126,13 +129,13 @@ test "compareEnergyTerms uses scalar comparisons" {
         .local_pseudo = 9.0,
         .nonlocal_pseudo = 10.0,
     };
-    const report = compareEnergyTerms(ref, cand);
+    const report = compare_energy_terms(ref, cand);
     try std.testing.expectApproxEqAbs(@as(f64, 0.1), report.total.abs, 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.5), report.hartree.abs, 1e-12);
     try std.testing.expectApproxEqAbs(@as(f64, 0.1), report.xc.abs, 1e-12);
 }
 
-test "withinEnergyTolerance aggregates per-term checks" {
+test "within_energy_tolerance aggregates per-term checks" {
     const report = EnergyComparison{
         .total = .{ .abs = 0.1, .rel = 0.01 },
         .band = .{ .abs = 0.0, .rel = 0.0 },
@@ -157,7 +160,7 @@ test "withinEnergyTolerance aggregates per-term checks" {
         .local_pseudo = .{ .abs = 0.01, .rel = 0.1 },
         .nonlocal_pseudo = .{ .abs = 0.01, .rel = 0.1 },
     };
-    const result = withinEnergyTolerance(report, tol);
+    const result = within_energy_tolerance(report, tol);
     try std.testing.expect(!result.total);
     try std.testing.expect(result.band);
     try std.testing.expect(!result.all);

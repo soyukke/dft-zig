@@ -22,14 +22,14 @@ pub const ScfReferenceData = struct {
 };
 
 /// Write SCF reference data to JSON file
-pub fn writeReferenceJson(
+pub fn write_reference_json(
     io: std.Io,
     alloc: std.mem.Allocator,
     dir: std.Io.Dir,
     path: []const u8,
     result: *const local_orbital_scf.ScfGridResult,
 ) !void {
-    const diag = try sparse.diagonalValues(alloc, result.density);
+    const diag = try sparse.diagonal_values(alloc, result.density);
     defer alloc.free(diag);
 
     var file = try dir.createFile(io, path, .{ .truncate = true });
@@ -57,7 +57,7 @@ pub fn writeReferenceJson(
 }
 
 /// Read SCF reference data from JSON file
-pub fn readReferenceJson(
+pub fn read_reference_json(
     io: std.Io,
     alloc: std.mem.Allocator,
     dir: std.Io.Dir,
@@ -104,12 +104,12 @@ pub const ComparisonResult = struct {
     density_rms_diff: f64,
 };
 
-pub fn compareResults(
+pub fn compare_results(
     alloc: std.mem.Allocator,
     result: *const local_orbital_scf.ScfGridResult,
     reference: *const ScfReferenceOwned,
 ) !ComparisonResult {
-    const diag = try sparse.diagonalValues(alloc, result.density);
+    const diag = try sparse.diagonal_values(alloc, result.density);
     defer alloc.free(diag);
 
     if (diag.len != reference.density_diagonal.len) return error.MismatchedSize;
@@ -145,13 +145,13 @@ test "round-trip JSON" {
         .{ .row = 0, .col = 0, .value = 1.0 },
         .{ .row = 1, .col = 1, .value = 2.0 },
     };
-    var density = try sparse.CsrMatrix.initFromTriplets(alloc, 2, 2, triplets[0..]);
+    var density = try sparse.CsrMatrix.init_from_triplets(alloc, 2, 2, triplets[0..]);
     defer density.deinit(alloc);
 
-    var overlap = try sparse.CsrMatrix.initFromTriplets(alloc, 2, 2, triplets[0..]);
+    var overlap = try sparse.CsrMatrix.init_from_triplets(alloc, 2, 2, triplets[0..]);
     defer overlap.deinit(alloc);
 
-    var hamiltonian = try sparse.CsrMatrix.initFromTriplets(alloc, 2, 2, triplets[0..]);
+    var hamiltonian = try sparse.CsrMatrix.init_from_triplets(alloc, 2, 2, triplets[0..]);
     defer hamiltonian.deinit(alloc);
 
     const result = local_orbital_scf.ScfGridResult{
@@ -170,9 +170,9 @@ test "round-trip JSON" {
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
-    try writeReferenceJson(io, alloc, tmp_dir.dir, "test.json", &result);
+    try write_reference_json(io, alloc, tmp_dir.dir, "test.json", &result);
 
-    var ref = try readReferenceJson(io, alloc, tmp_dir.dir, "test.json");
+    var ref = try read_reference_json(io, alloc, tmp_dir.dir, "test.json");
     defer ref.deinit(alloc);
 
     try std.testing.expectApproxEqAbs(@as(f64, -10.5), ref.energy.total, 1e-10);

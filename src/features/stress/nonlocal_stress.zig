@@ -9,10 +9,10 @@ const paw_mod = @import("../paw/paw_tab.zig");
 const stress_util = @import("stress.zig");
 
 const Stress3x3 = stress_util.Stress3x3;
-const dYlm_dq = stress_util.dYlm_dq;
+const d_ylm_dq = stress_util.d_ylm_dq;
 
 /// Fill radial_vals and radial_derivs arrays for all beta channels and G-vectors.
-fn fillRadialValuesAndDerivs(
+fn fill_radial_values_and_derivs(
     upf: pseudo.UpfData,
     nb: usize,
     n: usize,
@@ -28,17 +28,17 @@ fn fillRadialValuesAndDerivs(
             const gmag = math.Vec3.norm(gvecs[g].kpg);
             if (tables) |t| {
                 radial_vals[b_idx * n + g] = t.tables[b_idx].eval(gmag);
-                radial_derivs[b_idx * n + g] = t.tables[b_idx].evalDeriv(gmag);
+                radial_derivs[b_idx * n + g] = t.tables[b_idx].eval_deriv(gmag);
             } else {
                 const beta = upf.beta[b_idx];
                 const l = beta.l orelse 0;
                 const bv = beta.values;
                 radial_vals[b_idx * n + g] =
-                    nonlocal.radialProjector(bv, upf.r, upf.rab, l, gmag);
+                    nonlocal.radial_projector(bv, upf.r, upf.rab, l, gmag);
                 const dg: f64 = 0.001;
-                const rp = nonlocal.radialProjector(bv, upf.r, upf.rab, l, gmag + dg);
+                const rp = nonlocal.radial_projector(bv, upf.r, upf.rab, l, gmag + dg);
                 const gminus = if (gmag > dg) gmag - dg else 0.0;
-                const rm = nonlocal.radialProjector(bv, upf.r, upf.rab, l, gminus);
+                const rm = nonlocal.radial_projector(bv, upf.r, upf.rab, l, gminus);
                 radial_derivs[b_idx * n + g] = (rp - rm) / (2.0 * dg);
             }
         }
@@ -46,7 +46,7 @@ fn fillRadialValuesAndDerivs(
 }
 
 /// Populate m_offsets and m_counts, and return m_total for a species' beta channels.
-fn buildMLayout(upf: pseudo.UpfData, nb: usize, m_offsets: []usize, m_counts: []usize) usize {
+fn build_m_layout(upf: pseudo.UpfData, nb: usize, m_offsets: []usize, m_counts: []usize) usize {
     var off: usize = 0;
     for (0..nb) |b_idx| {
         const l_val = upf.beta[b_idx].l orelse 0;
@@ -58,7 +58,7 @@ fn buildMLayout(upf: pseudo.UpfData, nb: usize, m_offsets: []usize, m_counts: []
 }
 
 /// Build the effective per-band D_ij matrix (D^0 - ε_nk × q_ij) when PAW Q is active.
-fn fillDijEffective(
+fn fill_dij_effective(
     nb: usize,
     dij_data: []const f64,
     qij_data: []const f64,
@@ -76,7 +76,7 @@ fn fillDijEffective(
 }
 
 /// Apply the -ε_nk × q_ij correction to the expanded (b,m)-indexed D_m matrix in-place.
-fn fillDijMEffective(
+fn fill_dij_m_effective(
     upf: pseudo.UpfData,
     nb: usize,
     dm: []const f64,
@@ -105,7 +105,7 @@ fn fillDijMEffective(
 }
 
 /// Compute p_bm = Σ_G φ × phase × c and dp_bm/dq_dir = Σ_G (∂φ/∂q) × phase × c.
-fn projectPAndDp(
+fn project_p_and_dp(
     upf: pseudo.UpfData,
     nb: usize,
     n: usize,
@@ -135,7 +135,7 @@ fn projectPAndDp(
                 const q = gvecs[g].kpg;
                 const q_mag = math.Vec3.norm(q);
                 const radial = radial_vals[b_idx * n + g];
-                const ylm = nonlocal.realSphericalHarmonic(l_val, m, q.x, q.y, q.z);
+                const ylm = nonlocal.real_spherical_harmonic(l_val, m, q.x, q.y, q.z);
                 const phi = 4.0 * std.math.pi * radial * ylm;
 
                 const pc = math.complex.mul(phase_buf[g], c[g]);
@@ -148,7 +148,7 @@ fn projectPAndDp(
                 const inv_qmag = 1.0 / q_mag;
                 const nhat = [3]f64{ q.x * inv_qmag, q.y * inv_qmag, q.z * inv_qmag };
 
-                const dy = dYlm_dq(l_val, m, q.x, q.y, q.z, q_mag);
+                const dy = d_ylm_dq(l_val, m, q.x, q.y, q.z, q_mag);
 
                 for (0..3) |dir| {
                     const dphi = 4.0 * std.math.pi *
@@ -164,7 +164,7 @@ fn projectPAndDp(
 }
 
 /// Compute Dp_bm = Σ_j D_{bm,jm'} × p_jm for a single (b, m) channel.
-fn computeDpBm(
+fn compute_dp_bm(
     upf: pseudo.UpfData,
     nb: usize,
     b_idx: usize,
@@ -209,7 +209,7 @@ fn computeDpBm(
 }
 
 /// Accumulate σ_αβ over all (G, b, m) at a single band.
-fn accumulateNonlocalSigmaForBand(
+fn accumulate_nonlocal_sigma_for_band(
     upf: pseudo.UpfData,
     nb: usize,
     n: usize,
@@ -244,7 +244,7 @@ fn accumulateNonlocalSigmaForBand(
                 const m = @as(i32, @intCast(m_idx)) - l_b;
                 const bm = m_offsets[b_idx] + m_idx;
 
-                const dp_bm = computeDpBm(
+                const dp_bm = compute_dp_bm(
                     upf,
                     nb,
                     b_idx,
@@ -262,8 +262,8 @@ fn accumulateNonlocalSigmaForBand(
 
                 const radial = radial_vals[b_idx * n + g];
                 const dradial_val = radial_derivs[b_idx * n + g];
-                const ylm = nonlocal.realSphericalHarmonic(l_b, m, q.x, q.y, q.z);
-                const dy = dYlm_dq(l_b, m, q.x, q.y, q.z, q_mag);
+                const ylm = nonlocal.real_spherical_harmonic(l_b, m, q.x, q.y, q.z);
+                const dy = d_ylm_dq(l_b, m, q.x, q.y, q.z, q_mag);
 
                 const z = math.complex.mul(math.complex.conj(dp_bm), pc);
 
@@ -280,7 +280,7 @@ fn accumulateNonlocalSigmaForBand(
 }
 
 /// Compute E_nl per (k, band) as Σ_{b,m} Re[conj(p_bm) × Σ_j D_bj p_jm] / Ω.
-fn computeEnlForBand(
+fn compute_enl_for_band(
     upf: pseudo.UpfData,
     nb: usize,
     p_buf: []const math.Complex,
@@ -374,7 +374,7 @@ const NonlocalAtomWork = struct {
 };
 
 /// Allocate all per-atom work buffers and initialize pointers. Caller must call work.deinit.
-fn allocNonlocalAtomWork(
+fn alloc_nonlocal_atom_work(
     alloc: std.mem.Allocator,
     inputs: NonlocalStressInputs,
     atom: hamiltonian.AtomData,
@@ -402,7 +402,7 @@ fn allocNonlocalAtomWork(
 
     const radial_vals = try alloc.alloc(f64, nb * n);
     const radial_derivs = try alloc.alloc(f64, nb * n);
-    fillRadialValuesAndDerivs(upf.*, nb, n, inputs.gvecs, tables, radial_vals, radial_derivs);
+    fill_radial_values_and_derivs(upf.*, nb, n, inputs.gvecs, tables, radial_vals, radial_derivs);
 
     const phase_buf = try alloc.alloc(math.Complex, n);
     for (inputs.gvecs, 0..) |gv, g| {
@@ -411,7 +411,7 @@ fn allocNonlocalAtomWork(
 
     const m_offsets = try alloc.alloc(usize, nb);
     const m_counts = try alloc.alloc(usize, nb);
-    const m_total = buildMLayout(upf.*, nb, m_offsets, m_counts);
+    const m_total = build_m_layout(upf.*, nb, m_offsets, m_counts);
 
     const p_buf = try alloc.alloc(math.Complex, m_total);
     const dp_buf = try alloc.alloc(math.Complex, 3 * m_total);
@@ -440,31 +440,31 @@ fn allocNonlocalAtomWork(
 }
 
 /// Accumulate nonlocal stress contributions from all bands of one atom at a single k-point.
-fn accumulateNonlocalStressAtom(
+fn accumulate_nonlocal_stress_atom(
     alloc: std.mem.Allocator,
     inputs: NonlocalStressInputs,
     atom: hamiltonian.AtomData,
     atom_idx: usize,
     sigma: *Stress3x3,
 ) !void {
-    var work_opt = try allocNonlocalAtomWork(alloc, inputs, atom, atom_idx);
+    var work_opt = try alloc_nonlocal_atom_work(alloc, inputs, atom, atom_idx);
     if (work_opt == null) return;
     defer work_opt.?.deinit(alloc);
 
     for (0..inputs.kp.nbands) |band| {
-        try processNonlocalStressBand(inputs, work_opt.?, band, sigma);
+        try process_nonlocal_stress_band(inputs, work_opt.?, band, sigma);
     }
 }
 
 /// Process a single band: build effective D matrices, project p/dp, accumulate σ and E_nl.
 /// Build effective D matrices (both Dij and Dij_m) for the current band.
-fn prepareBandEffectiveD(
+fn prepare_band_effective_d(
     work: NonlocalAtomWork,
     kp: scf.KpointWavefunction,
     band: usize,
 ) struct { dij_for_band: []const f64, dij_m_eff: ?[]const f64 } {
     if (work.dij_m_eff_buf) |dm_buf| {
-        fillDijMEffective(
+        fill_dij_m_effective(
             work.upf,
             work.nb,
             work.dij_m_data.?,
@@ -477,14 +477,14 @@ fn prepareBandEffectiveD(
         );
     }
     const dij_for_band: []const f64 = if (work.dij_eff_buf) |buf| blk: {
-        fillDijEffective(work.nb, work.dij_data, work.qij_data.?, kp.eigenvalues[band], buf);
+        fill_dij_effective(work.nb, work.dij_data, work.qij_data.?, kp.eigenvalues[band], buf);
         break :blk buf;
     } else work.dij_data;
     const dij_m_eff: ?[]const f64 = if (work.dij_m_eff_buf) |b| b else null;
     return .{ .dij_for_band = dij_for_band, .dij_m_eff = dij_m_eff };
 }
 
-fn processNonlocalStressBand(
+fn process_nonlocal_stress_band(
     inputs: NonlocalStressInputs,
     work: NonlocalAtomWork,
     band: usize,
@@ -496,11 +496,11 @@ fn processNonlocalStressBand(
     const n = inputs.n;
     const c = kp.coefficients[band * n .. (band + 1) * n];
 
-    const dij_bundle = prepareBandEffectiveD(work, kp, band);
+    const dij_bundle = prepare_band_effective_d(work, kp, band);
     const dij_for_band = dij_bundle.dij_for_band;
     const dij_m_eff = dij_bundle.dij_m_eff;
 
-    projectPAndDp(
+    project_p_and_dp(
         work.upf,
         work.nb,
         n,
@@ -518,7 +518,7 @@ fn processNonlocalStressBand(
 
     const prefactor = 2.0 * occ * kp.weight *
         inputs.spin_factor * inputs.inv_volume * inputs.inv_volume;
-    accumulateNonlocalSigmaForBand(
+    accumulate_nonlocal_sigma_for_band(
         work.upf,
         work.nb,
         n,
@@ -537,7 +537,7 @@ fn processNonlocalStressBand(
         sigma,
     );
 
-    const e_nl_nk_raw = computeEnlForBand(
+    const e_nl_nk_raw = compute_enl_for_band(
         work.upf,
         work.nb,
         work.p_buf,
@@ -555,7 +555,7 @@ fn processNonlocalStressBand(
 /// Nonlocal pseudopotential stress.
 /// σ_αβ = -(E_nl/Ω) δ_αβ - (2 spin/Ω²) Σ_nk f w Re[Σ D conj(dp_αβ) p]
 /// where dp_αβ = Σ_G (∂φ/∂q_α × q_β) × S(G) × c(G)
-pub fn nonlocalStress(
+pub fn nonlocal_stress(
     alloc: std.mem.Allocator,
     wavefunctions: ?scf.WavefunctionData,
     species: []const hamiltonian.SpeciesEntry,
@@ -568,7 +568,7 @@ pub fn nonlocalStress(
     paw_tabs: ?[]const paw_mod.PawTab,
     spin_factor: f64,
 ) !Stress3x3 {
-    var sigma = stress_util.zeroStress();
+    var sigma = stress_util.zero_stress();
     const wf = wavefunctions orelse return sigma;
     const inv_volume = 1.0 / volume;
 
@@ -594,7 +594,7 @@ pub fn nonlocalStress(
         };
 
         for (atoms, 0..) |atom, atom_idx| {
-            try accumulateNonlocalStressAtom(alloc, inputs, atom, atom_idx, &sigma);
+            try accumulate_nonlocal_stress_atom(alloc, inputs, atom, atom_idx, &sigma);
         }
     }
 

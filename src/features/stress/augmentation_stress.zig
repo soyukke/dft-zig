@@ -10,7 +10,7 @@ const Grid = stress_util.Grid;
 
 /// Accumulate augmented-density contributions at a single G-vector.
 /// Returns (sum_re, sum_im) from all atoms' QIJL L=0 channels.
-fn accumulateAugmentedDensityG(
+fn accumulate_augmented_density_g(
     g_vec: math.Vec3,
     g_abs: f64,
     paw_rhoij: []const []const f64,
@@ -42,7 +42,7 @@ fn accumulateAugmentedDensityG(
             const rij_val = rij[i * nb + j];
             if (@abs(rij_val) < 1e-30) continue;
 
-            const qijl_g = tab.evalQijlForm(e, g_abs);
+            const qijl_g = tab.eval_qijl_form(e, g_abs);
             if (@abs(qijl_g) < 1e-30) continue;
 
             const ylm = 1.0 / @sqrt(4.0 * std.math.pi);
@@ -57,8 +57,8 @@ fn accumulateAugmentedDensityG(
 }
 
 /// Build augmented density ρ̃ + n̂ for PAW stress calculation.
-/// Same logic as addPawCompensationCharge in scf.zig.
-pub fn buildAugmentedDensity(
+/// Same logic as add_paw_compensation_charge in scf.zig.
+pub fn build_augmented_density(
     alloc: std.mem.Allocator,
     grid: Grid,
     rho: []f64,
@@ -82,7 +82,7 @@ pub fn buildAugmentedDensity(
         }
 
         const g_abs = math.Vec3.norm(g.gvec);
-        const sums = accumulateAugmentedDensityG(
+        const sums = accumulate_augmented_density_g(
             g.gvec,
             g_abs,
             paw_rhoij,
@@ -106,7 +106,7 @@ pub fn buildAugmentedDensity(
         .recip = grid.recip,
         .volume = grid.volume,
     };
-    const n_hat_r = try scf.reciprocalToReal(alloc, fft_obj, n_hat_g);
+    const n_hat_r = try scf.reciprocal_to_real(alloc, fft_obj, n_hat_g);
     defer alloc.free(n_hat_r);
 
     for (0..@min(rho.len, n_hat_r.len)) |i| {
@@ -115,7 +115,7 @@ pub fn buildAugmentedDensity(
 }
 
 /// Accumulate augmentation stress contributions at a single G-vector for a single atom.
-fn accumulateAugmentationStressAtom(
+fn accumulate_augmentation_stress_atom(
     g_vec: math.Vec3,
     g_norm: f64,
     v_eff: math.Complex,
@@ -147,7 +147,7 @@ fn accumulateAugmentationStressAtom(
 
         // Off-diagonal: dQ/dG derivative term (G≠0 only)
         if (g_norm < 1e-12) continue;
-        const dqijl_g = tab.evalQijlFormDeriv(e, g_norm);
+        const dqijl_g = tab.eval_qijl_form_deriv(e, g_norm);
         const factor = -rij_sym * dqijl_g * re_vs * ylm_gaunt * inv_volume / g_norm;
         const gv = [3]f64{ g_vec.x, g_vec.y, g_vec.z };
         for (0..3) |a2| {
@@ -161,7 +161,7 @@ fn accumulateAugmentationStressAtom(
 /// PAW augmentation charge stress (off-diagonal only, matching QE's addusstress).
 /// σ^aug_αβ = (1/Ω) Σ_{G≠0} Σ_{a,ij} ρ_ij × dQ_ij(|G|)/d|G|
 ///             × V_eff(G) × S*_a(G) × (-G_αG_β/|G|) / Ω
-pub fn augmentationStress(
+pub fn augmentation_stress(
     alloc: std.mem.Allocator,
     grid: Grid,
     potential_values: ?[]const math.Complex,
@@ -171,7 +171,7 @@ pub fn augmentationStress(
     inv_volume: f64,
     ecutrho: f64,
 ) !Stress3x3 {
-    var sigma = stress_util.zeroStress();
+    var sigma = stress_util.zero_stress();
     const tabs = paw_tabs orelse return sigma;
     const rhoij = paw_rhoij orelse return sigma;
     const pot_vals = potential_values orelse return sigma;
@@ -194,7 +194,7 @@ pub fn augmentationStress(
             const tab = &tabs[si];
             if (tab.nbeta == 0) continue;
             const rij = rhoij[a];
-            accumulateAugmentationStressAtom(
+            accumulate_augmentation_stress_atom(
                 g.gvec,
                 g_norm,
                 v_eff,

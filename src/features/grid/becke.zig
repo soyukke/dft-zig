@@ -58,7 +58,7 @@ fn distance(x1: f64, y1: f64, z1: f64, x2: f64, y2: f64, z2: f64) f64 {
 /// Becke's smoothing function: f(x) = 0.5 * (1 - p(x))
 /// where p(x) = 1.5*x - 0.5*x^3 (the step function polynomial).
 /// Applied `k` times for sharper partitioning.
-fn beckeSmooth(mu: f64, k: usize) f64 {
+fn becke_smooth(mu: f64, k: usize) f64 {
     var s = mu;
     for (0..k) |_| {
         s = 1.5 * s - 0.5 * s * s * s;
@@ -79,7 +79,7 @@ fn beckeSmooth(mu: f64, k: usize) f64 {
 /// where a_ij depends on the ratio of Bragg-Slater radii.
 /// Accumulate the Becke cell-function product over all (i, j) pairs into
 /// `p_buf`. Callers must initialize `p_buf[i] = 1.0` before calling.
-fn accumulateBeckeCellFunction(
+fn accumulate_becke_cell_function(
     atoms: []const Atom,
     config: GridConfig,
     inter_distances: []const f64,
@@ -97,8 +97,8 @@ fn accumulateBeckeCellFunction(
 
             // Atomic size adjustment
             if (config.use_atomic_radii) {
-                const chi = radial.braggSlaterRadius(atoms[i].z_number) /
-                    radial.braggSlaterRadius(atoms[j].z_number);
+                const chi = radial.bragg_slater_radius(atoms[i].z_number) /
+                    radial.bragg_slater_radius(atoms[j].z_number);
                 // u_ij = (chi - 1) / (chi + 1)
                 const u = (chi - 1.0) / (chi + 1.0);
                 // a_ij = u / (u^2 - 1), clamped to [-0.5, 0.5]
@@ -109,7 +109,7 @@ fn accumulateBeckeCellFunction(
             }
 
             // Apply smoothing function k times
-            const s_ij = beckeSmooth(mu, config.becke_hardness);
+            const s_ij = becke_smooth(mu, config.becke_hardness);
             const s_ji = 1.0 - s_ij;
 
             p_buf[i] *= s_ij;
@@ -118,7 +118,7 @@ fn accumulateBeckeCellFunction(
     }
 }
 
-pub fn beckeWeight(
+pub fn becke_weight(
     x: f64,
     y: f64,
     z: f64,
@@ -147,7 +147,7 @@ pub fn beckeWeight(
         p_buf[i] = 1.0;
     }
 
-    accumulateBeckeCellFunction(atoms, config, inter_distances, dist_buf[0..n_atoms], p_buf);
+    accumulate_becke_cell_function(atoms, config, inter_distances, dist_buf[0..n_atoms], p_buf);
 
     // Normalize: w_i = P_i / sum(P_j)
     var p_sum: f64 = 0.0;
@@ -162,7 +162,7 @@ pub fn beckeWeight(
 
 /// Determines the number of angular points for a given radial shell,
 /// using a simple pruning scheme similar to PySCF's nwchem_prune.
-fn prunedAngularPoints(i_radial: usize, n_radial: usize, n_angular_max: usize) usize {
+fn pruned_angular_points(i_radial: usize, n_radial: usize, n_angular_max: usize) usize {
     const fi: f64 = @floatFromInt(i_radial);
     const fn_: f64 = @floatFromInt(n_radial);
     const frac = fi / fn_;
@@ -182,7 +182,7 @@ fn prunedAngularPoints(i_radial: usize, n_radial: usize, n_angular_max: usize) u
 }
 
 /// Fill `inter_distances` (n x n row-major) with Cartesian atom-atom distances.
-fn fillInterAtomicDistances(atoms: []const Atom, inter_distances: []f64) void {
+fn fill_inter_atomic_distances(atoms: []const Atom, inter_distances: []f64) void {
     const n_atoms = atoms.len;
     for (0..n_atoms) |i| {
         for (0..n_atoms) |j| {
@@ -199,7 +199,7 @@ fn fillInterAtomicDistances(atoms: []const Atom, inter_distances: []f64) void {
 }
 
 /// Append all Becke-weighted grid points for a single atom center.
-fn appendAtomGridPoints(
+fn append_atom_grid_points(
     allocator: std.mem.Allocator,
     grid_points: *std.ArrayList(GridPoint),
     atoms: []const Atom,
@@ -209,7 +209,7 @@ fn appendAtomGridPoints(
     p_buf: []f64,
 ) !void {
     // Generate radial grid
-    const rad_grid = try radial.defaultRadialGrid(
+    const rad_grid = try radial.default_radial_grid(
         allocator,
         atoms[iatom].z_number,
         config.n_radial,
@@ -225,11 +225,11 @@ fn appendAtomGridPoints(
 
         // Determine angular grid size (with optional pruning)
         const n_ang = if (config.prune)
-            prunedAngularPoints(ir, config.n_radial, config.n_angular)
+            pruned_angular_points(ir, config.n_radial, config.n_angular)
         else
             config.n_angular;
 
-        const ang_grid = lebedev.getLebedevGrid(n_ang);
+        const ang_grid = lebedev.get_lebedev_grid(n_ang);
 
         // For each angular point
         for (ang_grid) |apt| {
@@ -239,7 +239,7 @@ fn appendAtomGridPoints(
             const gz = atoms[iatom].z + r * apt.z;
 
             // Compute Becke partitioning weight for this atom
-            const bw = beckeWeight(
+            const bw = becke_weight(
                 gx,
                 gy,
                 gz,
@@ -276,7 +276,7 @@ fn appendAtomGridPoints(
 /// Returns an array of GridPoints with combined weights (including
 /// the r^2 volume element, the 4*pi angular normalization, and
 /// the Becke partitioning weight).
-pub fn buildMolecularGrid(
+pub fn build_molecular_grid(
     allocator: std.mem.Allocator,
     atoms: []const Atom,
     config: GridConfig,
@@ -287,7 +287,7 @@ pub fn buildMolecularGrid(
     const inter_distances = try allocator.alloc(f64, n_atoms * n_atoms);
     defer allocator.free(inter_distances);
 
-    fillInterAtomicDistances(atoms, inter_distances);
+    fill_inter_atomic_distances(atoms, inter_distances);
 
     // Becke weight scratch buffer
     const p_buf = try allocator.alloc(f64, n_atoms);
@@ -299,7 +299,7 @@ pub fn buildMolecularGrid(
 
     // For each atom, generate atom-centered grid
     for (0..n_atoms) |iatom| {
-        try appendAtomGridPoints(
+        try append_atom_grid_points(
             allocator,
             &grid_points,
             atoms,
@@ -322,7 +322,7 @@ test "becke weight single atom is 1" {
     var p_buf = [_]f64{0.0};
     const inter_d = [_]f64{0.0};
 
-    const w = beckeWeight(1.0, 0.0, 0.0, &atoms, 0, .{}, &inter_d, &p_buf);
+    const w = becke_weight(1.0, 0.0, 0.0, &atoms, 0, .{}, &inter_d, &p_buf);
     try std.testing.expectApproxEqAbs(1.0, w, 1e-14);
 }
 
@@ -349,8 +349,8 @@ test "becke weights sum to 1" {
     };
 
     for (test_points) |pt| {
-        const w0 = beckeWeight(pt[0], pt[1], pt[2], &atoms, 0, .{}, &inter_d, &p_buf);
-        const w1 = beckeWeight(pt[0], pt[1], pt[2], &atoms, 1, .{}, &inter_d, &p_buf);
+        const w0 = becke_weight(pt[0], pt[1], pt[2], &atoms, 0, .{}, &inter_d, &p_buf);
+        const w1 = becke_weight(pt[0], pt[1], pt[2], &atoms, 1, .{}, &inter_d, &p_buf);
         try std.testing.expectApproxEqAbs(1.0, w0 + w1, 1e-14);
     }
 }
@@ -372,7 +372,7 @@ test "molecular grid integrates constant function" {
         .prune = false,
     };
 
-    const grid = try buildMolecularGrid(allocator, &atoms, config);
+    const grid = try build_molecular_grid(allocator, &atoms, config);
     defer allocator.free(grid);
 
     // Integrate a normalized Gaussian: (alpha/pi)^(3/2) * exp(-alpha*r^2)
@@ -403,7 +403,7 @@ test "molecular grid H2O integrates Gaussian" {
         .prune = false,
     };
 
-    const grid = try buildMolecularGrid(allocator, &atoms, config);
+    const grid = try build_molecular_grid(allocator, &atoms, config);
     defer allocator.free(grid);
 
     // Integrate a normalized s-type Gaussian centered at oxygen

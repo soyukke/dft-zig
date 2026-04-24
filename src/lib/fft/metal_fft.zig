@@ -28,7 +28,7 @@ const metal = if (builtin.os.tag == .macos) struct {
 } else struct {};
 
 /// Check if Metal is available on this system.
-pub fn isAvailable() bool {
+pub fn is_available() bool {
     if (comptime builtin.os.tag != .macos) return false;
     return metal.metal_is_available();
 }
@@ -100,7 +100,7 @@ pub const MetalPlan3d = struct {
 test "MetalPlan3d availability" {
     if (comptime builtin.os.tag != .macos) return;
 
-    _ = isAvailable();
+    _ = is_available();
 }
 
 test "MetalPlan3d roundtrip" {

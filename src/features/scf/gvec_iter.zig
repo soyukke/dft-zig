@@ -105,7 +105,7 @@ pub const GVecIterator = struct {
 // Tests
 // ============================================================================
 
-fn makeTestGrid(nx: usize, ny: usize, nz: usize) Grid {
+fn make_test_grid(nx: usize, ny: usize, nz: usize) Grid {
     const twopi = 2.0 * std.math.pi;
     return .{
         .nx = nx,
@@ -114,12 +114,12 @@ fn makeTestGrid(nx: usize, ny: usize, nz: usize) Grid {
         .min_h = -@as(i32, @intCast(nx / 2)),
         .min_k = -@as(i32, @intCast(ny / 2)),
         .min_l = -@as(i32, @intCast(nz / 2)),
-        .cell = math.Mat3.fromRows(
+        .cell = math.Mat3.from_rows(
             .{ .x = 1, .y = 0, .z = 0 },
             .{ .x = 0, .y = 1, .z = 0 },
             .{ .x = 0, .y = 0, .z = 1 },
         ),
-        .recip = math.Mat3.fromRows(
+        .recip = math.Mat3.from_rows(
             .{ .x = twopi, .y = 0, .z = 0 },
             .{ .x = 0, .y = twopi, .z = 0 },
             .{ .x = 0, .y = 0, .z = twopi },
@@ -129,7 +129,7 @@ fn makeTestGrid(nx: usize, ny: usize, nz: usize) Grid {
 }
 
 test "GVecIterator yields correct count" {
-    const grid = makeTestGrid(3, 4, 5);
+    const grid = make_test_grid(3, 4, 5);
     var it = GVecIterator.init(grid);
     var count: usize = 0;
     while (it.next()) |_| count += 1;
@@ -137,7 +137,7 @@ test "GVecIterator yields correct count" {
 }
 
 test "GVecIterator idx is sequential" {
-    const grid = makeTestGrid(3, 3, 3);
+    const grid = make_test_grid(3, 3, 3);
     var it = GVecIterator.init(grid);
     var expected_idx: usize = 0;
     while (it.next()) |item| {
@@ -148,7 +148,7 @@ test "GVecIterator idx is sequential" {
 }
 
 test "GVecIterator G=0 present" {
-    const grid = makeTestGrid(3, 3, 3);
+    const grid = make_test_grid(3, 3, 3);
     var it = GVecIterator.init(grid);
     var found_g0 = false;
     while (it.next()) |item| {
@@ -162,7 +162,7 @@ test "GVecIterator G=0 present" {
 
 test "GVecIterator loop order l-outer k h-inner" {
     // 2x2x2 grid: verify the first few items follow l→k→h order
-    const grid = makeTestGrid(2, 2, 2);
+    const grid = make_test_grid(2, 2, 2);
     var it = GVecIterator.init(grid);
 
     // idx=0: l=0 (gl=min_l), k=0 (gk=min_k), h=0 (gh=min_h)
@@ -203,7 +203,7 @@ test "GVecIterator loop order l-outer k h-inner" {
 
 test "GVecIterator gvec matches manual calculation" {
     const twopi = 2.0 * std.math.pi;
-    const grid = makeTestGrid(3, 1, 1);
+    const grid = make_test_grid(3, 1, 1);
     var it = GVecIterator.init(grid);
 
     // First item: gh=min_h=-1, gk=0, gl=0 => gvec = (-2pi, 0, 0)
@@ -217,7 +217,7 @@ test "GVecIterator gvec matches manual calculation" {
 
 test "GVecIterator matches manual l-k-h loop" {
     // Verify iterator output exactly matches the manual triple loop used in energy.zig etc.
-    const grid = makeTestGrid(4, 3, 5);
+    const grid = make_test_grid(4, 3, 5);
     var it = GVecIterator.init(grid);
 
     var manual_idx: usize = 0;

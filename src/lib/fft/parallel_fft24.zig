@@ -91,10 +91,10 @@ pub const ParallelPlan3d24 = struct {
         ny: usize,
         nz: usize,
     ) !ParallelPlan3d24 {
-        return initWithThreads(allocator, io, nx, ny, nz, 0);
+        return init_with_threads(allocator, io, nx, ny, nz, 0);
     }
 
-    pub fn initWithThreads(
+    pub fn init_with_threads(
         allocator: std.mem.Allocator,
         io: std.Io,
         nx: usize,
@@ -145,7 +145,7 @@ pub const ParallelPlan3d24 = struct {
         }
 
         for (0..num_threads) |i| {
-            threads[i] = try std.Thread.spawn(.{}, workerThread, .{ state, &workspaces[i] });
+            threads[i] = try std.Thread.spawn(.{}, worker_thread, .{ state, &workspaces[i] });
             spawned += 1;
         }
 
@@ -196,16 +196,16 @@ pub const ParallelPlan3d24 = struct {
         if (data.len != nx * ny * nz) return;
 
         // FFT along x-axis (parallel over y*z)
-        self.dispatchTask(.fft_x, data, inv, ny * nz);
+        self.dispatch_task(.fft_x, data, inv, ny * nz);
 
         // FFT along y-axis (parallel over x*z)
-        self.dispatchTask(.fft_y, data, inv, nx * nz);
+        self.dispatch_task(.fft_y, data, inv, nx * nz);
 
         // FFT along z-axis (parallel over x*y)
-        self.dispatchTask(.fft_z, data, inv, nx * ny);
+        self.dispatch_task(.fft_z, data, inv, nx * ny);
     }
 
-    fn dispatchTask(
+    fn dispatch_task(
         self: *ParallelPlan3d24,
         task: TaskType,
         data: []Complex,
@@ -234,7 +234,7 @@ pub const ParallelPlan3d24 = struct {
         self.state.mutex.unlock(self.state.io);
     }
 
-    fn workerThread(state: *ThreadPoolState, ws: *ThreadWorkspace) void {
+    fn worker_thread(state: *ThreadPoolState, ws: *ThreadWorkspace) void {
         var last_generation: usize = 0;
 
         while (true) {
@@ -263,9 +263,9 @@ pub const ParallelPlan3d24 = struct {
                     if (item >= state.total_work) break;
 
                     switch (task) {
-                        .fft_x => processXAxis(state, d, inv, item),
-                        .fft_y => processYAxis(state, ws, d, inv, item),
-                        .fft_z => processZAxis(state, ws, d, inv, item),
+                        .fft_x => process_x_axis(state, d, inv, item),
+                        .fft_y => process_y_axis(state, ws, d, inv, item),
+                        .fft_z => process_z_axis(state, ws, d, inv, item),
                         else => {},
                     }
                 }
@@ -280,7 +280,7 @@ pub const ParallelPlan3d24 = struct {
         }
     }
 
-    fn processXAxis(state: *ThreadPoolState, data: []Complex, inv: bool, item: usize) void {
+    fn process_x_axis(state: *ThreadPoolState, data: []Complex, inv: bool, item: usize) void {
         const nx = state.nx;
         const ny = state.ny;
         const y = item % ny;
@@ -291,7 +291,7 @@ pub const ParallelPlan3d24 = struct {
         fft24_comptime.fft24(data[offset .. offset + nx], inv);
     }
 
-    fn processYAxis(
+    fn process_y_axis(
         state: *ThreadPoolState,
         ws: *ThreadWorkspace,
         data: []Complex,
@@ -317,7 +317,7 @@ pub const ParallelPlan3d24 = struct {
         }
     }
 
-    fn processZAxis(
+    fn process_z_axis(
         state: *ThreadPoolState,
         ws: *ThreadWorkspace,
         data: []Complex,
@@ -351,7 +351,7 @@ test "ParallelPlan3d24 roundtrip" {
     const io = std.testing.io;
     const allocator = std.testing.allocator;
 
-    var plan = try ParallelPlan3d24.initWithThreads(allocator, io, 24, 24, 24, 4);
+    var plan = try ParallelPlan3d24.init_with_threads(allocator, io, 24, 24, 24, 4);
     defer plan.deinit();
 
     const total = 24 * 24 * 24;
@@ -376,10 +376,10 @@ test "ParallelPlan3d24 matches parallel_fft" {
     const allocator = std.testing.allocator;
     const parallel_fft = @import("parallel_fft.zig");
 
-    var plan24 = try ParallelPlan3d24.initWithThreads(allocator, io, 24, 24, 24, 4);
+    var plan24 = try ParallelPlan3d24.init_with_threads(allocator, io, 24, 24, 24, 4);
     defer plan24.deinit();
 
-    var plan_ref = try parallel_fft.ParallelPlan3d.initWithThreads(allocator, io, 24, 24, 24, 4);
+    var plan_ref = try parallel_fft.ParallelPlan3d.init_with_threads(allocator, io, 24, 24, 24, 4);
     defer plan_ref.deinit();
 
     const total = 24 * 24 * 24;

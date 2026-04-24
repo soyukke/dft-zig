@@ -401,6 +401,10 @@ just test             # Run all tests
 just test-unit        # Unit tests only
 just test-regression  # Regression tests (ABINIT/QE comparison)
 just fmt              # Format source code
+just fmt-check        # Check Zig formatting without rewriting
+just lint             # Run the Zig style checker against the baseline
+just lint-strict      # Report every current Zig style violation
+just lint-update-baseline  # Refresh the Zig style baseline
 ```
 
 ## Pseudopotentials

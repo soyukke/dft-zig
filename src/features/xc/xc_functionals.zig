@@ -49,7 +49,7 @@ pub const XcResult = struct {
 
 /// Slater exchange: eps_x = C_x * rho^(1/3), v_x = (4/3)*eps_x.
 /// C_x = -(3/4)*(3/pi)^(1/3).
-pub fn slaterExchange(rho: f64) XcResult {
+pub fn slater_exchange(rho: f64) XcResult {
     if (rho < 1e-30) return .{ .eps_xc = 0.0, .v_xc = 0.0, .v_sigma = 0.0 };
 
     const rho_13 = math.pow(f64, rho, 1.0 / 3.0);
@@ -89,7 +89,7 @@ const vwn_rpa_params = VwnParams{
 };
 
 /// Generic VWN correlation with given parameters.
-fn vwnCorrelationGeneric(rho: f64, p: VwnParams) XcResult {
+fn vwn_correlation_generic(rho: f64, p: VwnParams) XcResult {
     if (rho < 1e-30) return .{ .eps_xc = 0.0, .v_xc = 0.0, .v_sigma = 0.0 };
 
     const rs = math.pow(f64, 3.0 / (4.0 * math.pi * rho), 1.0 / 3.0);
@@ -126,20 +126,20 @@ fn vwnCorrelationGeneric(rho: f64, p: VwnParams) XcResult {
 
 /// VWN5 correlation energy and potential.
 /// Reference: Vosko, Wilk, Nusair, Can. J. Phys. 58, 1200 (1980), Table 4.4, form V.
-pub fn vwnCorrelation(rho: f64) XcResult {
-    return vwnCorrelationGeneric(rho, vwn5_params);
+pub fn vwn_correlation(rho: f64) XcResult {
+    return vwn_correlation_generic(rho, vwn5_params);
 }
 
 /// VWN_RPA correlation (form III).
 /// Used as the LDA correlation component in B3LYP (Gaussian convention).
-pub fn vwnRpaCorrelation(rho: f64) XcResult {
-    return vwnCorrelationGeneric(rho, vwn_rpa_params);
+pub fn vwn_rpa_correlation(rho: f64) XcResult {
+    return vwn_correlation_generic(rho, vwn_rpa_params);
 }
 
 /// LDA (SVWN5): Slater exchange + VWN5 correlation.
-pub fn ldaSvwn(rho: f64) XcResult {
-    const ex = slaterExchange(rho);
-    const ec = vwnCorrelation(rho);
+pub fn lda_svwn(rho: f64) XcResult {
+    const ex = slater_exchange(rho);
+    const ec = vwn_correlation(rho);
     return .{
         .eps_xc = ex.eps_xc + ec.eps_xc,
         .v_xc = ex.v_xc + ec.v_xc,
@@ -158,10 +158,10 @@ pub fn ldaSvwn(rho: f64) XcResult {
 ///   x_s = |grad rho_a| / rho_a^(4/3) = sqrt(sigma) * 2^(1/3) / rho^(4/3)
 ///   F(x_s) = -beta * x_s^2 / (1 + 6*beta*x_s*asinh(x_s))
 ///   eps_x = eps_slater + 2^(-1/3) * rho^(1/3) * F(x_s)
-pub fn becke88Exchange(rho: f64, sigma: f64) XcResult {
+pub fn becke88_exchange(rho: f64, sigma: f64) XcResult {
     if (rho < 1e-30) return .{ .eps_xc = 0.0, .v_xc = 0.0, .v_sigma = 0.0 };
 
-    const slater = slaterExchange(rho);
+    const slater = slater_exchange(rho);
     const beta: f64 = 0.0042;
     const rho_13 = math.pow(f64, rho, 1.0 / 3.0);
     const rho_43 = rho * rho_13;
@@ -225,7 +225,7 @@ const lyp_d: f64 = 0.349;
 ///   eps_c = a * (t1 + omega * (t2 + t3 + t4 + t5 + t6))
 ///
 /// Reference: Miehlich et al., CPL 157, 200 (1989); libxc gga_c_lyp.mpl
-fn lypEpsilon(rho_val: f64, sigma_val: f64) f64 {
+fn lyp_epsilon(rho_val: f64, sigma_val: f64) f64 {
     if (rho_val < 1e-30) return 0.0;
 
     const rho_83 = math.pow(f64, rho_val, 8.0 / 3.0);
@@ -260,7 +260,7 @@ const LypTerms = struct {
     t1: f64,
 };
 
-fn lypTerms(rho: f64, sigma: f64) LypTerms {
+fn lyp_terms(rho: f64, sigma: f64) LypTerms {
     const rho_13 = math.pow(f64, rho, 1.0 / 3.0);
     const rho_83 = math.pow(f64, rho, 8.0 / 3.0);
     const rr = 1.0 / rho_13; // rho^(-1/3)
@@ -294,7 +294,7 @@ fn lypTerms(rho: f64, sigma: f64) LypTerms {
 }
 
 /// Compute d(eps_c)/d(rho) via chain rule through all intermediates.
-fn lypDepsDrho(rho: f64, t: LypTerms) f64 {
+fn lyp_deps_drho(rho: f64, t: LypTerms) f64 {
     // Chain rule through intermediate variables:
     //   drr/drho = -1/(3*rho^(4/3)) = -rr/(3*rho)
     const drr_drho = -t.rr / (3.0 * rho);
@@ -346,7 +346,7 @@ fn lypDepsDrho(rho: f64, t: LypTerms) f64 {
 
 /// Compute v_sigma = d(rho * eps_c)/d(sigma).
 /// Only t2, t4, t5, t6 depend on sigma (via xt2 and xs2).
-fn lypVsigma(rho: f64, t: LypTerms) f64 {
+fn lyp_vsigma(rho: f64, t: LypTerms) f64 {
     // d(xt2)/d(sigma) = 1/rho^(8/3), d(xs2)/d(sigma) = 2^(2/3)/rho^(8/3)
     const dxt2_ds = 1.0 / t.rho_83;
     const dxs2_ds = two_2_3 / t.rho_83;
@@ -364,16 +364,16 @@ fn lypVsigma(rho: f64, t: LypTerms) f64 {
 /// Miehlich parametrization: CPL 157, 200 (1989).
 /// Implementation follows libxc gga_c_lyp.mpl exactly.
 /// Uses analytical derivatives for both v_xc and v_sigma.
-pub fn lypCorrelation(rho: f64, sigma: f64) XcResult {
+pub fn lyp_correlation(rho: f64, sigma: f64) XcResult {
     if (rho < 1e-30) return .{ .eps_xc = 0.0, .v_xc = 0.0, .v_sigma = 0.0 };
 
-    const t = lypTerms(rho, sigma);
+    const t = lyp_terms(rho, sigma);
     const eps_c = lyp_a * (t.t1 + t.omega * t.sigma_terms);
 
-    const deps_drho = lypDepsDrho(rho, t);
+    const deps_drho = lyp_deps_drho(rho, t);
     const v_xc = eps_c + rho * deps_drho;
 
-    const v_s = lypVsigma(rho, t);
+    const v_s = lyp_vsigma(rho, t);
 
     return .{ .eps_xc = eps_c, .v_xc = v_xc, .v_sigma = v_s };
 }
@@ -439,10 +439,10 @@ pub fn b3lyp(rho: f64, sigma: f64) B3lypResult {
     }
 
     // --- VWN_RPA correlation ---
-    const vwn = vwnRpaCorrelation(rho);
+    const vwn = vwn_rpa_correlation(rho);
 
     // --- LYP correlation ---
-    const lyp = lypCorrelation(rho, sigma);
+    const lyp = lyp_correlation(rho, sigma);
 
     // --- B3LYP combination ---
     // E_xc = (1-a0)*Slater + ax*dB88 + (1-ac)*VWN + ac*LYP
@@ -463,28 +463,28 @@ pub fn b3lyp(rho: f64, sigma: f64) B3lypResult {
 
 test "slater exchange vs PySCF" {
     // PySCF: LDA_X at rho=0.1 => eps_x = -0.342808612300562, v_x = -0.457078149734083
-    const result = slaterExchange(0.1);
+    const result = slater_exchange(0.1);
     try std.testing.expectApproxEqAbs(-0.342808612300562, result.eps_xc, 1e-12);
     try std.testing.expectApproxEqAbs(-0.457078149734083, result.v_xc, 1e-12);
 }
 
 test "vwn5 correlation vs PySCF" {
     // PySCF: LDA_C_VWN at rho=0.1 => eps_c = -0.053397289185950, v_c = -0.060812030331262
-    const result = vwnCorrelation(0.1);
+    const result = vwn_correlation(0.1);
     try std.testing.expectApproxEqAbs(-0.053397289185950, result.eps_xc, 1e-10);
     try std.testing.expectApproxEqAbs(-0.060812030331262, result.v_xc, 1e-10);
 }
 
 test "vwn_rpa correlation vs PySCF" {
     // PySCF: LDA_C_VWN_RPA at rho=0.1 => eps_c = -0.072059367828481, v_c = -0.080233973560799
-    const result = vwnRpaCorrelation(0.1);
+    const result = vwn_rpa_correlation(0.1);
     try std.testing.expectApproxEqAbs(-0.072059367828481, result.eps_xc, 1e-10);
     try std.testing.expectApproxEqAbs(-0.080233973560799, result.v_xc, 1e-10);
 }
 
 test "lda svwn vs PySCF" {
     // PySCF: LDA_X + LDA_C_VWN at rho=0.1 => eps = -0.396205901486512, v = -0.517890180065345
-    const result = ldaSvwn(0.1);
+    const result = lda_svwn(0.1);
     try std.testing.expectApproxEqAbs(-0.396205901486512, result.eps_xc, 1e-10);
     try std.testing.expectApproxEqAbs(-0.517890180065345, result.v_xc, 1e-10);
 }
@@ -492,7 +492,7 @@ test "lda svwn vs PySCF" {
 test "becke88 exchange vs PySCF" {
     // PySCF: GGA_X_B88 at rho=0.1, sigma=0.01
     // eps = -0.353006520959622, vrho = -0.445695995143018, vsigma = -0.093672623011794
-    const result = becke88Exchange(0.1, 0.01);
+    const result = becke88_exchange(0.1, 0.01);
     try std.testing.expectApproxEqAbs(-0.353006520959622, result.eps_xc, 1e-10);
     try std.testing.expectApproxEqAbs(-0.445695995143018, result.v_xc, 1e-8);
     try std.testing.expectApproxEqAbs(-0.093672623011794, result.v_sigma, 1e-8);
@@ -500,15 +500,15 @@ test "becke88 exchange vs PySCF" {
 
 test "becke88 reduces to slater at zero gradient" {
     const rho = 0.1;
-    const b88 = becke88Exchange(rho, 0.0);
-    const slater = slaterExchange(rho);
+    const b88 = becke88_exchange(rho, 0.0);
+    const slater = slater_exchange(rho);
     try std.testing.expectApproxEqAbs(slater.eps_xc, b88.eps_xc, 1e-12);
 }
 
 test "lyp correlation vs PySCF" {
     // PySCF: GGA_C_LYP at rho=0.1, sigma=0.01
     // eps = -0.032877381431883, vrho = -0.042336616391100, vsigma = 0.013598460610504
-    const result = lypCorrelation(0.1, 0.01);
+    const result = lyp_correlation(0.1, 0.01);
     try std.testing.expectApproxEqAbs(-0.032877381431883, result.eps_xc, 1e-12);
     try std.testing.expectApproxEqAbs(-0.042336616391100, result.v_xc, 1e-8);
     try std.testing.expectApproxEqAbs(0.013598460610504, result.v_sigma, 1e-12);
@@ -516,7 +516,7 @@ test "lyp correlation vs PySCF" {
 
 test "lyp correlation at rho=0.5, sigma=0.1 vs PySCF" {
     // PySCF: eps = -0.043355808865476, vrho = -0.049351917016856, vsigma = 0.001065244936754
-    const result = lypCorrelation(0.5, 0.1);
+    const result = lyp_correlation(0.5, 0.1);
     try std.testing.expectApproxEqAbs(-0.043355808865476, result.eps_xc, 1e-12);
     try std.testing.expectApproxEqAbs(-0.049351917016856, result.v_xc, 1e-8);
     try std.testing.expectApproxEqAbs(0.001065244936754, result.v_sigma, 1e-12);

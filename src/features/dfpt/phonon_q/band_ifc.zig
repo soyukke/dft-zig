@@ -22,33 +22,33 @@ const ifc_mod = @import("../ifc.zig");
 const phonon_dos_mod = @import("../phonon_dos.zig");
 const DfptConfig = dfpt.DfptConfig;
 const IonicData = dfpt.IonicData;
-const logDfpt = dfpt.logDfpt;
-const logDfptInfo = dfpt.logDfptInfo;
+const log_dfpt = dfpt.log_dfpt;
+const log_dfpt_info = dfpt.log_dfpt_info;
 
 const qpath_mod = @import("qpath.zig");
-const generateFccQPath = qpath_mod.generateFccQPath;
-const generateQPathFromConfig = qpath_mod.generateQPathFromConfig;
+const generate_fcc_q_path = qpath_mod.generate_fcc_q_path;
+const generate_q_path_from_config = qpath_mod.generate_q_path_from_config;
 const GeneratedQPath = qpath_mod.GeneratedQPath;
 
 const kpt_gs = @import("kpt_gs.zig");
 
 const kpt_dfpt = @import("kpt_dfpt.zig");
 const KPointDfptData = kpt_dfpt.KPointDfptData;
-const buildKPointDfptDataFromGS = kpt_dfpt.buildKPointDfptDataFromGS;
+const build_k_point_dfpt_data_from_gs = kpt_dfpt.build_k_point_dfpt_data_from_gs;
 
 const dynmat_build = @import("dynmat_build.zig");
-const buildQDynmatMultiK = dynmat_build.buildQDynmatMultiK;
+const build_q_dynmat_multi_k = dynmat_build.build_q_dynmat_multi_k;
 
 const band_direct = @import("band_direct.zig");
 const BandGroundStateData = band_direct.BandGroundStateData;
 const BandSymmetryData = band_direct.BandSymmetryData;
 const PhononBandResult = band_direct.PhononBandResult;
-const deinitKPointDfptData = band_direct.deinitKPointDfptData;
-const deinitKPointGsData = band_direct.deinitKPointGsData;
-const initBandGroundStateData = band_direct.initBandGroundStateData;
-const initBandSymmetryData = band_direct.initBandSymmetryData;
-const prepareBandKgsData = band_direct.prepareBandKgsData;
-const solveQPointPerturbations = band_direct.solveQPointPerturbations;
+const deinit_k_point_dfpt_data = band_direct.deinit_k_point_dfpt_data;
+const deinit_k_point_gs_data = band_direct.deinit_k_point_gs_data;
+const init_band_ground_state_data = band_direct.init_band_ground_state_data;
+const init_band_symmetry_data = band_direct.init_band_symmetry_data;
+const prepare_band_kgs_data = band_direct.prepare_band_kgs_data;
+const solve_q_point_perturbations = band_direct.solve_q_point_perturbations;
 
 const Grid = scf_mod.Grid;
 const IFCData = ifc_mod.IFC;
@@ -64,7 +64,7 @@ const QGridDynmatData = struct {
     }
 };
 
-fn logIfcQGridPoint(
+fn log_ifc_q_grid_point(
     iq: usize,
     qf: math.Vec3,
     q_norm: f64,
@@ -72,18 +72,18 @@ fn logIfcQGridPoint(
     irr_atoms: usize,
     n_atoms: usize,
 ) void {
-    logDfpt(
+    log_dfpt(
         "dfpt_ifc: q_grid[{d}] = ({d:.4},{d:.4},{d:.4}) |q|={d:.6}\n",
         .{ iq, qf.x, qf.y, qf.z, q_norm },
     );
-    logDfpt("dfpt_ifc: q_grid[{d}] using {d} k-points (full BZ)\n", .{ iq, n_kpts });
-    logDfpt(
+    log_dfpt("dfpt_ifc: q_grid[{d}] using {d} k-points (full BZ)\n", .{ iq, n_kpts });
+    log_dfpt(
         "dfpt_ifc: q_grid[{d}] {d}/{d} irreducible atoms\n",
         .{ iq, irr_atoms, n_atoms },
     );
 }
 
-fn initIfcIrreducibleAtoms(
+fn init_ifc_irreducible_atoms(
     alloc: std.mem.Allocator,
     sym_data: *const BandSymmetryData,
     n_atoms: usize,
@@ -93,18 +93,18 @@ fn initIfcIrreducibleAtoms(
     n_kpts: usize,
 ) !dynmat_mod.IrreducibleAtomInfo {
     const q_norm = math.Vec3.norm(q_cart);
-    const irr_info = try dynmat_mod.findIrreducibleAtoms(
+    const irr_info = try dynmat_mod.find_irreducible_atoms(
         alloc,
         sym_data.symops,
         sym_data.indsym,
         n_atoms,
         qf,
     );
-    logIfcQGridPoint(iq, qf, q_norm, n_kpts, irr_info.n_irr_atoms, n_atoms);
+    log_ifc_q_grid_point(iq, qf, q_norm, n_kpts, irr_info.n_irr_atoms, n_atoms);
     return irr_info;
 }
 
-fn buildIfcQGridKPoints(
+fn build_ifc_q_grid_k_points(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -119,7 +119,7 @@ fn buildIfcQGridKPoints(
     q_norm: f64,
     pert_thread_count: usize,
 ) ![]KPointDfptData {
-    return buildKPointDfptDataFromGS(
+    return build_k_point_dfpt_data_from_gs(
         alloc,
         io,
         kgs_data,
@@ -136,7 +136,7 @@ fn buildIfcQGridKPoints(
     );
 }
 
-fn computeIfcQGridPointResponse(
+fn compute_ifc_q_grid_point_response(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -156,7 +156,7 @@ fn computeIfcQGridPointResponse(
     pert_thread_count: usize,
     irr_info: dynmat_mod.IrreducibleAtomInfo,
 ) ![]math.Complex {
-    var buffers = try solveQPointPerturbations(
+    var buffers = try solve_q_point_perturbations(
         alloc,
         io,
         grid,
@@ -171,7 +171,7 @@ fn computeIfcQGridPointResponse(
     );
     defer buffers.deinit(alloc);
 
-    const dyn_q = try buildQDynmatMultiK(
+    const dyn_q = try build_q_dynmat_multi_k(
         alloc,
         kpts,
         buffers.pert_results_mk,
@@ -195,23 +195,33 @@ fn computeIfcQGridPointResponse(
         cfg.vdw,
         irr_info,
     );
-    if (irr_info.n_irr_atoms < atoms.len) {
-        dynmat_mod.reconstructDynmatColumnsComplex(
-            dyn_q,
-            atoms.len,
-            irr_info,
-            sym_data.symops,
-            sym_data.indsym,
-            sym_data.tnons_shift,
-            cell_bohr,
-            qf,
-        );
-    }
-    logDfpt("dfpt_ifc: q_grid[{d}] D(q) computed\n", .{iq});
+    reconstruct_ifc_dynmat_if_needed(dyn_q, atoms.len, irr_info, sym_data, cell_bohr, qf);
+    log_dfpt("dfpt_ifc: q_grid[{d}] D(q) computed\n", .{iq});
     return dyn_q;
 }
 
-fn solveIfcQGridPointDynmat(
+fn reconstruct_ifc_dynmat_if_needed(
+    dyn_q: []math.Complex,
+    n_atoms: usize,
+    irr_info: dynmat_mod.IrreducibleAtomInfo,
+    sym_data: *const BandSymmetryData,
+    cell_bohr: math.Mat3,
+    qf: math.Vec3,
+) void {
+    if (irr_info.n_irr_atoms >= n_atoms) return;
+    dynmat_mod.reconstruct_dynmat_columns_complex(
+        dyn_q,
+        n_atoms,
+        irr_info,
+        sym_data.symops,
+        sym_data.indsym,
+        sym_data.tnons_shift,
+        cell_bohr,
+        qf,
+    );
+}
+
+fn solve_ifc_q_grid_point_dynmat(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -229,12 +239,10 @@ fn solveIfcQGridPointDynmat(
     q_cart: math.Vec3,
     qf: math.Vec3,
 ) ![]math.Complex {
-    const n_atoms = atoms.len;
-    const q_norm = math.Vec3.norm(q_cart);
-    var irr_info = try initIfcIrreducibleAtoms(
+    var irr_info = try init_ifc_irreducible_atoms(
         alloc,
         sym_data,
-        n_atoms,
+        atoms.len,
         iq,
         q_cart,
         qf,
@@ -242,11 +250,8 @@ fn solveIfcQGridPointDynmat(
     );
     defer irr_info.deinit(alloc);
 
-    const pert_thread_count = dfpt.perturbationThreadCount(
-        3 * n_atoms,
-        dfpt_cfg.perturbation_threads,
-    );
-    const kpts = try buildIfcQGridKPoints(
+    const pert_thread_count = ifc_pert_thread_count(atoms.len, dfpt_cfg);
+    const kpts = try build_ifc_q_grid_k_points(
         alloc,
         io,
         cfg,
@@ -258,12 +263,12 @@ fn solveIfcQGridPointDynmat(
         grid,
         kgs_data,
         q_cart,
-        q_norm,
+        math.Vec3.norm(q_cart),
         pert_thread_count,
     );
-    defer deinitKPointDfptData(alloc, kpts);
+    defer deinit_k_point_dfpt_data(alloc, kpts);
 
-    return computeIfcQGridPointResponse(
+    return compute_ifc_q_grid_point_response(
         alloc,
         io,
         cfg,
@@ -285,7 +290,11 @@ fn solveIfcQGridPointDynmat(
     );
 }
 
-fn computeIfcQGridDynmat(
+fn ifc_pert_thread_count(n_atoms: usize, dfpt_cfg: DfptConfig) usize {
+    return dfpt.perturbation_thread_count(3 * n_atoms, dfpt_cfg.perturbation_threads);
+}
+
+fn compute_ifc_q_grid_dynmat(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -301,7 +310,7 @@ fn computeIfcQGridDynmat(
     kgs_data: []const kpt_gs.KPointGsData,
     qgrid: [3]usize,
 ) !QGridDynmatData {
-    const qgrid_points = try mesh_mod.generateKmesh(
+    const qgrid_points = try mesh_mod.generate_kmesh(
         alloc,
         qgrid,
         recip,
@@ -309,7 +318,7 @@ fn computeIfcQGridDynmat(
     );
     defer alloc.free(qgrid_points);
 
-    logDfptInfo("dfpt_ifc: {d} q-grid points for DFPT\n", .{qgrid_points.len});
+    log_dfpt_info("dfpt_ifc: {d} q-grid points for DFPT\n", .{qgrid_points.len});
 
     const q_frac_grid = try alloc.alloc(math.Vec3, qgrid_points.len);
     errdefer alloc.free(q_frac_grid);
@@ -322,7 +331,7 @@ fn computeIfcQGridDynmat(
 
     for (qgrid_points, 0..) |qpoint, iq| {
         q_frac_grid[iq] = qpoint.k_frac;
-        dynmat_grid[iq] = try solveIfcQGridPointDynmat(
+        dynmat_grid[iq] = try solve_ifc_q_grid_point_dynmat(
             alloc,
             io,
             cfg,
@@ -349,19 +358,19 @@ fn computeIfcQGridDynmat(
     };
 }
 
-fn initIfcQPath(
+fn init_ifc_q_path(
     alloc: std.mem.Allocator,
     cfg: config_mod.Config,
     recip: math.Mat3,
 ) !GeneratedQPath {
     const npoints_per_seg = cfg.dfpt.qpath_npoints;
     if (cfg.dfpt.qpath.len >= 2) {
-        return generateQPathFromConfig(alloc, cfg.dfpt.qpath, npoints_per_seg, recip);
+        return generate_q_path_from_config(alloc, cfg.dfpt.qpath, npoints_per_seg, recip);
     }
-    return generateFccQPath(alloc, recip, npoints_per_seg);
+    return generate_fcc_q_path(alloc, recip, npoints_per_seg);
 }
 
-fn interpolateIfcBandPath(
+fn interpolate_ifc_band_path(
     alloc: std.mem.Allocator,
     ifc_data: *const IFCData,
     ionic: *const IonicData,
@@ -382,11 +391,11 @@ fn interpolateIfcBandPath(
         defer alloc.free(dyn_interp);
 
         if (math.Vec3.norm(q_points_cart[iq]) < 1e-10) {
-            dynmat_mod.applyASRComplex(dyn_interp, n_atoms);
+            dynmat_mod.apply_asr_complex(dyn_interp, n_atoms);
         }
-        dynmat_mod.massWeightComplex(dyn_interp, n_atoms, ionic.masses);
+        dynmat_mod.mass_weight_complex(dyn_interp, n_atoms, ionic.masses);
 
-        var result_q = try dynmat_mod.diagonalizeComplex(alloc, dyn_interp, dim);
+        var result_q = try dynmat_mod.diagonalize_complex(alloc, dyn_interp, dim);
         defer result_q.deinit(alloc);
 
         frequencies[iq] = try alloc.alloc(f64, dim);
@@ -394,15 +403,15 @@ fn interpolateIfcBandPath(
         freq_count = iq + 1;
 
         if (iq % 10 == 0 or iq + 1 == q_points_cart.len) {
-            logDfptInfo("dfpt_ifc: q[{d}] freqs:", .{iq});
-            for (result_q.frequencies_cm1) |f| logDfptInfo(" {d:.1}", .{f});
-            logDfptInfo("\n", .{});
+            log_dfpt_info("dfpt_ifc: q[{d}] freqs:", .{iq});
+            for (result_q.frequencies_cm1) |f| log_dfpt_info(" {d:.1}", .{f});
+            log_dfpt_info("\n", .{});
         }
     }
     return frequencies;
 }
 
-fn maybeWriteIfcPhononDos(
+fn maybe_write_ifc_phonon_dos(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -411,12 +420,12 @@ fn maybeWriteIfcPhononDos(
     n_atoms: usize,
 ) !void {
     const dos_qmesh = cfg.dfpt.dos_qmesh orelse return;
-    logDfptInfo(
+    log_dfpt_info(
         "dfpt_ifc: computing phonon DOS on {d}x{d}x{d} mesh\n",
         .{ dos_qmesh[0], dos_qmesh[1], dos_qmesh[2] },
     );
 
-    var pdos = try phonon_dos_mod.computePhononDos(
+    var pdos = try phonon_dos_mod.compute_phonon_dos(
         alloc,
         ifc_data,
         ionic.masses,
@@ -430,17 +439,17 @@ fn maybeWriteIfcPhononDos(
     var out_dir = try std.Io.Dir.cwd().openDir(io, cfg.out_dir, .{});
     defer out_dir.close(io);
 
-    try phonon_dos_mod.writePhononDosCsv(io, out_dir, pdos);
-    logDfptInfo("dfpt_ifc: phonon DOS written to phonon_dos.csv\n", .{});
+    try phonon_dos_mod.write_phonon_dos_csv(io, out_dir, pdos);
+    log_dfpt_info("dfpt_ifc: phonon DOS written to phonon_dos.csv\n", .{});
 }
 
-fn computeIfcFromQGrid(
+fn compute_ifc_from_q_grid(
     alloc: std.mem.Allocator,
     qgrid_data: *const QGridDynmatData,
     qgrid: [3]usize,
     n_atoms: usize,
 ) !IFCData {
-    logDfptInfo(
+    log_dfpt_info(
         "dfpt_ifc: computing IFC from {d} q-grid points\n",
         .{qgrid_data.dynmat_grid.len},
     );
@@ -452,19 +461,19 @@ fn computeIfcFromQGrid(
         dynmat_const[i] = qgrid_data.dynmat_grid[i];
     }
 
-    var ifc_data = try ifc_mod.computeIFC(
+    var ifc_data = try ifc_mod.compute_ifc(
         alloc,
         dynmat_const,
         qgrid_data.q_frac_grid,
         qgrid,
         n_atoms,
     );
-    ifc_mod.applyASR(&ifc_data);
-    logDfptInfo("dfpt_ifc: IFC ASR applied\n", .{});
+    ifc_mod.apply_asr(&ifc_data);
+    log_dfpt_info("dfpt_ifc: IFC ASR applied\n", .{});
     return ifc_data;
 }
 
-fn buildIfcBandResult(
+fn build_ifc_band_result(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
@@ -473,7 +482,7 @@ fn buildIfcBandResult(
     ionic: *const IonicData,
     n_atoms: usize,
 ) !PhononBandResult {
-    const qpath_data = try initIfcQPath(alloc, cfg, recip);
+    const qpath_data = try init_ifc_q_path(alloc, cfg, recip);
     errdefer {
         alloc.free(qpath_data.q_points_frac);
         alloc.free(qpath_data.q_points_cart);
@@ -483,8 +492,8 @@ fn buildIfcBandResult(
     }
 
     const n_q = qpath_data.q_points_cart.len;
-    logDfptInfo("dfpt_ifc: interpolating {d} q-path points\n", .{n_q});
-    const frequencies = try interpolateIfcBandPath(
+    log_dfpt_info("dfpt_ifc: interpolating {d} q-path points\n", .{n_q});
+    const frequencies = try interpolate_ifc_band_path(
         alloc,
         ifc_data,
         ionic,
@@ -497,7 +506,7 @@ fn buildIfcBandResult(
         alloc.free(frequencies);
     }
 
-    try maybeWriteIfcPhononDos(alloc, io, cfg, ifc_data, ionic, n_atoms);
+    try maybe_write_ifc_phonon_dos(alloc, io, cfg, ifc_data, ionic, n_atoms);
     alloc.free(qpath_data.q_points_frac);
     alloc.free(qpath_data.q_points_cart);
 
@@ -515,86 +524,108 @@ fn buildIfcBandResult(
 /// 1. Compute D(q) on a coarse q-grid via DFPT
 /// 2. Fourier transform to IFC: C(R)
 /// 3. Interpolate D(q') at arbitrary q-path points
-pub fn runPhononBandIFC(
+pub fn run_phonon_band_ifc(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config_mod.Config,
     scf_result: *scf_mod.ScfResult,
     model: *const model_mod.Model,
 ) !PhononBandResult {
-    const species = model.species;
-    const atoms = model.atoms;
-    const cell_bohr = model.cell_bohr;
-    const recip = model.recip;
-    const volume = model.volume_bohr;
-    const n_atoms = atoms.len;
-    const grid = scf_result.grid;
     const qgrid = cfg.dfpt.qgrid orelse return error.MissingQgrid;
+    log_dfpt_info("dfpt_ifc: starting IFC phonon band ({d} atoms, qgrid={d}x{d}x{d})\n", .{
+        model.atoms.len,
+        qgrid[0],
+        qgrid[1],
+        qgrid[2],
+    });
 
-    logDfptInfo(
-        "dfpt_ifc: starting IFC phonon band ({d} atoms, qgrid={d}x{d}x{d})\n",
-        .{ n_atoms, qgrid[0], qgrid[1], qgrid[2] },
-    );
+    var context = try IfcBandContext.init(alloc, io, cfg, scf_result, model, qgrid);
+    defer context.deinit(alloc);
 
-    var band_data = try initBandGroundStateData(
+    return build_ifc_band_result(
         alloc,
         io,
         cfg,
-        scf_result,
-        species,
-        atoms,
-        volume,
-        recip,
-        grid,
-    );
-    defer band_data.deinit(alloc);
-
-    const dfpt_cfg = DfptConfig.fromConfig(cfg);
-    var sym_data = try initBandSymmetryData(alloc, cell_bohr, atoms, recip);
-    defer sym_data.deinit(alloc);
-
-    const kgs_data = try prepareBandKgsData(
-        alloc,
-        io,
-        cfg,
-        &band_data.prepared.gs,
-        band_data.prepared.local_r,
-        species,
-        atoms,
-        recip,
-        volume,
-        grid,
-    );
-    defer deinitKPointGsData(alloc, kgs_data);
-
-    var qgrid_data = try computeIfcQGridDynmat(
-        alloc,
-        io,
-        cfg,
-        dfpt_cfg,
-        &band_data,
-        species,
-        atoms,
-        cell_bohr,
-        recip,
-        volume,
-        grid,
-        &sym_data,
-        kgs_data,
-        qgrid,
-    );
-    defer qgrid_data.deinit(alloc);
-
-    var ifc_data = try computeIfcFromQGrid(alloc, &qgrid_data, qgrid, n_atoms);
-    defer ifc_data.deinit(alloc);
-
-    return buildIfcBandResult(
-        alloc,
-        io,
-        cfg,
-        recip,
-        &ifc_data,
-        &band_data.ionic,
-        n_atoms,
+        model.recip,
+        &context.ifc_data,
+        &context.band_data.ionic,
+        model.atoms.len,
     );
 }
+
+const IfcBandContext = struct {
+    band_data: BandGroundStateData,
+    qgrid_data: QGridDynmatData,
+    ifc_data: IFCData,
+
+    fn init(
+        alloc: std.mem.Allocator,
+        io: std.Io,
+        cfg: config_mod.Config,
+        scf_result: *scf_mod.ScfResult,
+        model: *const model_mod.Model,
+        qgrid: [3]usize,
+    ) !IfcBandContext {
+        var band_data = try init_band_ground_state_data(
+            alloc,
+            io,
+            cfg,
+            scf_result,
+            model.species,
+            model.atoms,
+            model.volume_bohr,
+            model.recip,
+            scf_result.grid,
+        );
+        errdefer band_data.deinit(alloc);
+
+        var sym_data = try init_band_symmetry_data(
+            alloc,
+            model.cell_bohr,
+            model.atoms,
+            model.recip,
+        );
+        defer sym_data.deinit(alloc);
+
+        const kgs_data = try prepare_band_kgs_data(
+            alloc,
+            io,
+            cfg,
+            &band_data.prepared.gs,
+            band_data.prepared.local_r,
+            model.species,
+            model.atoms,
+            model.recip,
+            model.volume_bohr,
+            scf_result.grid,
+        );
+        defer deinit_k_point_gs_data(alloc, kgs_data);
+
+        var qgrid_data = try compute_ifc_q_grid_dynmat(
+            alloc,
+            io,
+            cfg,
+            DfptConfig.from_config(cfg),
+            &band_data,
+            model.species,
+            model.atoms,
+            model.cell_bohr,
+            model.recip,
+            model.volume_bohr,
+            scf_result.grid,
+            &sym_data,
+            kgs_data,
+            qgrid,
+        );
+        errdefer qgrid_data.deinit(alloc);
+
+        const ifc_data = try compute_ifc_from_q_grid(alloc, &qgrid_data, qgrid, model.atoms.len);
+        return .{ .band_data = band_data, .qgrid_data = qgrid_data, .ifc_data = ifc_data };
+    }
+
+    fn deinit(self: *IfcBandContext, alloc: std.mem.Allocator) void {
+        self.ifc_data.deinit(alloc);
+        self.qgrid_data.deinit(alloc);
+        self.band_data.deinit(alloc);
+    }
+};

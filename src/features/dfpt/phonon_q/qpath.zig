@@ -15,8 +15,74 @@ pub const GeneratedQPath = struct {
     label_positions: []usize,
 };
 
+fn fill_config_qpath_labels(
+    qpath_points: []const config_mod.BandPathPoint,
+    npoints_per_seg: usize,
+    label_list: [][]const u8,
+    label_pos: []usize,
+) void {
+    for (0..qpath_points.len) |i| {
+        label_list[i] = qpath_points[i].label;
+        label_pos[i] = if (i == 0) 0 else i * npoints_per_seg;
+    }
+}
+
+fn fill_static_qpath_labels(
+    labels: []const []const u8,
+    npoints_per_seg: usize,
+    label_list: [][]const u8,
+    label_pos: []usize,
+) void {
+    for (0..labels.len) |i| {
+        label_list[i] = labels[i];
+        label_pos[i] = if (i == 0) 0 else i * npoints_per_seg;
+    }
+}
+
+fn frac_to_cart(recip: math.Mat3, qf: math.Vec3) math.Vec3 {
+    return math.Vec3.add(
+        math.Vec3.add(
+            math.Vec3.scale(recip.row(0), qf.x),
+            math.Vec3.scale(recip.row(1), qf.y),
+        ),
+        math.Vec3.scale(recip.row(2), qf.z),
+    );
+}
+
+fn append_fractional_qpath_endpoint(
+    points: []const math.Vec3,
+    recip: math.Mat3,
+    q_frac: []math.Vec3,
+    q_cart: []math.Vec3,
+    dists: []f64,
+    idx: usize,
+    cum_dist: *f64,
+) void {
+    const last_pt = points[points.len - 1];
+    q_frac[idx] = last_pt;
+    q_cart[idx] = frac_to_cart(recip, last_pt);
+    if (idx > 0) {
+        const dq = math.Vec3.sub(q_cart[idx], q_cart[idx - 1]);
+        cum_dist.* += math.Vec3.norm(dq);
+    }
+    dists[idx] = cum_dist.*;
+}
+
+fn append_config_qpath_endpoint(
+    qpath_points: []const config_mod.BandPathPoint,
+    recip: math.Mat3,
+    q_frac: []math.Vec3,
+    q_cart: []math.Vec3,
+    dists: []f64,
+    idx: usize,
+    cum_dist: *f64,
+) void {
+    const points = [_]math.Vec3{qpath_points[qpath_points.len - 1].k};
+    append_fractional_qpath_endpoint(&points, recip, q_frac, q_cart, dists, idx, cum_dist);
+}
+
 /// Generate FCC q-path: Γ-X-W-K-Γ-L
-pub fn generateFccQPath(
+pub fn generate_fcc_q_path(
     alloc: std.mem.Allocator,
     recip: math.Mat3,
     npoints_per_seg: usize,
@@ -41,15 +107,12 @@ pub fn generateFccQPath(
     errdefer alloc.free(q_cart);
     var dists = try alloc.alloc(f64, n_total);
     errdefer alloc.free(dists);
-    var label_list = try alloc.alloc([]const u8, points.len);
+    const label_list = try alloc.alloc([]const u8, points.len);
     errdefer alloc.free(label_list);
-    var label_pos = try alloc.alloc(usize, points.len);
+    const label_pos = try alloc.alloc(usize, points.len);
     errdefer alloc.free(label_pos);
 
-    for (0..points.len) |i| {
-        label_list[i] = labels[i];
-        label_pos[i] = if (i == 0) 0 else i * npoints_per_seg;
-    }
+    fill_static_qpath_labels(&labels, npoints_per_seg, label_list, label_pos);
 
     var idx: usize = 0;
     var cum_dist: f64 = 0.0;
@@ -65,13 +128,7 @@ pub fn generateFccQPath(
             };
             q_frac[idx] = qf;
             // Convert to Cartesian: q_cart = qf.x * b1 + qf.y * b2 + qf.z * b3
-            q_cart[idx] = math.Vec3.add(
-                math.Vec3.add(
-                    math.Vec3.scale(recip.row(0), qf.x),
-                    math.Vec3.scale(recip.row(1), qf.y),
-                ),
-                math.Vec3.scale(recip.row(2), qf.z),
-            );
+            q_cart[idx] = frac_to_cart(recip, qf);
             if (idx == 0) {
                 dists[idx] = 0.0;
             } else {
@@ -82,20 +139,7 @@ pub fn generateFccQPath(
             idx += 1;
         }
     }
-    // Last point
-    q_frac[idx] = points[n_segs];
-    q_cart[idx] = math.Vec3.add(
-        math.Vec3.add(
-            math.Vec3.scale(recip.row(0), points[n_segs].x),
-            math.Vec3.scale(recip.row(1), points[n_segs].y),
-        ),
-        math.Vec3.scale(recip.row(2), points[n_segs].z),
-    );
-    if (idx > 0) {
-        const dq = math.Vec3.sub(q_cart[idx], q_cart[idx - 1]);
-        cum_dist += math.Vec3.norm(dq);
-    }
-    dists[idx] = cum_dist;
+    append_fractional_qpath_endpoint(&points, recip, q_frac, q_cart, dists, idx, &cum_dist);
 
     return .{
         .q_points_frac = q_frac,
@@ -107,8 +151,8 @@ pub fn generateFccQPath(
 }
 
 /// Generate q-path from config-specified high-symmetry points.
-/// Same format as generateFccQPath but with user-supplied points.
-pub fn generateQPathFromConfig(
+/// Same format as generate_fcc_q_path but with user-supplied points.
+pub fn generate_q_path_from_config(
     alloc: std.mem.Allocator,
     qpath_points: []const config_mod.BandPathPoint,
     npoints_per_seg: usize,
@@ -126,15 +170,12 @@ pub fn generateQPathFromConfig(
     errdefer alloc.free(q_cart);
     var dists = try alloc.alloc(f64, n_total);
     errdefer alloc.free(dists);
-    var label_list = try alloc.alloc([]const u8, n_pts);
+    const label_list = try alloc.alloc([]const u8, n_pts);
     errdefer alloc.free(label_list);
-    var label_pos = try alloc.alloc(usize, n_pts);
+    const label_pos = try alloc.alloc(usize, n_pts);
     errdefer alloc.free(label_pos);
 
-    for (0..n_pts) |i| {
-        label_list[i] = qpath_points[i].label;
-        label_pos[i] = if (i == 0) 0 else i * npoints_per_seg;
-    }
+    fill_config_qpath_labels(qpath_points, npoints_per_seg, label_list, label_pos);
 
     var idx: usize = 0;
     var cum_dist: f64 = 0.0;
@@ -166,21 +207,7 @@ pub fn generateQPathFromConfig(
             idx += 1;
         }
     }
-    // Last point
-    const last_pt = qpath_points[n_segs].k;
-    q_frac[idx] = last_pt;
-    q_cart[idx] = math.Vec3.add(
-        math.Vec3.add(
-            math.Vec3.scale(recip.row(0), last_pt.x),
-            math.Vec3.scale(recip.row(1), last_pt.y),
-        ),
-        math.Vec3.scale(recip.row(2), last_pt.z),
-    );
-    if (idx > 0) {
-        const dq = math.Vec3.sub(q_cart[idx], q_cart[idx - 1]);
-        cum_dist += math.Vec3.norm(dq);
-    }
-    dists[idx] = cum_dist;
+    append_config_qpath_endpoint(qpath_points, recip, q_frac, q_cart, dists, idx, &cum_dist);
 
     return .{
         .q_points_frac = q_frac,

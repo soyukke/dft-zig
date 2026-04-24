@@ -48,7 +48,7 @@ pub fn boys0(x: f64) f64 {
 ///   This is numerically stable for all x > ~1 because the subtraction
 ///   (2n+1)*F_n(x) - exp(-x) does not suffer catastrophic cancellation:
 ///   exp(-x) is tiny for large x while (2n+1)*F_n(x) remains well-conditioned.
-pub fn boysN(n: u32, x: f64) f64 {
+pub fn boys_n(n: u32, x: f64) f64 {
     if (n == 0) return boys0(x);
 
     if (x < 1e-12) {
@@ -96,7 +96,7 @@ pub fn boysN(n: u32, x: f64) f64 {
 
 /// Compute all Boys function values F_0(x) through F_nmax(x) in one call.
 ///
-/// This is more efficient than calling boysN() individually for each m,
+/// This is more efficient than calling boys_n() individually for each m,
 /// because it computes F_nmax once (via Taylor or asymptotic) and then
 /// uses downward recurrence to get F_{nmax-1}, ..., F_0.
 ///
@@ -107,7 +107,7 @@ pub fn boysN(n: u32, x: f64) f64 {
 /// and the addition (not subtraction) avoids catastrophic cancellation.
 ///
 /// Output: result[m] = F_m(x) for m = 0, 1, ..., nmax.
-pub fn boysBatch(nmax: u32, x: f64, result: []f64) void {
+pub fn boys_batch(nmax: u32, x: f64, result: []f64) void {
     if (x < 1e-12) {
         // F_m(0) = 1/(2m+1)
         var m: u32 = 0;
@@ -122,8 +122,8 @@ pub fn boysBatch(nmax: u32, x: f64, result: []f64) void {
         return;
     }
 
-    // Compute F_nmax using the existing (accurate) boysN function
-    result[nmax] = boysN(nmax, x);
+    // Compute F_nmax using the existing (accurate) boys_n function
+    result[nmax] = boys_n(nmax, x);
 
     // Downward recurrence: F_{n-1}(x) = (2x * F_n(x) + exp(-x)) / (2n - 1)
     const exp_neg_x = @exp(-x);
@@ -150,9 +150,9 @@ test "boys F_0 known values" {
 
 test "boys F_n(0) = 1/(2n+1)" {
     const testing = std.testing;
-    try testing.expectApproxEqAbs(boysN(0, 0.0), 1.0, 1e-12);
-    try testing.expectApproxEqAbs(boysN(1, 0.0), 1.0 / 3.0, 1e-12);
-    try testing.expectApproxEqAbs(boysN(2, 0.0), 1.0 / 5.0, 1e-12);
+    try testing.expectApproxEqAbs(boys_n(0, 0.0), 1.0, 1e-12);
+    try testing.expectApproxEqAbs(boys_n(1, 0.0), 1.0 / 3.0, 1e-12);
+    try testing.expectApproxEqAbs(boys_n(2, 0.0), 1.0 / 5.0, 1e-12);
 }
 
 test "boys F_n scipy reference values" {
@@ -161,24 +161,24 @@ test "boys F_n scipy reference values" {
 
     // Reference values from scipy.special.hyp1f1
     // x = 20.325618 (large-x upward recurrence path)
-    try testing.expectApproxEqAbs(1.965726357771075e-01, boysN(0, 20.325618), tol);
-    try testing.expectApproxEqAbs(4.835588130427028e-03, boysN(1, 20.325618), tol);
-    try testing.expectApproxEqAbs(3.568590854890924e-04, boysN(2, 20.325618), tol);
+    try testing.expectApproxEqAbs(1.965726357771075e-01, boys_n(0, 20.325618), tol);
+    try testing.expectApproxEqAbs(4.835588130427028e-03, boys_n(1, 20.325618), tol);
+    try testing.expectApproxEqAbs(3.568590854890924e-04, boys_n(2, 20.325618), tol);
 
     // x = 7.665237 (Taylor expansion path)
-    try testing.expectApproxEqAbs(3.200685119119207e-01, boysN(0, 7.665237), tol);
-    try testing.expectApproxEqAbs(2.084734407339424e-02, boysN(1, 7.665237), tol);
-    try testing.expectApproxEqAbs(4.049006351303070e-03, boysN(2, 7.665237), tol);
+    try testing.expectApproxEqAbs(3.200685119119207e-01, boys_n(0, 7.665237), tol);
+    try testing.expectApproxEqAbs(2.084734407339424e-02, boys_n(1, 7.665237), tol);
+    try testing.expectApproxEqAbs(4.049006351303070e-03, boys_n(2, 7.665237), tol);
 
     // x = 5.079105 (Taylor expansion path)
-    try testing.expectApproxEqAbs(3.926693368267595e-01, boysN(0, 5.079105), tol);
-    try testing.expectApproxEqAbs(3.804251521679047e-02, boysN(1, 5.079105), tol);
-    try testing.expectApproxEqAbs(1.062215363966337e-02, boysN(2, 5.079105), tol);
+    try testing.expectApproxEqAbs(3.926693368267595e-01, boys_n(0, 5.079105), tol);
+    try testing.expectApproxEqAbs(3.804251521679047e-02, boys_n(1, 5.079105), tol);
+    try testing.expectApproxEqAbs(1.062215363966337e-02, boys_n(2, 5.079105), tol);
 
     // x = 32.985999 (large-x upward recurrence path)
-    try testing.expectApproxEqAbs(1.543050430110980e-01, boysN(0, 32.985999), tol);
-    try testing.expectApproxEqAbs(2.338947548793251e-03, boysN(1, 32.985999), tol);
-    try testing.expectApproxEqAbs(1.063609237115272e-04, boysN(2, 32.985999), tol);
+    try testing.expectApproxEqAbs(1.543050430110980e-01, boys_n(0, 32.985999), tol);
+    try testing.expectApproxEqAbs(2.338947548793251e-03, boys_n(1, 32.985999), tol);
+    try testing.expectApproxEqAbs(1.063609237115272e-04, boys_n(2, 32.985999), tol);
 }
 
 test "boys F_n large argument x=29.68 (CH2O regression)" {
@@ -189,19 +189,19 @@ test "boys F_n large argument x=29.68 (CH2O regression)" {
     // This argument caused negative Boys values with the old threshold (x<30 Taylor).
     // All Boys function values must be strictly positive.
     const x = 29.68;
-    try testing.expectApproxEqAbs(1.626720697317235e-01, boysN(0, x), tol);
-    try testing.expectApproxEqAbs(2.740432441569994e-03, boysN(1, x), tol);
-    try testing.expectApproxEqAbs(1.384989441472560e-04, boysN(2, x), tol);
-    try testing.expectApproxEqAbs(1.166601618273946e-05, boysN(3, x), tol);
-    try testing.expectApproxEqAbs(1.375709453340797e-06, boysN(4, x), tol);
-    try testing.expectApproxEqAbs(2.085812828706326e-07, boysN(5, x), tol);
-    try testing.expectApproxEqAbs(3.865218973568958e-08, boysN(6, x), tol);
-    try testing.expectApproxEqAbs(8.464931564985529e-09, boysN(7, x), tol);
+    try testing.expectApproxEqAbs(1.626720697317235e-01, boys_n(0, x), tol);
+    try testing.expectApproxEqAbs(2.740432441569994e-03, boys_n(1, x), tol);
+    try testing.expectApproxEqAbs(1.384989441472560e-04, boys_n(2, x), tol);
+    try testing.expectApproxEqAbs(1.166601618273946e-05, boys_n(3, x), tol);
+    try testing.expectApproxEqAbs(1.375709453340797e-06, boys_n(4, x), tol);
+    try testing.expectApproxEqAbs(2.085812828706326e-07, boys_n(5, x), tol);
+    try testing.expectApproxEqAbs(3.865218973568958e-08, boys_n(6, x), tol);
+    try testing.expectApproxEqAbs(8.464931564985529e-09, boys_n(7, x), tol);
 
     // Verify all values are positive (Boys function is always non-negative)
     var n: u32 = 0;
     while (n <= 12) : (n += 1) {
-        const val = boysN(n, x);
+        const val = boys_n(n, x);
         try testing.expect(val > 0.0);
     }
 }
@@ -215,25 +215,25 @@ test "boys F_n moderate argument transition region" {
     // Reference from scipy.special.hyp1f1.
 
     // x = 10.0 (near boundary for high n)
-    try testing.expectApproxEqAbs(2.802473905066e-01, boysN(0, 10.0), tol);
-    try testing.expectApproxEqAbs(2.099244932838e-03, boysN(2, 10.0), tol);
-    try testing.expectApproxEqAbs(1.806194363644e-04, boysN(4, 10.0), tol);
-    try testing.expectApproxEqAbs(4.118481594360e-05, boysN(6, 10.0), tol);
+    try testing.expectApproxEqAbs(2.802473905066e-01, boys_n(0, 10.0), tol);
+    try testing.expectApproxEqAbs(2.099244932838e-03, boys_n(2, 10.0), tol);
+    try testing.expectApproxEqAbs(1.806194363644e-04, boys_n(4, 10.0), tol);
+    try testing.expectApproxEqAbs(4.118481594360e-05, boys_n(6, 10.0), tol);
 
     // x = 15.0
-    try testing.expectApproxEqAbs(2.288227983297e-01, boysN(0, 15.0), tol);
-    try testing.expectApproxEqAbs(7.627314446807e-04, boysN(2, 15.0), tol);
-    try testing.expectApproxEqAbs(2.964920241996e-05, boysN(4, 15.0), tol);
-    try testing.expectApproxEqAbs(3.247476716040e-06, boysN(6, 15.0), tol);
+    try testing.expectApproxEqAbs(2.288227983297e-01, boys_n(0, 15.0), tol);
+    try testing.expectApproxEqAbs(7.627314446807e-04, boys_n(2, 15.0), tol);
+    try testing.expectApproxEqAbs(2.964920241996e-05, boys_n(4, 15.0), tol);
+    try testing.expectApproxEqAbs(3.247476716040e-06, boys_n(6, 15.0), tol);
 }
 
-test "boysBatch matches individual boysN calls" {
+test "boys_batch matches individual boys_n calls" {
     const testing = std.testing;
     const tol: f64 = 1e-10;
 
     // Test batch at several x values and nmax values.
     // Tolerance is 1e-10 because the batch uses upward recurrence from F_0
-    // for x >= 1, while individual boysN uses Taylor expansion for some (n, x)
+    // for x >= 1, while individual boys_n uses Taylor expansion for some (n, x)
     // combinations. Both are accurate to ~1e-12 individually, but they use
     // different code paths that can differ at ~1e-11 level.
     const x_vals = [_]f64{ 0.0, 0.001, 0.5, 1.0, 3.0, 7.5, 10.0, 15.0, 25.0, 29.68 };
@@ -242,11 +242,11 @@ test "boysBatch matches individual boysN calls" {
     for (x_vals) |x| {
         for (nmax_vals) |nmax| {
             var batch: [13]f64 = undefined;
-            boysBatch(nmax, x, &batch);
+            boys_batch(nmax, x, &batch);
 
             var m: u32 = 0;
             while (m <= nmax) : (m += 1) {
-                const individual = boysN(m, x);
+                const individual = boys_n(m, x);
                 try testing.expectApproxEqAbs(individual, batch[m], tol);
             }
         }

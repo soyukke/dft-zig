@@ -4,8 +4,8 @@
 //! No race conditions because each slice writes to different memory.
 //!
 //! Usage:
-//!   - init() or initWithThreads(..., 1): Sequential mode (recommended for most cases)
-//!   - initWithThreads(..., n) where n > 1: Parallel mode with n threads
+//!   - init() or init_with_threads(..., 1): Sequential mode (recommended for most cases)
+//!   - init_with_threads(..., n) where n > 1: Parallel mode with n threads
 //!
 //! Note: Parallel mode has significant thread spawn/join overhead.
 //! Only beneficial for very large grids (>128^3) with power-of-two sizes.
@@ -29,14 +29,14 @@ pub const Plan3dParallel = struct {
 
     /// Initialize with sequential execution (recommended)
     pub fn init(allocator: std.mem.Allocator, nx: usize, ny: usize, nz: usize) !Plan3dParallel {
-        return initWithThreads(allocator, nx, ny, nz, 1); // Sequential by default
+        return init_with_threads(allocator, nx, ny, nz, 1); // Sequential by default
     }
 
     /// Initialize with specified thread count
     /// - num_threads = 1: Sequential execution (no thread overhead)
     /// - num_threads > 1: Parallel execution with that many threads
     /// - num_threads = 0: Auto-detect (uses up to 8 threads)
-    pub fn initWithThreads(
+    pub fn init_with_threads(
         allocator: std.mem.Allocator,
         nx: usize,
         ny: usize,
@@ -116,16 +116,16 @@ pub const Plan3dParallel = struct {
         if (data.len != nx * ny * nz) return;
 
         // Phase 1: FFT along x-axis (parallel)
-        self.parallelForX(data, inv);
+        self.parallel_for_x(data, inv);
 
         // Phase 2: FFT along y-axis (parallel)
-        self.parallelForY(data, inv);
+        self.parallel_for_y(data, inv);
 
         // Phase 3: FFT along z-axis (parallel)
-        self.parallelForZ(data, inv);
+        self.parallel_for_z(data, inv);
     }
 
-    fn parallelForX(self: *Plan3dParallel, data: []Complex, inv: bool) void {
+    fn parallel_for_x(self: *Plan3dParallel, data: []Complex, inv: bool) void {
         const nx = self.nx;
         const ny = self.ny;
         const nz = self.nz;
@@ -199,7 +199,7 @@ pub const Plan3dParallel = struct {
         }
     }
 
-    fn parallelForY(self: *Plan3dParallel, data: []Complex, inv: bool) void {
+    fn parallel_for_y(self: *Plan3dParallel, data: []Complex, inv: bool) void {
         const nx = self.nx;
         const ny = self.ny;
         const nz = self.nz;
@@ -285,7 +285,7 @@ pub const Plan3dParallel = struct {
         }
     }
 
-    fn parallelForZ(self: *Plan3dParallel, data: []Complex, inv: bool) void {
+    fn parallel_for_z(self: *Plan3dParallel, data: []Complex, inv: bool) void {
         const nx = self.nx;
         const ny = self.ny;
         const nz = self.nz;
@@ -377,7 +377,7 @@ pub const Plan3dParallel = struct {
 test "Plan3dParallel roundtrip small" {
     const allocator = std.testing.allocator;
 
-    var plan = try Plan3dParallel.initWithThreads(allocator, 4, 4, 4, 2);
+    var plan = try Plan3dParallel.init_with_threads(allocator, 4, 4, 4, 2);
     defer plan.deinit();
 
     var data: [64]Complex = undefined;
@@ -398,7 +398,7 @@ test "Plan3dParallel roundtrip small" {
 test "Plan3dParallel vs sequential" {
     const allocator = std.testing.allocator;
 
-    var parallel_plan = try Plan3dParallel.initWithThreads(allocator, 8, 8, 8, 4);
+    var parallel_plan = try Plan3dParallel.init_with_threads(allocator, 8, 8, 8, 4);
     defer parallel_plan.deinit();
 
     var seq_plan = try fft.Plan3d.init(allocator, 8, 8, 8);

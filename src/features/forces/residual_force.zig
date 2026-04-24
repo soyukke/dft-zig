@@ -9,7 +9,7 @@ pub const Grid = local_force.Grid;
 
 /// Residual-potential force correction using atomic valence density.
 /// Uses ρ_atom(G) from PP_RHOATOM and v_resid(G) from SCF.
-pub fn residualForces(
+pub fn residual_forces(
     alloc: std.mem.Allocator,
     grid: Grid,
     vresid_g: []const math.Complex,
@@ -39,11 +39,11 @@ pub fn residualForces(
                 const rho_atom_g = if (rho_atom_tables) |tables|
                     tables[atom.species_index].eval(g_norm)
                 else
-                    form_factor.rhoAtomG(entry.upf.*, g_norm);
+                    form_factor.rho_atom_g(entry.upf.*, g_norm);
                 const rho_core_g = if (rho_core_tables) |tables|
                     tables[atom.species_index].eval(g_norm)
                 else
-                    form_factor.rhoCoreG(entry.upf.*, g_norm);
+                    form_factor.rho_core_g(entry.upf.*, g_norm);
                 const rho_total_g = rho_atom_g + rho_core_g;
                 if (rho_total_g != 0.0) {
                     const vresid = vresid_g[g.idx];

@@ -44,19 +44,19 @@ const SMALL_X: f64 = 1e-15;
 ///   x: Boys function argument (rho * |PQ|^2)
 ///   roots: output array for roots (at least nroots elements)
 ///   weights: output array for weights (at least nroots elements)
-pub fn rysRoots(nroots: usize, x: f64, roots: []f64, weights: []f64) void {
+pub fn rys_roots(nroots: usize, x: f64, roots: []f64, weights: []f64) void {
     std.debug.assert(nroots >= 1 and nroots <= MAX_NROOTS);
     std.debug.assert(roots.len >= nroots);
     std.debug.assert(weights.len >= nroots);
 
     if (nroots == 1) {
-        rysRoots1(x, roots, weights);
+        rys_roots1(x, roots, weights);
         return;
     }
 
     // Compute Boys function moments F_0(x) through F_{2*nroots-1}(x)
     var moments: [MAX_MOMENTS]f64 = undefined;
-    boys_mod.boysBatch(@as(u32, @intCast(2 * nroots - 1)), x, &moments);
+    boys_mod.boys_batch(@as(u32, @intCast(2 * nroots - 1)), x, &moments);
 
     // Use the modified Chebyshev algorithm to find the recurrence coefficients
     // of the orthogonal polynomials, then find roots via tridiagonal eigenproblem.
@@ -73,7 +73,7 @@ pub fn rysRoots(nroots: usize, x: f64, roots: []f64, weights: []f64) void {
     var alpha: [MAX_NROOTS]f64 = undefined;
     var beta_val: [MAX_NROOTS]f64 = undefined;
 
-    modifiedChebyshev(nroots, &moments, &alpha, &beta_val);
+    modified_chebyshev(nroots, &moments, &alpha, &beta_val);
 
     // Step 2: Solve tridiagonal eigenproblem using implicit QR (Golub-Welsch)
     // The tridiagonal matrix has:
@@ -104,7 +104,7 @@ pub fn rysRoots(nroots: usize, x: f64, roots: []f64, weights: []f64) void {
     }
 
     // Implicit QR algorithm for symmetric tridiagonal matrix
-    tridiagEigen(nroots, diag[0..nroots], offdiag[0..nroots], &z);
+    tridiag_eigen(nroots, diag[0..nroots], offdiag[0..nroots], &z);
 
     // Extract roots and weights
     const mu0 = moments[0]; // F_0(x)
@@ -117,9 +117,9 @@ pub fn rysRoots(nroots: usize, x: f64, roots: []f64, weights: []f64) void {
 /// Special case: nroots = 1.
 /// F_0(x) = w_0, F_1(x) = w_0 * u_0
 /// => u_0 = F_1(x) / F_0(x), w_0 = F_0(x)
-fn rysRoots1(x: f64, roots: []f64, weights: []f64) void {
-    const f0 = boys_mod.boysN(0, x);
-    const f1 = boys_mod.boysN(1, x);
+fn rys_roots1(x: f64, roots: []f64, weights: []f64) void {
+    const f0 = boys_mod.boys_n(0, x);
+    const f1 = boys_mod.boys_n(1, x);
 
     weights[0] = f0;
     if (f0 > SMALL_X) {
@@ -141,7 +141,7 @@ fn rysRoots1(x: f64, roots: []f64, weights: []f64) void {
 ///   Rocky Mountain J. Math., 4:2 (1974), 287-296.
 ///   Also: Gautschi, "On Generating Orthogonal Polynomials",
 ///   SIAM J. Sci. Stat. Comput., 3:3 (1982), 289-317.
-fn modifiedChebyshev(
+fn modified_chebyshev(
     n: usize,
     moments: *const [MAX_MOMENTS]f64,
     alpha: *[MAX_NROOTS]f64,
@@ -194,7 +194,7 @@ fn modifiedChebyshev(
 ///   z[i]: first component of eigenvector i
 ///
 /// This is the QL algorithm with implicit shifts (Golub-Welsch).
-fn tridiagEigen(n: usize, diag: []f64, offdiag: []f64, z: *[MAX_NROOTS]f64) void {
+fn tridiag_eigen(n: usize, diag: []f64, offdiag: []f64, z: *[MAX_NROOTS]f64) void {
     if (n <= 1) return;
 
     // Copy off-diagonal to working array (shifted by 1)
@@ -209,16 +209,16 @@ fn tridiagEigen(n: usize, diag: []f64, offdiag: []f64, z: *[MAX_NROOTS]f64) void
     for (0..n) |l| {
         var iter: usize = 0;
         while (iter < max_iter) {
-            const m = findTridiagSplit(n, diag, &e, l);
+            const m = find_tridiag_split(n, diag, &e, l);
             if (m == l) break;
 
             iter += 1;
-            applyQlSweep(diag, &e, z, l, m);
+            apply_ql_sweep(diag, &e, z, l, m);
         }
     }
 }
 
-fn findTridiagSplit(n: usize, diag: []const f64, e: *const [MAX_NROOTS]f64, l: usize) usize {
+fn find_tridiag_split(n: usize, diag: []const f64, e: *const [MAX_NROOTS]f64, l: usize) usize {
     var m: usize = l;
     while (m < n - 1) {
         const dd = @abs(diag[m]) + @abs(diag[m + 1]);
@@ -228,7 +228,7 @@ fn findTridiagSplit(n: usize, diag: []const f64, e: *const [MAX_NROOTS]f64, l: u
     return m;
 }
 
-fn applyQlSweep(
+fn apply_ql_sweep(
     diag: []f64,
     e: *[MAX_NROOTS]f64,
     z: *[MAX_NROOTS]f64,
@@ -300,14 +300,14 @@ test "rys roots nroots=1 basic" {
     var weights: [1]f64 = undefined;
 
     // x = 0
-    rysRoots(1, 0.0, &roots, &weights);
+    rys_roots(1, 0.0, &roots, &weights);
     try testing.expectApproxEqAbs(1.0, weights[0], tol); // F_0(0) = 1
     try testing.expectApproxEqAbs(1.0 / 3.0, roots[0], tol); // F_1(0)/F_0(0) = 1/3
 
     // x = 1.0
-    rysRoots(1, 1.0, &roots, &weights);
-    const f0 = boys_mod.boysN(0, 1.0);
-    const f1 = boys_mod.boysN(1, 1.0);
+    rys_roots(1, 1.0, &roots, &weights);
+    const f0 = boys_mod.boys_n(0, 1.0);
+    const f1 = boys_mod.boys_n(1, 1.0);
     try testing.expectApproxEqAbs(f0, weights[0], tol);
     try testing.expectApproxEqAbs(f1 / f0, roots[0], tol);
 }
@@ -323,7 +323,7 @@ test "rys roots nroots=2 moment verification" {
     const nroots: usize = 2;
 
     for (x_vals) |x| {
-        rysRoots(nroots, x, &roots, &weights);
+        rys_roots(nroots, x, &roots, &weights);
 
         // Verify: sum_i w_i * u_i^k = F_k(x) for k = 0..2*nroots-1
         for (0..2 * nroots) |k| {
@@ -335,7 +335,7 @@ test "rys roots nroots=2 moment verification" {
                 }
                 sum += weights[i] * uk;
             }
-            const fk = boys_mod.boysN(@as(u32, @intCast(k)), x);
+            const fk = boys_mod.boys_n(@as(u32, @intCast(k)), x);
             try testing.expectApproxEqAbs(fk, sum, tol);
         }
     }
@@ -352,7 +352,7 @@ test "rys roots nroots=3 moment verification" {
     const nroots: usize = 3;
 
     for (x_vals) |x| {
-        rysRoots(nroots, x, &roots, &weights);
+        rys_roots(nroots, x, &roots, &weights);
 
         for (0..2 * nroots) |k| {
             var sum: f64 = 0.0;
@@ -363,7 +363,7 @@ test "rys roots nroots=3 moment verification" {
                 }
                 sum += weights[i] * uk;
             }
-            const fk = boys_mod.boysN(@as(u32, @intCast(k)), x);
+            const fk = boys_mod.boys_n(@as(u32, @intCast(k)), x);
             try testing.expectApproxEqAbs(fk, sum, tol);
         }
     }
@@ -380,7 +380,7 @@ test "rys roots nroots=4,5 moment verification" {
 
     for (4..6) |nroots| {
         for (x_vals) |x| {
-            rysRoots(nroots, x, &roots, &weights);
+            rys_roots(nroots, x, &roots, &weights);
 
             for (0..2 * nroots) |k| {
                 var sum: f64 = 0.0;
@@ -391,7 +391,7 @@ test "rys roots nroots=4,5 moment verification" {
                     }
                     sum += weights[i] * uk;
                 }
-                const fk = boys_mod.boysN(@as(u32, @intCast(k)), x);
+                const fk = boys_mod.boys_n(@as(u32, @intCast(k)), x);
                 try testing.expectApproxEqAbs(fk, sum, tol);
             }
         }
@@ -409,7 +409,7 @@ test "rys roots nroots=7 for (ff|ff) case" {
     const x_vals = [_]f64{ 0.0, 0.5, 3.0, 10.0, 25.0, 50.0 };
 
     for (x_vals) |x| {
-        rysRoots(nroots, x, &roots, &weights);
+        rys_roots(nroots, x, &roots, &weights);
 
         // Verify first few moments (higher moments may lose some precision)
         for (0..@min(2 * nroots, 10)) |k| {
@@ -421,7 +421,7 @@ test "rys roots nroots=7 for (ff|ff) case" {
                 }
                 sum += weights[i] * uk;
             }
-            const fk = boys_mod.boysN(@as(u32, @intCast(k)), x);
+            const fk = boys_mod.boys_n(@as(u32, @intCast(k)), x);
             try testing.expectApproxEqAbs(fk, sum, tol);
         }
     }
@@ -437,7 +437,7 @@ test "rys roots positive weights" {
 
     for (1..8) |nroots| {
         for (x_vals) |x| {
-            rysRoots(nroots, x, &roots, &weights);
+            rys_roots(nroots, x, &roots, &weights);
 
             for (0..nroots) |i| {
                 try testing.expect(weights[i] >= 0.0);

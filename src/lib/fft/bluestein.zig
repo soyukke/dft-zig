@@ -17,7 +17,7 @@ const Complex = @import("complex.zig").Complex;
 const radix2 = @import("radix2.zig");
 
 /// Find the smallest power of 2 >= n.
-fn nextPowerOfTwo(n: usize) usize {
+fn next_power_of_two(n: usize) usize {
     if (n == 0) return 1;
     var v = n - 1;
     v |= v >> 1;
@@ -44,7 +44,7 @@ pub const Plan = struct {
         if (n == 0) return error.InvalidSize;
 
         // M must be >= 2N-1 and a power of 2
-        const m = nextPowerOfTwo(2 * n - 1);
+        const m = next_power_of_two(2 * n - 1);
 
         // Allocate chirp factors: W_N^(n²/2) for n = 0..N-1
         const chirp = try allocator.alloc(Complex, n);
@@ -173,7 +173,7 @@ pub const Plan = struct {
 };
 
 /// Direct DFT computation for testing (O(N²)).
-pub fn dftDirect(data: []const Complex, result: []Complex, inverse: bool) void {
+pub fn dft_direct(data: []const Complex, result: []Complex, inverse: bool) void {
     const n = data.len;
     if (result.len != n) return;
 
@@ -197,20 +197,20 @@ pub fn dftDirect(data: []const Complex, result: []Complex, inverse: bool) void {
 
 // ============== Tests ==============
 
-test "nextPowerOfTwo" {
-    try std.testing.expectEqual(@as(usize, 1), nextPowerOfTwo(0));
-    try std.testing.expectEqual(@as(usize, 1), nextPowerOfTwo(1));
-    try std.testing.expectEqual(@as(usize, 2), nextPowerOfTwo(2));
-    try std.testing.expectEqual(@as(usize, 4), nextPowerOfTwo(3));
-    try std.testing.expectEqual(@as(usize, 4), nextPowerOfTwo(4));
-    try std.testing.expectEqual(@as(usize, 8), nextPowerOfTwo(5));
-    try std.testing.expectEqual(@as(usize, 8), nextPowerOfTwo(7));
-    try std.testing.expectEqual(@as(usize, 8), nextPowerOfTwo(8));
-    try std.testing.expectEqual(@as(usize, 16), nextPowerOfTwo(9));
-    try std.testing.expectEqual(@as(usize, 32), nextPowerOfTwo(24));
+test "next_power_of_two" {
+    try std.testing.expectEqual(@as(usize, 1), next_power_of_two(0));
+    try std.testing.expectEqual(@as(usize, 1), next_power_of_two(1));
+    try std.testing.expectEqual(@as(usize, 2), next_power_of_two(2));
+    try std.testing.expectEqual(@as(usize, 4), next_power_of_two(3));
+    try std.testing.expectEqual(@as(usize, 4), next_power_of_two(4));
+    try std.testing.expectEqual(@as(usize, 8), next_power_of_two(5));
+    try std.testing.expectEqual(@as(usize, 8), next_power_of_two(7));
+    try std.testing.expectEqual(@as(usize, 8), next_power_of_two(8));
+    try std.testing.expectEqual(@as(usize, 16), next_power_of_two(9));
+    try std.testing.expectEqual(@as(usize, 32), next_power_of_two(24));
 }
 
-test "dftDirect basic" {
+test "dft_direct basic" {
     var data = [_]Complex{
         Complex.init(1, 0),
         Complex.init(2, 0),
@@ -219,7 +219,7 @@ test "dftDirect basic" {
     };
     var result: [4]Complex = undefined;
 
-    dftDirect(&data, &result, false);
+    dft_direct(&data, &result, false);
 
     // DFT of [1,2,3,4]: X[0]=10, X[1]=-2+2i, X[2]=-2, X[3]=-2-2i
     try std.testing.expectApproxEqAbs(result[0].re, 10.0, 1e-10);
@@ -244,7 +244,7 @@ test "bluestein size 3" {
 
     // Compute expected result via direct DFT
     var expected: [3]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
     // Compute via Bluestein
     plan.forward(&data);
@@ -271,7 +271,7 @@ test "bluestein size 5" {
     };
 
     var expected: [5]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
     plan.forward(&data);
 
@@ -324,7 +324,7 @@ test "bluestein size 7" {
     };
 
     var expected: [7]Complex = undefined;
-    dftDirect(&data, &expected, false);
+    dft_direct(&data, &expected, false);
 
     plan.forward(&data);
 
@@ -349,7 +349,7 @@ test "bluestein size 24" {
     }
 
     var expected: [24]Complex = undefined;
-    dftDirect(&original, &expected, false);
+    dft_direct(&original, &expected, false);
 
     plan.forward(&data);
 

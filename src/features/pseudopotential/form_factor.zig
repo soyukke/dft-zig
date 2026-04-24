@@ -3,7 +3,7 @@ const nonlocal = @import("nonlocal.zig");
 const local_potential = @import("local_potential.zig");
 const pseudo = @import("pseudopotential.zig");
 
-const ctrapWeight = @import("../math/math.zig").radial.ctrapWeight;
+const ctrap_weight = @import("../math/math.zig").radial.ctrap_weight;
 
 /// Pre-computed lookup table for local form factor V(q).
 /// Uses uniform grid + linear interpolation for O(1) evaluation.
@@ -27,9 +27,9 @@ pub const LocalFormFactorTable = struct {
         for (0..n) |i| {
             const q = @as(f64, @floatFromInt(i)) * dq;
             values[i] = switch (local_cfg.mode) {
-                .tail => localVqWithTail(upf, z_valence, q),
-                .ewald => localVqEwald(upf, z_valence, q, local_cfg.alpha),
-                .short_range => localVqShortRange(upf, z_valence, q),
+                .tail => local_vq_with_tail(upf, z_valence, q),
+                .ewald => local_vq_ewald(upf, z_valence, q, local_cfg.alpha),
+                .short_range => local_vq_short_range(upf, z_valence, q),
             };
         }
         return .{ .values = values, .dq = dq, .n_points = n };
@@ -44,7 +44,7 @@ pub const LocalFormFactorTable = struct {
     }
 
     /// Numerical derivative dV/dq using the table values.
-    pub fn evalDeriv(self: LocalFormFactorTable, q: f64) f64 {
+    pub fn eval_deriv(self: LocalFormFactorTable, q: f64) f64 {
         if (q < self.dq) {
             return (self.eval(self.dq) - self.eval(0.0)) / self.dq;
         }
@@ -65,25 +65,25 @@ pub const RadialFormFactorTable = struct {
 
     const N_POINTS: usize = 4096;
 
-    pub fn initRhoAtom(
+    pub fn init_rho_atom(
         alloc: std.mem.Allocator,
         upf: pseudo.UpfData,
         q_max: f64,
     ) !RadialFormFactorTable {
         if (upf.rho_atom.len == 0) return .{ .values = &[_]f64{}, .dq = 1.0, .n_points = 0 };
-        return buildTable(alloc, upf, upf.rho_atom, q_max);
+        return build_table(alloc, upf, upf.rho_atom, q_max);
     }
 
-    pub fn initRhoCore(
+    pub fn init_rho_core(
         alloc: std.mem.Allocator,
         upf: pseudo.UpfData,
         q_max: f64,
     ) !RadialFormFactorTable {
         if (upf.nlcc.len == 0) return .{ .values = &[_]f64{}, .dq = 1.0, .n_points = 0 };
-        return buildTable(alloc, upf, upf.nlcc, q_max);
+        return build_table(alloc, upf, upf.nlcc, q_max);
     }
 
-    fn buildTable(
+    fn build_table(
         alloc: std.mem.Allocator,
         upf: pseudo.UpfData,
         data: []const f64,
@@ -99,8 +99,8 @@ pub const RadialFormFactorTable = struct {
             var j: usize = 0;
             while (j < nr) : (j += 1) {
                 const x = q * upf.r[j];
-                const j0 = nonlocal.sphericalBessel(0, x);
-                sum += upf.r[j] * upf.r[j] * data[j] * j0 * upf.rab[j] * ctrapWeight(j, nr);
+                const j0 = nonlocal.spherical_bessel(0, x);
+                sum += upf.r[j] * upf.r[j] * data[j] * j0 * upf.rab[j] * ctrap_weight(j, nr);
             }
             values[i] = 4.0 * std.math.pi * sum;
         }
@@ -117,7 +117,7 @@ pub const RadialFormFactorTable = struct {
     }
 
     /// Numerical derivative dF/dq using the table values.
-    pub fn evalDeriv(self: RadialFormFactorTable, q: f64) f64 {
+    pub fn eval_deriv(self: RadialFormFactorTable, q: f64) f64 {
         if (self.n_points == 0) return 0.0;
         if (q < self.dq) {
             return (self.eval(self.dq) - self.eval(0.0)) / self.dq;
@@ -143,9 +143,9 @@ pub const RadialFormFactorTable = struct {
 ///
 /// The second term handles the long-range Coulomb consistently with Ewald.
 /// This approach ensures numerical stability for all q values.
-pub fn localVqEwald(upf: pseudo.UpfData, z_valence: f64, q: f64, alpha: f64) f64 {
+pub fn local_vq_ewald(upf: pseudo.UpfData, z_valence: f64, q: f64, alpha: f64) f64 {
     if (upf.r.len == 0) return 0.0;
-    if (alpha <= 0.0) return localVq(upf, q);
+    if (alpha <= 0.0) return local_vq(upf, q);
 
     const n = upf.r.len;
     // Integrate V_comp(r) = V_local(r) + Z×erf(αr)/r
@@ -158,12 +158,12 @@ pub fn localVqEwald(upf: pseudo.UpfData, z_valence: f64, q: f64, alpha: f64) f64
         const erf_term = if (r < 1e-10)
             z_valence * 2.0 * alpha / std.math.sqrt(std.math.pi)
         else
-            z_valence * erfApprox(alpha * r) / r;
+            z_valence * erf_approx(alpha * r) / r;
 
         const v_comp = v_local + erf_term;
         const x = q * r;
         const sinc = if (@abs(x) < 1e-12) 1.0 else std.math.sin(x) / x;
-        sum += r * r * v_comp * sinc * rab * ctrapWeight(i, n);
+        sum += r * r * v_comp * sinc * rab * ctrap_weight(i, n);
     }
     const v_comp_q = 4.0 * std.math.pi * sum;
 
@@ -179,7 +179,7 @@ pub fn localVqEwald(upf: pseudo.UpfData, z_valence: f64, q: f64, alpha: f64) f64
 }
 
 /// Approximate error function using polynomial approximation.
-fn erfApprox(x: f64) f64 {
+fn erf_approx(x: f64) f64 {
     const ax = @abs(x);
     const t = 1.0 / (1.0 + 0.3275911 * ax);
     const poly = t * (0.254829592 + t *
@@ -204,7 +204,7 @@ fn erfApprox(x: f64) f64 {
 /// This method is more numerically stable than the tail correction because
 /// the integrand V_SR(r) decays to zero at large r, unlike V_loc(r) which
 /// contains the long-range Coulomb tail.
-pub fn localVqShortRange(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
+pub fn local_vq_short_range(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
     if (upf.r.len == 0) return 0.0;
 
     const n = upf.r.len;
@@ -219,12 +219,12 @@ pub fn localVqShortRange(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
         const v_sr = v_local + v_coulomb_r;
         const x = q * r;
         const sinc = if (@abs(x) < 1e-12) 1.0 else std.math.sin(x) / x;
-        sum += r * r * v_sr * sinc * rab * ctrapWeight(i, n);
+        sum += r * r * v_sr * sinc * rab * ctrap_weight(i, n);
     }
     const v_sr_q = 4.0 * std.math.pi * sum;
 
     // For q≈0, the Coulomb term diverges; return only the SR part.
-    // (G=0 is handled separately in ionicLocalPotential)
+    // (G=0 is handled separately in ionic_local_potential)
     if (q < 1e-10) {
         return v_sr_q;
     }
@@ -237,8 +237,8 @@ pub fn localVqShortRange(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
 /// Compute epsatm: the q=0 limit of the short-range local form factor.
 /// epsatm = 4π ∫₀^∞ r² [V_loc(r) + 2Z/r] dr  (Rydberg units)
 /// This is the pseudopotential core energy per atom used in the total energy.
-pub fn computeEpsatm(upf: pseudo.UpfData, z_valence: f64) f64 {
-    return localVqShortRange(upf, z_valence, 0.0);
+pub fn compute_epsatm(upf: pseudo.UpfData, z_valence: f64) f64 {
+    return local_vq_short_range(upf, z_valence, 0.0);
 }
 
 /// Compute local pseudopotential form factor V(q) with Coulomb subtraction.
@@ -246,8 +246,8 @@ pub fn computeEpsatm(upf: pseudo.UpfData, z_valence: f64) f64 {
 /// where V_Coulomb(q) = -4πZ/q² for q>0.
 /// This ensures the long-range Coulomb divergence cancels with Hartree.
 /// NOTE: This uses a naive subtraction which has numerical issues for small q.
-/// Prefer localVqShortRange for better numerical stability.
-pub fn localVqWithZ(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
+/// Prefer local_vq_short_range for better numerical stability.
+pub fn local_vq_with_z(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
     if (upf.r.len == 0) return 0.0;
 
     var sum: f64 = 0.0;
@@ -263,7 +263,7 @@ pub fn localVqWithZ(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
     // For small q, the Coulomb term diverges but V_ps also diverges,
     // and their difference should be finite
     if (q < 1e-6) {
-        // At q=0, return 0 (G=0 handled separately in ionicLocalPotential)
+        // At q=0, return 0 (G=0 handled separately in ionic_local_potential)
         return 0.0;
     }
 
@@ -287,7 +287,7 @@ pub fn localVqWithZ(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
 ///
 /// So the tail contribution is:
 /// V_tail(q) = -8πZ×cos(qr_max)/q² (Rydberg)
-pub fn localVqWithTail(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
+pub fn local_vq_with_tail(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
     if (upf.r.len == 0) return 0.0;
 
     const n = upf.r.len;
@@ -298,7 +298,7 @@ pub fn localVqWithTail(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
         const rab = upf.rab[i];
         const x = q * r;
         const sinc = if (@abs(x) < 1e-12) 1.0 else std.math.sin(x) / x;
-        sum += r * r * v * sinc * rab * ctrapWeight(i, n);
+        sum += r * r * v * sinc * rab * ctrap_weight(i, n);
     }
     const v_numeric = 4.0 * std.math.pi * sum;
 
@@ -319,8 +319,8 @@ pub fn localVqWithTail(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
 
 /// Legacy function for compatibility - returns raw V(q) without tail correction
 /// NOTE: This gives incorrect results for small q due to missing Coulomb tail.
-/// Use localVqWithTail for accurate form factors.
-pub fn localVq(upf: pseudo.UpfData, q: f64) f64 {
+/// Use local_vq_with_tail for accurate form factors.
+pub fn local_vq(upf: pseudo.UpfData, q: f64) f64 {
     if (upf.r.len == 0) return 0.0;
     var sum: f64 = 0.0;
     for (upf.r, 0..) |r, i| {
@@ -335,29 +335,29 @@ pub fn localVq(upf: pseudo.UpfData, q: f64) f64 {
 
 /// Compute atomic valence density form factor ρ_atom(G).
 /// Uses ρ_atom(G) = 4π ∫ r² ρ_atom(r) j0(Gr) dr.
-pub fn rhoAtomG(upf: pseudo.UpfData, g: f64) f64 {
+pub fn rho_atom_g(upf: pseudo.UpfData, g: f64) f64 {
     if (upf.rho_atom.len == 0) return 0.0;
     const n = @min(upf.rho_atom.len, @min(upf.r.len, upf.rab.len));
     var sum: f64 = 0.0;
     var i: usize = 0;
     while (i < n) : (i += 1) {
         const x = g * upf.r[i];
-        const j0 = nonlocal.sphericalBessel(0, x);
-        sum += upf.r[i] * upf.r[i] * upf.rho_atom[i] * j0 * upf.rab[i] * ctrapWeight(i, n);
+        const j0 = nonlocal.spherical_bessel(0, x);
+        sum += upf.r[i] * upf.r[i] * upf.rho_atom[i] * j0 * upf.rab[i] * ctrap_weight(i, n);
     }
     return 4.0 * std.math.pi * sum;
 }
 
 /// Compute core density form factor ρ_core(G) from NLCC.
-pub fn rhoCoreG(upf: pseudo.UpfData, g: f64) f64 {
+pub fn rho_core_g(upf: pseudo.UpfData, g: f64) f64 {
     if (upf.nlcc.len == 0) return 0.0;
     const n = @min(upf.nlcc.len, @min(upf.r.len, upf.rab.len));
     var sum: f64 = 0.0;
     var i: usize = 0;
     while (i < n) : (i += 1) {
         const x = g * upf.r[i];
-        const j0 = nonlocal.sphericalBessel(0, x);
-        sum += upf.r[i] * upf.r[i] * upf.nlcc[i] * j0 * upf.rab[i] * ctrapWeight(i, n);
+        const j0 = nonlocal.spherical_bessel(0, x);
+        sum += upf.r[i] * upf.r[i] * upf.nlcc[i] * j0 * upf.rab[i] * ctrap_weight(i, n);
     }
     return 4.0 * std.math.pi * sum;
 }

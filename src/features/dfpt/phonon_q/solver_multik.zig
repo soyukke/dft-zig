@@ -12,27 +12,28 @@ const math = @import("../../math/math.zig");
 const scf_mod = @import("../../scf/scf.zig");
 const hamiltonian = @import("../../hamiltonian/hamiltonian.zig");
 const form_factor = @import("../../pseudopotential/form_factor.zig");
+const local_potential = @import("../../pseudopotential/local_potential.zig");
 
 const dfpt = @import("../dfpt.zig");
 const perturbation = dfpt.perturbation;
 const sternheimer = dfpt.sternheimer;
 const GroundState = dfpt.GroundState;
 const DfptConfig = dfpt.DfptConfig;
-const logDfpt = dfpt.logDfpt;
-const logDfptInfo = dfpt.logDfptInfo;
+const log_dfpt = dfpt.log_dfpt;
+const log_dfpt_info = dfpt.log_dfpt_info;
 
 const kpt_dfpt = @import("kpt_dfpt.zig");
 const KPointDfptData = kpt_dfpt.KPointDfptData;
 const MultiKPertResult = kpt_dfpt.MultiKPertResult;
 
 const cross_basis = @import("cross_basis.zig");
-const applyV1PsiQCached = cross_basis.applyV1PsiQCached;
-const computeRho1Q = cross_basis.computeRho1Q;
-const computeRho1QCached = cross_basis.computeRho1QCached;
-const complexRealToReciprocal = cross_basis.complexRealToReciprocal;
+const apply_v1_psi_q_cached = cross_basis.apply_v1_psi_q_cached;
+const compute_rho1_q = cross_basis.compute_rho1_q;
+const compute_rho1_q_cached = cross_basis.compute_rho1_q_cached;
+const complex_real_to_reciprocal = cross_basis.complex_real_to_reciprocal;
 
 const dynmat_elem_q = @import("dynmat_elem_q.zig");
-const computeElecDynmatElementQ = dynmat_elem_q.computeElecDynmatElementQ;
+const compute_elec_dynmat_element_q = dynmat_elem_q.compute_elec_dynmat_element_q;
 
 const Grid = scf_mod.Grid;
 
@@ -67,7 +68,7 @@ const DfptKpointWorker = struct {
     thread_index: usize,
 };
 
-fn setDfptWorkerError(shared: *DfptKpointShared, e: anyerror) void {
+fn set_dfpt_worker_error(shared: *DfptKpointShared, e: anyerror) void {
     shared.err_mutex.lockUncancelable(shared.io);
     defer shared.err_mutex.unlock(shared.io);
 
@@ -76,7 +77,7 @@ fn setDfptWorkerError(shared: *DfptKpointShared, e: anyerror) void {
     }
 }
 
-fn dfptKpointWorkerFn(worker: *DfptKpointWorker) void {
+fn dfpt_kpoint_worker_fn(worker: *DfptKpointWorker) void {
     const shared = worker.shared;
     const thread_index = worker.thread_index;
     const total = shared.total;
@@ -94,13 +95,13 @@ fn dfptKpointWorkerFn(worker: *DfptKpointWorker) void {
         _ = arena.reset(.retain_capacity);
         const kalloc = arena.allocator();
 
-        processOneKpointDfpt(
+        process_one_kpoint_dfpt(
             kalloc,
             shared,
             ik,
             rho1_local,
         ) catch |e| {
-            setDfptWorkerError(shared, e);
+            set_dfpt_worker_error(shared, e);
             shared.stop.store(1, .release);
             break;
         };
@@ -110,7 +111,7 @@ fn dfptKpointWorkerFn(worker: *DfptKpointWorker) void {
 /// Process a single k-point within one DFPT SCF iteration.
 /// Solves Sternheimer for each occupied band, updates psi1_per_k[ik],
 /// and accumulates ρ^(1) into the provided rho1_local buffer.
-fn processOneKpointDfpt(
+fn process_one_kpoint_dfpt(
     alloc: std.mem.Allocator,
     shared: *DfptKpointShared,
     ik: usize,
@@ -129,69 +130,19 @@ fn processOneKpointDfpt(
     // ψ^(0)(r) cache for this k-point
     const psi0_r_k = shared.psi0_r_cache[ik];
 
-    // Solve Sternheimer for each occupied band at this k-point
     for (0..n_occ) |n| {
-        // RHS: -P_c^{k+q} × H^(1)|ψ^(0)_{n,k}⟩
-        const rhs = try applyV1PsiQCached(
+        try process_one_kpoint_band_dfpt(
             alloc,
-            shared.grid,
+            shared,
+            kd,
             map_kq_ptr,
-            shared.v_scf_r,
             psi0_r_k[n],
+            ik,
+            n,
+            nl_ctx_k_opt,
+            nl_ctx_kq_opt,
             n_pw_kq,
         );
-        defer alloc.free(rhs);
-
-        // Add nonlocal perturbation
-        if (nl_ctx_k_opt != null and nl_ctx_kq_opt != null) {
-            const nl_out = try alloc.alloc(math.Complex, n_pw_kq);
-            defer alloc.free(nl_out);
-
-            try perturbation.applyNonlocalPerturbationQ(
-                alloc,
-                kd.basis_k.gvecs,
-                kd.basis_kq.gvecs,
-                shared.atoms,
-                nl_ctx_k_opt.?,
-                nl_ctx_kq_opt.?,
-                shared.atom_index,
-                shared.direction,
-                1.0 / shared.grid.volume,
-                kd.wavefunctions_k_const[n],
-                nl_out,
-            );
-            for (0..n_pw_kq) |g| {
-                rhs[g] = math.complex.add(rhs[g], nl_out[g]);
-            }
-        }
-
-        // Negate
-        for (0..n_pw_kq) |g| {
-            rhs[g] = math.complex.scale(rhs[g], -1.0);
-        }
-
-        // Project onto conduction band in k+q space
-        sternheimer.projectConduction(rhs, kd.occ_kq_const, kd.n_occ_kq);
-
-        // Solve Sternheimer
-        const result = try sternheimer.solve(
-            alloc,
-            kd.apply_ctx_kq,
-            rhs,
-            kd.eigenvalues_k[n],
-            kd.occ_kq_const,
-            kd.n_occ_kq,
-            kd.basis_kq.gvecs,
-            .{
-                .tol = shared.cfg.sternheimer_tol,
-                .max_iter = shared.cfg.sternheimer_max_iter,
-                .alpha_shift = shared.cfg.alpha_shift,
-            },
-        );
-
-        // Copy result to psi1_per_k (fixed-size buffer, no reallocation needed)
-        @memcpy(shared.psi1_per_k[ik][n], result.psi1);
-        alloc.free(result.psi1);
     }
 
     // Compute ρ^(1) for this k-point (weighted by wtk)
@@ -200,7 +151,7 @@ fn processOneKpointDfpt(
 
     for (0..n_occ) |n| psi1_const[n] = shared.psi1_per_k[ik][n];
 
-    const rho1_k_r = try computeRho1QCached(
+    const rho1_k_r = try compute_rho1_q_cached(
         alloc,
         shared.grid,
         map_kq_ptr,
@@ -217,6 +168,89 @@ fn processOneKpointDfpt(
     }
 }
 
+fn process_one_kpoint_band_dfpt(
+    alloc: std.mem.Allocator,
+    shared: *DfptKpointShared,
+    kd: *KPointDfptData,
+    map_kq_ptr: *const scf_mod.PwGridMap,
+    psi0_r: []const math.Complex,
+    ik: usize,
+    n: usize,
+    nl_ctx_k_opt: anytype,
+    nl_ctx_kq_opt: anytype,
+    n_pw_kq: usize,
+) !void {
+    const rhs = try apply_v1_psi_q_cached(
+        alloc,
+        shared.grid,
+        map_kq_ptr,
+        shared.v_scf_r,
+        psi0_r,
+        n_pw_kq,
+    );
+    defer alloc.free(rhs);
+
+    try add_nonlocal_perturbation_rhs(
+        alloc,
+        shared,
+        kd,
+        n,
+        nl_ctx_k_opt,
+        nl_ctx_kq_opt,
+        n_pw_kq,
+        rhs,
+    );
+    for (0..n_pw_kq) |g| rhs[g] = math.complex.scale(rhs[g], -1.0);
+    sternheimer.project_conduction(rhs, kd.occ_kq_const, kd.n_occ_kq);
+
+    const result = try sternheimer.solve(
+        alloc,
+        kd.apply_ctx_kq,
+        rhs,
+        kd.eigenvalues_k[n],
+        kd.occ_kq_const,
+        kd.n_occ_kq,
+        kd.basis_kq.gvecs,
+        .{
+            .tol = shared.cfg.sternheimer_tol,
+            .max_iter = shared.cfg.sternheimer_max_iter,
+            .alpha_shift = shared.cfg.alpha_shift,
+        },
+    );
+    @memcpy(shared.psi1_per_k[ik][n], result.psi1);
+    alloc.free(result.psi1);
+}
+
+fn add_nonlocal_perturbation_rhs(
+    alloc: std.mem.Allocator,
+    shared: *DfptKpointShared,
+    kd: *KPointDfptData,
+    n: usize,
+    nl_ctx_k_opt: anytype,
+    nl_ctx_kq_opt: anytype,
+    n_pw_kq: usize,
+    rhs: []math.Complex,
+) !void {
+    if (nl_ctx_k_opt == null or nl_ctx_kq_opt == null) return;
+    const nl_out = try alloc.alloc(math.Complex, n_pw_kq);
+    defer alloc.free(nl_out);
+
+    try perturbation.apply_nonlocal_perturbation_q(
+        alloc,
+        kd.basis_k.gvecs,
+        kd.basis_kq.gvecs,
+        shared.atoms,
+        nl_ctx_k_opt.?,
+        nl_ctx_kq_opt.?,
+        shared.atom_index,
+        shared.direction,
+        1.0 / shared.grid.volume,
+        kd.wavefunctions_k_const[n],
+        nl_out,
+    );
+    for (0..n_pw_kq) |g| rhs[g] = math.complex.add(rhs[g], nl_out[g]);
+}
+
 const Psi1Buffers = struct {
     values: [][][]math.Complex,
     consumed: bool = false,
@@ -230,7 +264,7 @@ const Psi1Buffers = struct {
         errdefer self.deinit(alloc);
 
         for (kpts, 0..) |kd, ik| {
-            self.values[ik] = try initPsi1ForKpoint(alloc, kd.n_occ, kd.n_pw_kq);
+            self.values[ik] = try init_psi1_for_kpoint(alloc, kd.n_occ, kd.n_pw_kq);
         }
         return self;
     }
@@ -246,7 +280,7 @@ const Psi1Buffers = struct {
         alloc.free(self.values);
     }
 
-    fn intoResult(
+    fn into_result(
         self: *Psi1Buffers,
         alloc: std.mem.Allocator,
     ) ![][]const []math.Complex {
@@ -286,7 +320,7 @@ const Psi0RCache = struct {
         errdefer self.deinit(alloc);
 
         for (kpts, 0..) |*kd, ik| {
-            self.values[ik] = try buildPsi0RForKpoint(
+            self.values[ik] = try build_psi0_r_for_kpoint(
                 alloc,
                 grid,
                 kd,
@@ -306,7 +340,7 @@ const Psi0RCache = struct {
         alloc.free(self.values);
     }
 
-    fn constView(
+    fn const_view(
         self: *const Psi0RCache,
         alloc: std.mem.Allocator,
     ) ![]const []const []const math.Complex {
@@ -360,7 +394,7 @@ const PulayState = struct {
     }
 };
 
-fn initPsi1ForKpoint(
+fn init_psi1_for_kpoint(
     alloc: std.mem.Allocator,
     n_occ: usize,
     n_pw_kq: usize,
@@ -381,7 +415,7 @@ fn initPsi1ForKpoint(
     return psi1_k;
 }
 
-fn buildPsi0RForKpoint(
+fn build_psi0_r_for_kpoint(
     alloc: std.mem.Allocator,
     grid: Grid,
     kd: *const KPointDfptData,
@@ -403,12 +437,12 @@ fn buildPsi0RForKpoint(
 
         @memset(work, math.complex.init(0.0, 0.0));
         kd.map_k.scatter(kd.wavefunctions_k_const[n], work);
-        try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, work, psi0_k[n], null);
+        try scf_mod.fft_reciprocal_to_complex_in_place(alloc, grid, work, psi0_k[n], null);
     }
     return psi0_k;
 }
 
-fn initDfptKpointShared(
+fn init_dfpt_kpoint_shared(
     io: std.Io,
     kpts: []KPointDfptData,
     v_scf_r: []const math.Complex,
@@ -450,7 +484,7 @@ fn initDfptKpointShared(
     };
 }
 
-fn buildCorePerturbationReal(
+fn build_core_perturbation_real(
     alloc: std.mem.Allocator,
     grid: Grid,
     atom: hamiltonian.AtomData,
@@ -459,7 +493,7 @@ fn buildCorePerturbationReal(
     q_cart: math.Vec3,
     rho_core_tables: ?[]const form_factor.RadialFormFactorTable,
 ) ![]math.Complex {
-    const rho1_core_g = try perturbation.buildCorePerturbationQ(
+    const rho1_core_g = try perturbation.build_core_perturbation_q(
         alloc,
         grid,
         atom,
@@ -477,11 +511,11 @@ fn buildCorePerturbationReal(
     const rho1_core_r = try alloc.alloc(math.Complex, rho1_core_g.len);
     errdefer alloc.free(rho1_core_r);
 
-    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, rho1_core_fft, rho1_core_r, null);
+    try scf_mod.fft_reciprocal_to_complex_in_place(alloc, grid, rho1_core_fft, rho1_core_r, null);
     return rho1_core_r;
 }
 
-fn reciprocalToComplexField(
+fn reciprocal_to_complex_field(
     alloc: std.mem.Allocator,
     grid: Grid,
     values_g: []const math.Complex,
@@ -493,11 +527,11 @@ fn reciprocalToComplexField(
     const values_r = try alloc.alloc(math.Complex, values_g.len);
     errdefer alloc.free(values_r);
 
-    try scf_mod.fftReciprocalToComplexInPlace(alloc, grid, values_fft, values_r, null);
+    try scf_mod.fft_reciprocal_to_complex_in_place(alloc, grid, values_fft, values_r, null);
     return values_r;
 }
 
-fn complexToReciprocalField(
+fn complex_to_reciprocal_field(
     alloc: std.mem.Allocator,
     grid: Grid,
     values_r: []const math.Complex,
@@ -509,11 +543,11 @@ fn complexToReciprocalField(
     const values_g = try alloc.alloc(math.Complex, values_r.len);
     errdefer alloc.free(values_g);
 
-    try scf_mod.fftComplexToReciprocalInPlace(alloc, grid, values_fft, values_g, null);
+    try scf_mod.fft_complex_to_reciprocal_in_place(alloc, grid, values_fft, values_g, null);
     return values_g;
 }
 
-fn accumulateSequentialRho1(
+fn accumulate_sequential_rho1(
     alloc: std.mem.Allocator,
     io: std.Io,
     kpts: []KPointDfptData,
@@ -533,7 +567,7 @@ fn accumulateSequentialRho1(
     var worker_err: ?anyerror = null;
     var err_mutex = std.Io.Mutex.init;
     var log_mutex = std.Io.Mutex.init;
-    var shared = initDfptKpointShared(
+    var shared = init_dfpt_kpoint_shared(
         io,
         kpts,
         v_scf_r,
@@ -555,11 +589,11 @@ fn accumulateSequentialRho1(
     );
 
     for (0..kpts.len) |ik| {
-        try processOneKpointDfpt(alloc, &shared, ik, rho1_r);
+        try process_one_kpoint_dfpt(alloc, &shared, ik, rho1_r);
     }
 }
 
-fn sumThreadLocalRho1(
+fn sum_thread_local_rho1(
     total: usize,
     thread_count: usize,
     rho1_locals: []const math.Complex,
@@ -574,7 +608,7 @@ fn sumThreadLocalRho1(
     }
 }
 
-fn accumulateParallelRho1(
+fn accumulate_parallel_rho1(
     alloc: std.mem.Allocator,
     io: std.Io,
     kpts: []KPointDfptData,
@@ -601,7 +635,7 @@ fn accumulateParallelRho1(
     var worker_err: ?anyerror = null;
     var err_mutex = std.Io.Mutex.init;
     var log_mutex = std.Io.Mutex.init;
-    var shared = initDfptKpointShared(
+    var shared = init_dfpt_kpoint_shared(
         io,
         kpts,
         v_scf_r,
@@ -632,18 +666,18 @@ fn accumulateParallelRho1(
         workers[ti] = .{ .shared = &shared, .thread_index = ti };
     }
     for (0..thread_count - 1) |ti| {
-        threads[ti] = try std.Thread.spawn(.{}, dfptKpointWorkerFn, .{&workers[ti + 1]});
+        threads[ti] = try std.Thread.spawn(.{}, dfpt_kpoint_worker_fn, .{&workers[ti + 1]});
     }
-    dfptKpointWorkerFn(&workers[0]);
+    dfpt_kpoint_worker_fn(&workers[0]);
     for (threads) |t| {
         t.join();
     }
     if (worker_err) |e| return e;
 
-    sumThreadLocalRho1(total, thread_count, rho1_locals, rho1_r);
+    sum_thread_local_rho1(total, thread_count, rho1_locals, rho1_r);
 }
 
-fn accumulateRho1Response(
+fn accumulate_rho1_response(
     alloc: std.mem.Allocator,
     io: std.Io,
     kpts: []KPointDfptData,
@@ -662,11 +696,11 @@ fn accumulateRho1Response(
     errdefer alloc.free(rho1_r);
     @memset(rho1_r, math.complex.init(0.0, 0.0));
 
-    const psi0_view = try psi0_r_cache.constView(alloc);
+    const psi0_view = try psi0_r_cache.const_view(alloc);
     defer alloc.free(psi0_view);
 
     if (thread_count <= 1) {
-        try accumulateSequentialRho1(
+        try accumulate_sequential_rho1(
             alloc,
             io,
             kpts,
@@ -684,7 +718,7 @@ fn accumulateRho1Response(
         return rho1_r;
     }
 
-    try accumulateParallelRho1(
+    try accumulate_parallel_rho1(
         alloc,
         io,
         kpts,
@@ -703,7 +737,7 @@ fn accumulateRho1Response(
     return rho1_r;
 }
 
-fn buildIterationRho1G(
+fn build_iteration_rho1_g(
     alloc: std.mem.Allocator,
     io: std.Io,
     kpts: []KPointDfptData,
@@ -718,10 +752,10 @@ fn buildIterationRho1G(
     psi0_r_cache: *const Psi0RCache,
     thread_count: usize,
 ) ![]math.Complex {
-    const v_scf_r = try reciprocalToComplexField(alloc, grid, v_scf_g);
+    const v_scf_r = try reciprocal_to_complex_field(alloc, grid, v_scf_g);
     defer alloc.free(v_scf_r);
 
-    const rho1_r = try accumulateRho1Response(
+    const rho1_r = try accumulate_rho1_response(
         alloc,
         io,
         kpts,
@@ -738,10 +772,10 @@ fn buildIterationRho1G(
     );
     defer alloc.free(rho1_r);
 
-    return complexRealToReciprocal(alloc, grid, rho1_r);
+    return complex_real_to_reciprocal(alloc, grid, rho1_r);
 }
 
-fn logIterationDensity(
+fn log_iteration_density(
     iter: usize,
     rho1_g: []const math.Complex,
     vloc1_g: []const math.Complex,
@@ -752,14 +786,14 @@ fn logIterationDensity(
     for (rho1_g) |value| {
         rho_norm += value.r * value.r + value.i * value.i;
     }
-    const d_elec_diag = computeElecDynmatElementQ(vloc1_g, rho1_g, volume);
-    logDfpt(
+    const d_elec_diag = compute_elec_dynmat_element_q(vloc1_g, rho1_g, volume);
+    log_dfpt(
         "dfptQ_mk: iter={d} |rho1|={e:.6} D_elec_bare=({e:.6},{e:.6}) nk={d}\n",
         .{ iter, @sqrt(rho_norm), d_elec_diag.r, d_elec_diag.i, n_kpts },
     );
 }
 
-fn buildOutputPotential(
+fn build_output_potential(
     alloc: std.mem.Allocator,
     grid: Grid,
     gs: GroundState,
@@ -768,10 +802,10 @@ fn buildOutputPotential(
     rho1_g: []const math.Complex,
     rho1_core_r: []const math.Complex,
 ) ![]math.Complex {
-    const vh1_g = try perturbation.buildHartreePerturbationQ(alloc, grid, rho1_g, q_cart);
+    const vh1_g = try perturbation.build_hartree_perturbation_q(alloc, grid, rho1_g, q_cart);
     defer alloc.free(vh1_g);
 
-    const rho1_val_r = try reciprocalToComplexField(alloc, grid, rho1_g);
+    const rho1_val_r = try reciprocal_to_complex_field(alloc, grid, rho1_g);
     defer alloc.free(rho1_val_r);
 
     const rho1_total_r = try alloc.alloc(math.Complex, rho1_g.len);
@@ -781,10 +815,10 @@ fn buildOutputPotential(
         rho1_total_r[i] = math.complex.add(rho1_val_r[i], rho1_core_r[i]);
     }
 
-    const vxc1_r = try perturbation.buildXcPerturbationFullComplex(alloc, gs, rho1_total_r);
+    const vxc1_r = try perturbation.build_xc_perturbation_full_complex(alloc, gs, rho1_total_r);
     defer alloc.free(vxc1_r);
 
-    const vxc1_g = try complexToReciprocalField(alloc, grid, vxc1_r);
+    const vxc1_g = try complex_to_reciprocal_field(alloc, grid, vxc1_r);
     defer alloc.free(vxc1_g);
 
     const v_out_g = try alloc.alloc(math.Complex, rho1_g.len);
@@ -799,7 +833,7 @@ fn buildOutputPotential(
     return v_out_g;
 }
 
-fn computeResidual(
+fn compute_residual(
     alloc: std.mem.Allocator,
     v_out_g: []const math.Complex,
     v_scf_g: []const math.Complex,
@@ -818,7 +852,7 @@ fn computeResidual(
     };
 }
 
-fn updateBestPotential(
+fn update_best_potential(
     alloc: std.mem.Allocator,
     residual_norm: f64,
     v_scf_g: []const math.Complex,
@@ -833,7 +867,7 @@ fn updateBestPotential(
     @memcpy(state.best_v_scf.?, v_scf_g);
 }
 
-fn applyPotentialMixing(
+fn apply_potential_mixing(
     alloc: std.mem.Allocator,
     iter: usize,
     cfg: DfptConfig,
@@ -848,7 +882,7 @@ fn applyPotentialMixing(
         if (state.best_v_scf) |values| @memcpy(v_scf_g, values);
         if (state.best_vresid < 10.0 * cfg.scf_tol) {
             state.force_converge = true;
-            logDfpt(
+            log_dfpt(
                 "dfptQ_mk: Pulay restart (near-converged) at iter={d}" ++
                     " vresid={e:.6} best={e:.6}\n",
                 .{ iter, residual.norm, state.best_vresid },
@@ -858,7 +892,7 @@ fn applyPotentialMixing(
         }
         state.mixer.reset();
         state.pulay_active_since = iter + 1 + cfg.pulay_start;
-        logDfpt(
+        log_dfpt(
             "dfptQ_mk: Pulay restart at iter={d} vresid={e:.6} best={e:.6}\n",
             .{ iter, residual.norm, state.best_vresid },
         );
@@ -867,7 +901,7 @@ fn applyPotentialMixing(
     }
 
     if (cfg.pulay_history > 0 and iter >= state.pulay_active_since) {
-        try state.mixer.mixWithResidual(v_scf_g, residual.values, cfg.mixing_beta);
+        try state.mixer.mix_with_residual(v_scf_g, residual.values, cfg.mixing_beta);
     } else {
         for (0..v_scf_g.len) |i| {
             v_scf_g[i] = math.complex.add(
@@ -880,7 +914,35 @@ fn applyPotentialMixing(
     return .mixed;
 }
 
-fn runMultiKScfLoop(
+fn converged_multi_k_scf(
+    alloc: std.mem.Allocator,
+    iter: usize,
+    cfg: DfptConfig,
+    residual: ResidualInfo,
+    state: *const PulayState,
+) bool {
+    const converged_now = residual.norm < cfg.scf_tol or
+        (state.force_converge and residual.norm < 10.0 * cfg.scf_tol);
+    if (!converged_now) return false;
+
+    var converged_residual = residual;
+    converged_residual.deinit(alloc);
+    log_dfpt(
+        "dfptQ_mk: converged at iter={d} vresid={e:.6}\n",
+        .{ iter, residual.norm },
+    );
+    return true;
+}
+
+fn log_multi_k_thread_usage(iter: usize, thread_count: usize, n_kpts: usize) void {
+    if (iter != 0 or thread_count <= 1) return;
+    log_dfpt_info(
+        "dfptQ_mk: using {d} threads for {d} k-points\n",
+        .{ thread_count, n_kpts },
+    );
+}
+
+fn run_multi_k_scf_loop(
     alloc: std.mem.Allocator,
     io: std.Io,
     kpts: []KPointDfptData,
@@ -899,20 +961,15 @@ fn runMultiKScfLoop(
     v_scf_g: []math.Complex,
 ) !void {
     const n_kpts = kpts.len;
-    const thread_count = scf_mod.kpointThreadCount(n_kpts, cfg.kpoint_threads);
+    const thread_count = scf_mod.kpoint_thread_count(n_kpts, cfg.kpoint_threads);
     var state = PulayState.init(alloc, cfg);
     defer state.deinit(alloc);
 
     var iter: usize = 0;
     while (iter < cfg.scf_max_iter) : (iter += 1) {
-        if (iter == 0 and thread_count > 1) {
-            logDfptInfo(
-                "dfptQ_mk: using {d} threads for {d} k-points\n",
-                .{ thread_count, n_kpts },
-            );
-        }
+        log_multi_k_thread_usage(iter, thread_count, n_kpts);
 
-        const rho1_g = try buildIterationRho1G(
+        const rho1_g = try build_iteration_rho1_g(
             alloc,
             io,
             kpts,
@@ -929,9 +986,9 @@ fn runMultiKScfLoop(
         );
         defer alloc.free(rho1_g);
 
-        logIterationDensity(iter, rho1_g, vloc1_g, grid.volume, n_kpts);
+        log_iteration_density(iter, rho1_g, vloc1_g, grid.volume, n_kpts);
 
-        const v_out_g = try buildOutputPotential(
+        const v_out_g = try build_output_potential(
             alloc,
             grid,
             gs,
@@ -942,28 +999,17 @@ fn runMultiKScfLoop(
         );
         defer alloc.free(v_out_g);
 
-        const residual = try computeResidual(alloc, v_out_g, v_scf_g);
-        logDfpt("dfptQ_mk: iter={d} vresid={e:.6}\n", .{ iter, residual.norm });
+        const residual = try compute_residual(alloc, v_out_g, v_scf_g);
+        log_dfpt("dfptQ_mk: iter={d} vresid={e:.6}\n", .{ iter, residual.norm });
+        if (converged_multi_k_scf(alloc, iter, cfg, residual, &state)) break;
 
-        const converged_now = residual.norm < cfg.scf_tol or
-            (state.force_converge and residual.norm < 10.0 * cfg.scf_tol);
-        if (converged_now) {
-            var converged_residual = residual;
-            converged_residual.deinit(alloc);
-            logDfpt(
-                "dfptQ_mk: converged at iter={d} vresid={e:.6}\n",
-                .{ iter, residual.norm },
-            );
-            break;
-        }
-
-        try updateBestPotential(alloc, residual.norm, v_scf_g, &state);
-        const action = try applyPotentialMixing(alloc, iter, cfg, v_scf_g, residual, &state);
+        try update_best_potential(alloc, residual.norm, v_scf_g, &state);
+        const action = try apply_potential_mixing(alloc, iter, cfg, v_scf_g, residual, &state);
         if (action == .restarted) continue;
     }
 }
 
-fn computeFinalRho1G(
+fn compute_final_rho1_g(
     alloc: std.mem.Allocator,
     grid: Grid,
     kpts: []KPointDfptData,
@@ -979,7 +1025,7 @@ fn computeFinalRho1G(
         defer alloc.free(psi1_const);
 
         for (0..kd.n_occ) |n| psi1_const[n] = psi1_buffers.values[ik][n];
-        const rho1_k_r = try computeRho1Q(
+        const rho1_k_r = try compute_rho1_q(
             alloc,
             grid,
             &kd.map_k,
@@ -998,9 +1044,57 @@ fn computeFinalRho1G(
         }
     }
 
-    const final_rho1_g = try complexRealToReciprocal(alloc, grid, final_rho1_r);
+    const final_rho1_g = try complex_real_to_reciprocal(alloc, grid, final_rho1_r);
     alloc.free(final_rho1_r);
     return final_rho1_g;
+}
+
+const MultiKPerturbationSources = struct {
+    vloc1_g: []math.Complex,
+    rho1_core_r: []math.Complex,
+
+    fn deinit(self: *MultiKPerturbationSources, alloc: std.mem.Allocator) void {
+        alloc.free(self.vloc1_g);
+        alloc.free(self.rho1_core_r);
+    }
+};
+
+fn build_multi_k_perturbation_sources(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    atom: hamiltonian.AtomData,
+    species: []const hamiltonian.SpeciesEntry,
+    direction: usize,
+    q_cart: math.Vec3,
+    local_cfg: local_potential.LocalPotentialConfig,
+    ff_tables: ?[]const form_factor.LocalFormFactorTable,
+    rho_core_tables: ?[]const form_factor.RadialFormFactorTable,
+) !MultiKPerturbationSources {
+    const vloc1_g = try perturbation.build_local_perturbation_q(
+        alloc,
+        grid,
+        atom,
+        species,
+        direction,
+        q_cart,
+        local_cfg,
+        ff_tables,
+    );
+    errdefer alloc.free(vloc1_g);
+
+    const rho1_core_r = try build_core_perturbation_real(
+        alloc,
+        grid,
+        atom,
+        species,
+        direction,
+        q_cart,
+        rho_core_tables,
+    );
+    return .{
+        .vloc1_g = vloc1_g,
+        .rho1_core_r = rho1_core_r,
+    };
 }
 
 /// Solve DFPT perturbation at q≠0 with multiple k-points.
@@ -1009,7 +1103,7 @@ fn computeFinalRho1G(
 ///
 /// Returns the converged ρ^(1)(G) (summed over all k-points) and
 /// per-k-point ψ^(1) wavefunctions.
-pub fn solvePerturbationQMultiK(
+pub fn solve_perturbation_q_multi_k(
     alloc: std.mem.Allocator,
     io: std.Io,
     kpts: []KPointDfptData,
@@ -1024,7 +1118,7 @@ pub fn solvePerturbationQMultiK(
     ff_tables: ?[]const form_factor.LocalFormFactorTable,
     rho_core_tables: ?[]const form_factor.RadialFormFactorTable,
 ) !MultiKPertResult {
-    const vloc1_g = try perturbation.buildLocalPerturbationQ(
+    var sources = try build_multi_k_perturbation_sources(
         alloc,
         grid,
         atoms[atom_index],
@@ -1033,19 +1127,9 @@ pub fn solvePerturbationQMultiK(
         q_cart,
         gs.local_cfg,
         ff_tables,
-    );
-    defer alloc.free(vloc1_g);
-
-    const rho1_core_r = try buildCorePerturbationReal(
-        alloc,
-        grid,
-        atoms[atom_index],
-        species,
-        direction,
-        q_cart,
         rho_core_tables,
     );
-    defer alloc.free(rho1_core_r);
+    defer sources.deinit(alloc);
 
     var psi1_buffers = try Psi1Buffers.init(alloc, kpts);
     errdefer psi1_buffers.deinit(alloc);
@@ -1053,12 +1137,12 @@ pub fn solvePerturbationQMultiK(
     const v_scf_g = try alloc.alloc(math.Complex, grid.count());
     defer alloc.free(v_scf_g);
 
-    @memcpy(v_scf_g, vloc1_g);
+    @memcpy(v_scf_g, sources.vloc1_g);
 
     var psi0_r_cache = try Psi0RCache.init(alloc, grid, kpts);
     defer psi0_r_cache.deinit(alloc);
 
-    try runMultiKScfLoop(
+    try run_multi_k_scf_loop(
         alloc,
         io,
         kpts,
@@ -1070,16 +1154,16 @@ pub fn solvePerturbationQMultiK(
         gs,
         species,
         atoms,
-        vloc1_g,
-        rho1_core_r,
+        sources.vloc1_g,
+        sources.rho1_core_r,
         &psi1_buffers,
         &psi0_r_cache,
         v_scf_g,
     );
 
-    const final_rho1_g = try computeFinalRho1G(alloc, grid, kpts, &psi1_buffers);
+    const final_rho1_g = try compute_final_rho1_g(alloc, grid, kpts, &psi1_buffers);
     errdefer alloc.free(final_rho1_g);
-    const psi1_result = try psi1_buffers.intoResult(alloc);
+    const psi1_result = try psi1_buffers.into_result(alloc);
 
     return .{
         .rho1_g = final_rho1_g,
