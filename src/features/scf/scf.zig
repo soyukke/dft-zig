@@ -1507,30 +1507,9 @@ fn prepare_scf_iteration_density(
         density_result.rho,
     );
 
-    const ecutrho_comp = paw_ecutrho_compute(ctx.cfg);
-    if (ctx.common.is_paw) {
-        try filter_augmented_density_in_place(
-            ctx.alloc,
-            ctx.common.grid,
-            density_result.rho,
-            ecutrho_comp,
-            ctx.cfg.scf.use_rfft,
-        );
-    }
     return .{
         .density_result = density_result,
-        .rho_for_potential = if (ctx.common.is_paw)
-            try build_augmented_density(
-                ctx.alloc,
-                ctx.common.grid,
-                density_result.rho,
-                ctx.common,
-                ctx.atoms,
-                ecutrho_comp,
-                ctx.common.grid.count(),
-            )
-        else
-            density_result.rho,
+        .rho_for_potential = try prepare_density_for_potential(ctx, density_result.rho),
     };
 }
 
@@ -1567,6 +1546,32 @@ fn build_scf_iteration_potential(
     );
     if (ctx.cfg.scf.profile) profile_add(ctx.io, &prof.residual_ns, t_resid_start);
     return .{ .potential_out = potential_out };
+}
+
+fn prepare_density_for_potential(
+    ctx: *const ScfRunContext,
+    rho: []f64,
+) ![]const f64 {
+    const ecutrho_comp = paw_ecutrho_compute(ctx.cfg);
+    if (ctx.common.is_paw) {
+        try filter_augmented_density_in_place(
+            ctx.alloc,
+            ctx.common.grid,
+            rho,
+            ecutrho_comp,
+            ctx.cfg.scf.use_rfft,
+        );
+        return build_augmented_density(
+            ctx.alloc,
+            ctx.common.grid,
+            rho,
+            ctx.common,
+            ctx.atoms,
+            ecutrho_comp,
+            ctx.common.grid.count(),
+        );
+    }
+    return rho;
 }
 
 fn finish_scf_iteration(
