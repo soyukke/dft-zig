@@ -1824,83 +1824,13 @@ const LoadState = struct {
         key: []const u8,
         value: []const u8,
     ) !void {
-        if (std.mem.eql(u8, key, "enabled")) {
-            self.dfpt.enabled = try parse_bool(value);
-            return;
-        }
-        if (std.mem.eql(u8, key, "sternheimer_tol")) {
-            self.dfpt.sternheimer_tol = try parse_float(value);
-            return;
-        }
-        if (std.mem.eql(u8, key, "sternheimer_max_iter")) {
-            self.dfpt.sternheimer_max_iter = try float_to_index(try parse_float(value));
-            return;
-        }
-        if (std.mem.eql(u8, key, "scf_tol")) {
-            self.dfpt.scf_tol = try parse_float(value);
-            return;
-        }
-        if (std.mem.eql(u8, key, "scf_max_iter")) {
-            self.dfpt.scf_max_iter = try float_to_index(try parse_float(value));
-            return;
-        }
-        if (std.mem.eql(u8, key, "mixing_beta")) {
-            self.dfpt.mixing_beta = try parse_float(value);
-            return;
-        }
-        if (std.mem.eql(u8, key, "alpha_shift")) {
-            self.dfpt.alpha_shift = try parse_float(value);
-            return;
-        }
-        if (std.mem.eql(u8, key, "qpath_npoints")) {
-            self.dfpt.qpath_npoints = try float_to_index(try parse_float(value));
-            return;
-        }
-        if (std.mem.eql(u8, key, "pulay_history")) {
-            self.dfpt.pulay_history = try float_to_index(try parse_float(value));
-            return;
-        }
-        if (std.mem.eql(u8, key, "pulay_start")) {
-            self.dfpt.pulay_start = try float_to_index(try parse_float(value));
-            return;
-        }
+        if (try self.parse_dfpt_bool_field(key, value)) return;
+        if (try self.parse_dfpt_float_field(key, value)) return;
+        if (try self.parse_dfpt_index_field(key, value)) return;
+        if (try self.parse_dfpt_mesh_field(key, value)) return;
         if (std.mem.eql(u8, key, "kpoint_threads")) {
             self.dfpt.kpoint_threads = try float_to_index(try parse_float(value));
             self.dfpt_kpoint_threads_explicit = true;
-            return;
-        }
-        if (std.mem.eql(u8, key, "perturbation_threads")) {
-            self.dfpt.perturbation_threads = try float_to_index(try parse_float(value));
-            return;
-        }
-        if (std.mem.eql(u8, key, "qgrid")) {
-            const qgrid = try parse_array_numbers(value, 3);
-            self.dfpt.qgrid = .{
-                try float_to_index(qgrid[0]),
-                try float_to_index(qgrid[1]),
-                try float_to_index(qgrid[2]),
-            };
-            return;
-        }
-        if (std.mem.eql(u8, key, "dos_qmesh")) {
-            const dos_qmesh = try parse_array_numbers(value, 3);
-            self.dfpt.dos_qmesh = .{
-                try float_to_index(dos_qmesh[0]),
-                try float_to_index(dos_qmesh[1]),
-                try float_to_index(dos_qmesh[2]),
-            };
-            return;
-        }
-        if (std.mem.eql(u8, key, "dos_sigma")) {
-            self.dfpt.dos_sigma = try parse_float(value);
-            return;
-        }
-        if (std.mem.eql(u8, key, "dos_nbin")) {
-            self.dfpt.dos_nbin = try float_to_index(try parse_float(value));
-            return;
-        }
-        if (std.mem.eql(u8, key, "compute_dielectric")) {
-            self.dfpt.compute_dielectric = try parse_bool(value);
             return;
         }
         if (std.mem.eql(u8, key, "log_level")) {
@@ -1911,6 +1841,86 @@ const LoadState = struct {
             return;
         }
         return error.UnsupportedToml;
+    }
+
+    fn parse_dfpt_bool_field(self: *LoadState, key: []const u8, value: []const u8) !bool {
+        if (std.mem.eql(u8, key, "enabled")) {
+            self.dfpt.enabled = try parse_bool(value);
+            return true;
+        }
+        if (std.mem.eql(u8, key, "compute_dielectric")) {
+            self.dfpt.compute_dielectric = try parse_bool(value);
+            return true;
+        }
+        return false;
+    }
+
+    fn parse_dfpt_float_field(self: *LoadState, key: []const u8, value: []const u8) !bool {
+        if (std.mem.eql(u8, key, "sternheimer_tol")) {
+            self.dfpt.sternheimer_tol = try parse_float(value);
+            return true;
+        }
+        if (std.mem.eql(u8, key, "scf_tol")) {
+            self.dfpt.scf_tol = try parse_float(value);
+            return true;
+        }
+        if (std.mem.eql(u8, key, "mixing_beta")) {
+            self.dfpt.mixing_beta = try parse_float(value);
+            return true;
+        }
+        if (std.mem.eql(u8, key, "alpha_shift")) {
+            self.dfpt.alpha_shift = try parse_float(value);
+            return true;
+        }
+        if (std.mem.eql(u8, key, "dos_sigma")) {
+            self.dfpt.dos_sigma = try parse_float(value);
+            return true;
+        }
+        return false;
+    }
+
+    fn parse_dfpt_index_field(self: *LoadState, key: []const u8, value: []const u8) !bool {
+        if (std.mem.eql(u8, key, "sternheimer_max_iter")) {
+            self.dfpt.sternheimer_max_iter = try float_to_index(try parse_float(value));
+            return true;
+        }
+        if (std.mem.eql(u8, key, "scf_max_iter")) {
+            self.dfpt.scf_max_iter = try float_to_index(try parse_float(value));
+            return true;
+        }
+        if (std.mem.eql(u8, key, "qpath_npoints")) {
+            self.dfpt.qpath_npoints = try float_to_index(try parse_float(value));
+            return true;
+        }
+        if (std.mem.eql(u8, key, "pulay_history")) {
+            self.dfpt.pulay_history = try float_to_index(try parse_float(value));
+            return true;
+        }
+        if (std.mem.eql(u8, key, "pulay_start")) {
+            self.dfpt.pulay_start = try float_to_index(try parse_float(value));
+            return true;
+        }
+        if (std.mem.eql(u8, key, "perturbation_threads")) {
+            self.dfpt.perturbation_threads = try float_to_index(try parse_float(value));
+            return true;
+        }
+        if (std.mem.eql(u8, key, "dos_nbin")) {
+            self.dfpt.dos_nbin = try float_to_index(try parse_float(value));
+            return true;
+        }
+        return false;
+    }
+
+    fn parse_dfpt_mesh_field(self: *LoadState, key: []const u8, value: []const u8) !bool {
+        if (std.mem.eql(u8, key, "qgrid")) {
+            self.dfpt.qgrid = try parse_u3_array(value);
+            return true;
+        }
+        if (std.mem.eql(u8, key, "dos_qmesh")) {
+            self.dfpt.dos_qmesh = try parse_u3_array(value);
+            return true;
+        }
+        return false;
     }
 
     fn parse_dfpt_qpath_field(
@@ -2362,6 +2372,15 @@ fn parse_band_solver(value: []const u8) !BandSolver {
 fn parse_vec3(value: []const u8) !math.Vec3 {
     const vals = try parse_array_numbers(value, 3);
     return .{ .x = vals[0], .y = vals[1], .z = vals[2] };
+}
+
+fn parse_u3_array(value: []const u8) ![3]usize {
+    const vals = try parse_array_numbers(value, 3);
+    return .{
+        try float_to_index(vals[0]),
+        try float_to_index(vals[1]),
+        try float_to_index(vals[2]),
+    };
 }
 
 /// Parse a fixed-length numeric array.
