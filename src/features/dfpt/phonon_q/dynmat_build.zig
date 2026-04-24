@@ -828,28 +828,22 @@ pub fn build_q_dynmat_multi_k(
     vdw_cfg: config_mod.VdwConfig,
     irr_info: dynmat_mod.IrreducibleAtomInfo,
 ) ![]math.Complex {
-    const n_atoms = atoms.len;
-    const dim = 3 * n_atoms;
-
+    const dim = 3 * atoms.len;
     const dyn_q = try alloc_dynmat(alloc, dim);
     errdefer alloc.free(dyn_q);
     fill_irreducible_electronic_dynmat(dyn_q, dim, vloc1_gs, pert_results, volume, irr_info);
     log_dfpt("dfptQ_mk_dyn: D_elec(0x,0x)=({e:.6},{e:.6})\n", .{ dyn_q[0].r, dyn_q[0].i });
-    const nl_resp_q = try compute_nonlocal_response_dynmat_q_multi_k(
+    const nl_resp_q = try compute_multi_k_nl_resp(
         alloc,
         kpts,
         pert_results,
         atoms,
-        n_atoms,
         volume,
         irr_info,
     );
     defer alloc.free(nl_resp_q);
 
-    log_dfpt(
-        "dfptQ_mk_dyn: D_nl_resp(0x,0x)=({e:.6},{e:.6})\n",
-        .{ nl_resp_q[0].r, nl_resp_q[0].i },
-    );
+    log_multi_k_dynmat_nl_sample(nl_resp_q);
     add_complex_dynmat(dyn_q, nl_resp_q);
     try add_multi_k_remaining_dynmat_terms(
         alloc,
@@ -874,12 +868,37 @@ pub fn build_q_dynmat_multi_k(
         rho_core,
         vxc_g,
         vdw_cfg,
-        n_atoms,
+        atoms.len,
         irr_info,
     );
     log_dfpt("dfptQ_mk_dyn: total(0x,0x)=({e:.6},{e:.6})\n", .{ dyn_q[0].r, dyn_q[0].i });
-
     return dyn_q;
+}
+
+fn compute_multi_k_nl_resp(
+    alloc: std.mem.Allocator,
+    kpts: []KPointDfptData,
+    pert_results: []MultiKPertResult,
+    atoms: []const hamiltonian.AtomData,
+    volume: f64,
+    irr_info: dynmat_mod.IrreducibleAtomInfo,
+) ![]math.Complex {
+    return try compute_nonlocal_response_dynmat_q_multi_k(
+        alloc,
+        kpts,
+        pert_results,
+        atoms,
+        atoms.len,
+        volume,
+        irr_info,
+    );
+}
+
+fn log_multi_k_dynmat_nl_sample(nl_resp_q: []const math.Complex) void {
+    log_dfpt(
+        "dfptQ_mk_dyn: D_nl_resp(0x,0x)=({e:.6},{e:.6})\n",
+        .{ nl_resp_q[0].r, nl_resp_q[0].i },
+    );
 }
 
 fn add_multi_k_remaining_dynmat_terms(
