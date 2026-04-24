@@ -880,6 +880,34 @@ fn apply_potential_mixing(
     return .mixed;
 }
 
+fn converged_multi_k_scf(
+    alloc: std.mem.Allocator,
+    iter: usize,
+    cfg: DfptConfig,
+    residual: ResidualInfo,
+    state: *const PulayState,
+) bool {
+    const converged_now = residual.norm < cfg.scf_tol or
+        (state.force_converge and residual.norm < 10.0 * cfg.scf_tol);
+    if (!converged_now) return false;
+
+    var converged_residual = residual;
+    converged_residual.deinit(alloc);
+    log_dfpt(
+        "dfptQ_mk: converged at iter={d} vresid={e:.6}\n",
+        .{ iter, residual.norm },
+    );
+    return true;
+}
+
+fn log_multi_k_thread_usage(iter: usize, thread_count: usize, n_kpts: usize) void {
+    if (iter != 0 or thread_count <= 1) return;
+    log_dfpt_info(
+        "dfptQ_mk: using {d} threads for {d} k-points\n",
+        .{ thread_count, n_kpts },
+    );
+}
+
 fn run_multi_k_scf_loop(
     alloc: std.mem.Allocator,
     io: std.Io,
@@ -905,12 +933,7 @@ fn run_multi_k_scf_loop(
 
     var iter: usize = 0;
     while (iter < cfg.scf_max_iter) : (iter += 1) {
-        if (iter == 0 and thread_count > 1) {
-            log_dfpt_info(
-                "dfptQ_mk: using {d} threads for {d} k-points\n",
-                .{ thread_count, n_kpts },
-            );
-        }
+        log_multi_k_thread_usage(iter, thread_count, n_kpts);
 
         const rho1_g = try build_iteration_rho1_g(
             alloc,
@@ -944,18 +967,7 @@ fn run_multi_k_scf_loop(
 
         const residual = try compute_residual(alloc, v_out_g, v_scf_g);
         log_dfpt("dfptQ_mk: iter={d} vresid={e:.6}\n", .{ iter, residual.norm });
-
-        const converged_now = residual.norm < cfg.scf_tol or
-            (state.force_converge and residual.norm < 10.0 * cfg.scf_tol);
-        if (converged_now) {
-            var converged_residual = residual;
-            converged_residual.deinit(alloc);
-            log_dfpt(
-                "dfptQ_mk: converged at iter={d} vresid={e:.6}\n",
-                .{ iter, residual.norm },
-            );
-            break;
-        }
+        if (converged_multi_k_scf(alloc, iter, cfg, residual, &state)) break;
 
         try update_best_potential(alloc, residual.norm, v_scf_g, &state);
         const action = try apply_potential_mixing(alloc, iter, cfg, v_scf_g, residual, &state);
