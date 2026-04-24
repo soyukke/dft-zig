@@ -86,6 +86,24 @@ pub const PulayMixer = struct {
         self.residual_history.deinit(self.alloc);
     }
 
+    fn append_preconditioned_history(
+        self: *PulayMixer,
+        rho: []const f64,
+        precond_residual: []f64,
+    ) !void {
+        const rho_copy = try self.alloc.alloc(f64, rho.len);
+        @memcpy(rho_copy, rho);
+
+        self.rho_history.append(self.alloc, rho_copy) catch |err| {
+            self.alloc.free(rho_copy);
+            return err;
+        };
+        self.residual_history.append(self.alloc, precond_residual) catch |err| {
+            self.alloc.free(self.rho_history.pop().?);
+            return err;
+        };
+    }
+
     /// Mix density using Pulay/DIIS method.
     /// Returns the optimal mixed density.
     pub fn mix(self: *PulayMixer, rho: []f64, rho_new: []const f64, beta: f64) !void {
@@ -169,17 +187,7 @@ pub const PulayMixer = struct {
         const n = rho.len;
 
         // Store current input and preconditioned residual
-        const rho_copy = try self.alloc.alloc(f64, n);
-        @memcpy(rho_copy, rho);
-
-        self.rho_history.append(self.alloc, rho_copy) catch |err| {
-            self.alloc.free(rho_copy);
-            return err;
-        };
-        self.residual_history.append(self.alloc, precond_residual) catch |err| {
-            self.alloc.free(self.rho_history.pop().?);
-            return err;
-        };
+        try self.append_preconditioned_history(rho, precond_residual);
 
         // Remove oldest entries if history is full
         while (self.rho_history.items.len > self.history) {
