@@ -772,13 +772,9 @@ fn mix_efield_potential(
     pulay: *scf_mod.ComplexPulayMixer,
     mix_state: *EfieldMixState,
 ) !EfieldMixOutcome {
-    var residual_norm: f64 = 0.0;
-    const residual = try alloc.alloc(math.Complex, v_out_g.len);
-    for (0..v_out_g.len) |i| {
-        residual[i] = math.complex.sub(v_out_g[i], v1_hxc_g[i]);
-        residual_norm += residual[i].r * residual[i].r + residual[i].i * residual[i].i;
-    }
-    residual_norm = @sqrt(residual_norm);
+    const residual_result = try build_complex_residual(alloc, v_out_g, v1_hxc_g);
+    const residual = residual_result.values;
+    const residual_norm = residual_result.norm;
     log_dfpt("efield SCF β={d}: iter={d} vresid={e:.6}\n", .{ beta, iter, residual_norm });
 
     const converged_strict = residual_norm < dfpt_cfg.scf_tol;
@@ -830,12 +826,39 @@ fn mix_efield_potential(
         return .keep_iterating;
     }
 
-    for (0..v_out_g.len) |i| {
-        const delta = math.complex.scale(residual[i], dfpt_cfg.mixing_beta);
-        v1_hxc_g[i] = math.complex.add(v1_hxc_g[i], delta);
-    }
+    apply_linear_complex_mix(v1_hxc_g, residual, dfpt_cfg.mixing_beta);
     alloc.free(residual);
     return .keep_iterating;
+}
+
+const ComplexResidual = struct {
+    values: []math.Complex,
+    norm: f64,
+};
+
+fn build_complex_residual(
+    alloc: std.mem.Allocator,
+    v_out_g: []const math.Complex,
+    v1_hxc_g: []const math.Complex,
+) !ComplexResidual {
+    var residual_norm: f64 = 0.0;
+    const residual = try alloc.alloc(math.Complex, v_out_g.len);
+    for (0..v_out_g.len) |i| {
+        residual[i] = math.complex.sub(v_out_g[i], v1_hxc_g[i]);
+        residual_norm += residual[i].r * residual[i].r + residual[i].i * residual[i].i;
+    }
+    return .{ .values = residual, .norm = @sqrt(residual_norm) };
+}
+
+fn apply_linear_complex_mix(
+    v1_hxc_g: []math.Complex,
+    residual: []const math.Complex,
+    mixing_beta: f64,
+) void {
+    for (0..v1_hxc_g.len) |i| {
+        const delta = math.complex.scale(residual[i], mixing_beta);
+        v1_hxc_g[i] = math.complex.add(v1_hxc_g[i], delta);
+    }
 }
 
 fn accumulate_dielectric_column(
