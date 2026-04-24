@@ -195,20 +195,30 @@ fn compute_ifc_q_grid_point_response(
         cfg.vdw,
         irr_info,
     );
-    if (irr_info.n_irr_atoms < atoms.len) {
-        dynmat_mod.reconstruct_dynmat_columns_complex(
-            dyn_q,
-            atoms.len,
-            irr_info,
-            sym_data.symops,
-            sym_data.indsym,
-            sym_data.tnons_shift,
-            cell_bohr,
-            qf,
-        );
-    }
+    reconstruct_ifc_dynmat_if_needed(dyn_q, atoms.len, irr_info, sym_data, cell_bohr, qf);
     log_dfpt("dfpt_ifc: q_grid[{d}] D(q) computed\n", .{iq});
     return dyn_q;
+}
+
+fn reconstruct_ifc_dynmat_if_needed(
+    dyn_q: []math.Complex,
+    n_atoms: usize,
+    irr_info: dynmat_mod.IrreducibleAtomInfo,
+    sym_data: *const BandSymmetryData,
+    cell_bohr: math.Mat3,
+    qf: math.Vec3,
+) void {
+    if (irr_info.n_irr_atoms >= n_atoms) return;
+    dynmat_mod.reconstruct_dynmat_columns_complex(
+        dyn_q,
+        n_atoms,
+        irr_info,
+        sym_data.symops,
+        sym_data.indsym,
+        sym_data.tnons_shift,
+        cell_bohr,
+        qf,
+    );
 }
 
 fn solve_ifc_q_grid_point_dynmat(
