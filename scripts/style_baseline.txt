@@ -13,7 +13,7 @@ src/features/integrals/obara_saika.zig	function_too_long	1
 src/features/integrals/rys_eri.zig	function_too_long	2
 src/features/paw/paw_xc.zig	function_too_long	3
 src/features/relax/relax.zig	function_too_long	3
-src/features/scf/kpoint_parallel.zig	function_too_long	6
+src/features/scf/kpoint_parallel.zig	function_too_long	5
 src/features/scf/mixing.zig	function_too_long	1
 src/features/scf/scf.zig	function_too_long	2
 src/features/scf/smearing.zig	function_too_long	4

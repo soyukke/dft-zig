@@ -420,6 +420,56 @@ pub fn smearing_worker(worker: *SmearingWorker) void {
 }
 
 /// Build or refresh the apply-cache entry for this k-point and wrap it in an ApplyContext.
+fn init_apply_context_without_cache(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: *const config.Config,
+    grid: Grid,
+    basis_gvecs: []plane_wave.GVector,
+    local_values: []const f64,
+    vnl: ?[]math.Complex,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    inv_volume: f64,
+    nonlocal_enabled: bool,
+    profile_ptr: ?*ScfProfile,
+    fft_index_map: ?[]const usize,
+    shared_fft_plan: ?fft.Fft3dPlan,
+) !ApplyContext {
+    if (shared_fft_plan) |plan| {
+        return try ApplyContext.init_with_fft_plan(
+            alloc,
+            io,
+            grid,
+            basis_gvecs,
+            local_values,
+            vnl,
+            species,
+            atoms,
+            inv_volume,
+            nonlocal_enabled,
+            profile_ptr,
+            fft_index_map,
+            plan,
+        );
+    }
+    return try ApplyContext.init(
+        alloc,
+        io,
+        grid,
+        basis_gvecs,
+        local_values,
+        vnl,
+        species,
+        atoms,
+        inv_volume,
+        nonlocal_enabled,
+        profile_ptr,
+        fft_index_map,
+        cfg.scf.fft_backend,
+    );
+}
+
 fn apply_context_from_cache_or_build(
     alloc: std.mem.Allocator,
     io: std.Io,
@@ -466,26 +516,10 @@ fn apply_context_from_cache_or_build(
             ac,
         );
     }
-    if (shared_fft_plan) |plan| {
-        return try ApplyContext.init_with_fft_plan(
-            alloc,
-            io,
-            grid,
-            basis_gvecs,
-            local_values,
-            vnl,
-            species,
-            atoms,
-            inv_volume,
-            nonlocal_enabled,
-            profile_ptr,
-            fft_index_map,
-            plan,
-        );
-    }
-    return try ApplyContext.init(
+    return try init_apply_context_without_cache(
         alloc,
         io,
+        cfg,
         grid,
         basis_gvecs,
         local_values,
@@ -496,7 +530,7 @@ fn apply_context_from_cache_or_build(
         nonlocal_enabled,
         profile_ptr,
         fft_index_map,
-        cfg.scf.fft_backend,
+        shared_fft_plan,
     );
 }
 
