@@ -910,82 +910,61 @@ pub const Config = struct {
         issues: *std.ArrayList(ValidationIssue),
     ) !void {
         if (!self.scf.enabled) return;
-        if (self.scf.solver == .dense) {
-            try add_issue_literal(
-                alloc,
-                issues,
-                .hint,
-                "scf",
-                "solver",
-                "solver = \"dense\" is slow for large systems;" ++
-                    " consider solver = \"iterative\" (LOBPCG)",
-            );
-        }
-        if (self.scf.fft_backend != .fftw) {
-            try add_issue_literal(
-                alloc,
-                issues,
-                .hint,
-                "scf",
-                "fft_backend",
-                "fft_backend = \"fftw\" is recommended for production calculations",
-            );
-        }
-        if (self.scf.diemac == 1.0 and self.scf.convergence < 1e-6) {
-            try add_issue_literal(
-                alloc,
-                issues,
-                .hint,
-                "scf",
-                "diemac",
-                "diemac = 1.0 (disabled); for tight convergence (<1e-6)," ++
-                    " set ~12 for semiconductors or ~1e6 for metals",
-            );
-        }
-        if (self.scf.pulay_history == 0) {
-            try add_issue_literal(
-                alloc,
-                issues,
-                .hint,
-                "scf",
-                "pulay_history",
-                "pulay_history = 0 (DIIS disabled); pulay_history = 8 with pulay_start = 4" ++
-                    " typically improves SCF convergence",
-            );
-        }
-        if (self.scf.mixing_mode == .density) {
-            try add_issue_literal(
-                alloc,
-                issues,
-                .hint,
-                "scf",
-                "mixing_mode",
-                "mixing_mode = \"density\" can oscillate at large ecut;" ++
-                    " mixing_mode = \"potential\" is recommended",
-            );
-        }
-        if (self.scf.solver == .iterative and self.scf.iterative_tol < 1e-6) {
-            try add_issue_literal(
-                alloc,
-                issues,
-                .hint,
-                "scf",
-                "iterative_tol",
-                "iterative_tol < 1e-6 increases eigensolver cost per SCF iteration;" ++
-                    " 1e-4 is usually sufficient",
-            );
-        }
-        if (!self.scf.symmetry) {
-            try add_issue_literal(
-                alloc,
-                issues,
-                .hint,
-                "scf",
-                "symmetry",
-                "symmetry = false; enabling symmetry reduces k-points" ++
-                    " and speeds up the calculation",
-            );
-        }
+        try add_scf_hint_if(
+            alloc,
+            issues,
+            self.scf.solver == .dense,
+            "solver",
+            "solver = \"dense\" is slow for large systems;" ++
+                " consider solver = \"iterative\" (LOBPCG)",
+        );
+        try add_scf_hint_if(
+            alloc,
+            issues,
+            self.scf.fft_backend != .fftw,
+            "fft_backend",
+            "fft_backend = \"fftw\" is recommended for production calculations",
+        );
+        try add_scf_hint_if(
+            alloc,
+            issues,
+            self.scf.diemac == 1.0 and self.scf.convergence < 1e-6,
+            "diemac",
+            "diemac = 1.0 (disabled); for tight convergence (<1e-6)," ++
+                " set ~12 for semiconductors or ~1e6 for metals",
+        );
+        try add_scf_hint_if(
+            alloc,
+            issues,
+            self.scf.pulay_history == 0,
+            "pulay_history",
+            "pulay_history = 0 (DIIS disabled); pulay_history = 8 with pulay_start = 4" ++
+                " typically improves SCF convergence",
+        );
+        try add_scf_hint_if(
+            alloc,
+            issues,
+            self.scf.mixing_mode == .density,
+            "mixing_mode",
+            "mixing_mode = \"density\" can oscillate at large ecut;" ++
+                " mixing_mode = \"potential\" is recommended",
+        );
+        try add_scf_hint_if(
+            alloc,
+            issues,
+            self.scf.solver == .iterative and self.scf.iterative_tol < 1e-6,
+            "iterative_tol",
+            "iterative_tol < 1e-6 increases eigensolver cost per SCF iteration;" ++
+                " 1e-4 is usually sufficient",
+        );
+        try add_scf_hint_if(
+            alloc,
+            issues,
+            !self.scf.symmetry,
+            "symmetry",
+            "symmetry = false; enabling symmetry reduces k-points" ++
+                " and speeds up the calculation",
+        );
     }
 
     fn add_band_validation_hints(
@@ -1057,6 +1036,17 @@ pub const Config = struct {
         const owned = try alloc.dupe(u8, message);
         errdefer alloc.free(owned);
         try add_issue(alloc, issues, severity, section, field, owned);
+    }
+
+    fn add_scf_hint_if(
+        alloc: std.mem.Allocator,
+        issues: *std.ArrayList(ValidationIssue),
+        enabled: bool,
+        field: []const u8,
+        comptime message: []const u8,
+    ) !void {
+        if (!enabled) return;
+        try add_issue_literal(alloc, issues, .hint, "scf", field, message);
     }
 };
 
