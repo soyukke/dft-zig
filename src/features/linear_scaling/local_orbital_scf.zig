@@ -107,6 +107,13 @@ const ScfStepHamiltonian = struct {
     energy_vxc_rho: f64,
 };
 
+const LocalPotentialMatrix = struct {
+    matrix: sparse.CsrMatrix,
+    energy_hartree: f64,
+    energy_xc: f64,
+    energy_vxc_rho: f64,
+};
+
 const ScfGridState = struct {
     overlap: sparse.CsrMatrix,
     density: sparse.CsrMatrix,
@@ -174,15 +181,13 @@ fn build_nonlocal_matrix(
     );
 }
 
-fn build_scf_step_hamiltonian(
+fn build_local_potential_matrix(
     alloc: std.mem.Allocator,
     centers: []const math.Vec3,
     pbc: neighbor_list.Pbc,
     opts: ScfGridOptions,
     density: sparse.CsrMatrix,
-    kinetic: sparse.CsrMatrix,
-    nonlocal: ?sparse.CsrMatrix,
-) !ScfStepHamiltonian {
+) !LocalPotentialMatrix {
     const rho = try density_grid.build_density_grid_from_centers(
         alloc,
         centers,
@@ -208,21 +213,38 @@ fn build_scf_step_hamiltonian(
         .dims = opts.grid.dims,
         .values = local.values,
     };
-    var local_matrix = try local_orbital_potential.build_local_potential_csr_from_centers(
-        alloc,
-        centers,
-        opts.sigma,
-        opts.cutoff,
-        pbc,
-        local_grid,
-    );
-    defer local_matrix.deinit(alloc);
+    return .{
+        .matrix = try local_orbital_potential.build_local_potential_csr_from_centers(
+            alloc,
+            centers,
+            opts.sigma,
+            opts.cutoff,
+            pbc,
+            local_grid,
+        ),
+        .energy_hartree = local.energy_hartree,
+        .energy_xc = local.energy_xc,
+        .energy_vxc_rho = local.energy_vxc_rho,
+    };
+}
+
+fn build_scf_step_hamiltonian(
+    alloc: std.mem.Allocator,
+    centers: []const math.Vec3,
+    pbc: neighbor_list.Pbc,
+    opts: ScfGridOptions,
+    density: sparse.CsrMatrix,
+    kinetic: sparse.CsrMatrix,
+    nonlocal: ?sparse.CsrMatrix,
+) !ScfStepHamiltonian {
+    var local = try build_local_potential_matrix(alloc, centers, pbc, opts, density);
+    defer local.matrix.deinit(alloc);
 
     var h_kinetic_local = try sparse.add_scaled(
         alloc,
         kinetic,
         1.0,
-        local_matrix,
+        local.matrix,
         1.0,
         opts.matrix_threshold,
     );
