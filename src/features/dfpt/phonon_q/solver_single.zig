@@ -315,6 +315,39 @@ fn log_scf_potential_sample(
     );
 }
 
+fn add_nonlocal_q_perturbation(
+    alloc: std.mem.Allocator,
+    gs: *const GroundState,
+    atom_index: usize,
+    direction: usize,
+    gvecs_kq: []const plane_wave.GVector,
+    apply_ctx_kq: *const scf_mod.ApplyContext,
+    psi0: []const math.Complex,
+    rhs: []math.Complex,
+) !void {
+    const nl_ctx_k = gs.apply_ctx.nonlocal_ctx orelse return;
+    const nl_ctx_kq = apply_ctx_kq.nonlocal_ctx orelse return;
+    const nl_out = try alloc.alloc(math.Complex, gvecs_kq.len);
+    defer alloc.free(nl_out);
+
+    try perturbation.apply_nonlocal_perturbation_q(
+        alloc,
+        gs.gvecs,
+        gvecs_kq,
+        gs.atoms,
+        nl_ctx_k,
+        nl_ctx_kq,
+        atom_index,
+        direction,
+        1.0 / gs.grid.volume,
+        psi0,
+        nl_out,
+    );
+    for (0..gvecs_kq.len) |g| {
+        rhs[g] = math.complex.add(rhs[g], nl_out[g]);
+    }
+}
+
 fn solve_single_q_bands(
     alloc: std.mem.Allocator,
     gs: *const GroundState,
@@ -330,8 +363,6 @@ fn solve_single_q_bands(
     psi0_r_cache: [][]math.Complex,
     psi1: [][]math.Complex,
 ) !void {
-    const nl_ctx_k_opt = gs.apply_ctx.nonlocal_ctx;
-    const nl_ctx_kq_opt = apply_ctx_kq.nonlocal_ctx;
     for (0..gs.n_occ) |n| {
         const rhs = try apply_v1_psi_q_cached(
             alloc,
@@ -343,27 +374,16 @@ fn solve_single_q_bands(
         );
         defer alloc.free(rhs);
 
-        if (nl_ctx_k_opt != null and nl_ctx_kq_opt != null) {
-            const nl_out = try alloc.alloc(math.Complex, gvecs_kq.len);
-            defer alloc.free(nl_out);
-
-            try perturbation.apply_nonlocal_perturbation_q(
-                alloc,
-                gs.gvecs,
-                gvecs_kq,
-                gs.atoms,
-                nl_ctx_k_opt.?,
-                nl_ctx_kq_opt.?,
-                atom_index,
-                direction,
-                1.0 / gs.grid.volume,
-                gs.wavefunctions[n],
-                nl_out,
-            );
-            for (0..gvecs_kq.len) |g| {
-                rhs[g] = math.complex.add(rhs[g], nl_out[g]);
-            }
-        }
+        try add_nonlocal_q_perturbation(
+            alloc,
+            gs,
+            atom_index,
+            direction,
+            gvecs_kq,
+            apply_ctx_kq,
+            gs.wavefunctions[n],
+            rhs,
+        );
 
         for (0..gvecs_kq.len) |g| rhs[g] = math.complex.scale(rhs[g], -1.0);
         sternheimer.project_conduction(rhs, occ_kq, n_occ_kq);
