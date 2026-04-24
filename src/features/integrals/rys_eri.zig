@@ -472,16 +472,8 @@ fn init_quartet_setup(
         .dim_ij = dim_ij,
         .dim_kl = dim_kl,
         .nroots = nroots,
-        .ab = .{
-            shell_a.center.x - shell_b.center.x,
-            shell_a.center.y - shell_b.center.y,
-            shell_a.center.z - shell_b.center.z,
-        },
-        .cd = .{
-            shell_c.center.x - shell_d.center.x,
-            shell_c.center.y - shell_d.center.y,
-            shell_c.center.z - shell_d.center.z,
-        },
+        .ab = .{ diff_ab.x, diff_ab.y, diff_ab.z },
+        .cd = .{ diff_cd.x, diff_cd.y, diff_cd.z },
         .r2_ab = math.Vec3.dot(diff_ab, diff_ab),
         .r2_cd = math.Vec3.dot(diff_cd, diff_cd),
         .a_hr_count = la + 1 + a_order_extra,
