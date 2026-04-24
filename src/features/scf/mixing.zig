@@ -100,6 +100,7 @@ pub const PulayMixer = struct {
         };
         self.residual_history.append(self.alloc, precond_residual) catch |err| {
             self.alloc.free(self.rho_history.pop().?);
+            self.alloc.free(precond_residual);
             return err;
         };
     }
