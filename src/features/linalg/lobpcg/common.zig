@@ -318,6 +318,30 @@ pub fn next_rand01(seed: *u64) f64 {
     return @as(f64, @floatFromInt(val)) / 9007199254740992.0;
 }
 
+const ZheevWorkBuffer = struct {
+    ptr: [*]math.Complex,
+    heap: ?[]math.Complex = null,
+
+    fn deinit(self: *const ZheevWorkBuffer, alloc: std.mem.Allocator) void {
+        if (self.heap) |buffer| alloc.free(buffer);
+    }
+};
+
+fn init_zheev_work_buffer(
+    alloc: std.mem.Allocator,
+    lwork: c_int,
+    work_stack: *[2 * 64 * 64]math.Complex,
+) !ZheevWorkBuffer {
+    if (@as(usize, @intCast(lwork)) <= work_stack.len) {
+        return .{ .ptr = work_stack };
+    }
+    const heap = try alloc.alloc(math.Complex, @intCast(lwork));
+    return .{
+        .ptr = heap.ptr,
+        .heap = heap,
+    };
+}
+
 /// Small matrix eigendecomposition using LAPACK zheev
 /// Optimized for small matrices: bypasses global mutex and uses stack workspace.
 pub fn hermitian_eigen_decomp_small(
@@ -366,15 +390,8 @@ pub fn hermitian_eigen_decomp_small(
 
         // Use stack buffer if small enough, otherwise heap allocate
         var work_stack: [2 * 64 * 64]math.Complex = undefined;
-        var work_heap: ?[]math.Complex = null;
-        defer if (work_heap) |w| alloc.free(w);
-
-        const work_ptr: [*]math.Complex = if (@as(usize, @intCast(lwork)) <= work_stack.len)
-            &work_stack
-        else blk: {
-            work_heap = try alloc.alloc(math.Complex, @intCast(lwork));
-            break :blk work_heap.?.ptr;
-        };
+        const work_buffer = try init_zheev_work_buffer(alloc, lwork, &work_stack);
+        defer work_buffer.deinit(alloc);
 
         info = 0;
         zheev_(
@@ -384,7 +401,7 @@ pub fn hermitian_eigen_decomp_small(
             @ptrCast(vectors.ptr),
             &lda,
             values.ptr,
-            @ptrCast(work_ptr),
+            @ptrCast(work_buffer.ptr),
             &lwork,
             rwork.ptr,
             &info,
