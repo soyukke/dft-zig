@@ -633,6 +633,48 @@ fn init_apply_context_with_cache(
 }
 
 /// Run iterative (LOBPCG/CG) eigendecomposition using a fresh ApplyContext stored in apply_ctx_out.
+fn solve_iterative_eigenproblem(
+    alloc: std.mem.Allocator,
+    cfg: *const config.Config,
+    basis_len: usize,
+    diag: []const f64,
+    apply_ctx_out: *?ApplyContext,
+    iter_max_iter: usize,
+    iter_tol: f64,
+    init_vectors: ?[]const math.Complex,
+    init_cols: usize,
+    nbands: usize,
+    use_cg: bool,
+) !linalg.EigenDecomp {
+    const ctx = &apply_ctx_out.*.?;
+    const has_paw_overlap = if (ctx.nonlocal_ctx) |nc| nc.has_paw_overlap() else false;
+    const op = iterative.Operator{
+        .n = basis_len,
+        .ctx = ctx,
+        .apply = apply_hamiltonian,
+        .apply_batch = apply_hamiltonian_batched,
+        .apply_s = if (has_paw_overlap) apply.apply_overlap else null,
+    };
+    const opts = iterative.Options{
+        .max_iter = iter_max_iter,
+        .tol = iter_tol,
+        .max_subspace = cfg.scf.iterative_max_subspace,
+        .block_size = cfg.scf.iterative_block_size,
+        .init_diagonal = cfg.scf.iterative_init_diagonal,
+        .init_vectors = init_vectors,
+        .init_vectors_cols = init_cols,
+    };
+    if (use_cg) return try iterative.hermitian_eigen_decomp_cg(alloc, op, diag, nbands, opts);
+    return try iterative.hermitian_eigen_decomp_iterative(
+        alloc,
+        cfg.linalg_backend,
+        op,
+        diag,
+        nbands,
+        opts,
+    );
+}
+
 fn run_iterative_eigen_decomp(
     alloc: std.mem.Allocator,
     io: std.Io,
@@ -686,33 +728,18 @@ fn run_iterative_eigen_decomp(
         paw_tabs,
     );
     apply_ctx_out.* = ctx;
-    const has_paw_overlap = if (ctx.nonlocal_ctx) |nc| nc.has_paw_overlap() else false;
-    const op = iterative.Operator{
-        .n = basis_gvecs.len,
-        .ctx = &apply_ctx_out.*.?,
-        .apply = apply_hamiltonian,
-        .apply_batch = apply_hamiltonian_batched,
-        .apply_s = if (has_paw_overlap) apply.apply_overlap else null,
-    };
-    const opts = iterative.Options{
-        .max_iter = iter_max_iter,
-        .tol = iter_tol,
-        .max_subspace = cfg.scf.iterative_max_subspace,
-        .block_size = cfg.scf.iterative_block_size,
-        .init_diagonal = cfg.scf.iterative_init_diagonal,
-        .init_vectors = init_vectors,
-        .init_vectors_cols = init_cols,
-    };
-    if (use_cg) {
-        return try iterative.hermitian_eigen_decomp_cg(alloc, op, diag, nbands, opts);
-    }
-    return try iterative.hermitian_eigen_decomp_iterative(
+    return try solve_iterative_eigenproblem(
         alloc,
-        cfg.linalg_backend,
-        op,
+        cfg,
+        basis_gvecs.len,
         diag,
+        apply_ctx_out,
+        iter_max_iter,
+        iter_tol,
+        init_vectors,
+        init_cols,
         nbands,
-        opts,
+        use_cg,
     );
 }
 
