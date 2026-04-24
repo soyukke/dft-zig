@@ -275,62 +275,7 @@ pub const PulayMixer = struct {
         errdefer self.alloc.free(precond_residual);
         self.alloc.free(residual);
 
-        // Store current density and preconditioned residual
-        try self.append_preconditioned_history(rho, precond_residual);
-
-        // Remove oldest entries if history is full
-        while (self.rho_history.items.len > self.history) {
-            self.alloc.free(self.rho_history.orderedRemove(0));
-            self.alloc.free(self.residual_history.orderedRemove(0));
-        }
-
-        const m = self.rho_history.items.len;
-        if (m < 2) {
-            // Not enough history, use Kerker-preconditioned linear mixing
-            for (0..n) |i| {
-                rho[i] = rho[i] + beta * self.residual_history.items[m - 1][i];
-            }
-            return;
-        }
-
-        // Build overlap matrix using preconditioned residuals
-        const matrix_size = m + 1;
-        const B = try self.alloc.alloc(f64, matrix_size * matrix_size);
-        defer self.alloc.free(B);
-
-        const rhs_vec = try self.alloc.alloc(f64, matrix_size);
-        defer self.alloc.free(rhs_vec);
-
-        for (0..m) |i| {
-            const res_i = self.residual_history.items[i];
-            for (0..m) |j| {
-                const res_j = self.residual_history.items[j];
-                var dot: f64 = 0.0;
-                for (0..n) |k| {
-                    dot += res_i[k] * res_j[k];
-                }
-                B[i * matrix_size + j] = dot;
-            }
-            B[i * matrix_size + m] = -1.0;
-            B[m * matrix_size + i] = -1.0;
-            rhs_vec[i] = 0.0;
-        }
-        B[m * matrix_size + m] = 0.0;
-        rhs_vec[m] = -1.0;
-
-        const coeffs = try solve_pulay_system(self.alloc, B, rhs_vec, matrix_size);
-        defer self.alloc.free(coeffs);
-
-        // Compute optimal density: rho = sum_i c_i * (rho_i + beta * PR_i)
-        @memset(rho, 0.0);
-        for (0..m) |i| {
-            const c = coeffs[i];
-            const rho_i = self.rho_history.items[i];
-            const res_i = self.residual_history.items[i];
-            for (0..n) |k| {
-                rho[k] += c * (rho_i[k] + beta * res_i[k]);
-            }
-        }
+        try self.mix_with_residual(rho, precond_residual, beta);
     }
 };
 
