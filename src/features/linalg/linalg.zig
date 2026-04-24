@@ -246,6 +246,42 @@ fn query_dsygv_lwork(
     return @max(lwork, 1);
 }
 
+fn query_zhegv_lwork(
+    nn: c_int,
+    a: []math.Complex,
+    b: []math.Complex,
+    w: []f64,
+    rwork: []f64,
+    itype: *c_int,
+    jobz: *[1]u8,
+    uplo: *[1]u8,
+    lda: *const c_int,
+    ldb: *const c_int,
+) !c_int {
+    var lwork: c_int = -1;
+    var work_query = math.complex.init(0.0, 0.0);
+    var info: c_int = 0;
+    zhegv_(
+        itype,
+        jobz[0..].ptr,
+        uplo[0..].ptr,
+        @constCast(&nn),
+        @ptrCast(@constCast(a.ptr)),
+        @constCast(lda),
+        @ptrCast(@constCast(b.ptr)),
+        @constCast(ldb),
+        w.ptr,
+        @ptrCast(&work_query),
+        &lwork,
+        rwork.ptr,
+        &info,
+    );
+    if (info != 0) return error.LapackFailure;
+
+    lwork = @intFromFloat(work_query.r);
+    return @max(lwork, 1);
+}
+
 /// Compute generalized real symmetric eigenvalues and eigenvectors using LAPACK.
 /// LAPACK dsygv_ uses column-major order. Since A and B are symmetric,
 /// row-major == column-major, so no transposition is needed on input.
@@ -553,34 +589,25 @@ fn hermitian_gen_eigenvalues_lapack(
     const w = try alloc.alloc(f64, n);
     errdefer alloc.free(w);
 
-    var lwork: c_int = -1;
-    var work_query = math.complex.init(0.0, 0.0);
     const rwork = try alloc.alloc(f64, @max(@as(usize, 1), 3 * n - 2));
     errdefer alloc.free(rwork);
 
-    zhegv_(
+    const lwork = query_zhegv_lwork(
+        nn,
+        a,
+        b,
+        w,
+        rwork,
         &itype,
-        jobz[0..].ptr,
-        uplo[0..].ptr,
-        @constCast(&nn),
-        @ptrCast(@constCast(a.ptr)),
-        @constCast(&lda),
-        @ptrCast(@constCast(b.ptr)),
-        @constCast(&ldb),
-        w.ptr,
-        @ptrCast(&work_query),
-        &lwork,
-        rwork.ptr,
-        &info,
-    );
-    if (info != 0) {
+        &jobz,
+        &uplo,
+        &lda,
+        &ldb,
+    ) catch |err| {
         alloc.free(rwork);
         alloc.free(w);
-        return error.LapackFailure;
-    }
-
-    lwork = @intFromFloat(work_query.r);
-    if (lwork < 1) lwork = 1;
+        return err;
+    };
     const work = try alloc.alloc(math.Complex, @intCast(lwork));
     errdefer alloc.free(work);
 
