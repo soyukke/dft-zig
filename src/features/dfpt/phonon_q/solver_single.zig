@@ -495,6 +495,16 @@ fn build_single_q_output_potential(
     return v_out_g;
 }
 
+fn apply_linear_complex_mix(
+    dst: []math.Complex,
+    residual: []const math.Complex,
+    beta: f64,
+) void {
+    for (0..dst.len) |i| {
+        dst[i] = math.complex.add(dst[i], math.complex.scale(residual[i], beta));
+    }
+}
+
 fn mix_single_q_potential(
     alloc: std.mem.Allocator,
     cfg: DfptConfig,
@@ -558,12 +568,7 @@ fn mix_single_q_potential(
         return false;
     }
 
-    for (0..v_out_g.len) |i| {
-        v_scf_g[i] = math.complex.add(
-            v_scf_g[i],
-            math.complex.scale(residual[i], cfg.mixing_beta),
-        );
-    }
+    apply_linear_complex_mix(v_scf_g, residual, cfg.mixing_beta);
     alloc.free(residual);
     return false;
 }
