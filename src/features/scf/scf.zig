@@ -624,25 +624,20 @@ fn init_scf_common(params: ScfParams) !ScfCommon {
     const atoms = params.model.atoms;
     const recip = params.model.recip;
     const volume_bohr = params.model.volume_bohr;
-    const ff_tables = params.ff_tables;
     const derived = derive_scf_common_data(cfg, species, recip, volume_bohr);
-    const electron_count = total_electrons(species, atoms);
-
     var ionic = try potential_mod.build_ionic_potential_grid(
         alloc,
         derived.grid,
         species,
         atoms,
         derived.local_cfg,
-        ff_tables,
+        params.ff_tables,
         derived.ecutrho,
     );
     errdefer ionic.deinit(alloc);
 
-    var log = try ScfLog.init(alloc, io, cfg.out_dir);
+    var log = try init_scf_log(alloc, io, cfg.out_dir);
     errdefer log.deinit();
-
-    try log.write_header();
 
     const kpoints = try generate_kpoints_for_config(
         alloc,
@@ -676,16 +671,73 @@ fn init_scf_common(params: ScfParams) !ScfCommon {
     var paw = try maybe_build_paw_bundle(alloc, cfg, species, atoms, derived.is_paw);
     errdefer free_paw_bundle(alloc, &paw);
 
-    return build_scf_common_struct(.{
-        .alloc = alloc,
-        .cfg = cfg,
-        .species = species,
-        .atoms = atoms,
-        .recip = recip,
-        .volume_bohr = volume_bohr,
-        .grid = derived.grid,
-        .total_electrons = electron_count,
-        .local_cfg = derived.local_cfg,
+    return finish_scf_common_init(scf_common_init_result(
+        params,
+        derived,
+        total_electrons(species, atoms),
+        ionic,
+        log,
+        kpoints,
+        sym_ops,
+        rho_core,
+        radial_tables_buf,
+        radial_tables,
+        pulay_mixer,
+        paw,
+    ));
+}
+
+fn init_scf_log(alloc: std.mem.Allocator, io: std.Io, out_dir: []const u8) !ScfLog {
+    var log = try ScfLog.init(alloc, io, out_dir);
+    errdefer log.deinit();
+
+    try log.write_header();
+    return log;
+}
+
+const ScfCommonInitResult = struct {
+    alloc: std.mem.Allocator,
+    cfg: *const config.Config,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    recip: math.Mat3,
+    volume_bohr: f64,
+    derived: ScfInitDerived,
+    total_electrons: f64,
+    ionic: hamiltonian.PotentialGrid,
+    log: ScfLog,
+    kpoints: []KPoint,
+    sym_ops: ?[]symmetry.SymOp,
+    rho_core: ?[]f64,
+    radial_tables_buf: ?[]nonlocal_mod.RadialTableSet,
+    radial_tables: ?[]const nonlocal_mod.RadialTableSet,
+    pulay_mixer: ?PulayMixer,
+    paw: PawBundle,
+};
+
+fn scf_common_init_result(
+    params: ScfParams,
+    derived: ScfInitDerived,
+    total_electrons_value: f64,
+    ionic: hamiltonian.PotentialGrid,
+    log: ScfLog,
+    kpoints: []KPoint,
+    sym_ops: ?[]symmetry.SymOp,
+    rho_core: ?[]f64,
+    radial_tables_buf: ?[]nonlocal_mod.RadialTableSet,
+    radial_tables: ?[]const nonlocal_mod.RadialTableSet,
+    pulay_mixer: ?PulayMixer,
+    paw: PawBundle,
+) ScfCommonInitResult {
+    return .{
+        .alloc = params.alloc,
+        .cfg = &params.cfg,
+        .species = params.model.species,
+        .atoms = params.model.atoms,
+        .recip = params.model.recip,
+        .volume_bohr = params.model.volume_bohr,
+        .derived = derived,
+        .total_electrons = total_electrons_value,
         .ionic = ionic,
         .log = log,
         .kpoints = kpoints,
@@ -694,9 +746,32 @@ fn init_scf_common(params: ScfParams) !ScfCommon {
         .radial_tables_buf = radial_tables_buf,
         .radial_tables = radial_tables,
         .pulay_mixer = pulay_mixer,
-        .coulomb_r_cut = derived.coulomb_r_cut,
         .paw = paw,
-        .is_paw = derived.is_paw,
+    };
+}
+
+fn finish_scf_common_init(result: ScfCommonInitResult) ScfCommon {
+    return build_scf_common_struct(.{
+        .alloc = result.alloc,
+        .cfg = result.cfg,
+        .species = result.species,
+        .atoms = result.atoms,
+        .recip = result.recip,
+        .volume_bohr = result.volume_bohr,
+        .grid = result.derived.grid,
+        .total_electrons = result.total_electrons,
+        .local_cfg = result.derived.local_cfg,
+        .ionic = result.ionic,
+        .log = result.log,
+        .kpoints = result.kpoints,
+        .sym_ops = result.sym_ops,
+        .rho_core = result.rho_core,
+        .radial_tables_buf = result.radial_tables_buf,
+        .radial_tables = result.radial_tables,
+        .pulay_mixer = result.pulay_mixer,
+        .coulomb_r_cut = result.derived.coulomb_r_cut,
+        .paw = result.paw,
+        .is_paw = result.derived.is_paw,
     });
 }
 
@@ -1775,24 +1850,24 @@ fn maybe_compute_final_scf_wavefunctions(
     {
         return;
     }
-    const wfn_result = try compute_final_wavefunctions_with_spin_factor(
-        ctx.alloc,
-        ctx.io,
-        ctx.cfg.*,
-        ctx.common.grid,
-        ctx.common.kpoints,
-        ctx.common.ionic,
-        ctx.species,
-        ctx.atoms,
-        ctx.recip,
-        ctx.volume_bohr,
-        state.potential,
-        caches.kpoint_cache,
-        caches.apply_caches,
-        ctx.common.radial_tables,
-        ctx.common.paw_tabs,
-        2.0,
-    );
+    const wfn_result = try compute_final_wavefunctions_with_spin_factor(.{
+        .alloc = ctx.alloc,
+        .io = ctx.io,
+        .cfg = ctx.cfg.*,
+        .grid = ctx.common.grid,
+        .kpoints = ctx.common.kpoints,
+        .ionic = ctx.common.ionic,
+        .species = ctx.species,
+        .atoms = ctx.atoms,
+        .recip = ctx.recip,
+        .volume = ctx.volume_bohr,
+        .potential = state.potential,
+        .kpoint_cache = caches.kpoint_cache,
+        .apply_caches = caches.apply_caches,
+        .radial_tables = ctx.common.radial_tables,
+        .paw_tabs = ctx.common.paw_tabs,
+        .spin_factor = 2.0,
+    });
     state.wavefunctions = wfn_result.wavefunctions;
     state.last_band_energy = wfn_result.band_energy;
     state.last_nonlocal_energy = wfn_result.nonlocal_energy;
@@ -2167,8 +2242,7 @@ fn find_wavefunction_fermi_level(kp_wavefunctions: []const KpointWavefunction) f
     return fermi_level;
 }
 
-/// Compute final wavefunctions for force calculation.
-pub fn compute_final_wavefunctions_with_spin_factor(
+pub const FinalWavefunctionParams = struct {
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: config.Config,
@@ -2185,76 +2259,186 @@ pub fn compute_final_wavefunctions_with_spin_factor(
     radial_tables: ?[]const nonlocal_mod.RadialTableSet,
     paw_tabs: ?[]const paw_mod.PawTab,
     spin_factor: f64,
+};
+
+/// Compute final wavefunctions for force calculation.
+pub fn compute_final_wavefunctions_with_spin_factor(
+    params: FinalWavefunctionParams,
 ) !WavefunctionResult {
-    var setup = try init_final_wavefunction_setup(
-        alloc,
-        &cfg,
-        grid,
-        ionic,
-        species,
-        atoms,
-        potential,
-    );
-    defer setup.deinit(alloc);
+    var setup = try init_logged_final_wavefunction_setup(params);
+    defer setup.deinit(params.alloc);
 
-    try maybe_log_final_wavefunction_potential_mean(io, &cfg, potential, setup.local_r);
-
-    var kp_wavefunctions = try alloc.alloc(KpointWavefunction, kpoints.len);
+    var kp_wavefunctions = try params.alloc.alloc(KpointWavefunction, params.kpoints.len);
     var filled: usize = 0;
     errdefer {
         for (kp_wavefunctions[0..filled]) |*kw| {
-            kw.deinit(alloc);
+            kw.deinit(params.alloc);
         }
-        alloc.free(kp_wavefunctions);
+        params.alloc.free(kp_wavefunctions);
     }
-
     var wf_fft_plan = try fft.Fft3dPlan.init_with_backend(
-        alloc,
-        io,
-        grid.nx,
-        grid.ny,
-        grid.nz,
-        cfg.scf.fft_backend,
+        params.alloc,
+        params.io,
+        params.grid.nx,
+        params.grid.ny,
+        params.grid.nz,
+        params.cfg.scf.fft_backend,
     );
-    defer wf_fft_plan.deinit(alloc);
+    defer wf_fft_plan.deinit(params.alloc);
 
     var band_energy: f64 = 0.0;
     var nonlocal_energy: f64 = 0.0;
-
-    for (kpoints, 0..) |kp, kidx| {
-        kp_wavefunctions[kidx] = try compute_final_kpoint_wavefunction(
-            alloc,
-            io,
-            &cfg,
-            grid,
-            kp,
-            species,
-            atoms,
-            recip,
-            volume,
-            potential,
-            radial_tables,
-            paw_tabs,
-            &setup,
-            &kpoint_cache[kidx],
-            &apply_caches[kidx],
-            wf_fft_plan,
-            spin_factor,
-            &band_energy,
-            &nonlocal_energy,
-        );
-        filled += 1;
-    }
-
+    const fill_input = final_wavefunction_fill_input(
+        params.alloc,
+        params.io,
+        &params.cfg,
+        params.grid,
+        params.kpoints,
+        params.species,
+        params.atoms,
+        params.recip,
+        params.volume,
+        params.potential,
+        params.radial_tables,
+        params.paw_tabs,
+        &setup,
+        params.kpoint_cache,
+        params.apply_caches,
+        wf_fft_plan,
+        params.spin_factor,
+        kp_wavefunctions,
+        &band_energy,
+        &nonlocal_energy,
+    );
+    filled = try fill_final_kpoint_wavefunctions(fill_input);
     return WavefunctionResult{
         .wavefunctions = WavefunctionData{
             .kpoints = kp_wavefunctions,
-            .ecut_ry = cfg.scf.ecut_ry,
+            .ecut_ry = params.cfg.scf.ecut_ry,
             .fermi_level = find_wavefunction_fermi_level(kp_wavefunctions),
         },
         .band_energy = band_energy,
         .nonlocal_energy = nonlocal_energy,
     };
+}
+
+fn init_logged_final_wavefunction_setup(
+    params: FinalWavefunctionParams,
+) !FinalWavefunctionSetup {
+    const setup = try init_final_wavefunction_setup(
+        params.alloc,
+        &params.cfg,
+        params.grid,
+        params.ionic,
+        params.species,
+        params.atoms,
+        params.potential,
+    );
+    try maybe_log_final_wavefunction_potential_mean(
+        params.io,
+        &params.cfg,
+        params.potential,
+        setup.local_r,
+    );
+    return setup;
+}
+
+const FinalWavefunctionFill = struct {
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: *const config.Config,
+    grid: Grid,
+    kpoints: []KPoint,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    recip: math.Mat3,
+    volume: f64,
+    potential: hamiltonian.PotentialGrid,
+    radial_tables: ?[]const nonlocal_mod.RadialTableSet,
+    paw_tabs: ?[]const paw_mod.PawTab,
+    setup: *const FinalWavefunctionSetup,
+    kpoint_cache: []KpointCache,
+    apply_caches: []apply.KpointApplyCache,
+    wf_fft_plan: fft.Fft3dPlan,
+    spin_factor: f64,
+    wavefunctions: []KpointWavefunction,
+    band_energy: *f64,
+    nonlocal_energy: *f64,
+};
+
+fn final_wavefunction_fill_input(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: *const config.Config,
+    grid: Grid,
+    kpoints: []KPoint,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    recip: math.Mat3,
+    volume: f64,
+    potential: hamiltonian.PotentialGrid,
+    radial_tables: ?[]const nonlocal_mod.RadialTableSet,
+    paw_tabs: ?[]const paw_mod.PawTab,
+    setup: *const FinalWavefunctionSetup,
+    kpoint_cache: []KpointCache,
+    apply_caches: []apply.KpointApplyCache,
+    wf_fft_plan: fft.Fft3dPlan,
+    spin_factor: f64,
+    wavefunctions: []KpointWavefunction,
+    band_energy: *f64,
+    nonlocal_energy: *f64,
+) FinalWavefunctionFill {
+    return .{
+        .alloc = alloc,
+        .io = io,
+        .cfg = cfg,
+        .grid = grid,
+        .kpoints = kpoints,
+        .species = species,
+        .atoms = atoms,
+        .recip = recip,
+        .volume = volume,
+        .potential = potential,
+        .radial_tables = radial_tables,
+        .paw_tabs = paw_tabs,
+        .setup = setup,
+        .kpoint_cache = kpoint_cache,
+        .apply_caches = apply_caches,
+        .wf_fft_plan = wf_fft_plan,
+        .spin_factor = spin_factor,
+        .wavefunctions = wavefunctions,
+        .band_energy = band_energy,
+        .nonlocal_energy = nonlocal_energy,
+    };
+}
+
+fn fill_final_kpoint_wavefunctions(input: FinalWavefunctionFill) !usize {
+    var filled: usize = 0;
+    for (input.kpoints, 0..) |kp, kidx| {
+        input.wavefunctions[kidx] = try compute_final_kpoint_wavefunction(
+            input.alloc,
+            input.io,
+            input.cfg,
+            input.grid,
+            kp,
+            input.species,
+            input.atoms,
+            input.recip,
+            input.volume,
+            input.potential,
+            input.radial_tables,
+            input.paw_tabs,
+            input.setup,
+            &input.kpoint_cache[kidx],
+            &input.apply_caches[kidx],
+            input.wf_fft_plan,
+            input.spin_factor,
+            input.band_energy,
+            input.nonlocal_energy,
+        );
+        filled += 1;
+    }
+    return filled;
 }
 
 /// Compute density from Kohn-Sham eigenvectors.

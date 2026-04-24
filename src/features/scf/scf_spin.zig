@@ -1781,46 +1781,46 @@ fn compute_spin_final_wavefunctions(
     var result: SpinFinalWavefunctionData = .{};
     errdefer result.deinit(ctx.alloc);
 
-    const wfn_up = try scf_mod.compute_final_wavefunctions_with_spin_factor(
-        ctx.alloc,
-        ctx.io,
-        ctx.cfg.*,
-        ctx.common.grid,
-        ctx.common.kpoints,
-        ctx.common.ionic,
-        ctx.species,
-        ctx.atoms,
-        ctx.common.recip,
-        ctx.volume_bohr,
-        resources.potential_up,
-        resources.kpoint_cache_up,
-        resources.apply_caches_up,
-        ctx.common.radial_tables,
-        ctx.common.paw_tabs,
-        1.0,
-    );
+    const wfn_up = try scf_mod.compute_final_wavefunctions_with_spin_factor(.{
+        .alloc = ctx.alloc,
+        .io = ctx.io,
+        .cfg = ctx.cfg.*,
+        .grid = ctx.common.grid,
+        .kpoints = ctx.common.kpoints,
+        .ionic = ctx.common.ionic,
+        .species = ctx.species,
+        .atoms = ctx.atoms,
+        .recip = ctx.common.recip,
+        .volume = ctx.volume_bohr,
+        .potential = resources.potential_up,
+        .kpoint_cache = resources.kpoint_cache_up,
+        .apply_caches = resources.apply_caches_up,
+        .radial_tables = ctx.common.radial_tables,
+        .paw_tabs = ctx.common.paw_tabs,
+        .spin_factor = 1.0,
+    });
     result.wavefunctions_up = wfn_up.wavefunctions;
     result.band_energy += wfn_up.band_energy;
     result.nonlocal_energy += wfn_up.nonlocal_energy;
 
-    const wfn_down = try scf_mod.compute_final_wavefunctions_with_spin_factor(
-        ctx.alloc,
-        ctx.io,
-        ctx.cfg.*,
-        ctx.common.grid,
-        ctx.common.kpoints,
-        ctx.common.ionic,
-        ctx.species,
-        ctx.atoms,
-        ctx.common.recip,
-        ctx.volume_bohr,
-        resources.potential_down,
-        resources.kpoint_cache_down,
-        resources.apply_caches_down,
-        ctx.common.radial_tables,
-        ctx.common.paw_tabs,
-        1.0,
-    );
+    const wfn_down = try scf_mod.compute_final_wavefunctions_with_spin_factor(.{
+        .alloc = ctx.alloc,
+        .io = ctx.io,
+        .cfg = ctx.cfg.*,
+        .grid = ctx.common.grid,
+        .kpoints = ctx.common.kpoints,
+        .ionic = ctx.common.ionic,
+        .species = ctx.species,
+        .atoms = ctx.atoms,
+        .recip = ctx.common.recip,
+        .volume = ctx.volume_bohr,
+        .potential = resources.potential_down,
+        .kpoint_cache = resources.kpoint_cache_down,
+        .apply_caches = resources.apply_caches_down,
+        .radial_tables = ctx.common.radial_tables,
+        .paw_tabs = ctx.common.paw_tabs,
+        .spin_factor = 1.0,
+    });
     result.wavefunctions_down = wfn_down.wavefunctions;
     result.band_energy += wfn_down.band_energy;
     result.nonlocal_energy += wfn_down.nonlocal_energy;
