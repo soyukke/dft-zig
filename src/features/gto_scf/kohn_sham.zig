@@ -1421,6 +1421,120 @@ fn diagonalize_and_update_density(
     density_matrix.update_density_matrix(n, n_occ, eigen.vectors, p_mat);
 }
 
+fn build_ks_iteration_terms(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    n: usize,
+    hf_frac: f64,
+    v_nn: f64,
+    h_core: []const f64,
+    jk_ctx: KsJkCtx,
+    grid_points: []const becke.GridPoint,
+    bog: BasisOnGrid,
+    xc_functional: XcFunctional,
+    p_mat: []f64,
+    f_mat: []f64,
+    j_mat: []f64,
+    k_mat: []f64,
+    vxc_mat: []f64,
+    xc_work_buf: []f64,
+    state: *KsScfState,
+) !struct { terms: KsEnergyTerms, e_xc: f64 } {
+    var timer = std.Io.Clock.Timestamp.now(io, .awake);
+    try build_jk_for_ks(alloc, jk_ctx, p_mat, j_mat, k_mat);
+    state.scf_jk_ns += @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
+
+    timer = std.Io.Clock.Timestamp.now(io, .awake);
+    const e_xc = try build_density_and_xc(
+        alloc,
+        n,
+        grid_points,
+        p_mat,
+        bog,
+        xc_functional,
+        vxc_mat,
+        xc_work_buf,
+    );
+    state.scf_xc_ns += @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
+    return .{
+        .terms = compute_ks_iter_energy_and_fock(
+            n,
+            hf_frac,
+            v_nn,
+            h_core,
+            j_mat,
+            k_mat,
+            vxc_mat,
+            e_xc,
+            p_mat,
+            f_mat,
+            state,
+        ),
+        .e_xc = e_xc,
+    };
+}
+
+fn finalize_ks_scf_iteration(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    iter: usize,
+    n: usize,
+    n_occ: usize,
+    v_nn: f64,
+    s_mat: []const f64,
+    p_mat: []f64,
+    p_old: []f64,
+    f_mat: []f64,
+    f_diis: ?[]f64,
+    diis: *?GtoDiis,
+    eigen: *linalg.RealEigenDecomp,
+    params: KsParams,
+    terms: KsEnergyTerms,
+    e_xc: f64,
+    state: *KsScfState,
+) !bool {
+    const delta_e = @abs(state.e_total - state.e_old);
+    const rms_p = density_matrix.density_rms_diff(n, p_mat, p_old);
+
+    log_ks_iter_verbose(
+        params.verbose,
+        iter,
+        n,
+        state.e_total,
+        delta_e,
+        rms_p,
+        terms,
+        e_xc,
+        v_nn,
+        p_mat,
+        s_mat,
+    );
+
+    if (iter > 0 and delta_e < params.energy_threshold and rms_p < params.density_threshold) {
+        state.converged = true;
+        return true;
+    }
+
+    state.e_old = state.e_total;
+    @memcpy(p_old, p_mat);
+    try diagonalize_and_update_density(
+        alloc,
+        io,
+        iter,
+        n,
+        n_occ,
+        s_mat,
+        f_mat,
+        p_mat,
+        f_diis,
+        diis,
+        eigen,
+        params,
+        state,
+    );
+    return false;
+}
+
 fn run_ks_scf_iteration(
     alloc: std.mem.Allocator,
     io: std.Io,
@@ -1448,78 +1562,44 @@ fn run_ks_scf_iteration(
     eigen: *linalg.RealEigenDecomp,
     state: *KsScfState,
 ) !bool {
-    var timer = std.Io.Clock.Timestamp.now(io, .awake);
-    try build_jk_for_ks(alloc, jk_ctx, p_mat, j_mat, k_mat);
-    state.scf_jk_ns += @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
-
-    timer = std.Io.Clock.Timestamp.now(io, .awake);
-    const e_xc = try build_density_and_xc(
+    const iter_data = try build_ks_iteration_terms(
         alloc,
-        n,
-        grid_points,
-        p_mat,
-        bog,
-        xc_functional,
-        vxc_mat,
-        xc_work_buf,
-    );
-    state.scf_xc_ns += @as(u64, @intCast(timer.untilNow(io).raw.nanoseconds));
-
-    const terms = compute_ks_iter_energy_and_fock(
+        io,
         n,
         hf_frac,
         v_nn,
         h_core,
+        jk_ctx,
+        grid_points,
+        bog,
+        xc_functional,
+        p_mat,
+        f_mat,
         j_mat,
         k_mat,
         vxc_mat,
-        e_xc,
-        p_mat,
-        f_mat,
+        xc_work_buf,
         state,
     );
-
-    const delta_e = @abs(state.e_total - state.e_old);
-    const rms_p = density_matrix.density_rms_diff(n, p_mat, p_old);
-
-    log_ks_iter_verbose(
-        params.verbose,
-        iter,
-        n,
-        state.e_total,
-        delta_e,
-        rms_p,
-        terms,
-        e_xc,
-        v_nn,
-        p_mat,
-        s_mat,
-    );
-
-    if (iter > 0 and delta_e < params.energy_threshold and rms_p < params.density_threshold) {
-        state.converged = true;
-        return true;
-    }
-
-    state.e_old = state.e_total;
-    @memcpy(p_old, p_mat);
-
-    try diagonalize_and_update_density(
+    return finalize_ks_scf_iteration(
         alloc,
         io,
         iter,
         n,
         n_occ,
+        v_nn,
         s_mat,
-        f_mat,
         p_mat,
+        p_old,
+        f_mat,
         f_diis,
         diis,
         eigen,
         params,
+        iter_data.terms,
+        iter_data.e_xc,
         state,
     );
-    return false;
 }
 
 fn elapsed_seconds(io: std.Io, timer: std.Io.Clock.Timestamp) f64 {
