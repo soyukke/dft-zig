@@ -91,6 +91,14 @@ pub const RealEigenDecomp = struct {
     }
 };
 
+fn empty_real_eigen_decomp(alloc: std.mem.Allocator) !RealEigenDecomp {
+    return .{
+        .values = try alloc.alloc(f64, 0),
+        .vectors = try alloc.alloc(f64, 0),
+        .n = 0,
+    };
+}
+
 fn empty_eigen_decomp(alloc: std.mem.Allocator) !EigenDecomp {
     return EigenDecomp{
         .values = try alloc.alloc(f64, 0),
@@ -204,6 +212,40 @@ pub fn real_symmetric_eigen_decomp(
     };
 }
 
+fn query_dsygv_lwork(
+    nn: c_int,
+    matrix_a: []f64,
+    matrix_b: []f64,
+    w: []f64,
+    itype: *c_int,
+    jobz: *[1]u8,
+    uplo: *[1]u8,
+    lda: *const c_int,
+    ldb: *const c_int,
+) !c_int {
+    var lwork: c_int = -1;
+    var work_query: f64 = 0.0;
+    var info: c_int = 0;
+    dsygv_(
+        itype,
+        jobz[0..].ptr,
+        uplo[0..].ptr,
+        @constCast(&nn),
+        @ptrCast(@constCast(matrix_a.ptr)),
+        @constCast(lda),
+        @ptrCast(@constCast(matrix_b.ptr)),
+        @constCast(ldb),
+        w.ptr,
+        @ptrCast(&work_query),
+        &lwork,
+        &info,
+    );
+    if (info != 0) return error.LapackFailure;
+
+    lwork = @intFromFloat(work_query);
+    return @max(lwork, 1);
+}
+
 /// Compute generalized real symmetric eigenvalues and eigenvectors using LAPACK.
 /// LAPACK dsygv_ uses column-major order. Since A and B are symmetric,
 /// row-major == column-major, so no transposition is needed on input.
@@ -219,13 +261,7 @@ fn real_symmetric_gen_eigen_decomp_lapack(
     defer lapack_mutex.unlock();
 
     if (a.len != n * n or b.len != n * n) return error.InvalidMatrixSize;
-    if (n == 0) {
-        return RealEigenDecomp{
-            .values = try alloc.alloc(f64, 0),
-            .vectors = try alloc.alloc(f64, 0),
-            .n = 0,
-        };
-    }
+    if (n == 0) return empty_real_eigen_decomp(alloc);
 
     const matrix_a = try alloc.alloc(f64, n * n);
     errdefer alloc.free(matrix_a);
@@ -245,28 +281,17 @@ fn real_symmetric_gen_eigen_decomp_lapack(
     const w = try alloc.alloc(f64, n);
     errdefer alloc.free(w);
 
-    // Workspace query
-    var lwork: c_int = -1;
-    var work_query: f64 = 0.0;
-
-    dsygv_(
+    const lwork = try query_dsygv_lwork(
+        nn,
+        matrix_a,
+        matrix_b,
+        w,
         &itype,
-        jobz[0..].ptr,
-        uplo[0..].ptr,
-        @constCast(&nn),
-        @ptrCast(@constCast(matrix_a.ptr)),
-        @constCast(&lda),
-        @ptrCast(@constCast(matrix_b.ptr)),
-        @constCast(&ldb),
-        w.ptr,
-        @ptrCast(&work_query),
-        &lwork,
-        &info,
+        &jobz,
+        &uplo,
+        &lda,
+        &ldb,
     );
-    if (info != 0) return error.LapackFailure;
-
-    lwork = @intFromFloat(work_query);
-    if (lwork < 1) lwork = 1;
     const work = try alloc.alloc(f64, @intCast(lwork));
     errdefer alloc.free(work);
 
