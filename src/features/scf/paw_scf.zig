@@ -567,6 +567,40 @@ fn symmetrize_species_m_resolved_dij(
     }
 }
 
+fn accumulate_compensation_charge_for_gvec(
+    rhoij: *const paw_mod.RhoIJ,
+    paw_tabs: []const paw_mod.PawTab,
+    atoms: []const hamiltonian.AtomData,
+    gaunt_table: *const paw_mod.GauntTable,
+    gvec: math.Vec3,
+    inv_omega: f64,
+) math.Complex {
+    const g_abs = math.Vec3.norm(gvec);
+    var ylm_g: [MAX_YLM_AUG]f64 = undefined;
+    fill_aug_ylm(gaunt_table, gvec, g_abs, &ylm_g);
+
+    var total = math.complex.init(0.0, 0.0);
+    for (atoms, 0..) |atom, ai| {
+        const sp = atom.species_index;
+        if (sp >= paw_tabs.len or paw_tabs[sp].nbeta == 0) continue;
+        total = math.complex.add(
+            total,
+            compensation_charge_for_atom(
+                rhoij,
+                &paw_tabs[sp],
+                atom,
+                ai,
+                gaunt_table,
+                gvec,
+                g_abs,
+                &ylm_g,
+                inv_omega,
+            ),
+        );
+    }
+    return total;
+}
+
 /// Add PAW compensation charge n_hat(r) to density array (multi-L with Gaunt coefficients).
 ///
 /// n̂(G) = Σ_a Σ_{i,m_i,j,m_j} ρ_{(i,m_i),(j,m_j)}^a × Σ_{L,M} G(l_i,m_i,l_j,m_j,L,M)
@@ -609,31 +643,18 @@ pub fn add_paw_compensation_charge(
                     ),
                     math.Vec3.scale(b3, @as(f64, @floatFromInt(gl))),
                 );
-                const g_abs = math.Vec3.norm(gvec);
-                const g2 = math.Vec3.dot(gvec, gvec);
-                if (g2 >= ecutrho) {
+                if (math.Vec3.dot(gvec, gvec) >= ecutrho) {
                     idx += 1;
                     continue;
                 }
-
-                var ylm_g: [MAX_YLM_AUG]f64 = undefined;
-                fill_aug_ylm(gaunt_table, gvec, g_abs, &ylm_g);
-                for (atoms, 0..) |atom, ai| {
-                    const sp = atom.species_index;
-                    if (sp >= paw_tabs.len or paw_tabs[sp].nbeta == 0) continue;
-                    const contrib = compensation_charge_for_atom(
-                        rhoij,
-                        &paw_tabs[sp],
-                        atom,
-                        ai,
-                        gaunt_table,
-                        gvec,
-                        g_abs,
-                        &ylm_g,
-                        inv_omega,
-                    );
-                    n_hat_g[idx] = math.complex.add(n_hat_g[idx], contrib);
-                }
+                n_hat_g[idx] = accumulate_compensation_charge_for_gvec(
+                    rhoij,
+                    paw_tabs,
+                    atoms,
+                    gaunt_table,
+                    gvec,
+                    inv_omega,
+                );
                 idx += 1;
             }
         }
