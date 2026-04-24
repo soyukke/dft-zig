@@ -847,102 +847,22 @@ pub fn find_irreducible_perturbations(
 
     const is_irreducible = try alloc.alloc(bool, dim);
     errdefer alloc.free(is_irreducible);
+    init_perturbation_orbits(pert_to_irr, pert_sym_idx, pert_dir_coeffs, is_irreducible);
+    map_perturbation_orbits(
+        symops,
+        indsym,
+        little_group.items,
+        cell_bohr,
+        pert_to_irr,
+        pert_sym_idx,
+        pert_dir_coeffs,
+        is_irreducible,
+    );
+    resolve_representative_chain(pert_to_irr);
+    mark_irreducible_perturbations(pert_to_irr, is_irreducible);
 
-    // Initialize: each perturbation maps to itself
-    for (0..dim) |p| {
-        pert_to_irr[p] = p;
-        pert_sym_idx[p] = 0; // identity
-        pert_dir_coeffs[p] = .{ 0.0, 0.0, 0.0 };
-        pert_dir_coeffs[p][p % 3] = 1.0; // identity mapping
-        is_irreducible[p] = true;
-    }
-
-    // For each perturbation, check if a smaller-index one is equivalent
-    for (0..dim) |pidx| {
-        const ia = pidx / 3;
-        const dir = pidx % 3;
-
-        for (little_group.items) |isym| {
-            const mapped_atom = indsym[isym][ia];
-            const r_cart = frac_rot_to_cart(symops[isym].rot, cell_bohr);
-
-            // S maps (ia, dir) to (mapped_atom, Σ_γ R_cart[·][dir] × e_γ)
-            // The mapped direction is a linear combination: row = R_cart[·][dir]
-            // But for orbit finding, the key insight is:
-            // (ia, dir) -> (mapped_atom, R_cart × e_dir) = Σ_γ R_cart[γ][dir] on mapped_atom
-            //
-            // Check: does this map to a perturbation with smaller index?
-            // The mapped perturbation lives on mapped_atom, and its direction
-            // is the column R_cart[·][dir]. For cubic symmetry, this column
-            // is often a pure unit vector (mapping x->y etc.)
-
-            // Find if R_cart maps e_dir to a pure direction e_mapped_dir
-            // i.e., R_cart[mapped_dir][dir] = ±1 and all others 0
-            var pure_dir: ?usize = null;
-            for (0..3) |d| {
-                if (@abs(@abs(r_cart[d][dir]) - 1.0) < 1e-10) {
-                    // Check other components are zero
-                    var others_zero = true;
-                    for (0..3) |d2| {
-                        if (d2 != d and @abs(r_cart[d2][dir]) > 1e-10) {
-                            others_zero = false;
-                            break;
-                        }
-                    }
-                    if (others_zero) {
-                        pure_dir = d;
-                        break;
-                    }
-                }
-            }
-
-            if (pure_dir) |md| {
-                const mapped_pidx = 3 * mapped_atom + md;
-                if (mapped_pidx < pert_to_irr[pidx]) {
-                    // This perturbation can be obtained from mapped_pidx via inverse of S
-                    pert_to_irr[pidx] = mapped_pidx;
-                    pert_sym_idx[pidx] = isym;
-                    // Store the direction coefficients: R_cart row for dir
-                    pert_dir_coeffs[pidx] = .{
-                        r_cart[0][dir],
-                        r_cart[1][dir],
-                        r_cart[2][dir],
-                    };
-                    is_irreducible[pidx] = false;
-                }
-            }
-        }
-    }
-
-    // Resolve transitive mappings: follow chains to final representative
-    var changed = true;
-    while (changed) {
-        changed = false;
-        for (0..dim) |p| {
-            const rep = pert_to_irr[p];
-            if (pert_to_irr[rep] < rep) {
-                pert_to_irr[p] = pert_to_irr[rep];
-                changed = true;
-            }
-        }
-    }
-
-    // Mark final irreducible set
-    for (0..dim) |p| {
-        is_irreducible[p] = (pert_to_irr[p] == p);
-    }
-
-    // Collect irreducible perturbation indices
-    var irr_list: std.ArrayList(usize) = .empty;
-    errdefer irr_list.deinit(alloc);
-
-    for (0..dim) |p| {
-        if (is_irreducible[p]) {
-            try irr_list.append(alloc, p);
-        }
-    }
-    const n_irr = irr_list.items.len;
-    const irr_indices = try irr_list.toOwnedSlice(alloc);
+    const irr_indices = try collect_irreducible_perturbation_indices(alloc, is_irreducible);
+    const n_irr = irr_indices.len;
 
     return .{
         .irr_pert_indices = irr_indices,
@@ -952,6 +872,101 @@ pub fn find_irreducible_perturbations(
         .pert_dir_coeffs = pert_dir_coeffs,
         .is_irreducible = is_irreducible,
     };
+}
+
+fn init_perturbation_orbits(
+    pert_to_irr: []usize,
+    pert_sym_idx: []usize,
+    pert_dir_coeffs: [][3]f64,
+    is_irreducible: []bool,
+) void {
+    for (0..pert_to_irr.len) |p| {
+        pert_to_irr[p] = p;
+        pert_sym_idx[p] = 0;
+        pert_dir_coeffs[p] = .{ 0.0, 0.0, 0.0 };
+        pert_dir_coeffs[p][p % 3] = 1.0;
+        is_irreducible[p] = true;
+    }
+}
+
+fn map_perturbation_orbits(
+    symops: []const symmetry_mod.SymOp,
+    indsym: []const []const usize,
+    little_group: []const usize,
+    cell_bohr: math.Mat3,
+    pert_to_irr: []usize,
+    pert_sym_idx: []usize,
+    pert_dir_coeffs: [][3]f64,
+    is_irreducible: []bool,
+) void {
+    for (0..pert_to_irr.len) |pidx| {
+        const ia = pidx / 3;
+        const dir = pidx % 3;
+        for (little_group) |isym| {
+            const mapped_atom = indsym[isym][ia];
+            const r_cart = frac_rot_to_cart(symops[isym].rot, cell_bohr);
+            const pure_dir = pure_direction_index(r_cart, dir) orelse continue;
+            const mapped_pidx = 3 * mapped_atom + pure_dir;
+            if (mapped_pidx >= pert_to_irr[pidx]) continue;
+            pert_to_irr[pidx] = mapped_pidx;
+            pert_sym_idx[pidx] = isym;
+            pert_dir_coeffs[pidx] = .{
+                r_cart[0][dir],
+                r_cart[1][dir],
+                r_cart[2][dir],
+            };
+            is_irreducible[pidx] = false;
+        }
+    }
+}
+
+fn pure_direction_index(r_cart: [3][3]f64, dir: usize) ?usize {
+    for (0..3) |d| {
+        if (@abs(@abs(r_cart[d][dir]) - 1.0) >= 1e-10) continue;
+        var others_zero = true;
+        for (0..3) |d2| {
+            if (d2 != d and @abs(r_cart[d2][dir]) > 1e-10) {
+                others_zero = false;
+                break;
+            }
+        }
+        if (others_zero) return d;
+    }
+    return null;
+}
+
+fn resolve_representative_chain(pert_to_irr: []usize) void {
+    var changed = true;
+    while (changed) {
+        changed = false;
+        for (0..pert_to_irr.len) |p| {
+            const rep = pert_to_irr[p];
+            if (pert_to_irr[rep] < rep) {
+                pert_to_irr[p] = pert_to_irr[rep];
+                changed = true;
+            }
+        }
+    }
+}
+
+fn mark_irreducible_perturbations(pert_to_irr: []const usize, is_irreducible: []bool) void {
+    for (0..pert_to_irr.len) |p| {
+        is_irreducible[p] = pert_to_irr[p] == p;
+    }
+}
+
+fn collect_irreducible_perturbation_indices(
+    alloc: std.mem.Allocator,
+    is_irreducible: []const bool,
+) ![]usize {
+    var irr_list: std.ArrayList(usize) = .empty;
+    errdefer irr_list.deinit(alloc);
+    for (0..is_irreducible.len) |p| {
+        if (is_irreducible[p]) {
+            try irr_list.append(alloc, p);
+        }
+    }
+    return try irr_list.toOwnedSlice(alloc);
 }
 
 /// Reconstruct dynamical matrix columns for non-irreducible atoms (Γ-point, real).
