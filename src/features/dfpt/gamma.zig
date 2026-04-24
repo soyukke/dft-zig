@@ -486,12 +486,7 @@ pub fn run_phonon(
     scf_result: *scf_mod.ScfResult,
     model: *const model_mod.Model,
 ) !PhononResult {
-    const species = model.species;
-    const atoms = model.atoms;
-    const cell_bohr = model.cell_bohr;
-    const recip = model.recip;
-    const volume = model.volume_bohr;
-    const n_atoms = atoms.len;
+    const n_atoms = model.atoms.len;
     const dim = 3 * n_atoms;
 
     log_dfpt_info("dfpt: starting phonon calculation ({d} atoms, dim={d})\n", .{ n_atoms, dim });
@@ -500,47 +495,38 @@ pub fn run_phonon(
         io,
         cfg,
         scf_result,
-        species,
-        atoms,
-        volume,
-        recip,
+        model.species,
+        model.atoms,
+        model.volume_bohr,
+        model.recip,
     );
-    defer prepared.deinit();
-
     var gs = prepared.gs;
     const dfpt_cfg = DfptConfig.from_config(cfg);
     const pert_thread_count = dfpt.perturbation_thread_count(dim, dfpt_cfg.perturbation_threads);
-    var symmetry = try init_gamma_symmetry_data(alloc, cell_bohr, atoms, recip);
-    defer symmetry.deinit(alloc);
-
-    log_dfpt_info(
-        "dfpt: {d} symops, {d}/{d} irreducible atoms\n",
-        .{ symmetry.symops.len, symmetry.irr_info.n_irr_atoms, n_atoms },
-    );
-
+    var symmetry = try init_gamma_symmetry_data(alloc, model.cell_bohr, model.atoms, model.recip);
     var storage = try GammaPerturbationBuffers.init(alloc, dim);
-    defer storage.deinit(alloc);
-
-    try build_all_gamma_analytic_perturbations(alloc, gs, &storage);
-    if (pert_thread_count <= 1) {
-        try solve_sequential_gamma_perturbations(alloc, gs, symmetry.irr_info, dfpt_cfg, &storage);
-    } else {
-        try solve_parallel_gamma_perturbations(
-            alloc,
-            io,
-            gs,
-            symmetry.irr_info,
-            dfpt_cfg,
-            &storage,
-            pert_thread_count,
-            dim,
-        );
-    }
-    try maybe_run_gamma_diagnostics(alloc, gs, &storage, n_atoms, symmetry.irr_info);
-
-    const ionic = try IonicData.init(alloc, species, atoms);
+    const ionic = try IonicData.init(alloc, model.species, model.atoms);
     defer ionic.deinit(alloc);
+    defer storage.deinit(alloc);
+    defer symmetry.deinit(alloc);
+    defer prepared.deinit();
 
+    log_dfpt_info("dfpt: {d} symops, {d}/{d} irreducible atoms\n", .{
+        symmetry.symops.len,
+        symmetry.irr_info.n_irr_atoms,
+        n_atoms,
+    });
+    try run_gamma_perturbation_solves(
+        alloc,
+        io,
+        gs,
+        symmetry.irr_info,
+        dfpt_cfg,
+        &storage,
+        pert_thread_count,
+        dim,
+        n_atoms,
+    );
     const result = try build_gamma_phonon_result(
         alloc,
         scf_result,
@@ -548,23 +534,62 @@ pub fn run_phonon(
         &storage,
         ionic,
         symmetry,
-        cell_bohr,
-        recip,
-        volume,
+        model.cell_bohr,
+        model.recip,
+        model.volume_bohr,
         cfg,
     );
+    try maybe_compute_gamma_dielectric_for_model(alloc, io, cfg, &gs, prepared.local_r, model);
+    return result;
+}
 
+fn run_gamma_perturbation_solves(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    gs: GroundState,
+    irr_info: dynmat_mod.IrreducibleAtomInfo,
+    dfpt_cfg: DfptConfig,
+    storage: *GammaPerturbationBuffers,
+    pert_thread_count: usize,
+    dim: usize,
+    n_atoms: usize,
+) !void {
+    try build_all_gamma_analytic_perturbations(alloc, gs, storage);
+    if (pert_thread_count <= 1) {
+        try solve_sequential_gamma_perturbations(alloc, gs, irr_info, dfpt_cfg, storage);
+    } else {
+        try solve_parallel_gamma_perturbations(
+            alloc,
+            io,
+            gs,
+            irr_info,
+            dfpt_cfg,
+            storage,
+            pert_thread_count,
+            dim,
+        );
+    }
+    try maybe_run_gamma_diagnostics(alloc, gs, storage, n_atoms, irr_info);
+}
+
+fn maybe_compute_gamma_dielectric_for_model(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: config_mod.Config,
+    gs: *GroundState,
+    local_r: []const f64,
+    model: *const model_mod.Model,
+) !void {
     try maybe_compute_gamma_dielectric(
         alloc,
         io,
         cfg,
-        &gs,
-        prepared.local_r,
-        cell_bohr,
-        recip,
-        volume,
+        gs,
+        local_r,
+        model.cell_bohr,
+        model.recip,
+        model.volume_bohr,
     );
-    return result;
 }
 
 fn init_solve_perturbation_inputs(
