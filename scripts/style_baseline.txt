@@ -7,7 +7,7 @@
 #
 # Format: <path>\t<rule>\t<count>
 src/features/dfpt/phonon_q/dynmat_build.zig	function_too_long	2
-src/features/dfpt/phonon_q/solver_multik.zig	function_too_long	2
+src/features/dfpt/phonon_q/solver_multik.zig	function_too_long	1
 src/features/integrals/libcint.zig	function_too_long	3
 src/features/integrals/obara_saika.zig	function_too_long	1
 src/features/integrals/rys_eri.zig	function_too_long	2

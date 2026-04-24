@@ -12,6 +12,7 @@ const math = @import("../../math/math.zig");
 const scf_mod = @import("../../scf/scf.zig");
 const hamiltonian = @import("../../hamiltonian/hamiltonian.zig");
 const form_factor = @import("../../pseudopotential/form_factor.zig");
+const local_potential = @import("../../pseudopotential/local_potential.zig");
 
 const dfpt = @import("../dfpt.zig");
 const perturbation = dfpt.perturbation;
@@ -1015,6 +1016,54 @@ fn compute_final_rho1_g(
     return final_rho1_g;
 }
 
+const MultiKPerturbationSources = struct {
+    vloc1_g: []math.Complex,
+    rho1_core_r: []math.Complex,
+
+    fn deinit(self: *MultiKPerturbationSources, alloc: std.mem.Allocator) void {
+        alloc.free(self.vloc1_g);
+        alloc.free(self.rho1_core_r);
+    }
+};
+
+fn build_multi_k_perturbation_sources(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    atom: hamiltonian.AtomData,
+    species: []const hamiltonian.SpeciesEntry,
+    direction: usize,
+    q_cart: math.Vec3,
+    local_cfg: local_potential.LocalPotentialConfig,
+    ff_tables: ?[]const form_factor.LocalFormFactorTable,
+    rho_core_tables: ?[]const form_factor.RadialFormFactorTable,
+) !MultiKPerturbationSources {
+    const vloc1_g = try perturbation.build_local_perturbation_q(
+        alloc,
+        grid,
+        atom,
+        species,
+        direction,
+        q_cart,
+        local_cfg,
+        ff_tables,
+    );
+    errdefer alloc.free(vloc1_g);
+
+    const rho1_core_r = try build_core_perturbation_real(
+        alloc,
+        grid,
+        atom,
+        species,
+        direction,
+        q_cart,
+        rho_core_tables,
+    );
+    return .{
+        .vloc1_g = vloc1_g,
+        .rho1_core_r = rho1_core_r,
+    };
+}
+
 /// Solve DFPT perturbation at q≠0 with multiple k-points.
 /// For each k-point, solves Sternheimer equations and accumulates ρ^(1)
 /// with the k-point weight. Uses potential mixing for stable convergence.
@@ -1036,7 +1085,7 @@ pub fn solve_perturbation_q_multi_k(
     ff_tables: ?[]const form_factor.LocalFormFactorTable,
     rho_core_tables: ?[]const form_factor.RadialFormFactorTable,
 ) !MultiKPertResult {
-    const vloc1_g = try perturbation.build_local_perturbation_q(
+    var sources = try build_multi_k_perturbation_sources(
         alloc,
         grid,
         atoms[atom_index],
@@ -1045,19 +1094,9 @@ pub fn solve_perturbation_q_multi_k(
         q_cart,
         gs.local_cfg,
         ff_tables,
-    );
-    defer alloc.free(vloc1_g);
-
-    const rho1_core_r = try build_core_perturbation_real(
-        alloc,
-        grid,
-        atoms[atom_index],
-        species,
-        direction,
-        q_cart,
         rho_core_tables,
     );
-    defer alloc.free(rho1_core_r);
+    defer sources.deinit(alloc);
 
     var psi1_buffers = try Psi1Buffers.init(alloc, kpts);
     errdefer psi1_buffers.deinit(alloc);
@@ -1065,7 +1104,7 @@ pub fn solve_perturbation_q_multi_k(
     const v_scf_g = try alloc.alloc(math.Complex, grid.count());
     defer alloc.free(v_scf_g);
 
-    @memcpy(v_scf_g, vloc1_g);
+    @memcpy(v_scf_g, sources.vloc1_g);
 
     var psi0_r_cache = try Psi0RCache.init(alloc, grid, kpts);
     defer psi0_r_cache.deinit(alloc);
@@ -1082,8 +1121,8 @@ pub fn solve_perturbation_q_multi_k(
         gs,
         species,
         atoms,
-        vloc1_g,
-        rho1_core_r,
+        sources.vloc1_g,
+        sources.rho1_core_r,
         &psi1_buffers,
         &psi0_r_cache,
         v_scf_g,
