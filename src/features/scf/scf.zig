@@ -2037,7 +2037,7 @@ fn fill_occupied_bands(
     }
 }
 
-fn compute_final_kpoint_wavefunction(
+fn compute_final_kpoint_eigen_data(
     alloc: std.mem.Allocator,
     io: std.Io,
     cfg: *const config.Config,
@@ -2054,11 +2054,8 @@ fn compute_final_kpoint_wavefunction(
     kpoint_cache: *KpointCache,
     apply_cache: *apply.KpointApplyCache,
     wf_fft_plan: fft.Fft3dPlan,
-    spin_factor: f64,
-    band_energy: *f64,
-    nonlocal_energy: *f64,
-) !KpointWavefunction {
-    const eigen_data = try compute_kpoint_eigen_data(
+) !KpointEigenData {
+    return compute_kpoint_eigen_data(
         alloc,
         io,
         cfg,
@@ -2085,6 +2082,47 @@ fn compute_final_kpoint_wavefunction(
         apply_cache,
         radial_tables,
         paw_tabs,
+    );
+}
+
+fn compute_final_kpoint_wavefunction(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: *const config.Config,
+    grid: Grid,
+    kp: KPoint,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    recip: math.Mat3,
+    volume: f64,
+    potential: hamiltonian.PotentialGrid,
+    radial_tables: ?[]const nonlocal_mod.RadialTableSet,
+    paw_tabs: ?[]const paw_mod.PawTab,
+    setup: *const FinalWavefunctionSetup,
+    kpoint_cache: *KpointCache,
+    apply_cache: *apply.KpointApplyCache,
+    wf_fft_plan: fft.Fft3dPlan,
+    spin_factor: f64,
+    band_energy: *f64,
+    nonlocal_energy: *f64,
+) !KpointWavefunction {
+    const eigen_data = try compute_final_kpoint_eigen_data(
+        alloc,
+        io,
+        cfg,
+        grid,
+        kp,
+        species,
+        atoms,
+        recip,
+        volume,
+        potential,
+        radial_tables,
+        paw_tabs,
+        setup,
+        kpoint_cache,
+        apply_cache,
+        wf_fft_plan,
     );
     errdefer {
         var ed = eigen_data;
