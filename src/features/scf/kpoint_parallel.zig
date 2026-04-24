@@ -133,6 +133,35 @@ pub const KpointWorker = struct {
     thread_index: usize,
 };
 
+pub const KpointSolveInput = struct {
+    io: std.Io,
+    cfg: *const config.Config,
+    grid: Grid,
+    kp: KPoint,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    recip: math.Mat3,
+    volume: f64,
+    local_cfg: local_potential.LocalPotentialConfig,
+    potential: hamiltonian.PotentialGrid,
+    local_r: ?[]f64,
+    nocc: usize,
+    use_iterative_config: bool,
+    has_qij: bool,
+    nonlocal_enabled: bool,
+    fft_index_map: ?[]const usize,
+    iter_max_iter: usize,
+    iter_tol: f64,
+    reuse_vectors: bool,
+    cache: *KpointCache,
+    profile_ptr: ?*ScfProfile,
+    shared_fft_plan: ?fft.Fft3dPlan,
+    apply_cache: ?*apply.KpointApplyCache,
+    radial_tables: ?[]const nonlocal.RadialTableSet,
+    paw_tabs: ?[]const paw_mod.PawTab,
+    loose_init: bool,
+};
+
 fn set_worker_error(shared: *KpointShared, err: anyerror) void {
     shared.err_mutex.lockUncancelable(shared.io);
     defer shared.err_mutex.unlock(shared.io);
@@ -159,35 +188,41 @@ fn dispatch_kpoint_contribution(
         null;
     try compute_kpoint_contribution(
         kalloc,
-        shared.io,
-        shared.cfg,
-        shared.grid,
-        shared.kpoints[idx],
-        shared.species,
-        shared.atoms,
-        shared.recip,
-        shared.volume,
-        shared.local_cfg,
-        shared.potential,
-        shared.local_r,
-        shared.nocc,
+        .{
+            .io = shared.io,
+            .cfg = shared.cfg,
+            .grid = shared.grid,
+            .kp = shared.kpoints[idx],
+            .species = shared.species,
+            .atoms = shared.atoms,
+            .recip = shared.recip,
+            .volume = shared.volume,
+            .local_cfg = shared.local_cfg,
+            .potential = shared.potential,
+            .local_r = shared.local_r,
+            .nocc = shared.nocc,
+            .use_iterative_config = shared.use_iterative_config,
+            .has_qij = shared.has_qij,
+            .nonlocal_enabled = shared.nonlocal_enabled,
+            .fft_index_map = shared.fft_index_map,
+            .iter_max_iter = shared.iter_max_iter,
+            .iter_tol = shared.iter_tol,
+            .reuse_vectors = shared.reuse_vectors,
+            .cache = &shared.kpoint_cache[idx],
+            .profile_ptr = profile_ptr,
+            .shared_fft_plan = thread_fft_plan,
+            .apply_cache = if (shared.apply_caches) |acs|
+                (if (idx < acs.len) &acs[idx] else null)
+            else
+                null,
+            .radial_tables = shared.radial_tables,
+            .paw_tabs = shared.paw_tabs,
+            .loose_init = false,
+        },
         shared.nelec,
-        shared.use_iterative_config,
-        shared.has_qij,
-        shared.nonlocal_enabled,
-        shared.fft_index_map,
-        shared.iter_max_iter,
-        shared.iter_tol,
-        shared.reuse_vectors,
-        &shared.kpoint_cache[idx],
         rho_local,
         local_band,
         local_nonlocal,
-        profile_ptr,
-        thread_fft_plan,
-        if (shared.apply_caches) |acs| (if (idx < acs.len) &acs[idx] else null) else null,
-        shared.radial_tables,
-        shared.paw_tabs,
         null, // paw_rhoij: not thread-safe, handled in smearing path
     );
 }
@@ -954,61 +989,47 @@ const SolvedKpoint = struct {
 
 fn run_kpoint_solve(
     alloc: std.mem.Allocator,
-    io: std.Io,
-    cfg: *const config.Config,
-    grid: Grid,
+    input: KpointSolveInput,
     basis_gvecs: []plane_wave.GVector,
-    species: []const hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
     inv_volume: f64,
-    local_cfg: local_potential.LocalPotentialConfig,
-    potential: hamiltonian.PotentialGrid,
-    local_r: ?[]f64,
-    has_qij: bool,
-    nonlocal_enabled: bool,
-    fft_index_map: ?[]const usize,
-    iter_max_iter: usize,
-    iter_tol: f64,
-    reuse_vectors: bool,
-    cache: *KpointCache,
-    profile_ptr: ?*ScfProfile,
-    shared_fft_plan: ?fft.Fft3dPlan,
-    apply_cache: ?*apply.KpointApplyCache,
-    radial_tables: ?[]const nonlocal.RadialTableSet,
-    paw_tabs: ?[]const paw_mod.PawTab,
     nbands: usize,
     use_iterative: bool,
-    loose_init: bool,
     vnl: ?[]math.Complex,
     apply_ctx: *?ApplyContext,
 ) !linalg.EigenDecomp {
-    const init = if (loose_init)
-        pick_init_vectors_loose(cache, basis_gvecs.len, nbands, use_iterative, reuse_vectors)
+    const init = if (input.loose_init)
+        pick_init_vectors_loose(
+            input.cache,
+            basis_gvecs.len,
+            nbands,
+            use_iterative,
+            input.reuse_vectors,
+        )
     else
-        pick_init_vectors(cache, basis_gvecs.len, nbands, use_iterative, reuse_vectors);
-    const use_cg = (cfg.scf.solver == .cg);
-    const eig_start = if (profile_ptr != null) profile_start(io) else null;
+        pick_init_vectors(input.cache, basis_gvecs.len, nbands, use_iterative, input.reuse_vectors);
+    const use_cg = (input.cfg.scf.solver == .cg);
+    const eig_start = if (input.profile_ptr != null) profile_start(input.io) else null;
     const eig = if (use_iterative)
         try run_iterative_eigen_decomp(
             alloc,
-            io,
-            cfg,
-            grid,
+            input.io,
+            input.cfg,
+            input.grid,
             basis_gvecs,
-            species,
-            atoms,
+            input.species,
+            input.atoms,
             inv_volume,
-            local_r,
+            input.local_r,
             vnl,
-            nonlocal_enabled,
-            profile_ptr,
-            fft_index_map,
-            shared_fft_plan,
-            apply_cache,
-            radial_tables,
-            paw_tabs,
-            iter_max_iter,
-            iter_tol,
+            input.nonlocal_enabled,
+            input.profile_ptr,
+            input.fft_index_map,
+            input.shared_fft_plan,
+            input.apply_cache,
+            input.radial_tables,
+            input.paw_tabs,
+            input.iter_max_iter,
+            input.iter_tol,
             init.init_vectors,
             init.init_cols,
             nbands,
@@ -1018,113 +1039,68 @@ fn run_kpoint_solve(
     else
         try run_dense_eigen_decomp(
             alloc,
-            io,
-            cfg,
+            input.io,
+            input.cfg,
             basis_gvecs,
-            species,
-            atoms,
+            input.species,
+            input.atoms,
             inv_volume,
-            local_cfg,
-            potential,
-            has_qij,
-            profile_ptr,
+            input.local_cfg,
+            input.potential,
+            input.has_qij,
+            input.profile_ptr,
         );
-    if (profile_ptr) |p| profile_add(io, &p.eig_ns, eig_start);
+    if (input.profile_ptr) |p| profile_add(input.io, &p.eig_ns, eig_start);
     return eig;
 }
 
 fn solve_kpoint(
     alloc: std.mem.Allocator,
-    io: std.Io,
-    cfg: *const config.Config,
-    grid: Grid,
-    kp: KPoint,
-    species: []const hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
-    recip: math.Mat3,
-    volume: f64,
-    local_cfg: local_potential.LocalPotentialConfig,
-    potential: hamiltonian.PotentialGrid,
-    local_r: ?[]f64,
-    nocc: usize,
-    use_iterative_config: bool,
-    has_qij: bool,
-    nonlocal_enabled: bool,
-    fft_index_map: ?[]const usize,
-    iter_max_iter: usize,
-    iter_tol: f64,
-    reuse_vectors: bool,
-    cache: *KpointCache,
-    profile_ptr: ?*ScfProfile,
-    shared_fft_plan: ?fft.Fft3dPlan,
-    apply_cache: ?*apply.KpointApplyCache,
-    radial_tables: ?[]const nonlocal.RadialTableSet,
-    paw_tabs: ?[]const paw_mod.PawTab,
-    loose_init: bool,
+    input: KpointSolveInput,
 ) !SolvedKpoint {
     var basis = try generate_basis_profiled(
         alloc,
-        io,
-        recip,
-        cfg.scf.ecut_ry,
-        kp.k_cart,
-        profile_ptr,
+        input.io,
+        input.recip,
+        input.cfg.scf.ecut_ry,
+        input.kp.k_cart,
+        input.profile_ptr,
     );
     errdefer basis.deinit(alloc);
 
-    const nbands = @min(@max(cfg.band.nbands, nocc), basis.gvecs.len);
-    if (nocc > basis.gvecs.len) return error.InsufficientBands;
-    const inv_volume = 1.0 / volume;
+    const nbands = @min(@max(input.cfg.band.nbands, input.nocc), basis.gvecs.len);
+    if (input.nocc > basis.gvecs.len) return error.InsufficientBands;
+    const inv_volume = 1.0 / input.volume;
     var apply_ctx: ?ApplyContext = null;
     errdefer if (apply_ctx) |*ctx| ctx.deinit(alloc);
 
     const use_iterative = try choose_iterative_solver(
-        io,
-        cfg,
-        grid,
+        input.io,
+        input.cfg,
+        input.grid,
         basis.gvecs,
-        use_iterative_config,
+        input.use_iterative_config,
     );
     const vnl = try build_vnl_if_needed(
         alloc,
-        io,
+        input.io,
         basis.gvecs,
-        species,
-        atoms,
+        input.species,
+        input.atoms,
         inv_volume,
         use_iterative,
-        nonlocal_enabled,
-        profile_ptr,
+        input.nonlocal_enabled,
+        input.profile_ptr,
     );
     errdefer if (vnl) |mat| alloc.free(mat);
 
     var eig = try run_kpoint_solve(
         alloc,
-        io,
-        cfg,
-        grid,
+        input,
         basis.gvecs,
-        species,
-        atoms,
         inv_volume,
-        local_cfg,
-        potential,
-        local_r,
-        has_qij,
-        nonlocal_enabled,
-        fft_index_map,
-        iter_max_iter,
-        iter_tol,
-        reuse_vectors,
-        cache,
-        profile_ptr,
-        shared_fft_plan,
-        apply_cache,
-        radial_tables,
-        paw_tabs,
         nbands,
         use_iterative,
-        loose_init,
         vnl,
         &apply_ctx,
     );
@@ -1137,100 +1113,55 @@ fn solve_kpoint(
         .apply_ctx = apply_ctx,
         .inv_volume = inv_volume,
         .nbands = nbands,
-        .store_vectors = use_iterative and reuse_vectors,
+        .store_vectors = use_iterative and input.reuse_vectors,
     };
 }
 
 pub fn compute_kpoint_contribution(
     alloc: std.mem.Allocator,
-    io: std.Io,
-    cfg: *const config.Config,
-    grid: Grid,
-    kp: KPoint,
-    species: []const hamiltonian.SpeciesEntry,
-    atoms: []const hamiltonian.AtomData,
-    recip: math.Mat3,
-    volume: f64,
-    local_cfg: local_potential.LocalPotentialConfig,
-    potential: hamiltonian.PotentialGrid,
-    local_r: ?[]f64,
-    nocc: usize,
+    input: KpointSolveInput,
     nelec: f64,
-    use_iterative_config: bool,
-    has_qij: bool,
-    nonlocal_enabled: bool,
-    fft_index_map: ?[]const usize,
-    iter_max_iter: usize,
-    iter_tol: f64,
-    reuse_vectors: bool,
-    cache: *KpointCache,
     rho: []f64,
     band_energy: *f64,
     nonlocal_energy: *f64,
-    profile_ptr: ?*ScfProfile,
-    shared_fft_plan: ?fft.Fft3dPlan,
-    apply_cache: ?*apply.KpointApplyCache,
-    radial_tables: ?[]const nonlocal.RadialTableSet,
-    paw_tabs: ?[]const paw_mod.PawTab,
     paw_rhoij: ?*paw_mod.RhoIJ,
 ) !void {
-    var solved = try solve_kpoint(
-        alloc,
-        io,
-        cfg,
-        grid,
-        kp,
-        species,
-        atoms,
-        recip,
-        volume,
-        local_cfg,
-        potential,
-        local_r,
-        nocc,
-        use_iterative_config,
-        has_qij,
-        nonlocal_enabled,
-        fft_index_map,
-        iter_max_iter,
-        iter_tol,
-        reuse_vectors,
-        cache,
-        profile_ptr,
-        shared_fft_plan,
-        apply_cache,
-        radial_tables,
-        paw_tabs,
-        false,
-    );
+    var solved = try solve_kpoint(alloc, input);
     defer solved.deinit(alloc);
 
     // FFT now supports arbitrary sizes via Bluestein's algorithm
-    var dbufs = try allocate_density_buffers(alloc, io, cfg, grid, solved.basis.gvecs);
+    var dbufs = try allocate_density_buffers(
+        alloc,
+        input.io,
+        input.cfg,
+        input.grid,
+        solved.basis.gvecs,
+    );
     defer deinit_density_buffers(alloc, &dbufs);
 
     try accumulate_band_contributions(
         alloc,
-        io,
-        cfg,
-        grid,
-        kp,
-        solved.basis.gvecs,
-        atoms,
-        solved.inv_volume,
-        nocc,
-        nelec,
-        solved.nbands,
-        solved.eig,
-        solved.vnl,
-        &solved.apply_ctx,
-        apply_cache,
-        fft_index_map,
-        dbufs.map,
-        dbufs.recip,
-        dbufs.real,
-        &dbufs.plan,
-        profile_ptr,
+        .{
+            .io = input.io,
+            .grid = input.grid,
+            .kp = input.kp,
+            .basis_gvecs = solved.basis.gvecs,
+            .atoms = input.atoms,
+            .inv_volume = solved.inv_volume,
+            .nocc = input.nocc,
+            .nelec = nelec,
+            .nbands = solved.nbands,
+            .eig = solved.eig,
+            .vnl = solved.vnl,
+            .apply_ctx = &solved.apply_ctx,
+            .apply_cache = input.apply_cache,
+            .fft_index_map = input.fft_index_map,
+            .density_map = dbufs.map,
+            .density_recip = dbufs.recip,
+            .density_real = dbufs.real,
+            .density_plan = &dbufs.plan,
+            .profile_ptr = input.profile_ptr,
+        },
         rho,
         band_energy,
         nonlocal_energy,
@@ -1238,7 +1169,7 @@ pub fn compute_kpoint_contribution(
     );
 
     try store_eig_result(
-        cache,
+        input.cache,
         solved.basis.gvecs.len,
         solved.nbands,
         solved.eig,
@@ -1308,10 +1239,8 @@ fn accumulate_band_paw_rho_ij(
 }
 
 /// Per-band band-energy, nonlocal-energy, density and (optionally) PAW rhoij accumulation.
-fn accumulate_band_contributions(
-    alloc: std.mem.Allocator,
+const BandAccumulationInput = struct {
     io: std.Io,
-    cfg: *const config.Config,
     grid: Grid,
     kp: KPoint,
     basis_gvecs: []plane_wave.GVector,
@@ -1330,61 +1259,69 @@ fn accumulate_band_contributions(
     density_real: ?[]math.Complex,
     density_plan: *?fft.Fft3dPlan,
     profile_ptr: ?*ScfProfile,
+};
+
+fn accumulate_band_contributions(
+    alloc: std.mem.Allocator,
+    input: BandAccumulationInput,
     rho: []f64,
     band_energy: *f64,
     nonlocal_energy: *f64,
     paw_rhoij: ?*paw_mod.RhoIJ,
 ) !void {
-    _ = cfg;
-    const occ_last = if (nocc == 0)
+    const occ_last = if (input.nocc == 0)
         0.0
     else
-        nelec / 2.0 - @as(f64, @floatFromInt(nocc - 1));
+        input.nelec / 2.0 - @as(f64, @floatFromInt(input.nocc - 1));
     const spin_factor = 2.0;
     var band: usize = 0;
-    while (band < nocc and band < nbands) : (band += 1) {
-        const occ = if (band + 1 == nocc) occ_last else 1.0;
+    while (band < input.nocc and band < input.nbands) : (band += 1) {
+        const occ = if (band + 1 == input.nocc) occ_last else 1.0;
         if (occ <= 0.0) continue;
-        const w = kp.weight * occ * spin_factor;
-        band_energy.* += w * eig.values[band];
-        if (vnl) |mat| {
-            const e_nl = band_nonlocal_energy(basis_gvecs.len, mat, eig.vectors, band);
+        const w = input.kp.weight * occ * spin_factor;
+        band_energy.* += w * input.eig.values[band];
+        if (input.vnl) |mat| {
+            const e_nl = band_nonlocal_energy(input.basis_gvecs.len, mat, input.eig.vectors, band);
             nonlocal_energy.* += w * e_nl;
-        } else if (apply_ctx.*) |*ctx| {
+        } else if (input.apply_ctx.*) |*ctx| {
             if (ctx.nonlocal_ctx != null) {
-                const psi = eig.vectors[band * basis_gvecs.len .. (band + 1) * basis_gvecs.len];
+                const psi_start = band * input.basis_gvecs.len;
+                const psi_end = (band + 1) * input.basis_gvecs.len;
+                const psi = input.eig.vectors[psi_start..psi_end];
                 try apply_nonlocal_potential(ctx, psi, ctx.work_vec);
-                const e_nl = inner_product(basis_gvecs.len, psi, ctx.work_vec).r;
+                const e_nl = inner_product(input.basis_gvecs.len, psi, ctx.work_vec).r;
                 nonlocal_energy.* += w * e_nl;
             }
         }
-        const density_start = if (profile_ptr != null) profile_start(io) else null;
-        const coeffs = eig.vectors[band * basis_gvecs.len .. (band + 1) * basis_gvecs.len];
+        const density_start = if (input.profile_ptr != null) profile_start(input.io) else null;
+        const coeff_start = band * input.basis_gvecs.len;
+        const coeff_end = (band + 1) * input.basis_gvecs.len;
+        const coeffs = input.eig.vectors[coeff_start..coeff_end];
         try accumulate_band_density_fft(
             alloc,
-            grid,
-            density_map.?,
+            input.grid,
+            input.density_map.?,
             coeffs,
-            density_recip.?,
-            density_real.?,
-            if (density_plan.*) |*plan| plan else null,
-            fft_index_map,
+            input.density_recip.?,
+            input.density_real.?,
+            if (input.density_plan.*) |*plan| plan else null,
+            input.fft_index_map,
             w,
-            inv_volume,
+            input.inv_volume,
             rho,
         );
-        if (profile_ptr) |p| profile_add(io, &p.density_ns, density_start);
+        if (input.profile_ptr) |p| profile_add(input.io, &p.density_ns, density_start);
 
         if (paw_rhoij) |rij| {
             try accumulate_band_paw_rho_ij(
                 alloc,
-                apply_cache,
-                apply_ctx,
-                basis_gvecs,
-                atoms,
+                input.apply_cache,
+                input.apply_ctx,
+                input.basis_gvecs,
+                input.atoms,
                 coeffs,
                 w,
-                inv_volume,
+                input.inv_volume,
                 rij,
             );
         }
@@ -1506,32 +1443,34 @@ pub fn compute_kpoint_eigen_data(
 ) !KpointEigenData {
     var solved = try solve_kpoint(
         alloc,
-        io,
-        cfg,
-        grid,
-        kp,
-        species,
-        atoms,
-        recip,
-        volume,
-        local_cfg,
-        potential,
-        local_r,
-        nocc,
-        use_iterative_config,
-        has_qij,
-        nonlocal_enabled,
-        fft_index_map,
-        iter_max_iter,
-        iter_tol,
-        reuse_vectors,
-        cache,
-        profile_ptr,
-        shared_fft_plan,
-        apply_cache,
-        radial_tables,
-        paw_tabs,
-        true,
+        .{
+            .io = io,
+            .cfg = cfg,
+            .grid = grid,
+            .kp = kp,
+            .species = species,
+            .atoms = atoms,
+            .recip = recip,
+            .volume = volume,
+            .local_cfg = local_cfg,
+            .potential = potential,
+            .local_r = local_r,
+            .nocc = nocc,
+            .use_iterative_config = use_iterative_config,
+            .has_qij = has_qij,
+            .nonlocal_enabled = nonlocal_enabled,
+            .fft_index_map = fft_index_map,
+            .iter_max_iter = iter_max_iter,
+            .iter_tol = iter_tol,
+            .reuse_vectors = reuse_vectors,
+            .cache = cache,
+            .profile_ptr = profile_ptr,
+            .shared_fft_plan = shared_fft_plan,
+            .apply_cache = apply_cache,
+            .radial_tables = radial_tables,
+            .paw_tabs = paw_tabs,
+            .loose_init = true,
+        },
     );
     defer solved.deinit(alloc);
 
