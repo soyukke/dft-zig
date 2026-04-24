@@ -48,6 +48,11 @@ const ActiveStructure = struct {
     volume_bohr: f64,
 };
 
+const ResolvedActiveStructure = struct {
+    active: ActiveStructure,
+    cell_ang: math.Mat3,
+};
+
 fn cell_volume(cell_bohr: math.Mat3) f64 {
     const a1 = cell_bohr.row(0);
     const a2 = cell_bohr.row(1);
@@ -79,6 +84,128 @@ fn select_active_structure(
     };
 }
 
+fn open_run_out_dir(cwd: std.Io.Dir, io: std.Io, cfg: config.Config) !std.Io.Dir {
+    try cwd.createDirPath(io, cfg.out_dir);
+    return cwd.openDir(io, cfg.out_dir, .{});
+}
+
+fn resolve_active_run_structure(
+    setup: *const RunSetup,
+    relax_result: ?*const relax.RelaxResult,
+) ResolvedActiveStructure {
+    const active = select_active_structure(
+        setup.atom_data,
+        setup.cell.cell_bohr,
+        setup.cell.recip,
+        setup.cell.volume_bohr,
+        relax_result,
+    );
+    return .{
+        .active = active,
+        .cell_ang = active.cell_bohr.scale(math.units_scale_to_angstrom(.bohr)),
+    };
+}
+
+const ScfFlowState = struct {
+    active_model: model_mod.Model,
+    scf_result: ?scf.ScfResult = null,
+};
+
+const BandPathState = struct {
+    auto_path_result: ?kpath.auto_kpath.AutoKPathResult = null,
+    kpoints: kpath.KPath,
+
+    fn deinit(self: *BandPathState, alloc: std.mem.Allocator) void {
+        self.kpoints.deinit(alloc);
+        if (self.auto_path_result) |*result| result.deinit(alloc);
+    }
+};
+
+fn run_main_scf_flow(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    out_dir: std.Io.Dir,
+    cwd: std.Io.Dir,
+    cfg: config.Config,
+    species: []const hamiltonian.SpeciesEntry,
+    active: ActiveStructure,
+    relax_result: *?relax.RelaxResult,
+    timing: *output.Timing,
+) !ScfFlowState {
+    var flow = ScfFlowState{
+        .active_model = build_active_model(species, active),
+    };
+    try maybe_run_scf(
+        alloc,
+        io,
+        cfg,
+        &flow.active_model,
+        relax_result,
+        &flow.scf_result,
+        timing,
+    );
+    try run_post_scf_pipeline(
+        alloc,
+        io,
+        out_dir,
+        cwd,
+        cfg,
+        &flow.active_model,
+        species,
+        active,
+        &flow.scf_result,
+    );
+    return flow;
+}
+
+fn prepare_band_kpath(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: config.Config,
+    active: ActiveStructure,
+) !BandPathState {
+    try log_step(io, "step: generate k-path");
+    var auto_path_result: ?kpath.auto_kpath.AutoKPathResult = null;
+    return .{
+        .auto_path_result = auto_path_result,
+        .kpoints = try generate_band_kpath(alloc, cfg, active, &auto_path_result),
+    };
+}
+
+fn finalize_and_finish_run(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    out_dir: std.Io.Dir,
+    cfg: config.Config,
+    atoms: []const xyz.Atom,
+    resolved: ResolvedActiveStructure,
+    species: []const hamiltonian.SpeciesEntry,
+    kpoints: kpath.KPath,
+    pseudo_data: []const pseudo.Parsed,
+    flow: *ScfFlowState,
+    relax_result: *?relax.RelaxResult,
+    timing: *output.Timing,
+    total_start_ns: u64,
+) !void {
+    try finalize_run_outputs(
+        alloc,
+        io,
+        out_dir,
+        cfg,
+        atoms,
+        resolved.cell_ang,
+        resolved.active,
+        species,
+        kpoints,
+        pseudo_data,
+        &flow.active_model,
+        relax_result,
+        &flow.scf_result,
+        timing,
+    );
+    try finish_run(io, out_dir, cfg, flow.scf_result, timing, total_start_ns, kpoints.points.len);
+}
+
 /// Run the current DFT workflow.
 pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xyz.Atom) !void {
     const total_start_ns = now_ns(io);
@@ -86,8 +213,7 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
     timing.cpu_start_us = output.Timing.get_cpu_time_us();
 
     const cwd = std.Io.Dir.cwd();
-    try cwd.createDirPath(io, cfg.out_dir);
-    var out_dir = try cwd.openDir(io, cfg.out_dir, .{});
+    var out_dir = try open_run_out_dir(cwd, io, cfg);
     defer out_dir.close(io);
 
     const setup = try prepare_run_setup(alloc, io, cfg, atoms);
@@ -113,58 +239,43 @@ pub fn run(alloc: std.mem.Allocator, io: std.Io, cfg: config.Config, atoms: []xy
         &timing,
     );
 
-    const active = select_active_structure(
-        setup.atom_data,
-        setup.cell.cell_bohr,
-        setup.cell.recip,
-        setup.cell.volume_bohr,
+    const resolved = resolve_active_run_structure(
+        &setup,
         if (relax_result) |*rr| rr else null,
     );
-    const cell_ang = active.cell_bohr.scale(math.units_scale_to_angstrom(.bohr));
+    const active = resolved.active;
 
-    try log_step(io, "step: generate k-path");
-    var auto_path_result: ?kpath.auto_kpath.AutoKPathResult = null;
-    defer if (auto_path_result) |*r| r.deinit(alloc);
+    var band_path = try prepare_band_kpath(alloc, io, cfg, active);
+    defer band_path.deinit(alloc);
 
-    var kpoints = try generate_band_kpath(alloc, cfg, active, &auto_path_result);
-    defer kpoints.deinit(alloc);
-
-    var scf_result: ?scf.ScfResult = null;
-    defer if (scf_result) |*result| result.deinit(alloc);
-
-    const active_model = build_active_model(setup.species, active);
-    try maybe_run_scf(alloc, io, cfg, &active_model, &relax_result, &scf_result, &timing);
-
-    try run_post_scf_pipeline(
+    var flow = try run_main_scf_flow(
         alloc,
         io,
         out_dir,
         cwd,
         cfg,
-        &active_model,
         setup.species,
         active,
-        &scf_result,
+        &relax_result,
+        &timing,
     );
+    defer if (flow.scf_result) |*result| result.deinit(alloc);
 
-    try finalize_run_outputs(
+    try finalize_and_finish_run(
         alloc,
         io,
         out_dir,
         cfg,
         atoms,
-        cell_ang,
-        active,
+        resolved,
         setup.species,
-        kpoints,
+        band_path.kpoints,
         setup.pseudo_data,
-        &active_model,
+        &flow,
         &relax_result,
-        &scf_result,
         &timing,
+        total_start_ns,
     );
-
-    try finish_run(io, out_dir, cfg, scf_result, &timing, total_start_ns, kpoints.points.len);
 }
 
 /// Write all end-of-run outputs: run-info/atoms/kpoints/pseudos, and band
