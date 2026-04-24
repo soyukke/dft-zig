@@ -585,84 +585,88 @@ pub fn symmetrize_dynmat_complex(
     const nsym = symops.len;
     if (nsym <= 1) return; // Nothing to symmetrize
 
-    const two_pi = 2.0 * std.math.pi;
-
-    // Accumulate symmetrized matrix (dynamically allocated for large systems)
     const dyn_sym = try alloc.alloc(math.Complex, dim * dim);
     defer alloc.free(dyn_sym);
 
     @memset(dyn_sym, math.complex.init(0.0, 0.0));
 
     var nsym_used: usize = 0;
-
     for (0..nsym) |isym| {
-        // Check if this symmetry operation belongs to the little group of q:
-        // S^T q ≡ q (mod G), i.e., (S^T q - q) must be integer
         const rot = symops[isym].rot;
-        const sq = symmetry_mod.Mat3i.transpose(rot).mul_vec(q_frac);
-        const dq_x = sq.x - q_frac.x;
-        const dq_y = sq.y - q_frac.y;
-        const dq_z = sq.z - q_frac.z;
-        const tol_q: f64 = 1e-8;
-        if (@abs(dq_x - std.math.round(dq_x)) > tol_q or
-            @abs(dq_y - std.math.round(dq_y)) > tol_q or
-            @abs(dq_z - std.math.round(dq_z)) > tol_q)
-        {
-            continue; // Not in little group of q, skip
-        }
-
-        // Compute Cartesian rotation matrix for this symmetry operation
+        if (!is_q_little_group_operation(rot, q_frac)) continue;
         const r_cart = frac_rot_to_cart(symops[isym].rot, cell_bohr);
-
         for (0..n_atoms) |iatom| {
             for (0..n_atoms) |jatom| {
-                // Find images: S(iatom) and S(jatom)
                 const si = indsym[isym][iatom];
                 const sj = indsym[isym][jatom];
-
-                // Phase factor: exp(-i 2π q·(shift_i - shift_j))
                 const shift_i = tnons_shift[isym][iatom];
                 const shift_j = tnons_shift[isym][jatom];
-                const dshift = math.Vec3{
-                    .x = shift_i.x - shift_j.x,
-                    .y = shift_i.y - shift_j.y,
-                    .z = shift_i.z - shift_j.z,
-                };
-                // q is in fractional coordinates, shift is in fractional coordinates
-                // q·shift = q_frac · shift (dot product in fractional space)
-                const arg = -two_pi *
-                    (q_frac.x * dshift.x + q_frac.y * dshift.y + q_frac.z * dshift.z);
-                const phase = math.complex.init(@cos(arg), @sin(arg));
-
-                // D_sym(α,I; β,J) +=
-                //   R_cart[α][γ] × R_cart[β][δ] × D(γ,S(I); δ,S(J)) × phase
-                for (0..3) |alpha| {
-                    for (0..3) |beta| {
-                        var acc = math.complex.init(0.0, 0.0);
-                        for (0..3) |gamma_idx| {
-                            for (0..3) |delta| {
-                                const d_idx = (3 * si + gamma_idx) * dim + (3 * sj + delta);
-                                const d_elem = dynmat[d_idx];
-                                const coeff = r_cart[alpha][gamma_idx] * r_cart[beta][delta];
-                                acc = math.complex.add(acc, math.complex.scale(d_elem, coeff));
-                            }
-                        }
-                        // Multiply by phase
-                        acc = math.complex.mul(acc, phase);
-                        const idx = (3 * iatom + alpha) * dim + (3 * jatom + beta);
-                        dyn_sym[idx] = math.complex.add(dyn_sym[idx], acc);
-                    }
-                }
+                accumulate_symmetrized_atom_pair(
+                    dyn_sym,
+                    dynmat,
+                    dim,
+                    iatom,
+                    jatom,
+                    si,
+                    sj,
+                    r_cart,
+                    symmetry_phase(q_frac, shift_i, shift_j),
+                );
             }
         }
         nsym_used += 1;
     }
 
-    // Average over symmetry operations
     if (nsym_used > 0) {
         const inv_nsym = 1.0 / @as(f64, @floatFromInt(nsym_used));
         for (0..dim * dim) |i| {
             dynmat[i] = math.complex.scale(dyn_sym[i], inv_nsym);
+        }
+    }
+}
+
+fn is_q_little_group_operation(rot: symmetry_mod.Mat3i, q_frac: math.Vec3) bool {
+    const sq = symmetry_mod.Mat3i.transpose(rot).mul_vec(q_frac);
+    const tol_q: f64 = 1e-8;
+    return @abs((sq.x - q_frac.x) - std.math.round(sq.x - q_frac.x)) <= tol_q and
+        @abs((sq.y - q_frac.y) - std.math.round(sq.y - q_frac.y)) <= tol_q and
+        @abs((sq.z - q_frac.z) - std.math.round(sq.z - q_frac.z)) <= tol_q;
+}
+
+fn symmetry_phase(q_frac: math.Vec3, shift_i: math.Vec3, shift_j: math.Vec3) math.Complex {
+    const dshift = math.Vec3{
+        .x = shift_i.x - shift_j.x,
+        .y = shift_i.y - shift_j.y,
+        .z = shift_i.z - shift_j.z,
+    };
+    const arg = -2.0 * std.math.pi *
+        (q_frac.x * dshift.x + q_frac.y * dshift.y + q_frac.z * dshift.z);
+    return math.complex.init(@cos(arg), @sin(arg));
+}
+
+fn accumulate_symmetrized_atom_pair(
+    dyn_sym: []math.Complex,
+    dynmat: []const math.Complex,
+    dim: usize,
+    iatom: usize,
+    jatom: usize,
+    si: usize,
+    sj: usize,
+    r_cart: [3][3]f64,
+    phase: math.Complex,
+) void {
+    for (0..3) |alpha| {
+        for (0..3) |beta| {
+            var acc = math.complex.init(0.0, 0.0);
+            for (0..3) |gamma_idx| {
+                for (0..3) |delta| {
+                    const d_idx = (3 * si + gamma_idx) * dim + (3 * sj + delta);
+                    const coeff = r_cart[alpha][gamma_idx] * r_cart[beta][delta];
+                    acc = math.complex.add(acc, math.complex.scale(dynmat[d_idx], coeff));
+                }
+            }
+            const idx = (3 * iatom + alpha) * dim + (3 * jatom + beta);
+            dyn_sym[idx] = math.complex.add(dyn_sym[idx], math.complex.mul(acc, phase));
         }
     }
 }
