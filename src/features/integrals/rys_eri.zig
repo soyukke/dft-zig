@@ -602,6 +602,32 @@ fn prepare_ket_pairs(
     return n_ket;
 }
 
+fn fill_primitive_quartet_root_data(
+    workspace: *RecurrenceWorkspace,
+    nroots: usize,
+    pq: f64,
+    bra: BraPair,
+    ket: KetPair,
+    wx: f64,
+    wy: f64,
+    wz: f64,
+    prefactor: f64,
+) void {
+    for (0..nroots) |r| {
+        const t2 = workspace.rys_roots[r];
+        workspace.b00_arr[r] = 0.5 / pq * t2;
+        workspace.b10_arr[r] = bra.inv_2p * (1.0 - ket.q / pq * t2);
+        workspace.b01_arr[r] = ket.inv_2q * (1.0 - bra.p / pq * t2);
+        workspace.c00x[r] = bra.pax + (wx - bra.px) * t2;
+        workspace.c00y[r] = bra.pay + (wy - bra.py) * t2;
+        workspace.c00z[r] = bra.paz + (wz - bra.pz) * t2;
+        workspace.c0px[r] = ket.qcx + (wx - ket.qx) * t2;
+        workspace.c0py[r] = ket.qcy + (wy - ket.qy) * t2;
+        workspace.c0pz[r] = ket.qcz + (wz - ket.qz) * t2;
+        workspace.w_pref[r] = workspace.rys_weights[r] * prefactor;
+    }
+}
+
 fn prepare_primitive_quartet(
     workspace: *RecurrenceWorkspace,
     setup: QuartetSetup,
@@ -630,19 +656,7 @@ fn prepare_primitive_quartet(
         &workspace.rys_roots,
         &workspace.rys_weights,
     );
-    for (0..setup.nroots) |r| {
-        const t2 = workspace.rys_roots[r];
-        workspace.b00_arr[r] = 0.5 / pq * t2;
-        workspace.b10_arr[r] = bra.inv_2p * (1.0 - ket.q / pq * t2);
-        workspace.b01_arr[r] = ket.inv_2q * (1.0 - bra.p / pq * t2);
-        workspace.c00x[r] = bra.pax + (wx - bra.px) * t2;
-        workspace.c00y[r] = bra.pay + (wy - bra.py) * t2;
-        workspace.c00z[r] = bra.paz + (wz - bra.pz) * t2;
-        workspace.c0px[r] = ket.qcx + (wx - ket.qx) * t2;
-        workspace.c0py[r] = ket.qcy + (wy - ket.qy) * t2;
-        workspace.c0pz[r] = ket.qcz + (wz - ket.qz) * t2;
-        workspace.w_pref[r] = workspace.rys_weights[r] * prefactor;
-    }
+    fill_primitive_quartet_root_data(workspace, setup.nroots, pq, bra, ket, wx, wy, wz, prefactor);
 
     const g_axis_size = setup.nroots * setup.dim_ij * setup.dim_kl;
     build_g2d(
