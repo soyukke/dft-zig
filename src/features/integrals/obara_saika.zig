@@ -1270,6 +1270,20 @@ fn eri_recursive(
     return eri_vertical(a, c, m, params);
 }
 
+const VerticalAxis = struct {
+    axis: usize,
+    from_a: bool,
+};
+
+fn select_vertical_axis(a: [3]u32, c: [3]u32) VerticalAxis {
+    if (a[0] > 0 or a[1] > 0 or a[2] > 0) {
+        const axis: usize = if (a[0] > 0) 0 else if (a[1] > 0) 1 else 2;
+        return .{ .axis = axis, .from_a = true };
+    }
+    const axis: usize = if (c[0] > 0) 0 else if (c[1] > 0) 1 else 2;
+    return .{ .axis = axis, .from_a = false };
+}
+
 /// Vertical recurrence for [a,0|c,0]^(m) (fallback recursive version).
 fn eri_vertical(
     a: [3]u32,
@@ -1281,30 +1295,10 @@ fn eri_vertical(
         return params.boys[m];
     }
 
-    var axis: usize = 0;
-    var from_a = true;
+    const vertical = select_vertical_axis(a, c);
+    const axis = vertical.axis;
 
-    if (a[0] > 0 or a[1] > 0 or a[2] > 0) {
-        if (a[0] > 0) {
-            axis = 0;
-        } else if (a[1] > 0) {
-            axis = 1;
-        } else {
-            axis = 2;
-        }
-        from_a = true;
-    } else {
-        if (c[0] > 0) {
-            axis = 0;
-        } else if (c[1] > 0) {
-            axis = 1;
-        } else {
-            axis = 2;
-        }
-        from_a = false;
-    }
-
-    if (from_a) {
+    if (vertical.from_a) {
         var a_dec = a;
         a_dec[axis] -= 1;
 
