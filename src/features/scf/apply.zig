@@ -35,6 +35,12 @@ const fft_complex_to_reciprocal_in_place_mapped =
 const profile_start = logging.profile_start;
 const profile_add = logging.profile_add;
 
+const SharedWorkspaceState = struct {
+    count: usize,
+    workspaces: []ApplyWorkspace,
+    ws_in_use: []std.atomic.Value(u8),
+};
+
 /// Thread-local workspace for apply_hamiltonian
 pub const ApplyWorkspace = struct {
     work_recip: []math.Complex,
@@ -249,6 +255,49 @@ fn build_apply_context(s: ApplyContextSetup) ApplyContext {
         .work_coeff = s.workspaces[0].work_coeff,
         .work_coeff2 = s.workspaces[0].work_coeff2,
     };
+}
+
+fn init_shared_workspace_state(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    gvec_count: usize,
+    max_m_total: usize,
+    plan: fft.Fft3dPlan,
+    num_workspaces: usize,
+) !SharedWorkspaceState {
+    const ws_count = @max(num_workspaces, 1);
+    const workspaces = try alloc_shared_plan_workspaces(
+        alloc,
+        grid,
+        gvec_count,
+        max_m_total,
+        plan,
+        ws_count,
+    );
+    errdefer {
+        for (workspaces) |*ws| {
+            ws.deinit_without_plan(alloc);
+        }
+        alloc.free(workspaces);
+    }
+
+    const ws_in_use = try alloc_ws_in_use(alloc, ws_count);
+    errdefer alloc.free(ws_in_use);
+    return .{
+        .count = ws_count,
+        .workspaces = workspaces,
+        .ws_in_use = ws_in_use,
+    };
+}
+
+fn maybe_build_fft_indices(
+    alloc: std.mem.Allocator,
+    map: *PwGridMap,
+    fft_index_map: ?[]const usize,
+) !void {
+    if (fft_index_map) |idx_map| {
+        try map.build_fft_indices(alloc, idx_map);
+    }
 }
 
 pub const ApplyContext = struct {
@@ -471,10 +520,7 @@ pub const ApplyContext = struct {
 
         var map = try PwGridMap.init(alloc, gvecs, grid);
         errdefer map.deinit(alloc);
-
-        if (fft_index_map) |idx_map| {
-            try map.build_fft_indices(alloc, idx_map);
-        }
+        try maybe_build_fft_indices(alloc, &map, fft_index_map);
 
         var plan = try fft.Fft3dPlan.init_with_backend(
             alloc,
@@ -487,24 +533,14 @@ pub const ApplyContext = struct {
         errdefer plan.deinit(alloc);
 
         const max_m_total = if (nonlocal_ctx) |ctx| ctx.max_m_total else 0;
-        const ws_count = @max(num_workspaces, 1);
-        const workspaces = try alloc_shared_plan_workspaces(
+        const workspace_state = try init_shared_workspace_state(
             alloc,
             grid,
             gvecs.len,
             max_m_total,
             plan,
-            ws_count,
+            num_workspaces,
         );
-        errdefer {
-            for (workspaces) |*ws| {
-                ws.deinit_without_plan(alloc);
-            }
-            alloc.free(workspaces);
-        }
-
-        const ws_in_use = try alloc_ws_in_use(alloc, ws_count);
-        errdefer alloc.free(ws_in_use);
 
         return build_apply_context(.{
             .alloc = alloc,
@@ -523,9 +559,9 @@ pub const ApplyContext = struct {
             .owns_fft_plan = true,
             .owns_nonlocal = true,
             .owns_map = true,
-            .workspaces = workspaces,
-            .num_workspaces = ws_count,
-            .ws_in_use = ws_in_use,
+            .workspaces = workspace_state.workspaces,
+            .num_workspaces = workspace_state.count,
+            .ws_in_use = workspace_state.ws_in_use,
         });
     }
 
