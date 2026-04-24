@@ -397,24 +397,8 @@ pub fn build_indsym(
 } {
     const nsym = symops.len;
     const natom = atoms.len;
-
-    // Convert atom positions to fractional coordinates
-    const two_pi = 2.0 * std.math.pi;
-    const b1 = recip.row(0);
-    const b2 = recip.row(1);
-    const b3 = recip.row(2);
-
-    const atom_fracs = try alloc.alloc(math.Vec3, natom);
+    const atom_fracs = try build_atom_fractional_positions(alloc, atoms, recip);
     defer alloc.free(atom_fracs);
-
-    for (atoms, 0..) |atom, i| {
-        const pos = atom.position;
-        atom_fracs[i] = .{
-            .x = math.Vec3.dot(b1, pos) / two_pi,
-            .y = math.Vec3.dot(b2, pos) / two_pi,
-            .z = math.Vec3.dot(b3, pos) / two_pi,
-        };
-    }
 
     const indsym = try alloc.alloc([]usize, nsym);
     errdefer {
@@ -434,50 +418,78 @@ pub fn build_indsym(
         const trans = symops[isym].trans;
 
         for (0..natom) |iatom| {
-            // Apply rotation + translation in fractional coords
-            const rotated = rot.mul_vec(atom_fracs[iatom]);
-            const image = math.Vec3{
-                .x = rotated.x + trans.x,
-                .y = rotated.y + trans.y,
-                .z = rotated.z + trans.z,
-            };
-
-            // Find matching atom in the unit cell
-            var found = false;
-            for (0..natom) |jatom| {
-                if (atoms[jatom].species_index != atoms[iatom].species_index) continue;
-                // Check if image ≡ atom_j (mod lattice)
-                const diff = math.Vec3{
-                    .x = image.x - atom_fracs[jatom].x,
-                    .y = image.y - atom_fracs[jatom].y,
-                    .z = image.z - atom_fracs[jatom].z,
-                };
-                const shift = math.Vec3{
-                    .x = std.math.round(diff.x),
-                    .y = std.math.round(diff.y),
-                    .z = std.math.round(diff.z),
-                };
-                const residual = math.Vec3{
-                    .x = diff.x - shift.x,
-                    .y = diff.y - shift.y,
-                    .z = diff.z - shift.z,
-                };
-                if (@abs(residual.x) < tol and @abs(residual.y) < tol and @abs(residual.z) < tol) {
-                    indsym[isym][iatom] = jatom;
-                    // Store the lattice shift (image = atom_j + shift)
-                    tnons_shift[isym][iatom] = shift;
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                // This should not happen if symmetry operations are valid
+            const match = find_atom_symmetry_image(rot, trans, atom_fracs, atoms, iatom, tol) orelse
                 @panic("build_indsym: atom mapping failed");
-            }
+            indsym[isym][iatom] = match.index;
+            tnons_shift[isym][iatom] = match.shift;
         }
     }
 
     return .{ .indsym = indsym, .tnons_shift = tnons_shift };
+}
+
+const AtomSymmetryImage = struct {
+    index: usize,
+    shift: math.Vec3,
+};
+
+fn build_atom_fractional_positions(
+    alloc: std.mem.Allocator,
+    atoms: []const hamiltonian.AtomData,
+    recip: math.Mat3,
+) ![]math.Vec3 {
+    const two_pi = 2.0 * std.math.pi;
+    const b1 = recip.row(0);
+    const b2 = recip.row(1);
+    const b3 = recip.row(2);
+    const atom_fracs = try alloc.alloc(math.Vec3, atoms.len);
+    for (atoms, 0..) |atom, i| {
+        const pos = atom.position;
+        atom_fracs[i] = .{
+            .x = math.Vec3.dot(b1, pos) / two_pi,
+            .y = math.Vec3.dot(b2, pos) / two_pi,
+            .z = math.Vec3.dot(b3, pos) / two_pi,
+        };
+    }
+    return atom_fracs;
+}
+
+fn find_atom_symmetry_image(
+    rot: symmetry_mod.Mat3i,
+    trans: math.Vec3,
+    atom_fracs: []const math.Vec3,
+    atoms: []const hamiltonian.AtomData,
+    iatom: usize,
+    tol: f64,
+) ?AtomSymmetryImage {
+    const rotated = rot.mul_vec(atom_fracs[iatom]);
+    const image = math.Vec3{
+        .x = rotated.x + trans.x,
+        .y = rotated.y + trans.y,
+        .z = rotated.z + trans.z,
+    };
+    for (0..atoms.len) |jatom| {
+        if (atoms[jatom].species_index != atoms[iatom].species_index) continue;
+        const diff = math.Vec3{
+            .x = image.x - atom_fracs[jatom].x,
+            .y = image.y - atom_fracs[jatom].y,
+            .z = image.z - atom_fracs[jatom].z,
+        };
+        const shift = math.Vec3{
+            .x = std.math.round(diff.x),
+            .y = std.math.round(diff.y),
+            .z = std.math.round(diff.z),
+        };
+        const residual = math.Vec3{
+            .x = diff.x - shift.x,
+            .y = diff.y - shift.y,
+            .z = diff.z - shift.z,
+        };
+        if (@abs(residual.x) < tol and @abs(residual.y) < tol and @abs(residual.z) < tol) {
+            return .{ .index = jatom, .shift = shift };
+        }
+    }
+    return null;
 }
 
 /// Convert a fractional-coordinate rotation matrix to Cartesian coordinates.

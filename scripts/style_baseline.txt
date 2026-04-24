@@ -6,7 +6,7 @@
 # running: just lint-update-baseline
 #
 # Format: <path>\t<rule>\t<count>
-src/features/dfpt/dynmat.zig	function_too_long	3
+src/features/dfpt/dynmat.zig	function_too_long	2
 src/features/dfpt/electric.zig	function_too_long	3
 src/features/dfpt/gamma.zig	function_too_long	3
 src/features/dfpt/phonon_q/band_direct.zig	function_too_long	3
