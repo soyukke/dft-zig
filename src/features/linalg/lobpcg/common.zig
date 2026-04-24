@@ -342,6 +342,99 @@ fn init_zheev_work_buffer(
     };
 }
 
+fn init_zhegv_work_buffer(
+    alloc: std.mem.Allocator,
+    lwork: c_int,
+    work_stack: *[2 * 128 * 128]math.Complex,
+) !ZheevWorkBuffer {
+    if (@as(usize, @intCast(lwork)) <= work_stack.len) {
+        return .{ .ptr = work_stack };
+    }
+    const heap = try alloc.alloc(math.Complex, @intCast(lwork));
+    return .{
+        .ptr = heap.ptr,
+        .heap = heap,
+    };
+}
+
+const ZhegvInputs = struct {
+    vectors: []math.Complex,
+    b_copy: []math.Complex,
+    values: []f64,
+    rwork: []f64,
+    nn: c_int,
+    lda: c_int,
+    ldb: c_int,
+    itype: c_int,
+    jobz: [1]u8,
+    uplo: [1]u8,
+};
+
+fn init_zhegv_inputs(
+    alloc: std.mem.Allocator,
+    n: usize,
+    a: []math.Complex,
+    b: []math.Complex,
+    rwork_buf: *[3 * 128]f64,
+) !ZhegvInputs {
+    const vectors = try alloc.alloc(math.Complex, n * n);
+    errdefer alloc.free(vectors);
+    @memcpy(vectors, a[0 .. n * n]);
+
+    const b_copy = try alloc.alloc(math.Complex, n * n);
+    errdefer alloc.free(b_copy);
+    @memcpy(b_copy, b[0 .. n * n]);
+
+    const values = try alloc.alloc(f64, n);
+    errdefer alloc.free(values);
+
+    const rwork_len = if (3 * n > 2) 3 * n - 2 else 1;
+    const rwork = if (rwork_len <= rwork_buf.len)
+        rwork_buf[0..rwork_len]
+    else
+        return error.MatrixTooLarge;
+
+    return .{
+        .vectors = vectors,
+        .b_copy = b_copy,
+        .values = values,
+        .rwork = rwork,
+        .nn = @intCast(n),
+        .lda = @intCast(n),
+        .ldb = @intCast(n),
+        .itype = 1,
+        .jobz = [1]u8{'V'},
+        .uplo = [1]u8{'U'},
+    };
+}
+
+fn query_zhegv_lwork(inputs: *const ZhegvInputs, info: *c_int) c_int {
+    var nn = inputs.nn;
+    var lda = inputs.lda;
+    var ldb = inputs.ldb;
+    var itype = inputs.itype;
+    var jobz = inputs.jobz;
+    var uplo = inputs.uplo;
+    var lwork: c_int = -1;
+    var work_query = math.complex.init(0.0, 0.0);
+    zhegv_(
+        &itype,
+        &jobz,
+        &uplo,
+        &nn,
+        @ptrCast(inputs.vectors.ptr),
+        &lda,
+        @ptrCast(inputs.b_copy.ptr),
+        &ldb,
+        inputs.values.ptr,
+        @ptrCast(&work_query),
+        &lwork,
+        inputs.rwork.ptr,
+        info,
+    );
+    return @max(@as(c_int, 1), @as(c_int, @intFromFloat(work_query.r)));
+}
+
 /// Small matrix eigendecomposition using LAPACK zheev
 /// Optimized for small matrices: bypasses global mutex and uses stack workspace.
 pub fn hermitian_eigen_decomp_small(
@@ -459,65 +552,26 @@ pub fn hermitian_generalized_eigen_decomp_small(
         };
     }
 
-    const vectors = try alloc.alloc(math.Complex, n * n);
-    errdefer alloc.free(vectors);
-    @memcpy(vectors, a[0 .. n * n]);
-
-    const b_copy = try alloc.alloc(math.Complex, n * n);
-    defer alloc.free(b_copy);
-
-    @memcpy(b_copy, b[0 .. n * n]);
-
-    const values = try alloc.alloc(f64, n);
-    errdefer alloc.free(values);
-
     var rwork_buf: [3 * 128]f64 = undefined;
-    const rwork_len = if (3 * n > 2) 3 * n - 2 else 1;
-    const rwork = if (rwork_len <= rwork_buf.len)
-        rwork_buf[0..rwork_len]
-    else
-        return error.MatrixTooLarge;
+    const inputs = try init_zhegv_inputs(alloc, n, a, b, &rwork_buf);
+    errdefer alloc.free(inputs.vectors);
+    defer alloc.free(inputs.b_copy);
+    errdefer alloc.free(inputs.values);
 
-    var nn: c_int = @intCast(n);
-    var lda: c_int = @intCast(n);
-    var ldb: c_int = @intCast(n);
+    var nn = inputs.nn;
+    var lda = inputs.lda;
+    var ldb = inputs.ldb;
     var info: c_int = 0;
-    var itype: c_int = 1;
-    var jobz = [1]u8{'V'};
-    var uplo = [1]u8{'U'};
+    var itype = inputs.itype;
+    var jobz = inputs.jobz;
+    var uplo = inputs.uplo;
 
-    // Workspace query
-    var lwork: c_int = -1;
-    var work_query = math.complex.init(0.0, 0.0);
-    zhegv_(
-        &itype,
-        &jobz,
-        &uplo,
-        &nn,
-        @ptrCast(vectors.ptr),
-        &lda,
-        @ptrCast(b_copy.ptr),
-        &ldb,
-        values.ptr,
-        @ptrCast(&work_query),
-        &lwork,
-        rwork.ptr,
-        &info,
-    );
+    var lwork = query_zhegv_lwork(&inputs, &info);
     if (info != 0) return error.LapackFailure;
 
-    lwork = @max(@as(c_int, 1), @as(c_int, @intFromFloat(work_query.r)));
-
     var work_stack: [2 * 128 * 128]math.Complex = undefined;
-    var work_heap: ?[]math.Complex = null;
-    defer if (work_heap) |w_h| alloc.free(w_h);
-
-    const work_ptr: [*]math.Complex = if (@as(usize, @intCast(lwork)) <= work_stack.len)
-        &work_stack
-    else blk: {
-        work_heap = try alloc.alloc(math.Complex, @intCast(lwork));
-        break :blk work_heap.?.ptr;
-    };
+    const work_buffer = try init_zhegv_work_buffer(alloc, lwork, &work_stack);
+    defer work_buffer.deinit(alloc);
 
     info = 0;
     zhegv_(
@@ -525,17 +579,17 @@ pub fn hermitian_generalized_eigen_decomp_small(
         &jobz,
         &uplo,
         &nn,
-        @ptrCast(vectors.ptr),
+        @ptrCast(inputs.vectors.ptr),
         &lda,
-        @ptrCast(b_copy.ptr),
+        @ptrCast(inputs.b_copy.ptr),
         &ldb,
-        values.ptr,
-        @ptrCast(work_ptr),
+        inputs.values.ptr,
+        @ptrCast(work_buffer.ptr),
         &lwork,
-        rwork.ptr,
+        inputs.rwork.ptr,
         &info,
     );
     if (info != 0) return error.LapackFailure;
 
-    return linalg.EigenDecomp{ .values = values, .vectors = vectors, .n = n };
+    return linalg.EigenDecomp{ .values = inputs.values, .vectors = inputs.vectors, .n = n };
 }
