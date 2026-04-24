@@ -1659,6 +1659,100 @@ fn package_ks_result(
     };
 }
 
+const KsScfPreparation = struct {
+    v_nn: f64,
+    grid_points: []becke.GridPoint,
+    bog: BasisOnGrid,
+    eigen: linalg.RealEigenDecomp,
+
+    fn deinit(self: *KsScfPreparation, alloc: std.mem.Allocator) void {
+        alloc.free(self.grid_points);
+        self.bog.deinit(alloc);
+    }
+};
+
+fn hf_exchange_fraction(xc_functional: XcFunctional) f64 {
+    return switch (xc_functional) {
+        .lda_svwn => 0.0,
+        .b3lyp => 0.20,
+    };
+}
+
+fn prepare_ks_scf_loop(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    shells: []const ContractedShell,
+    nuc_positions: []const math_mod.Vec3,
+    nuc_charges: []const f64,
+    n: usize,
+    h_core: []const f64,
+    s_mat: []const f64,
+    params: KsParams,
+) !KsScfPreparation {
+    const v_nn = energy_mod.nuclear_repulsion_energy(nuc_positions, nuc_charges);
+    const grid_points = try run_ks_step_three(alloc, io, nuc_positions, nuc_charges, params);
+    errdefer alloc.free(grid_points);
+
+    var bog = try run_ks_step_four(alloc, io, shells, grid_points, params);
+    errdefer bog.deinit(alloc);
+
+    const eigen = try run_ks_step_five(alloc, io, n, h_core, s_mat, params);
+    return .{
+        .v_nn = v_nn,
+        .grid_points = grid_points,
+        .bog = bog,
+        .eigen = eigen,
+    };
+}
+
+fn run_ks_scf_loop(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    n: usize,
+    n_occ: usize,
+    hf_frac: f64,
+    shells: []const ContractedShell,
+    resources: *KsIntegralResources,
+    h_core: []const f64,
+    s_mat: []const f64,
+    prep: *KsScfPreparation,
+    params: KsParams,
+    p_mat: []f64,
+) !struct { state: KsScfState, iter: usize } {
+    logging.verbose(
+        params.verbose,
+        "  [KS] Step 6: Starting SCF loop (max_iter={d})...\n",
+        .{params.max_iter},
+    );
+    const jk_ctx = make_ks_jk_ctx(
+        n,
+        hf_frac,
+        shells,
+        resources.use_libcint_actual,
+        params,
+        &resources.df_context,
+        &resources.jk_builder,
+        &resources.schwarz_table,
+        &resources.eri_table,
+    );
+    return run_ks_main_scc_loop(
+        alloc,
+        io,
+        n,
+        n_occ,
+        hf_frac,
+        prep.v_nn,
+        h_core,
+        s_mat,
+        jk_ctx,
+        prep.grid_points,
+        prep.bog,
+        params,
+        p_mat,
+        &prep.eigen,
+    );
+}
+
 fn make_ks_jk_ctx(
     n: usize,
     hf_frac: f64,
@@ -1978,12 +2072,7 @@ pub fn run_kohn_sham_scf(
     std.debug.assert(n_electrons % 2 == 0);
     const n = obara_saika.total_basis_functions(shells);
     const n_occ = n_electrons / 2;
-
-    // HF exchange fraction
-    const hf_frac: f64 = switch (params.xc_functional) {
-        .lda_svwn => 0.0,
-        .b3lyp => 0.20,
-    };
+    const hf_frac = hf_exchange_fraction(params.xc_functional);
 
     // Steps 1, 2, 2b: one-electron integrals, ERI/Schwarz tables, DF context
     var resources = try prepare_ks_integral_resources(
@@ -2000,59 +2089,37 @@ pub fn run_kohn_sham_scf(
     const s_mat = resources.one_mats.s_mat;
     const h_core = resources.one_mats.h_core;
 
-    // Nuclear repulsion
-    const v_nn = energy_mod.nuclear_repulsion_energy(nuc_positions, nuc_charges);
-
-    // Step 3: Build molecular grid
-    const grid_points = try run_ks_step_three(alloc, io, nuc_positions, nuc_charges, params);
-    defer alloc.free(grid_points);
-
-    // Step 4: Pre-evaluate basis functions on grid
-    var bog = try run_ks_step_four(alloc, io, shells, grid_points, params);
-    defer bog.deinit(alloc);
-
-    // Step 5: Initial guess — diagonalize H_core
-    var eigen = try run_ks_step_five(alloc, io, n, h_core, s_mat, params);
-
-    const p_mat = try density_matrix.build_density_matrix(alloc, n, n_occ, eigen.vectors);
-
-    // Step 6: SCF loop
-    logging.verbose(
-        params.verbose,
-        "  [KS] Step 6: Starting SCF loop (max_iter={d})...\n",
-        .{params.max_iter},
-    );
-
-    const jk_ctx = make_ks_jk_ctx(
-        n,
-        hf_frac,
+    var prep = try prepare_ks_scf_loop(
+        alloc,
+        io,
         shells,
-        resources.use_libcint_actual,
+        nuc_positions,
+        nuc_charges,
+        n,
+        h_core,
+        s_mat,
         params,
-        &resources.df_context,
-        &resources.jk_builder,
-        &resources.schwarz_table,
-        &resources.eri_table,
     );
+    defer prep.deinit(alloc);
 
-    const loop_out = try run_ks_main_scc_loop(
+    const p_mat = try density_matrix.build_density_matrix(alloc, n, n_occ, prep.eigen.vectors);
+
+    const loop_out = try run_ks_scf_loop(
         alloc,
         io,
         n,
         n_occ,
         hf_frac,
-        v_nn,
+        shells,
+        &resources,
         h_core,
         s_mat,
-        jk_ctx,
-        grid_points,
-        bog,
+        &prep,
         params,
         p_mat,
-        &eigen,
     );
 
-    return package_ks_result(loop_out, v_nn, eigen, p_mat);
+    return package_ks_result(loop_out, prep.v_nn, prep.eigen, p_mat);
 }
 
 /// Solve the Roothaan-Hall equation FC = SCε using canonical orthogonalization.
