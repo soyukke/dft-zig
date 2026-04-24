@@ -531,79 +531,101 @@ pub fn run_phonon_band_ifc(
     scf_result: *scf_mod.ScfResult,
     model: *const model_mod.Model,
 ) !PhononBandResult {
-    const species = model.species;
-    const atoms = model.atoms;
-    const cell_bohr = model.cell_bohr;
-    const recip = model.recip;
-    const volume = model.volume_bohr;
-    const n_atoms = atoms.len;
-    const grid = scf_result.grid;
     const qgrid = cfg.dfpt.qgrid orelse return error.MissingQgrid;
+    log_dfpt_info("dfpt_ifc: starting IFC phonon band ({d} atoms, qgrid={d}x{d}x{d})\n", .{
+        model.atoms.len,
+        qgrid[0],
+        qgrid[1],
+        qgrid[2],
+    });
 
-    log_dfpt_info(
-        "dfpt_ifc: starting IFC phonon band ({d} atoms, qgrid={d}x{d}x{d})\n",
-        .{ n_atoms, qgrid[0], qgrid[1], qgrid[2] },
-    );
-
-    var band_data = try init_band_ground_state_data(
-        alloc,
-        io,
-        cfg,
-        scf_result,
-        species,
-        atoms,
-        volume,
-        recip,
-        grid,
-    );
-    defer band_data.deinit(alloc);
-
-    const dfpt_cfg = DfptConfig.from_config(cfg);
-    var sym_data = try init_band_symmetry_data(alloc, cell_bohr, atoms, recip);
-    defer sym_data.deinit(alloc);
-
-    const kgs_data = try prepare_band_kgs_data(
-        alloc,
-        io,
-        cfg,
-        &band_data.prepared.gs,
-        band_data.prepared.local_r,
-        species,
-        atoms,
-        recip,
-        volume,
-        grid,
-    );
-    defer deinit_k_point_gs_data(alloc, kgs_data);
-
-    var qgrid_data = try compute_ifc_q_grid_dynmat(
-        alloc,
-        io,
-        cfg,
-        dfpt_cfg,
-        &band_data,
-        species,
-        atoms,
-        cell_bohr,
-        recip,
-        volume,
-        grid,
-        &sym_data,
-        kgs_data,
-        qgrid,
-    );
-    defer qgrid_data.deinit(alloc);
-
-    var ifc_data = try compute_ifc_from_q_grid(alloc, &qgrid_data, qgrid, n_atoms);
-    defer ifc_data.deinit(alloc);
+    var context = try IfcBandContext.init(alloc, io, cfg, scf_result, model, qgrid);
+    defer context.deinit(alloc);
 
     return build_ifc_band_result(
         alloc,
         io,
         cfg,
-        recip,
-        &ifc_data,
-        &band_data.ionic,
-        n_atoms,
+        model.recip,
+        &context.ifc_data,
+        &context.band_data.ionic,
+        model.atoms.len,
     );
 }
+
+const IfcBandContext = struct {
+    band_data: BandGroundStateData,
+    qgrid_data: QGridDynmatData,
+    ifc_data: IFCData,
+
+    fn init(
+        alloc: std.mem.Allocator,
+        io: std.Io,
+        cfg: config_mod.Config,
+        scf_result: *scf_mod.ScfResult,
+        model: *const model_mod.Model,
+        qgrid: [3]usize,
+    ) !IfcBandContext {
+        var band_data = try init_band_ground_state_data(
+            alloc,
+            io,
+            cfg,
+            scf_result,
+            model.species,
+            model.atoms,
+            model.volume_bohr,
+            model.recip,
+            scf_result.grid,
+        );
+        errdefer band_data.deinit(alloc);
+
+        var sym_data = try init_band_symmetry_data(
+            alloc,
+            model.cell_bohr,
+            model.atoms,
+            model.recip,
+        );
+        defer sym_data.deinit(alloc);
+
+        const kgs_data = try prepare_band_kgs_data(
+            alloc,
+            io,
+            cfg,
+            &band_data.prepared.gs,
+            band_data.prepared.local_r,
+            model.species,
+            model.atoms,
+            model.recip,
+            model.volume_bohr,
+            scf_result.grid,
+        );
+        defer deinit_k_point_gs_data(alloc, kgs_data);
+
+        var qgrid_data = try compute_ifc_q_grid_dynmat(
+            alloc,
+            io,
+            cfg,
+            DfptConfig.from_config(cfg),
+            &band_data,
+            model.species,
+            model.atoms,
+            model.cell_bohr,
+            model.recip,
+            model.volume_bohr,
+            scf_result.grid,
+            &sym_data,
+            kgs_data,
+            qgrid,
+        );
+        errdefer qgrid_data.deinit(alloc);
+
+        const ifc_data = try compute_ifc_from_q_grid(alloc, &qgrid_data, qgrid, model.atoms.len);
+        return .{ .band_data = band_data, .qgrid_data = qgrid_data, .ifc_data = ifc_data };
+    }
+
+    fn deinit(self: *IfcBandContext, alloc: std.mem.Allocator) void {
+        self.ifc_data.deinit(alloc);
+        self.qgrid_data.deinit(alloc);
+        self.band_data.deinit(alloc);
+    }
+};

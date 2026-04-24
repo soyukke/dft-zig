@@ -19,4 +19,3 @@ src/features/scf/kpoint_parallel.zig	function_too_long	7
 src/features/scf/mixing.zig	function_too_long	3
 src/features/scf/scf.zig	function_too_long	2
 src/features/scf/smearing.zig	function_too_long	4
-src/features/dfpt/phonon_q/band_ifc.zig	function_too_long	1
