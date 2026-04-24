@@ -840,6 +840,45 @@ pub fn solve_perturbation(
     var nl_buffers = try NonlocalScfBuffers.init(alloc, gs.apply_ctx, gs.gvecs.len);
     defer nl_buffers.deinit(alloc);
 
+    try run_density_response_scf_loop(
+        alloc,
+        gs,
+        atom_index,
+        direction,
+        cfg,
+        inputs,
+        rho1_g,
+        psi1,
+        &nl_buffers,
+    );
+    const final_rho1_r = try compute_rho1(
+        alloc,
+        gs.grid,
+        gs.gvecs,
+        gs.wavefunctions,
+        psi1,
+        gs.n_occ,
+        gs.apply_ctx,
+    );
+    defer alloc.free(final_rho1_r);
+
+    const final_rho1_g = try scf_mod.real_to_reciprocal(alloc, gs.grid, final_rho1_r, false);
+    log_rho1_consistency(final_rho1_g, rho1_g);
+    alloc.free(rho1_g);
+    return .{ .rho1_g = final_rho1_g, .psi1 = psi1 };
+}
+
+fn run_density_response_scf_loop(
+    alloc: std.mem.Allocator,
+    gs: GroundState,
+    atom_index: usize,
+    direction: usize,
+    cfg: DfptConfig,
+    inputs: SolvePerturbationInputs,
+    rho1_g: []math.Complex,
+    psi1: [][]math.Complex,
+    nl_buffers: *NonlocalScfBuffers,
+) !void {
     var iter: usize = 0;
     while (iter < cfg.scf_max_iter) : (iter += 1) {
         const vtot1_r = try build_total_perturbation_potential(
@@ -859,7 +898,7 @@ pub fn solve_perturbation(
             vtot1_r,
             psi1,
             cfg,
-            &nl_buffers,
+            nl_buffers,
         );
         const new_rho1_r = try compute_rho1(
             alloc,
@@ -881,21 +920,6 @@ pub fn solve_perturbation(
             break;
         }
     }
-    const final_rho1_r = try compute_rho1(
-        alloc,
-        gs.grid,
-        gs.gvecs,
-        gs.wavefunctions,
-        psi1,
-        gs.n_occ,
-        gs.apply_ctx,
-    );
-    defer alloc.free(final_rho1_r);
-
-    const final_rho1_g = try scf_mod.real_to_reciprocal(alloc, gs.grid, final_rho1_r, false);
-    log_rho1_consistency(final_rho1_g, rho1_g);
-    alloc.free(rho1_g);
-    return .{ .rho1_g = final_rho1_g, .psi1 = psi1 };
 }
 
 /// Apply V^(1)(r)|ψ(r)⟩ → result in PW basis.
