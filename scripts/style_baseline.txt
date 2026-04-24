@@ -6,4 +6,3 @@
 # running: just lint-update-baseline
 #
 # Format: <path>\t<rule>\t<count>
-src/features/paw/paw_xc.zig	function_too_long	1

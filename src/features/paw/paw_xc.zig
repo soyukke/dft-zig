@@ -3175,6 +3175,83 @@ fn run_spin_dij_xc_accumulation(
     }
 }
 
+fn run_spin_dij_xc_with_buffers(
+    grid: anytype,
+    paw: PawData,
+    rhoij_m_up: []const f64,
+    rhoij_m_down: []const f64,
+    m_total: usize,
+    m_offsets: []const usize,
+    gaunt_table: *const GauntTable,
+    lb: *const LebedevBuffers,
+    dims: MeshAndAug,
+    aug: *const AugR2Buffers,
+    uiuj: *const UiUjBuffers,
+    sc: *const SpinDijXcScratch,
+    r: []const f64,
+    rab: []const f64,
+    rho_core_ae: ?[]const f64,
+    rho_core_ps: ?[]const f64,
+    xc_func: xc.Functional,
+    dij_xc_m_up: []f64,
+    dij_xc_m_down: []f64,
+    four_pi: f64,
+) void {
+    @memset(dij_xc_m_up[0 .. m_total * m_total], 0.0);
+    @memset(dij_xc_m_down[0 .. m_total * m_total], 0.0);
+    run_spin_dij_xc_angular_pass(
+        grid,
+        paw,
+        rhoij_m_up,
+        rhoij_m_down,
+        m_total,
+        m_offsets,
+        gaunt_table,
+        lb,
+        dims,
+        aug,
+        uiuj,
+        sc,
+        r,
+        rab,
+        rho_core_ae,
+        rho_core_ps,
+        xc_func,
+    );
+    run_spin_dij_xc_accumulation(
+        grid,
+        paw,
+        m_total,
+        m_offsets,
+        lb,
+        dims,
+        sc,
+        gaunt_table,
+        dij_xc_m_up,
+        dij_xc_m_down,
+        four_pi,
+    );
+}
+
+fn precompute_spin_dij_core_derivatives(
+    alloc: std.mem.Allocator,
+    rho_core_ae: ?[]const f64,
+    rho_core_ps: ?[]const f64,
+    r: []const f64,
+    dims: MeshAndAug,
+    sc: *const SpinDijXcScratch,
+) !void {
+    try precompute_spin_core_derivatives(
+        alloc,
+        rho_core_ae,
+        rho_core_ps,
+        r,
+        dims.n_mesh,
+        sc.up.dcore_ae,
+        sc.up.dcore_ps,
+    );
+}
+
 /// Spin-polarized PAW D^xc: compute D^xc_up and D^xc_down from rhoij_up/down.
 /// Core density (spherical) is split equally between up and down.
 /// For non-magnetic input (rhoij_up == rhoij_down == total/2), this reduces
@@ -3198,7 +3275,6 @@ pub fn compute_paw_dij_xc_angular_spin(
     const nbeta = paw.number_of_proj;
     const dims = compute_mesh_and_aug(paw, r, rab);
     const grid = lebedev.get_lebedev_grid(N_ANG);
-    const n_ang = grid.len;
     const n_ij = nbeta * nbeta;
     const four_pi = 4.0 * std.math.pi;
     const lb = try alloc_lebedev_buffers(
@@ -3207,7 +3283,7 @@ pub fn compute_paw_dij_xc_angular_spin(
         paw,
         m_total,
         m_offsets,
-        n_ang,
+        grid.len,
         dims.n_l_aug,
         dims.n_lm_aug,
     );
@@ -3219,22 +3295,12 @@ pub fn compute_paw_dij_xc_angular_spin(
     const aug = try precompute_aug_r2(alloc, paw, r, dims.n_mesh, dims.n_l_aug, true);
     defer free_aug_r2(alloc, aug);
 
-    const sc = try alloc_spin_dij_xc_scratch(alloc, dims.n_mesh, n_ang, n_ij, dims.n_l_aug);
+    const sc = try alloc_spin_dij_xc_scratch(alloc, dims.n_mesh, grid.len, n_ij, dims.n_l_aug);
     defer free_spin_dij_xc_scratch(alloc, sc);
 
-    try precompute_spin_core_derivatives(
-        alloc,
-        rho_core_ae,
-        rho_core_ps,
-        r,
-        dims.n_mesh,
-        sc.up.dcore_ae,
-        sc.up.dcore_ps,
-    );
+    try precompute_spin_dij_core_derivatives(alloc, rho_core_ae, rho_core_ps, r, dims, &sc);
 
-    @memset(dij_xc_m_up[0 .. m_total * m_total], 0.0);
-    @memset(dij_xc_m_down[0 .. m_total * m_total], 0.0);
-    run_spin_dij_xc_angular_pass(
+    run_spin_dij_xc_with_buffers(
         grid,
         paw,
         rhoij_m_up,
@@ -3252,16 +3318,6 @@ pub fn compute_paw_dij_xc_angular_spin(
         rho_core_ae,
         rho_core_ps,
         xc_func,
-    );
-    run_spin_dij_xc_accumulation(
-        grid,
-        paw,
-        m_total,
-        m_offsets,
-        &lb,
-        dims,
-        &sc,
-        gaunt_table,
         dij_xc_m_up,
         dij_xc_m_down,
         four_pi,
