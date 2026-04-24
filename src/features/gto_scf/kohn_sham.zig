@@ -1785,6 +1785,11 @@ fn prepare_ks_scf_loop(
     };
 }
 
+const KsScfLoopResult = struct {
+    state: KsScfState,
+    iter: usize,
+};
+
 fn run_ks_scf_loop(
     alloc: std.mem.Allocator,
     io: std.Io,
@@ -1798,7 +1803,7 @@ fn run_ks_scf_loop(
     prep: *KsScfPreparation,
     params: KsParams,
     p_mat: []f64,
-) !struct { state: KsScfState, iter: usize } {
+) !KsScfLoopResult {
     logging.verbose(
         params.verbose,
         "  [KS] Step 6: Starting SCF loop (max_iter={d})...\n",
@@ -2027,7 +2032,7 @@ fn run_ks_main_scc_loop(
     params: KsParams,
     p_mat: []f64,
     eigen: *linalg.RealEigenDecomp,
-) !struct { state: KsScfState, iter: usize } {
+) !KsScfLoopResult {
     var bufs = try alloc_ks_scf_buffers(alloc, n, grid_points.len, params);
     defer bufs.deinit(alloc);
 
