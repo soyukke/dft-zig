@@ -671,9 +671,7 @@ fn log_q_point_summary(
     log_dfpt_info("\n", .{});
 }
 
-fn solve_band_q_point(
-    alloc: std.mem.Allocator,
-    io: std.Io,
+const BandQPointInputs = struct {
     cfg: config_mod.Config,
     dfpt_cfg: DfptConfig,
     gs: GroundState,
@@ -691,57 +689,105 @@ fn solve_band_q_point(
     indsym: []const []const usize,
     tnons_shift: []const []const math.Vec3,
     kgs_data: []const kpt_gs.KPointGsData,
+};
+
+fn solve_band_q_point(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    inputs: BandQPointInputs,
     iq: usize,
     q_cart: math.Vec3,
     qf: math.Vec3,
 ) ![]f64 {
-    const n_atoms = atoms.len;
-    const q_norm = math.Vec3.norm(q_cart);
-    const irr_info = try dynmat_mod.find_irreducible_atoms(
-        alloc,
-        symops,
-        indsym,
-        n_atoms,
-        qf,
-    );
-    defer @constCast(&irr_info).deinit(alloc);
-
-    const pert_thread_count = dfpt.perturbation_thread_count(
-        3 * n_atoms,
-        dfpt_cfg.perturbation_threads,
-    );
-    const kpts = try build_k_point_dfpt_data_from_gs(
+    const n_atoms = inputs.atoms.len;
+    var context = try QPointSolveContext.init(
         alloc,
         io,
-        kgs_data,
+        inputs.cfg,
+        inputs.dfpt_cfg,
+        inputs.symops,
+        inputs.indsym,
+        n_atoms,
+        qf,
+        inputs.kgs_data,
         q_cart,
-        q_norm,
-        cfg,
-        local_r,
-        species,
-        atoms,
-        recip,
-        volume,
-        grid,
-        pert_thread_count,
+        inputs.local_r,
+        inputs.species,
+        inputs.atoms,
+        inputs.recip,
+        inputs.volume,
+        inputs.grid,
     );
-    defer deinit_k_point_dfpt_data(alloc, kpts);
-
     var buffers = try solve_q_point_perturbations(
         alloc,
         io,
-        grid,
-        gs,
-        species,
-        atoms,
+        inputs.grid,
+        inputs.gs,
+        inputs.species,
+        inputs.atoms,
         q_cart,
-        dfpt_cfg,
-        pert_thread_count,
-        kpts,
-        irr_info,
+        inputs.dfpt_cfg,
+        context.pert_thread_count,
+        context.kpts,
+        context.irr_info,
     );
     defer buffers.deinit(alloc);
+    defer context.deinit(alloc);
 
+    return try finish_solved_q_point(
+        alloc,
+        inputs.cfg,
+        inputs.gs,
+        inputs.ionic,
+        inputs.rho0_g,
+        inputs.vxc_g,
+        inputs.cell_bohr,
+        inputs.recip,
+        inputs.volume,
+        q_cart,
+        qf,
+        math.Vec3.norm(q_cart),
+        inputs.grid,
+        inputs.species,
+        inputs.atoms,
+        inputs.symops,
+        inputs.indsym,
+        inputs.tnons_shift,
+        iq,
+        inputs.kgs_data.len,
+        n_atoms,
+        context.irr_info,
+        &buffers,
+        context.kpts,
+    );
+}
+
+fn finish_solved_q_point(
+    alloc: std.mem.Allocator,
+    cfg: config_mod.Config,
+    gs: GroundState,
+    ionic: *const IonicData,
+    rho0_g: []const math.Complex,
+    vxc_g: ?[]const math.Complex,
+    cell_bohr: math.Mat3,
+    recip: math.Mat3,
+    volume: f64,
+    q_cart: math.Vec3,
+    qf: math.Vec3,
+    q_norm: f64,
+    grid: Grid,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    symops: []const symmetry_mod.SymOp,
+    indsym: []const []const usize,
+    tnons_shift: []const []const math.Vec3,
+    iq: usize,
+    n_kpts: usize,
+    n_atoms: usize,
+    irr_info: dynmat_mod.IrreducibleAtomInfo,
+    buffers: *const QPointPertBuffers,
+    kpts: []KPointDfptData,
+) ![]f64 {
     const frequencies = try finalize_q_point_frequencies(
         alloc,
         cfg,
@@ -763,11 +809,70 @@ fn solve_band_q_point(
         tnons_shift,
         irr_info,
         kpts,
-        &buffers,
+        buffers,
     );
-    log_q_point_summary(iq, qf, q_norm, kgs_data.len, irr_info, n_atoms, frequencies);
+    log_q_point_summary(iq, qf, q_norm, n_kpts, irr_info, n_atoms, frequencies);
     return frequencies;
 }
+
+const QPointSolveContext = struct {
+    irr_info: dynmat_mod.IrreducibleAtomInfo,
+    kpts: []KPointDfptData,
+    pert_thread_count: usize,
+
+    fn init(
+        alloc: std.mem.Allocator,
+        io: std.Io,
+        cfg: config_mod.Config,
+        dfpt_cfg: DfptConfig,
+        symops: []const symmetry_mod.SymOp,
+        indsym: []const []const usize,
+        n_atoms: usize,
+        qf: math.Vec3,
+        kgs_data: []const kpt_gs.KPointGsData,
+        q_cart: math.Vec3,
+        local_r: []const f64,
+        species: []const hamiltonian.SpeciesEntry,
+        atoms: []const hamiltonian.AtomData,
+        recip: math.Mat3,
+        volume: f64,
+        grid: Grid,
+    ) !QPointSolveContext {
+        const irr_info = try dynmat_mod.find_irreducible_atoms(alloc, symops, indsym, n_atoms, qf);
+        errdefer @constCast(&irr_info).deinit(alloc);
+
+        const pert_thread_count = dfpt.perturbation_thread_count(
+            3 * n_atoms,
+            dfpt_cfg.perturbation_threads,
+        );
+        const q_norm = math.Vec3.norm(q_cart);
+        const kpts = try build_k_point_dfpt_data_from_gs(
+            alloc,
+            io,
+            kgs_data,
+            q_cart,
+            q_norm,
+            cfg,
+            local_r,
+            species,
+            atoms,
+            recip,
+            volume,
+            grid,
+            pert_thread_count,
+        );
+        return .{
+            .irr_info = irr_info,
+            .kpts = kpts,
+            .pert_thread_count = pert_thread_count,
+        };
+    }
+
+    fn deinit(self: *QPointSolveContext, alloc: std.mem.Allocator) void {
+        deinit_k_point_dfpt_data(alloc, self.kpts);
+        self.irr_info.deinit(alloc);
+    }
+};
 
 fn solve_band_q_points(
     alloc: std.mem.Allocator,
@@ -798,27 +903,30 @@ fn solve_band_q_points(
         alloc.free(frequencies);
     }
 
+    const q_point_inputs: BandQPointInputs = .{
+        .cfg = cfg,
+        .dfpt_cfg = dfpt_cfg,
+        .gs = gs,
+        .local_r = local_r,
+        .ionic = ionic,
+        .rho0_g = rho0_g,
+        .vxc_g = vxc_g,
+        .species = species,
+        .atoms = atoms,
+        .cell_bohr = cell_bohr,
+        .recip = recip,
+        .volume = volume,
+        .grid = grid,
+        .symops = sym_data.symops,
+        .indsym = sym_data.indsym,
+        .tnons_shift = sym_data.tnons_shift,
+        .kgs_data = kgs_data,
+    };
     for (0..n_q) |iq| {
         frequencies[iq] = try solve_band_q_point(
             alloc,
             io,
-            cfg,
-            dfpt_cfg,
-            gs,
-            local_r,
-            ionic,
-            rho0_g,
-            vxc_g,
-            species,
-            atoms,
-            cell_bohr,
-            recip,
-            volume,
-            grid,
-            sym_data.symops,
-            sym_data.indsym,
-            sym_data.tnons_shift,
-            kgs_data,
+            q_point_inputs,
             iq,
             q_points_cart[iq],
             q_points_frac[iq],
