@@ -317,7 +317,7 @@ fn real_symmetric_gen_eigen_decomp_lapack(
     const w = try alloc.alloc(f64, n);
     errdefer alloc.free(w);
 
-    const lwork = try query_dsygv_lwork(
+    var lwork = try query_dsygv_lwork(
         nn,
         matrix_a,
         matrix_b,
@@ -591,7 +591,7 @@ fn hermitian_gen_eigenvalues_lapack(
     const rwork = try alloc.alloc(f64, @max(@as(usize, 1), 3 * n - 2));
     errdefer alloc.free(rwork);
 
-    const lwork = query_zhegv_lwork(
+    var lwork = query_zhegv_lwork(
         nn,
         a,
         b,
@@ -669,7 +669,7 @@ fn hermitian_gen_eigen_decomp_lapack(
     const rwork = try alloc.alloc(f64, @max(@as(usize, 1), 3 * n - 2));
     errdefer alloc.free(rwork);
 
-    const lwork = try query_zhegv_lwork(
+    var lwork = try query_zhegv_lwork(
         nn,
         matrix_a,
         matrix_b,
