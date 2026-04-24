@@ -12,13 +12,13 @@ const atomic_solver = @import("atomic_solver.zig");
 // ============================================================================
 
 /// Exact hydrogen 1s density: ρ(r) = exp(-2r)/π
-fn hydrogenDensity(r: f64) f64 {
+fn hydrogen_density(r: f64) f64 {
     return @exp(-2.0 * r) / std.math.pi;
 }
 
 /// Exact hydrogen Hartree potential (Rydberg):
 /// V_H(r) = 2[1 - (1+r)exp(-2r)] / r
-fn hydrogenVH(r: f64) f64 {
+fn hydrogen_vh(r: f64) f64 {
     if (r < 1e-10) return 2.0; // limit as r→0
     return 2.0 * (1.0 - (1.0 + r) * @exp(-2.0 * r)) / r;
 }
@@ -37,19 +37,19 @@ test "Poisson solver: hydrogen V_H" {
     defer allocator.free(rho);
 
     for (0..grid.n) |i| {
-        rho[i] = hydrogenDensity(grid.r[i]);
+        rho[i] = hydrogen_density(grid.r[i]);
     }
 
     const v_h = try allocator.alloc(f64, grid.n);
     defer allocator.free(v_h);
 
-    atomic_solver.radialPoisson(&grid, rho, v_h);
+    atomic_solver.radial_poisson(&grid, rho, v_h);
 
     var max_rel_err: f64 = 0;
     for (0..grid.n) |i| {
         const r = grid.r[i];
         if (r < 0.01 or r > 30.0) continue;
-        const exact = hydrogenVH(r);
+        const exact = hydrogen_vh(r);
         const err = @abs(v_h[i] - exact);
         const rel = err / @abs(exact);
         if (rel > max_rel_err) max_rel_err = rel;
@@ -68,14 +68,14 @@ test "electron count normalization" {
     defer allocator.free(rho);
 
     for (0..grid.n) |i| {
-        rho[i] = hydrogenDensity(grid.r[i]);
+        rho[i] = hydrogen_density(grid.r[i]);
     }
 
     // Integrate ρ × 4πr² dr
     var nel: f64 = 0;
     for (0..grid.n) |i| {
         const r = grid.r[i];
-        const w = ctrapWeight(i, grid.n);
+        const w = ctrap_weight(i, grid.n);
         nel += w * rho[i] * 4.0 * std.math.pi * r * r * grid.rab[i];
     }
 
@@ -93,9 +93,9 @@ test "XC energy for hydrogen density" {
     var integral_vxc_rho: f64 = 0;
     for (0..grid.n) |i| {
         const r = grid.r[i];
-        const rho = hydrogenDensity(r);
-        const xc_point = xc_mod.evalPoint(.lda_pz, rho, 0);
-        const w = ctrapWeight(i, grid.n);
+        const rho = hydrogen_density(r);
+        const xc_point = xc_mod.eval_point(.lda_pz, rho, 0);
+        const w = ctrap_weight(i, grid.n);
         const vol = w * 4.0 * std.math.pi * r * r * grid.rab[i];
         e_xc += xc_point.f * vol;
         integral_vxc_rho += xc_point.df_dn * rho * vol;
@@ -122,18 +122,18 @@ test "Hartree energy for hydrogen density" {
     defer allocator.free(rho);
 
     for (0..grid.n) |i| {
-        rho[i] = hydrogenDensity(grid.r[i]);
+        rho[i] = hydrogen_density(grid.r[i]);
     }
 
     const v_h = try allocator.alloc(f64, grid.n);
     defer allocator.free(v_h);
 
-    atomic_solver.radialPoisson(&grid, rho, v_h);
+    atomic_solver.radial_poisson(&grid, rho, v_h);
 
     var e_h: f64 = 0;
     for (0..grid.n) |i| {
         const r = grid.r[i];
-        const w = ctrapWeight(i, grid.n);
+        const w = ctrap_weight(i, grid.n);
         e_h += 0.5 * w * v_h[i] * rho[i] * 4.0 * std.math.pi * r * r * grid.rab[i];
     }
 
@@ -159,7 +159,7 @@ test "kinetic energy for hydrogen 1s" {
     // Normalize
     var norm: f64 = 0;
     for (0..grid.n) |i| {
-        const w = ctrapWeight(i, grid.n);
+        const w = ctrap_weight(i, grid.n);
         norm += w * u[i] * u[i] * grid.rab[i];
     }
     try std.testing.expectApproxEqAbs(1.0, norm, 1e-5);
@@ -186,7 +186,7 @@ test "total energy decomposition: exact hydrogen density" {
     const rho = try allocator.alloc(f64, n);
     defer allocator.free(rho);
 
-    for (0..n) |i| rho[i] = hydrogenDensity(grid.r[i]);
+    for (0..n) |i| rho[i] = hydrogen_density(grid.r[i]);
 
     // E_ext = ∫ V_nuc ρ 4πr² dr = ∫ (-2/r)(e^{-2r}/π) 4πr² dr = -8 ∫ r e^{-2r} dr = -2.0 Ry
     var e_ext: f64 = 0;
@@ -194,7 +194,7 @@ test "total energy decomposition: exact hydrogen density" {
         const r = grid.r[i];
         if (r < 1e-30) continue;
         const v_nuc = -2.0 / r;
-        const w = ctrapWeight(i, n);
+        const w = ctrap_weight(i, n);
         e_ext += w * v_nuc * rho[i] * 4.0 * std.math.pi * r * r * grid.rab[i];
     }
 
@@ -202,12 +202,12 @@ test "total energy decomposition: exact hydrogen density" {
     const v_h = try allocator.alloc(f64, n);
     defer allocator.free(v_h);
 
-    atomic_solver.radialPoisson(&grid, rho, v_h);
+    atomic_solver.radial_poisson(&grid, rho, v_h);
 
     var e_h: f64 = 0;
     for (0..n) |i| {
         const r = grid.r[i];
-        const w = ctrapWeight(i, n);
+        const w = ctrap_weight(i, n);
         e_h += 0.5 * w * v_h[i] * rho[i] * 4.0 * std.math.pi * r * r * grid.rab[i];
     }
 
@@ -215,8 +215,8 @@ test "total energy decomposition: exact hydrogen density" {
     var e_xc: f64 = 0;
     for (0..n) |i| {
         const r = grid.r[i];
-        const w = ctrapWeight(i, n);
-        const xc_pt = xc_mod.evalPoint(.lda_pz, rho[i], 0);
+        const w = ctrap_weight(i, n);
+        const xc_pt = xc_mod.eval_point(.lda_pz, rho[i], 0);
         e_xc += w * xc_pt.f * 4.0 * std.math.pi * r * r * grid.rab[i];
     }
 
@@ -274,7 +274,7 @@ test "He atom SCF: spin-unpolarized LDA" {
     try std.testing.expectApproxEqAbs(-5.670, result.total_energy, 0.01);
 }
 
-fn ctrapWeight(i: usize, n: usize) f64 {
+fn ctrap_weight(i: usize, n: usize) f64 {
     const endpoint_weights = [5]f64{
         23.75 / 72.0, 95.10 / 72.0, 55.20 / 72.0, 79.30 / 72.0, 70.65 / 72.0,
     };

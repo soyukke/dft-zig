@@ -74,7 +74,7 @@ test "Si pseudopotential generation: valence only" {
     var buf: [2 * 1024 * 1024]u8 = undefined;
     var writer = std.Io.Writer.fixed(&buf);
 
-    try pipeline.generatePseudopotential(allocator, .{
+    try pipeline.generate_pseudopotential(allocator, .{
         .z = 14,
         .element = "Si",
         .xc = .lda_pz,

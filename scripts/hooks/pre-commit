@@ -18,7 +18,7 @@ if ! zig fmt --check src ppgen/src scripts; then
 fi
 
 if ! ZIG_GLOBAL_CACHE_DIR=.zig-global-cache ZIG_LOCAL_CACHE_DIR=.zig-cache \
-    zig run scripts/check_style.zig -- --root src; then
+    zig run scripts/check_style.zig -- --root src --root ppgen/src; then
     echo "" >&2
     echo "pre-commit: style check failed." >&2
     echo "pre-commit: run 'just lint' and re-stage the changes." >&2
