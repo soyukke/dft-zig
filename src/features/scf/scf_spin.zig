@@ -43,6 +43,22 @@ const SpinEigenResult = struct {
     filled: usize,
 };
 
+const SpinKpointSolveConfig = struct {
+    nocc: usize,
+    has_qij: bool,
+    use_iterative: bool,
+    nonlocal_enabled: bool,
+    local_r: ?[]f64,
+    fft_index_map: []usize,
+    iter_max_iter: usize,
+    iter_tol: f64,
+
+    fn deinit(self: *const SpinKpointSolveConfig, alloc: std.mem.Allocator) void {
+        if (self.local_r) |values| alloc.free(values);
+        alloc.free(self.fft_index_map);
+    }
+};
+
 const SpinContext = struct {
     alloc: std.mem.Allocator,
     io: std.Io,
@@ -52,6 +68,108 @@ const SpinContext = struct {
     volume_bohr: f64,
     common: *scf_mod.ScfCommon,
 };
+
+fn init_spin_kpoint_solve_config(
+    alloc: std.mem.Allocator,
+    cfg: config.Config,
+    common: *scf_mod.ScfCommon,
+    potential: hamiltonian.PotentialGrid,
+    scf_iter: usize,
+) !SpinKpointSolveConfig {
+    const nocc_base = @as(usize, @intFromFloat(std.math.ceil(common.total_electrons / 2.0)));
+    const has_qij = scf_mod.has_qij(common.species) and !scf_mod.has_paw(common.species);
+    const use_iterative = (cfg.scf.solver == .iterative or
+        cfg.scf.solver == .cg or
+        cfg.scf.solver == .auto) and !has_qij;
+
+    var local_r: ?[]f64 = null;
+    if (use_iterative) {
+        local_r = try potential_mod.build_local_potential_real(
+            alloc,
+            common.grid,
+            common.ionic,
+            potential,
+        );
+    }
+    errdefer if (local_r) |values| alloc.free(values);
+
+    const fft_index_map = try build_fft_index_map(alloc, common.grid);
+    errdefer alloc.free(fft_index_map);
+
+    var iter_max_iter = cfg.scf.iterative_max_iter;
+    var iter_tol = cfg.scf.iterative_tol;
+    if (cfg.scf.iterative_warmup_steps > 0 and scf_iter < cfg.scf.iterative_warmup_steps) {
+        iter_max_iter = cfg.scf.iterative_warmup_max_iter;
+        iter_tol = cfg.scf.iterative_warmup_tol;
+    }
+
+    return .{
+        .nocc = nocc_base + @max(4, nocc_base / 5),
+        .has_qij = has_qij,
+        .use_iterative = use_iterative,
+        .nonlocal_enabled = cfg.scf.enable_nonlocal and scf_mod.has_nonlocal(common.species),
+        .local_r = local_r,
+        .fft_index_map = fft_index_map,
+        .iter_max_iter = iter_max_iter,
+        .iter_tol = iter_tol,
+    };
+}
+
+fn compute_spin_channel_eigen_data(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: *const config.Config,
+    common: *scf_mod.ScfCommon,
+    potential: hamiltonian.PotentialGrid,
+    kpoint_cache: []KpointCache,
+    apply_caches: []apply.KpointApplyCache,
+    shared_fft_plan: fft.Fft3dPlan,
+    solve_cfg: *const SpinKpointSolveConfig,
+) !SpinEigenResult {
+    const eigen_data = try alloc.alloc(KpointEigenData, common.kpoints.len);
+    var filled: usize = 0;
+    errdefer {
+        var ii: usize = 0;
+        while (ii < filled) : (ii += 1) {
+            eigen_data[ii].deinit(alloc);
+        }
+        alloc.free(eigen_data);
+    }
+
+    for (common.kpoints, 0..) |kp, kidx| {
+        const ac_ptr: ?*apply.KpointApplyCache = &apply_caches[kidx];
+        eigen_data[kidx] = try compute_kpoint_eigen_data(
+            alloc,
+            io,
+            cfg,
+            common.grid,
+            kp,
+            common.species,
+            common.atoms,
+            common.recip,
+            common.volume_bohr,
+            common.local_cfg,
+            potential,
+            solve_cfg.local_r,
+            solve_cfg.nocc,
+            solve_cfg.use_iterative,
+            solve_cfg.has_qij,
+            solve_cfg.nonlocal_enabled,
+            solve_cfg.fft_index_map,
+            solve_cfg.iter_max_iter,
+            solve_cfg.iter_tol,
+            cfg.scf.iterative_reuse_vectors,
+            &kpoint_cache[kidx],
+            null,
+            shared_fft_plan,
+            ac_ptr,
+            common.radial_tables,
+            common.paw_tabs,
+        );
+        filled += 1;
+    }
+    return .{ .eigen_data = eigen_data, .filled = filled };
+}
 
 const SpinLoopMetrics = struct {
     iterations: usize = 0,
@@ -1861,94 +1979,23 @@ fn solve_kpoints_for_spin(
     scf_iter: usize,
     shared_fft_plan: fft.Fft3dPlan,
 ) !SpinEigenResult {
-    const grid = common.grid;
-    const kpoints = common.kpoints;
-    const species = common.species;
-    const atoms = common.atoms;
-    const recip = common.recip;
-    const volume_bohr = common.volume_bohr;
-    const radial_tables = common.radial_tables;
-
     // For spin-polarized SCF, each channel needs enough bands to accommodate
     // magnetic splitting: up channel may have more occupied than nelec/2.
     // Add 20% extra bands + 4 minimum buffer for partial occupations.
-    const nocc_base = @as(usize, @intFromFloat(std.math.ceil(common.total_electrons / 2.0)));
-    const nocc = nocc_base + @max(4, nocc_base / 5);
-    const is_paw_spin = scf_mod.has_paw(species);
-    const has_qij = scf_mod.has_qij(species) and !is_paw_spin;
-    const use_iterative_config = (cfg.scf.solver == .iterative or
-        cfg.scf.solver == .cg or
-        cfg.scf.solver == .auto) and !has_qij;
-    const nonlocal_enabled = cfg.scf.enable_nonlocal and scf_mod.has_nonlocal(species);
+    const solve_cfg = try init_spin_kpoint_solve_config(alloc, cfg, common, potential, scf_iter);
+    defer solve_cfg.deinit(alloc);
 
-    var local_r: ?[]f64 = null;
-    if (use_iterative_config) {
-        local_r = try potential_mod.build_local_potential_real(
-            alloc,
-            grid,
-            common.ionic,
-            potential,
-        );
-    }
-    defer if (local_r) |values| alloc.free(values);
-
-    const fft_index_map = try build_fft_index_map(alloc, grid);
-    defer alloc.free(fft_index_map);
-
-    var iter_max_iter = cfg.scf.iterative_max_iter;
-    var iter_tol = cfg.scf.iterative_tol;
-    if (cfg.scf.iterative_warmup_steps > 0 and scf_iter < cfg.scf.iterative_warmup_steps) {
-        iter_max_iter = cfg.scf.iterative_warmup_max_iter;
-        iter_tol = cfg.scf.iterative_warmup_tol;
-    }
-
-    const eigen_data = try alloc.alloc(KpointEigenData, kpoints.len);
-    var filled: usize = 0;
-    errdefer {
-        var ii: usize = 0;
-        while (ii < filled) : (ii += 1) {
-            eigen_data[ii].deinit(alloc);
-        }
-        alloc.free(eigen_data);
-    }
-
-    for (kpoints, 0..) |kp, kidx| {
-        const ac_ptr: ?*apply.KpointApplyCache = &apply_caches[kidx];
-        eigen_data[kidx] = try compute_kpoint_eigen_data(
-            alloc,
-            io,
-            &cfg,
-            grid,
-            kp,
-            species,
-            atoms,
-            recip,
-            volume_bohr,
-            common.local_cfg,
-            potential,
-            local_r,
-            nocc,
-            use_iterative_config,
-            has_qij,
-            nonlocal_enabled,
-            fft_index_map,
-            iter_max_iter,
-            iter_tol,
-            cfg.scf.iterative_reuse_vectors,
-            &kpoint_cache[kidx],
-            null,
-            shared_fft_plan,
-            ac_ptr,
-            radial_tables,
-            common.paw_tabs,
-        );
-        filled += 1;
-    }
-
-    return SpinEigenResult{
-        .eigen_data = eigen_data,
-        .filled = filled,
-    };
+    return compute_spin_channel_eigen_data(
+        alloc,
+        io,
+        &cfg,
+        common,
+        potential,
+        kpoint_cache,
+        apply_caches,
+        shared_fft_plan,
+        &solve_cfg,
+    );
 }
 
 // =========================================================================
