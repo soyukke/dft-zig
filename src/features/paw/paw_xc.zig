@@ -2701,40 +2701,14 @@ const SpinExcAngularCtx = struct {
     xc_func: xc.Functional,
 };
 
-fn process_spin_exc_one_angular(
-    alpha: usize,
-    w_ang: f64,
+fn prepare_spin_exc_density_channels(
     ctx: *const SpinExcAngularCtx,
     sc: *const SpinExcScratch,
-) SpinExcResult {
-    var dens_up = build_exc_density_ctx(
-        ctx.paw,
-        ctx.rhoij_m_up,
-        ctx.m_total,
-        ctx.m_offsets,
-        alpha,
-        ctx.lb,
-        ctx.dims,
-        ctx.aug.*,
-        ctx.uiuj.*,
-        ctx.gaunt_table,
-        &sc.up,
-    );
-    var dens_down = build_exc_density_ctx(
-        ctx.paw,
-        ctx.rhoij_m_down,
-        ctx.m_total,
-        ctx.m_offsets,
-        alpha,
-        ctx.lb,
-        ctx.dims,
-        ctx.aug.*,
-        ctx.uiuj.*,
-        ctx.gaunt_table,
-        &sc.down,
-    );
-    build_density_at_angular_point(&dens_up);
-    build_density_at_angular_point(&dens_down);
+    dens_up: *DensityAccumCtx,
+    dens_down: *DensityAccumCtx,
+) void {
+    build_density_at_angular_point(dens_up);
+    build_density_at_angular_point(dens_down);
     radial_derivative_density_channel(
         sc.up.rho_ae,
         sc.up.rho_ps,
@@ -2771,6 +2745,41 @@ fn process_spin_exc_one_angular(
         sc.up.dcore_ps,
         ctx.dims.n_mesh,
     );
+}
+
+fn process_spin_exc_one_angular(
+    alpha: usize,
+    w_ang: f64,
+    ctx: *const SpinExcAngularCtx,
+    sc: *const SpinExcScratch,
+) SpinExcResult {
+    var dens_up = build_exc_density_ctx(
+        ctx.paw,
+        ctx.rhoij_m_up,
+        ctx.m_total,
+        ctx.m_offsets,
+        alpha,
+        ctx.lb,
+        ctx.dims,
+        ctx.aug.*,
+        ctx.uiuj.*,
+        ctx.gaunt_table,
+        &sc.up,
+    );
+    var dens_down = build_exc_density_ctx(
+        ctx.paw,
+        ctx.rhoij_m_down,
+        ctx.m_total,
+        ctx.m_offsets,
+        alpha,
+        ctx.lb,
+        ctx.dims,
+        ctx.aug.*,
+        ctx.uiuj.*,
+        ctx.gaunt_table,
+        &sc.down,
+    );
+    prepare_spin_exc_density_channels(ctx, sc, &dens_up, &dens_down);
     return integrate_spin_exc_radial(
         w_ang,
         ctx.dims.n_mesh,
