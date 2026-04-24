@@ -7,7 +7,6 @@
 #
 # Format: <path>\t<rule>\t<count>
 src/features/config/config.zig	function_too_long	3
-src/features/dfpt/dfpt.zig	function_too_long	1
 src/features/dfpt/dynmat.zig	function_too_long	3
 src/features/dfpt/electric.zig	function_too_long	3
 src/features/dfpt/gamma.zig	function_too_long	3

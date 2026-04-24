@@ -583,6 +583,11 @@ const XcSupport = struct {
     }
 };
 
+const GammaGroundSetup = struct {
+    local_cfg: local_potential.LocalPotentialConfig,
+    gamma_prep: GammaGroundPrep,
+};
+
 fn build_dfpt_xc_support(
     alloc: std.mem.Allocator,
     cfg: config_mod.Config,
@@ -612,65 +617,79 @@ fn build_dfpt_xc_support(
 
 /// Build a PreparedGroundState at the Γ-point from converged SCF results.
 /// This extracts the common ground-state setup shared by `run_phonon` and `run_phonon_band`.
-pub fn prepare_ground_state(
+fn init_gamma_ground_setup(
     alloc: std.mem.Allocator,
-    io: std.Io,
     cfg: config_mod.Config,
     scf_result: *scf_mod.ScfResult,
     species: []const hamiltonian.SpeciesEntry,
     atoms: []const hamiltonian.AtomData,
-    volume: f64,
     recip: math.Mat3,
-) !PreparedGroundState {
+) !GammaGroundSetup {
     set_dfpt_log_level(cfg.dfpt.log_level);
-    const grid = scf_result.grid;
-    const local_cfg = local_potential.resolve(cfg.scf.local_potential, cfg.ewald.alpha, grid.cell);
-    var gamma_prep = try init_gamma_ground_prep(
-        alloc,
-        cfg,
-        scf_result,
-        species,
-        atoms,
-        recip,
-        local_cfg,
+    const local_cfg = local_potential.resolve(
+        cfg.scf.local_potential,
+        cfg.ewald.alpha,
+        scf_result.grid.cell,
     );
-    errdefer gamma_prep.deinit(alloc);
-    const gvecs = gamma_prep.basis.gvecs;
-    const n_occ = gamma_prep.n_occ;
-    var electronic = try build_gamma_electronic_state(
+    return .{
+        .local_cfg = local_cfg,
+        .gamma_prep = try init_gamma_ground_prep(
+            alloc,
+            cfg,
+            scf_result,
+            species,
+            atoms,
+            recip,
+            local_cfg,
+        ),
+    };
+}
+
+fn build_prepared_gamma_electronic_state(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: config_mod.Config,
+    grid: Grid,
+    gamma_prep: *const GammaGroundPrep,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    volume: f64,
+) !ElectronicState {
+    return build_gamma_electronic_state(
         alloc,
         io,
         cfg,
         grid,
-        gvecs,
+        gamma_prep.basis.gvecs,
         gamma_prep.local_r,
         species,
         atoms,
         volume,
-        n_occ,
+        gamma_prep.n_occ,
     );
-    errdefer electronic.deinit(alloc);
+}
 
-    var xc_support = try build_dfpt_xc_support(
-        alloc,
-        cfg,
-        grid,
-        scf_result.density,
-        species,
-        atoms,
-    );
-    errdefer xc_support.deinit(alloc);
-
+fn finalize_prepared_ground_state(
+    alloc: std.mem.Allocator,
+    scf_result: *scf_mod.ScfResult,
+    cfg: config_mod.Config,
+    gamma_prep: GammaGroundPrep,
+    local_cfg: local_potential.LocalPotentialConfig,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    electronic: *const ElectronicState,
+    xc_support: *XcSupport,
+) !PreparedGroundState {
     const gs = make_ground_state(
         scf_result,
         cfg,
-        gvecs,
+        gamma_prep.basis.gvecs,
         species,
         atoms,
         local_cfg,
         electronic.apply_ctx_ptr,
         electronic.wf_const,
-        n_occ,
+        gamma_prep.n_occ,
         electronic.eig,
         xc_support.core_resources,
         xc_support.vxc_r,
@@ -687,6 +706,62 @@ pub fn prepare_ground_state(
         xc_support.core_resources,
         xc_support.vxc_r,
         xc_support.fxc_result,
+    );
+}
+
+pub fn prepare_ground_state(
+    alloc: std.mem.Allocator,
+    io: std.Io,
+    cfg: config_mod.Config,
+    scf_result: *scf_mod.ScfResult,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    volume: f64,
+    recip: math.Mat3,
+) !PreparedGroundState {
+    const grid = scf_result.grid;
+    const gamma_setup = try init_gamma_ground_setup(
+        alloc,
+        cfg,
+        scf_result,
+        species,
+        atoms,
+        recip,
+    );
+    var gamma_prep = gamma_setup.gamma_prep;
+    errdefer gamma_prep.deinit(alloc);
+    var electronic = try build_prepared_gamma_electronic_state(
+        alloc,
+        io,
+        cfg,
+        grid,
+        &gamma_prep,
+        species,
+        atoms,
+        volume,
+    );
+    errdefer electronic.deinit(alloc);
+
+    var xc_support = try build_dfpt_xc_support(
+        alloc,
+        cfg,
+        grid,
+        scf_result.density,
+        species,
+        atoms,
+    );
+    errdefer xc_support.deinit(alloc);
+
+    return finalize_prepared_ground_state(
+        alloc,
+        scf_result,
+        cfg,
+        gamma_prep,
+        gamma_setup.local_cfg,
+        species,
+        atoms,
+        &electronic,
+        &xc_support,
     );
 }
 
