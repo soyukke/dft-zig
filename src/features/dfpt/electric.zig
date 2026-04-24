@@ -1111,71 +1111,136 @@ fn apply_ddk_nonlocal(
     @memset(out, math.complex.init(0.0, 0.0));
 
     for (nl_ctx.species) |sp| {
-        const g_count = sp.g_count;
-        if (g_count != n_pw) continue;
-        if (sp.m_total == 0) continue;
-
+        if (sp.g_count != n_pw or sp.m_total == 0) continue;
         for (atoms) |atom| {
             if (atom.species_index != sp.species_index) continue;
-            for (0..n_pw) |g| {
-                work_phase[g] = math.complex.expi(math.Vec3.dot(gvecs[g].cart, atom.position));
-            }
+            accumulate_ddk_nonlocal_atom(
+                gvecs,
+                atom,
+                sp,
+                direction,
+                inv_volume,
+                psi,
+                radial_tables[atom.species_index].tables,
+                out,
+                work_phase,
+                work_coeff,
+                work_coeff2,
+                work_dcoeff,
+                work_dcoeff2,
+            );
+        }
+    }
+}
 
-            var b: usize = 0;
-            while (b < sp.beta_count) : (b += 1) {
-                const l_val = sp.l_list[b];
-                const offset = sp.m_offsets[b];
-                const m_count = sp.m_counts[b];
-                const table = &radial_tables[atom.species_index].tables[b];
-                var m_idx: usize = 0;
-                while (m_idx < m_count) : (m_idx += 1) {
-                    const m_val = @as(i32, @intCast(m_idx)) - l_val;
-                    var coeff = math.complex.init(0.0, 0.0);
-                    var dcoeff = math.complex.init(0.0, 0.0);
-                    for (0..n_pw) |g| {
-                        const kpg = gvecs[g].kpg;
-                        const xphase = math.complex.mul(psi[g], work_phase[g]);
-                        // Use fresh phi consistent with compute_dphi_beta's Y_lm
-                        const phi_val = compute_phi_beta(kpg, l_val, m_val, table);
-                        coeff = math.complex.add(coeff, math.complex.scale(xphase, phi_val));
-                        const dphi_val = compute_dphi_beta(kpg, direction, l_val, m_val, table);
-                        dcoeff = math.complex.add(dcoeff, math.complex.scale(xphase, dphi_val));
-                    }
-                    work_coeff[offset + m_idx] = math.complex.scale(coeff, inv_volume);
-                    work_dcoeff[offset + m_idx] = math.complex.scale(dcoeff, inv_volume);
-                }
-            }
-            apply_dij(sp, work_coeff, work_coeff2);
-            apply_dij(sp, work_dcoeff, work_dcoeff2);
+fn accumulate_ddk_nonlocal_atom(
+    gvecs: []const plane_wave.GVector,
+    atom: hamiltonian.AtomData,
+    sp: scf_mod.NonlocalSpecies,
+    direction: usize,
+    inv_volume: f64,
+    psi: []const math.Complex,
+    atom_tables: []const nonlocal.RadialTable,
+    out: []math.Complex,
+    work_phase: []math.Complex,
+    work_coeff: []math.Complex,
+    work_coeff2: []math.Complex,
+    work_dcoeff: []math.Complex,
+    work_dcoeff2: []math.Complex,
+) void {
+    for (0..gvecs.len) |g| {
+        work_phase[g] = math.complex.expi(math.Vec3.dot(gvecs[g].cart, atom.position));
+    }
+    project_ddk_nonlocal_coefficients(
+        gvecs,
+        sp,
+        direction,
+        inv_volume,
+        psi,
+        atom_tables,
+        work_phase,
+        work_coeff,
+        work_dcoeff,
+    );
+    apply_dij(sp, work_coeff, work_coeff2);
+    apply_dij(sp, work_dcoeff, work_dcoeff2);
+    accumulate_ddk_nonlocal_output(
+        gvecs,
+        sp,
+        direction,
+        atom_tables,
+        out,
+        work_phase,
+        work_coeff2,
+        work_dcoeff2,
+    );
+}
 
-            b = 0;
-            while (b < sp.beta_count) : (b += 1) {
-                const l_val = sp.l_list[b];
-                const offset = sp.m_offsets[b];
-                const m_count = sp.m_counts[b];
-                const table = &radial_tables[atom.species_index].tables[b];
-                var m_idx: usize = 0;
-                while (m_idx < m_count) : (m_idx += 1) {
-                    const m_val = @as(i32, @intCast(m_idx)) - l_val;
-                    const dc = work_coeff2[offset + m_idx];
-                    const ddc = work_dcoeff2[offset + m_idx];
-                    if (@abs(dc.r) + @abs(dc.i) + @abs(ddc.r) + @abs(ddc.i) < 1e-30) continue;
-                    for (0..n_pw) |g| {
-                        const phase_conj = math.complex.conj(work_phase[g]);
-                        const phi_val = compute_phi_beta(gvecs[g].kpg, l_val, m_val, table);
-                        const dphi = compute_dphi_beta(
-                            gvecs[g].kpg,
-                            direction,
-                            l_val,
-                            m_val,
-                            table,
-                        );
-                        out[g] = math.complex.add(out[g], math.complex.add(
-                            math.complex.mul(math.complex.scale(phase_conj, dphi), dc),
-                            math.complex.mul(math.complex.scale(phase_conj, phi_val), ddc),
-                        ));
-                    }
-                }
+fn project_ddk_nonlocal_coefficients(
+    gvecs: []const plane_wave.GVector,
+    sp: scf_mod.NonlocalSpecies,
+    direction: usize,
+    inv_volume: f64,
+    psi: []const math.Complex,
+    atom_tables: []const nonlocal.RadialTable,
+    work_phase: []const math.Complex,
+    work_coeff: []math.Complex,
+    work_dcoeff: []math.Complex,
+) void {
+    var b: usize = 0;
+    while (b < sp.beta_count) : (b += 1) {
+        const l_val = sp.l_list[b];
+        const offset = sp.m_offsets[b];
+        const m_count = sp.m_counts[b];
+        const table = &atom_tables[b];
+        var m_idx: usize = 0;
+        while (m_idx < m_count) : (m_idx += 1) {
+            const m_val = @as(i32, @intCast(m_idx)) - l_val;
+            var coeff = math.complex.init(0.0, 0.0);
+            var dcoeff = math.complex.init(0.0, 0.0);
+            for (0..gvecs.len) |g| {
+                const xphase = math.complex.mul(psi[g], work_phase[g]);
+                const phi_val = compute_phi_beta(gvecs[g].kpg, l_val, m_val, table);
+                const dphi_val = compute_dphi_beta(gvecs[g].kpg, direction, l_val, m_val, table);
+                coeff = math.complex.add(coeff, math.complex.scale(xphase, phi_val));
+                dcoeff = math.complex.add(dcoeff, math.complex.scale(xphase, dphi_val));
+            }
+            work_coeff[offset + m_idx] = math.complex.scale(coeff, inv_volume);
+            work_dcoeff[offset + m_idx] = math.complex.scale(dcoeff, inv_volume);
+        }
+    }
+}
+
+fn accumulate_ddk_nonlocal_output(
+    gvecs: []const plane_wave.GVector,
+    sp: scf_mod.NonlocalSpecies,
+    direction: usize,
+    atom_tables: []const nonlocal.RadialTable,
+    out: []math.Complex,
+    work_phase: []const math.Complex,
+    work_coeff2: []const math.Complex,
+    work_dcoeff2: []const math.Complex,
+) void {
+    var b: usize = 0;
+    while (b < sp.beta_count) : (b += 1) {
+        const l_val = sp.l_list[b];
+        const offset = sp.m_offsets[b];
+        const m_count = sp.m_counts[b];
+        const table = &atom_tables[b];
+        var m_idx: usize = 0;
+        while (m_idx < m_count) : (m_idx += 1) {
+            const m_val = @as(i32, @intCast(m_idx)) - l_val;
+            const dc = work_coeff2[offset + m_idx];
+            const ddc = work_dcoeff2[offset + m_idx];
+            if (@abs(dc.r) + @abs(dc.i) + @abs(ddc.r) + @abs(ddc.i) < 1e-30) continue;
+            for (0..gvecs.len) |g| {
+                const phase_conj = math.complex.conj(work_phase[g]);
+                const phi_val = compute_phi_beta(gvecs[g].kpg, l_val, m_val, table);
+                const dphi_val = compute_dphi_beta(gvecs[g].kpg, direction, l_val, m_val, table);
+                out[g] = math.complex.add(out[g], math.complex.add(
+                    math.complex.mul(math.complex.scale(phase_conj, dphi_val), dc),
+                    math.complex.mul(math.complex.scale(phase_conj, phi_val), ddc),
+                ));
             }
         }
     }
