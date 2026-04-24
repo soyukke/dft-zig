@@ -669,6 +669,104 @@ pub fn add_paw_compensation_charge(
     }
 }
 
+fn update_paw_dij_for_atom(
+    ctx: *const PawDijUpdateCtx,
+    setup: SpeciesPawSetup,
+    atom: hamiltonian.AtomData,
+    atom_index: usize,
+    atom_counter: usize,
+) !void {
+    const dij = try ctx.alloc.alloc(f64, setup.n_ij);
+    defer ctx.alloc.free(dij);
+
+    const dij_m = try ctx.alloc.alloc(f64, setup.n_m);
+    defer ctx.alloc.free(dij_m);
+
+    initialize_paw_dij_buffers(setup, dij, dij_m);
+    add_paw_dhat_for_atom(
+        ctx.grid,
+        ctx.ionic,
+        ctx.potential,
+        setup,
+        atom.position,
+        ctx.ecutrho,
+        ctx.gaunt_table,
+        dij,
+        dij_m,
+    );
+
+    const dij_xc_m = try ctx.alloc.alloc(f64, setup.n_m);
+    defer ctx.alloc.free(dij_xc_m);
+
+    if (ctx.skip_dxc) {
+        @memset(dij_xc_m, 0.0);
+    } else {
+        try fill_paw_dij_xc_matrix(
+            ctx.alloc,
+            setup,
+            ctx.rhoij,
+            atom_index,
+            ctx.rhoij_spin,
+            ctx.xc_func,
+            ctx.gaunt_table,
+            dij_xc_m,
+        );
+    }
+    add_m_resolved_correction(setup, dij_xc_m, dij, dij_m);
+
+    const dij_h_m = try ctx.alloc.alloc(f64, setup.n_m);
+    defer ctx.alloc.free(dij_h_m);
+
+    try apply_paw_hartree_correction(
+        ctx.alloc,
+        setup,
+        ctx.rhoij,
+        atom_index,
+        ctx.gaunt_table,
+        dij_h_m,
+        dij,
+        dij_m,
+    );
+
+    mix_and_write_paw_dij_atom(
+        ctx.apply_caches,
+        setup.si,
+        atom_counter,
+        ctx.dij_mix_beta,
+        dij,
+        dij_m,
+    );
+}
+
+fn apply_paw_hartree_correction(
+    alloc: std.mem.Allocator,
+    setup: SpeciesPawSetup,
+    rhoij: *const paw_mod.RhoIJ,
+    atom_index: usize,
+    gaunt_table: *const paw_mod.GauntTable,
+    dij_h_m: []f64,
+    dij: []f64,
+    dij_m: []f64,
+) !void {
+    try fill_paw_dij_hartree_matrix(alloc, setup, rhoij, atom_index, gaunt_table, dij_h_m);
+    add_m_resolved_correction(setup, dij_h_m, dij, dij_m);
+}
+
+const PawDijUpdateCtx = struct {
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    ionic: hamiltonian.PotentialGrid,
+    potential: hamiltonian.PotentialGrid,
+    apply_caches: []apply.KpointApplyCache,
+    ecutrho: f64,
+    rhoij: *const paw_mod.RhoIJ,
+    xc_func: xc.Functional,
+    gaunt_table: *const paw_mod.GauntTable,
+    skip_dxc: bool,
+    rhoij_spin: ?*const paw_mod.RhoIJ,
+    dij_mix_beta: f64,
+};
+
 /// Update PAW D_ij per-atom from the total effective potential.
 /// D_ij(atom) = D^0_ij + D^hat_ij(atom) + D^xc_ij(atom) + D^H_ij(atom)
 /// D^hat depends on atom position via structure factor exp(-iG·R_a).
@@ -691,6 +789,20 @@ pub fn update_paw_dij(
     rhoij_spin: ?*const paw_mod.RhoIJ,
     dij_mix_beta: f64,
 ) !void {
+    const ctx = PawDijUpdateCtx{
+        .alloc = alloc,
+        .grid = grid,
+        .ionic = ionic,
+        .potential = potential,
+        .apply_caches = apply_caches,
+        .ecutrho = ecutrho,
+        .rhoij = rhoij,
+        .xc_func = xc_func,
+        .gaunt_table = gaunt_table,
+        .skip_dxc = skip_dxc,
+        .rhoij_spin = rhoij_spin,
+        .dij_mix_beta = dij_mix_beta,
+    };
     for (species, 0..) |entry_s, si| {
         if (si >= paw_tabs.len) continue;
         const setup = init_species_paw_setup(entry_s, si, &paw_tabs[si], atoms) orelse continue;
@@ -699,59 +811,13 @@ pub fn update_paw_dij(
         var atom_counter: usize = 0;
         for (atoms, 0..) |atom, ai| {
             if (atom.species_index != si) continue;
-            const dij = try alloc.alloc(f64, setup.n_ij);
-            defer alloc.free(dij);
-
-            const dij_m = try alloc.alloc(f64, setup.n_m);
-            defer alloc.free(dij_m);
-
-            initialize_paw_dij_buffers(setup, dij, dij_m);
-            add_paw_dhat_for_atom(
-                grid,
-                ionic,
-                potential,
+            try update_paw_dij_for_atom(
+                &ctx,
                 setup,
-                atom.position,
-                ecutrho,
-                gaunt_table,
-                dij,
-                dij_m,
-            );
-
-            const dij_xc_m = try alloc.alloc(f64, setup.n_m);
-            defer alloc.free(dij_xc_m);
-
-            if (skip_dxc) {
-                @memset(dij_xc_m, 0.0);
-            } else {
-                try fill_paw_dij_xc_matrix(
-                    alloc,
-                    setup,
-                    rhoij,
-                    ai,
-                    rhoij_spin,
-                    xc_func,
-                    gaunt_table,
-                    dij_xc_m,
-                );
-            }
-            add_m_resolved_correction(setup, dij_xc_m, dij, dij_m);
-
-            const dij_h_m = try alloc.alloc(f64, setup.n_m);
-            defer alloc.free(dij_h_m);
-
-            try fill_paw_dij_hartree_matrix(alloc, setup, rhoij, ai, gaunt_table, dij_h_m);
-            add_m_resolved_correction(setup, dij_h_m, dij, dij_m);
-
-            mix_and_write_paw_dij_atom(
-                apply_caches,
-                setup.si,
+                atom,
+                ai,
                 atom_counter,
-                dij_mix_beta,
-                dij,
-                dij_m,
             );
-
             atom_counter += 1;
         }
 
