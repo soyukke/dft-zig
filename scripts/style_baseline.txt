@@ -13,7 +13,6 @@ src/features/dfpt/gamma.zig	function_too_long	3
 src/features/dfpt/phonon_q/band_direct.zig	function_too_long	3
 src/features/dfpt/phonon_q/band_ifc.zig	function_too_long	3
 src/features/dfpt/phonon_q/dynmat_build.zig	function_too_long	4
-src/features/dfpt/phonon_q/qpath.zig	function_too_long	1
 src/features/dfpt/phonon_q/solver_multik.zig	function_too_long	3
 src/features/dfpt/phonon_q/solver_single.zig	function_too_long	3
 src/features/dft/dft.zig	function_too_long	1
