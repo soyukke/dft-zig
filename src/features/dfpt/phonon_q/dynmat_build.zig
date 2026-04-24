@@ -550,12 +550,7 @@ pub fn build_q_dynmat(
     const dyn_q = try alloc_dynmat(alloc, dim);
     errdefer alloc.free(dyn_q);
     fill_electronic_dynmat(dyn_q, dim, vloc1_gs, pert_results, volume);
-    log_dfpt(
-        "dfptQ_dyn: D_elec(0x,0x)=({e:.6},{e:.6}) D_elec(0x,1x)=({e:.6},{e:.6})\n",
-        .{ dyn_q[0].r, dyn_q[0].i, dyn_q[3].r, dyn_q[3].i },
-    );
-
-    // Nonlocal response contribution (monochromatic)
+    log_single_k_dynmat_electronic_samples(dyn_q, dim);
     const nl_resp_q = try compute_nonlocal_response_dynmat_q(
         alloc,
         gs,
@@ -566,6 +561,43 @@ pub fn build_q_dynmat(
     );
     defer alloc.free(nl_resp_q);
 
+    log_single_k_dynmat_nonlocal_samples(dyn_q, nl_resp_q, dim);
+    add_complex_dynmat(dyn_q, nl_resp_q);
+    try add_single_k_remaining_dynmat_terms(
+        alloc,
+        dyn_q,
+        dim,
+        gs,
+        pert_results,
+        rho1_core_gs,
+        rho0_g,
+        charges,
+        positions,
+        cell_bohr,
+        recip,
+        q_cart,
+        vxc_g,
+        n_atoms,
+        irr_info,
+    );
+    log_single_k_dynmat_total_samples(dyn_q);
+
+    return dyn_q;
+}
+
+fn log_single_k_dynmat_electronic_samples(dyn_q: []const math.Complex, dim: usize) void {
+    _ = dim;
+    log_dfpt(
+        "dfptQ_dyn: D_elec(0x,0x)=({e:.6},{e:.6}) D_elec(0x,1x)=({e:.6},{e:.6})\n",
+        .{ dyn_q[0].r, dyn_q[0].i, dyn_q[3].r, dyn_q[3].i },
+    );
+}
+
+fn log_single_k_dynmat_nonlocal_samples(
+    dyn_q: []const math.Complex,
+    nl_resp_q: []const math.Complex,
+    dim: usize,
+) void {
     log_dfpt(
         "dfptQ_dyn: D_nl_resp(0x,0x)=({e:.6},{e:.6}) D_nl_resp(0x,1x)=({e:.6},{e:.6})\n",
         .{ nl_resp_q[0].r, nl_resp_q[0].i, nl_resp_q[3].r, nl_resp_q[3].i },
@@ -579,12 +611,29 @@ pub fn build_q_dynmat(
             nl_resp_q[3 * dim + 3].i,
         },
     );
-    // Print D_elec for atom1 block too
     log_dfpt(
         "dfptQ_dyn: D_elec(1x,0x)=({e:.6},{e:.6}) D_elec(1x,1x)=({e:.6},{e:.6})\n",
         .{ dyn_q[3 * dim].r, dyn_q[3 * dim].i, dyn_q[3 * dim + 3].r, dyn_q[3 * dim + 3].i },
     );
-    add_complex_dynmat(dyn_q, nl_resp_q);
+}
+
+fn add_single_k_remaining_dynmat_terms(
+    alloc: std.mem.Allocator,
+    dyn_q: []math.Complex,
+    dim: usize,
+    gs: GroundState,
+    pert_results: []PerturbationResult,
+    rho1_core_gs: []const []math.Complex,
+    rho0_g: []const math.Complex,
+    charges: []const f64,
+    positions: []const math.Vec3,
+    cell_bohr: math.Mat3,
+    recip: math.Mat3,
+    q_cart: math.Vec3,
+    vxc_g: ?[]const math.Complex,
+    n_atoms: usize,
+    irr_info: dynmat_mod.IrreducibleAtomInfo,
+) !void {
     try add_single_k_nlcc_cross_contribution(
         alloc,
         dyn_q,
@@ -611,13 +660,14 @@ pub fn build_q_dynmat(
         vxc_g,
         n_atoms,
     );
+}
+
+fn log_single_k_dynmat_total_samples(dyn_q: []const math.Complex) void {
     log_dfpt(
         "dfptQ_dyn: total(0x,0x)=({e:.6},{e:.6}) total(0x,1x)=({e:.6},{e:.6})" ++
             " total(0x,1y)=({e:.6},{e:.6})\n",
         .{ dyn_q[0].r, dyn_q[0].i, dyn_q[3].r, dyn_q[3].i, dyn_q[4].r, dyn_q[4].i },
     );
-
-    return dyn_q;
 }
 
 /// Compute nonlocal response dynmat D_nl_resp summed over all k-points.
@@ -801,6 +851,63 @@ pub fn build_q_dynmat_multi_k(
         .{ nl_resp_q[0].r, nl_resp_q[0].i },
     );
     add_complex_dynmat(dyn_q, nl_resp_q);
+    try add_multi_k_remaining_dynmat_terms(
+        alloc,
+        dyn_q,
+        dim,
+        kpts,
+        rho0_g,
+        gs,
+        pert_results,
+        rho1_core_gs,
+        charges,
+        positions,
+        cell_bohr,
+        recip,
+        volume,
+        q_cart,
+        grid,
+        species,
+        atoms,
+        ff_tables,
+        rho_core_tables,
+        rho_core,
+        vxc_g,
+        vdw_cfg,
+        n_atoms,
+        irr_info,
+    );
+    log_dfpt("dfptQ_mk_dyn: total(0x,0x)=({e:.6},{e:.6})\n", .{ dyn_q[0].r, dyn_q[0].i });
+
+    return dyn_q;
+}
+
+fn add_multi_k_remaining_dynmat_terms(
+    alloc: std.mem.Allocator,
+    dyn_q: []math.Complex,
+    dim: usize,
+    kpts: []KPointDfptData,
+    rho0_g: []const math.Complex,
+    gs: GroundState,
+    pert_results: []MultiKPertResult,
+    rho1_core_gs: []const []math.Complex,
+    charges: []const f64,
+    positions: []const math.Vec3,
+    cell_bohr: math.Mat3,
+    recip: math.Mat3,
+    volume: f64,
+    q_cart: math.Vec3,
+    grid: Grid,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    ff_tables: ?[]const form_factor.LocalFormFactorTable,
+    rho_core_tables: ?[]const form_factor.RadialFormFactorTable,
+    rho_core: ?[]const f64,
+    vxc_g: ?[]const math.Complex,
+    vdw_cfg: config_mod.VdwConfig,
+    n_atoms: usize,
+    irr_info: dynmat_mod.IrreducibleAtomInfo,
+) !void {
     try add_multi_k_nlcc_cross_contribution(
         alloc,
         dyn_q,
@@ -835,7 +942,4 @@ pub fn build_q_dynmat_multi_k(
         vdw_cfg,
         n_atoms,
     );
-    log_dfpt("dfptQ_mk_dyn: total(0x,0x)=({e:.6},{e:.6})\n", .{ dyn_q[0].r, dyn_q[0].i });
-
-    return dyn_q;
 }
