@@ -120,6 +120,14 @@ const ScfGridState = struct {
     current_h: sparse.CsrMatrix,
 };
 
+const ScfGridIterationSummary = struct {
+    energy_hartree: f64 = 0.0,
+    energy_xc: f64 = 0.0,
+    energy_vxc_rho: f64 = 0.0,
+    converged: bool = false,
+    iterations: usize = 0,
+};
+
 fn validate_scf_grid_inputs(
     centers: []const math.Vec3,
     opts: ScfGridOptions,
@@ -288,6 +296,51 @@ fn density_matrix_converged(
     return max_diff < density_tol;
 }
 
+fn run_scf_grid_iterations(
+    alloc: std.mem.Allocator,
+    centers: []const math.Vec3,
+    pbc: neighbor_list.Pbc,
+    opts: ScfGridOptions,
+    kinetic: sparse.CsrMatrix,
+    nonlocal: ?sparse.CsrMatrix,
+    state: *ScfGridState,
+) !ScfGridIterationSummary {
+    var summary = ScfGridIterationSummary{};
+    while (summary.iterations < opts.max_iter) : (summary.iterations += 1) {
+        var step = try build_scf_step_hamiltonian(
+            alloc,
+            centers,
+            pbc,
+            opts,
+            state.density,
+            kinetic,
+            nonlocal,
+        );
+        defer step.hamiltonian.deinit(alloc);
+
+        summary.energy_hartree = step.energy_hartree;
+        summary.energy_xc = step.energy_xc;
+        summary.energy_vxc_rho = step.energy_vxc_rho;
+
+        var next_density = try build_next_density(alloc, step.hamiltonian, state.overlap, opts);
+        errdefer next_density.deinit(alloc);
+
+        summary.converged = try density_matrix_converged(
+            alloc,
+            state.density,
+            next_density,
+            opts.density_tol,
+        );
+
+        state.density.deinit(alloc);
+        state.density = next_density;
+        state.current_h.deinit(alloc);
+        state.current_h = try sparse.clone(alloc, step.hamiltonian);
+        if (summary.converged) break;
+    }
+    return summary;
+}
+
 fn build_scf_grid_result(
     overlap: sparse.CsrMatrix,
     hamiltonian: sparse.CsrMatrix,
@@ -453,45 +506,15 @@ pub fn run_scf_with_grid(
         state.current_h.deinit(alloc);
     }
 
-    var energy_hartree: f64 = 0.0;
-    var energy_xc: f64 = 0.0;
-    var energy_vxc_rho: f64 = 0.0;
-    var converged = false;
-    var iter: usize = 0;
-    while (iter < opts.max_iter) : (iter += 1) {
-        var step = try build_scf_step_hamiltonian(
-            alloc,
-            centers,
-            pbc,
-            opts,
-            state.density,
-            kinetic,
-            nonlocal,
-        );
-        defer step.hamiltonian.deinit(alloc);
-
-        energy_hartree = step.energy_hartree;
-        energy_xc = step.energy_xc;
-        energy_vxc_rho = step.energy_vxc_rho;
-
-        var next_density = try build_next_density(alloc, step.hamiltonian, state.overlap, opts);
-        errdefer next_density.deinit(alloc);
-
-        converged = try density_matrix_converged(
-            alloc,
-            state.density,
-            next_density,
-            opts.density_tol,
-        );
-
-        state.density.deinit(alloc);
-        state.density = next_density;
-        state.current_h.deinit(alloc);
-        state.current_h = try sparse.clone(alloc, step.hamiltonian);
-
-        if (converged) break;
-    }
-
+    const summary = try run_scf_grid_iterations(
+        alloc,
+        centers,
+        pbc,
+        opts,
+        kinetic,
+        nonlocal,
+        &state,
+    );
     const energy = try sparse.trace_product(state.current_h, state.density);
     const energy_nonlocal = try nonlocal_trace_product(nonlocal, state.density);
     return build_scf_grid_result(
@@ -499,12 +522,12 @@ pub fn run_scf_with_grid(
         state.current_h,
         state.density,
         energy,
-        energy_hartree,
-        energy_xc,
-        energy_vxc_rho,
+        summary.energy_hartree,
+        summary.energy_xc,
+        summary.energy_vxc_rho,
         energy_nonlocal,
-        iter,
-        converged,
+        summary.iterations,
+        summary.converged,
     );
 }
 
