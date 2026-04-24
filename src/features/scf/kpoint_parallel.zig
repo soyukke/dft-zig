@@ -1394,6 +1394,27 @@ fn compute_nonlocal_band_entries(
     return entries;
 }
 
+fn finalize_solved_eigen_data(
+    alloc: std.mem.Allocator,
+    kp: KPoint,
+    nonlocal_enabled: bool,
+    cache: *KpointCache,
+    solved: *SolvedKpoint,
+) !KpointEigenData {
+    return try finalize_eigen_data(
+        alloc,
+        kp,
+        solved.eig,
+        solved.basis.gvecs.len,
+        solved.nbands,
+        nonlocal_enabled,
+        solved.vnl,
+        &solved.apply_ctx,
+        cache,
+        solved.store_vectors,
+    );
+}
+
 pub fn compute_kpoint_eigen_data(
     alloc: std.mem.Allocator,
     io: std.Io,
@@ -1453,18 +1474,7 @@ pub fn compute_kpoint_eigen_data(
     );
     defer solved.deinit(alloc);
 
-    return try finalize_eigen_data(
-        alloc,
-        kp,
-        solved.eig,
-        solved.basis.gvecs.len,
-        solved.nbands,
-        nonlocal_enabled,
-        solved.vnl,
-        &solved.apply_ctx,
-        cache,
-        solved.store_vectors,
-    );
+    return try finalize_solved_eigen_data(alloc, kp, nonlocal_enabled, cache, &solved);
 }
 
 /// Copy eig result to persistent storage, compute nonlocal-band entries,
