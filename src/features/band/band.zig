@@ -533,47 +533,27 @@ pub fn write_band_energies(
         cfg.band.solver == .auto;
     var band_ctx: ?scf.BandIterativeContext = null;
     if (use_iterative) {
-        if (extra == null) {
-            try log_step(io, "band: iterative solver disabled (no SCF potential)");
-            use_iterative = false;
-        } else {
-            const ctx_result = scf.init_band_iterative_context(
-                alloc,
+        band_ctx = try init_optional_band_context(
+            alloc,
+            io,
+            cfg,
+            species,
+            atoms,
+            recip,
+            volume_bohr,
+            extra,
+            paw_tabs,
+            paw_dij,
+        );
+        if (band_ctx == null) {
+            try log_step(
                 io,
-                cfg,
-                species,
-                atoms,
-                recip,
-                volume_bohr,
-                extra.?.*,
+                if (extra == null)
+                    "band: iterative solver disabled (no SCF potential)"
+                else
+                    "band: iterative solver disabled (grid mismatch)",
             );
-            if (ctx_result) |ctx| {
-                band_ctx = ctx;
-                // Set PAW data if available
-                if (paw_tabs) |tabs| {
-                    band_ctx.?.paw_tabs = tabs;
-                }
-                if (paw_dij) |dij| {
-                    // Make owned copies of per-atom D_ij for BandIterativeContext
-                    const dij_copy = try alloc.alloc([]f64, dij.len);
-                    errdefer {
-                        for (dij_copy) |d| alloc.free(d);
-                        alloc.free(dij_copy);
-                    }
-                    for (dij, 0..) |atom_dij, ai| {
-                        dij_copy[ai] = try alloc.alloc(f64, atom_dij.len);
-                        @memcpy(dij_copy[ai], atom_dij);
-                    }
-                    band_ctx.?.paw_dij = dij_copy;
-                }
-            } else |err| {
-                if (err == error.InvalidGrid) {
-                    try log_step(io, "band: iterative solver disabled (grid mismatch)");
-                    use_iterative = false;
-                } else {
-                    return err;
-                }
-            }
+            use_iterative = false;
         }
     }
     defer if (band_ctx) |*ctx| ctx.deinit(alloc);
@@ -587,56 +567,19 @@ pub fn write_band_energies(
     var pool = try ThreadPool.init(alloc, io, 0);
     defer pool.deinit();
 
-    // Build radial projector lookup tables for fast NonlocalContext construction.
-    // The tables are shared across all band k-points and eliminate expensive
-    // numerical integration (O(N_r) per G-vector -> O(1) per G-vector).
-    var radial_tables: ?[]nonlocal.RadialTableSet = null;
-    if (use_iterative and cfg.scf.enable_nonlocal) {
-        // Estimate g_max from ecut: |G+k|^2/2 <= ecut_ry, so |G+k|_max = sqrt(2*ecut_ry)
-        // Add margin for k-point offset
-        const g_max = @sqrt(2.0 * cfg.scf.ecut_ry) * 1.5;
-        var tables = try alloc.alloc(nonlocal.RadialTableSet, species.len);
-        var n_tables: usize = 0;
-        errdefer {
-            for (tables[0..n_tables]) |*t| t.deinit(alloc);
-            alloc.free(tables);
-        }
-        for (species) |entry| {
-            const upf = entry.upf.*;
-            if (upf.beta.len == 0 or upf.dij.len == 0) continue;
-            tables[n_tables] = try nonlocal.RadialTableSet.init(
-                alloc,
-                upf.beta,
-                upf.r,
-                upf.rab,
-                g_max,
-            );
-            n_tables += 1;
-        }
-        radial_tables = tables[0..n_tables];
-    }
-    defer if (radial_tables) |tables| {
-        for (tables) |*t| t.deinit(alloc);
-        // Free the original allocation (species.len elements)
-        const full_ptr = @as([*]nonlocal.RadialTableSet, @ptrCast(tables.ptr));
-        const full_slice = full_ptr[0..species.len];
-        alloc.free(full_slice);
-    };
+    var radial_tables = try BandRadialTables.init(
+        alloc,
+        cfg,
+        species,
+        use_iterative and cfg.scf.enable_nonlocal,
+    );
+    defer radial_tables.deinit(alloc);
 
     if (thread_count <= 1) {
         // Pre-create shared FFT plan for band calculation to avoid
         // expensive FFTW plan creation for each k-point
-        var band_fft_plan: ?fft.Fft3dPlan = null;
-        if (band_ctx) |ctx| {
-            band_fft_plan = try fft.Fft3dPlan.init_with_backend(
-                alloc,
-                io,
-                ctx.grid.nx,
-                ctx.grid.ny,
-                ctx.grid.nz,
-                cfg.scf.fft_backend,
-            );
-        }
+        const band_ctx_ptr = if (band_ctx) |*ctx| ctx else null;
+        var band_fft_plan = try init_band_fft_plan(alloc, io, cfg, band_ctx_ptr);
         defer if (band_fft_plan) |*plan| plan.deinit(alloc);
 
         var cache = scf.BandVectorCache{};
@@ -662,7 +605,7 @@ pub fn write_band_energies(
                         .reuse_vectors = cfg.band.iterative_reuse_vectors,
                         .pool = if (cfg.band.lobpcg_parallel) &pool else null,
                         .shared_fft_plan = band_fft_plan,
-                        .radial_tables = radial_tables,
+                        .radial_tables = radial_tables.view,
                         .paw_tabs = if (band_ctx) |ctx| ctx.paw_tabs else null,
                         .paw_dij = if (band_ctx) |ctx| ctx.paw_dij else null,
                     },

@@ -1,0 +1,106 @@
+const builtin = @import("builtin");
+const linalg = @import("../linalg/linalg.zig");
+const types = @import("types.zig");
+
+pub const linalg_backend = if (builtin.os.tag == .macos) linalg.Backend.accelerate else .openblas;
+
+pub const scf = types.ScfConfig{
+    .enabled = false,
+    .solver = .dense,
+    .xc = .lda_pz,
+    .smearing = .none,
+    .smear_ry = 0.0,
+    .ecut_ry = 30.0,
+    .kmesh = .{ 4, 4, 4 },
+    .kmesh_shift = .{ 0.0, 0.0, 0.0 },
+    .grid = .{ 0, 0, 0 },
+    .grid_scale = 1.0,
+    .mixing_beta = 0.3,
+    .max_iter = 50,
+    .convergence = 1e-6,
+    .convergence_metric = .density,
+    .profile = false,
+    .quiet = false,
+    .debug_nonlocal = false,
+    .debug_local = false,
+    .debug_fermi = false,
+    .enable_nonlocal = true,
+    .local_potential = .short_range,
+    .symmetry = true,
+    .time_reversal = true,
+    .kpoint_threads = 0,
+    .iterative_max_iter = 20,
+    .iterative_tol = 1e-4,
+    .iterative_max_subspace = 0,
+    .iterative_block_size = 0,
+    .iterative_init_diagonal = false,
+    .iterative_warmup_steps = 2,
+    .iterative_warmup_max_iter = 10,
+    .iterative_warmup_tol = 1e-3,
+    .iterative_reuse_vectors = true,
+    .kerker_q0 = 0.0,
+    .diemac = 1.0,
+    .dielng = 1.0,
+    .pulay_history = 8,
+    .pulay_start = 4,
+    .mixing_mode = .potential,
+    .use_rfft = false,
+    .fft_backend = .fftw,
+    .nspin = 1,
+    .spinat = null,
+    .compute_stress = false,
+    .reference_json = null,
+    .compare_reference_json = null,
+    .comparison_json = null,
+    .compare_tolerance_json = null,
+};
+
+pub const ewald = types.EwaldConfig{
+    .alpha = 0.0,
+    .rcut = 0.0,
+    .gcut = 0.0,
+    .tol = 1e-8,
+};
+
+pub const band = types.BandConfig{
+    .points_per_segment = 60,
+    .nbands = 8,
+    .path = &.{},
+    .path_string = null,
+    .solver = .dense,
+    .iterative_max_iter = 40,
+    .iterative_tol = 1e-6,
+    .iterative_max_subspace = 0,
+    .iterative_block_size = 0,
+    .iterative_init_diagonal = false,
+    .kpoint_threads = 0,
+    .iterative_reuse_vectors = true,
+    .use_symmetry = false,
+    .lobpcg_parallel = false,
+};
+
+pub const relax = types.RelaxConfig{
+    .enabled = false,
+    .algorithm = .bfgs,
+    .max_iter = 100,
+    .force_tol = 1e-4,
+    .max_step = 0.5,
+    .output_trajectory = false,
+};
+
+pub const dfpt = types.DfptConfig{
+    .enabled = false,
+    .sternheimer_tol = 1e-8,
+    .sternheimer_max_iter = 200,
+    .scf_tol = 1e-10,
+    .scf_max_iter = 50,
+    .mixing_beta = 0.3,
+    .alpha_shift = 0.01,
+    .qpath_npoints = 0,
+    .pulay_history = 8,
+    .pulay_start = 4,
+    .kpoint_threads = 0,
+    .perturbation_threads = 1,
+    .qgrid = null,
+    .qpath = &.{},
+};
