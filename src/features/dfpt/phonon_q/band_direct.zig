@@ -983,94 +983,122 @@ pub fn run_phonon_band(
     model: *const model_mod.Model,
     npoints_per_seg: usize,
 ) !PhononBandResult {
-    const species = model.species;
-    const atoms = model.atoms;
-    const cell_bohr = model.cell_bohr;
-    const recip = model.recip;
-    const volume = model.volume_bohr;
-    const n_atoms = atoms.len;
-    const dim = 3 * n_atoms;
-    const grid = scf_result.grid;
+    const dim = 3 * model.atoms.len;
+    log_dfpt_info("dfpt_band: starting phonon band calculation ({d} atoms)\n", .{model.atoms.len});
 
-    log_dfpt_info("dfpt_band: starting phonon band calculation ({d} atoms)\n", .{n_atoms});
+    var context = try BandPhononContext.init(alloc, io, cfg, scf_result, model, npoints_per_seg);
+    defer context.deinit(alloc);
 
-    var band_data = try init_band_ground_state_data(
-        alloc,
-        io,
-        cfg,
-        scf_result,
-        species,
-        atoms,
-        volume,
-        recip,
-        grid,
-    );
-    defer band_data.deinit(alloc);
-
-    const gs = band_data.prepared.gs;
-
-    // Generate q-path
-    const q_path_data = try generate_fcc_q_path(alloc, recip, npoints_per_seg);
-    errdefer {
-        alloc.free(q_path_data.label_positions);
-        alloc.free(q_path_data.labels);
-        alloc.free(q_path_data.distances);
-    }
-    defer alloc.free(q_path_data.q_points_frac);
-    defer alloc.free(q_path_data.q_points_cart);
-
-    const n_q = q_path_data.q_points_cart.len;
-    log_dfpt_info("dfpt_band: {d} q-points along path\n", .{n_q});
-
-    var sym_data = try init_band_symmetry_data(alloc, cell_bohr, atoms, recip);
-    defer sym_data.deinit(alloc);
-
-    const dfpt_cfg = DfptConfig.from_config(cfg);
-
-    // ---------------------------------------------------------------
-    // Prepare full-BZ k-point ground-state data (q-independent).
-    // DFPT requires the full BZ sum over k-points. Even if SCF used
-    // IBZ k-points, DFPT needs all k-points in the full BZ because
-    // for q≠0, the function f(k, k+q) is not invariant under the
-    // symmetry operations that map k to its star.
-    // ---------------------------------------------------------------
-    const kgs_data = try prepare_band_kgs_data(
-        alloc,
-        io,
-        cfg,
-        &gs,
-        band_data.prepared.local_r,
-        species,
-        atoms,
-        recip,
-        volume,
-        grid,
-    );
-    defer deinit_k_point_gs_data(alloc, kgs_data);
-
+    log_dfpt_info("dfpt_band: {d} q-points along path\n", .{context.q_path_data.q_points_cart.len});
     const frequencies = try solve_band_path_frequencies(
         alloc,
         io,
         cfg,
-        dfpt_cfg,
+        context.dfpt_cfg,
         model,
-        grid,
-        &band_data,
-        &sym_data,
-        kgs_data,
-        q_path_data.q_points_cart,
-        q_path_data.q_points_frac,
+        scf_result.grid,
+        &context.band_data,
+        &context.sym_data,
+        context.kgs_data,
+        context.q_path_data.q_points_cart,
+        context.q_path_data.q_points_frac,
     );
+    context.release_result_path_data();
 
     return PhononBandResult{
-        .distances = q_path_data.distances,
+        .distances = context.q_path_data.distances,
         .frequencies = frequencies,
         .n_modes = dim,
-        .n_q = n_q,
-        .labels = q_path_data.labels,
-        .label_positions = q_path_data.label_positions,
+        .n_q = context.q_path_data.q_points_cart.len,
+        .labels = context.q_path_data.labels,
+        .label_positions = context.q_path_data.label_positions,
     };
 }
+
+const BandPhononContext = struct {
+    band_data: BandGroundStateData,
+    q_path_data: qpath.GeneratedQPath,
+    sym_data: BandSymmetryData,
+    dfpt_cfg: DfptConfig,
+    kgs_data: []kpt_gs.KPointGsData,
+    owns_result_path_data: bool = true,
+
+    fn init(
+        alloc: std.mem.Allocator,
+        io: std.Io,
+        cfg: config_mod.Config,
+        scf_result: *scf_mod.ScfResult,
+        model: *const model_mod.Model,
+        npoints_per_seg: usize,
+    ) !BandPhononContext {
+        var band_data = try init_band_ground_state_data(
+            alloc,
+            io,
+            cfg,
+            scf_result,
+            model.species,
+            model.atoms,
+            model.volume_bohr,
+            model.recip,
+            scf_result.grid,
+        );
+        errdefer band_data.deinit(alloc);
+
+        const q_path_data = try generate_fcc_q_path(alloc, model.recip, npoints_per_seg);
+        errdefer {
+            alloc.free(q_path_data.q_points_frac);
+            alloc.free(q_path_data.q_points_cart);
+            alloc.free(q_path_data.distances);
+            alloc.free(q_path_data.labels);
+            alloc.free(q_path_data.label_positions);
+        }
+
+        var sym_data = try init_band_symmetry_data(
+            alloc,
+            model.cell_bohr,
+            model.atoms,
+            model.recip,
+        );
+        errdefer sym_data.deinit(alloc);
+
+        const kgs_data = try prepare_band_kgs_data(
+            alloc,
+            io,
+            cfg,
+            &band_data.prepared.gs,
+            band_data.prepared.local_r,
+            model.species,
+            model.atoms,
+            model.recip,
+            model.volume_bohr,
+            scf_result.grid,
+        );
+        return .{
+            .band_data = band_data,
+            .q_path_data = q_path_data,
+            .sym_data = sym_data,
+            .dfpt_cfg = DfptConfig.from_config(cfg),
+            .kgs_data = kgs_data,
+        };
+    }
+
+    fn release_result_path_data(self: *BandPhononContext) void {
+        self.owns_result_path_data = false;
+    }
+
+    fn deinit(self: *BandPhononContext, alloc: std.mem.Allocator) void {
+        deinit_k_point_gs_data(alloc, self.kgs_data);
+        self.sym_data.deinit(alloc);
+        alloc.free(self.q_path_data.q_points_frac);
+        alloc.free(self.q_path_data.q_points_cart);
+        if (self.owns_result_path_data) {
+            alloc.free(self.q_path_data.distances);
+            alloc.free(self.q_path_data.labels);
+            alloc.free(self.q_path_data.label_positions);
+        }
+        self.band_data.deinit(alloc);
+    }
+};
 
 // =====================================================================
 // Perturbation parallelism for q≠0
