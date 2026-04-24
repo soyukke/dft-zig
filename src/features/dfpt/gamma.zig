@@ -1479,31 +1479,10 @@ fn run_nonlocal_commutator_band_diagnostic(
 ) !void {
     const nl_ctx = gs.apply_ctx.nonlocal_ctx.?;
     const n_pw = gs.gvecs.len;
-    const nl_out1 = try alloc.alloc(math.Complex, n_pw);
-    defer alloc.free(nl_out1);
+    var buffers = try NonlocalCommutatorBuffers.init(alloc, n_pw, nl_ctx.max_m_total);
+    defer buffers.deinit(alloc);
 
-    const nl_out2 = try alloc.alloc(math.Complex, n_pw);
-    defer alloc.free(nl_out2);
-
-    const nl_out3 = try alloc.alloc(math.Complex, n_pw);
-    defer alloc.free(nl_out3);
-
-    const work_igpsi = try alloc.alloc(math.Complex, n_pw);
-    defer alloc.free(work_igpsi);
-
-    const nl_phase = try alloc.alloc(math.Complex, n_pw);
-    defer alloc.free(nl_phase);
-
-    const nl_xphase = try alloc.alloc(math.Complex, n_pw);
-    defer alloc.free(nl_xphase);
-
-    const nl_coeff = try alloc.alloc(math.Complex, nl_ctx.max_m_total);
-    defer alloc.free(nl_coeff);
-
-    const nl_coeff2 = try alloc.alloc(math.Complex, nl_ctx.max_m_total);
-    defer alloc.free(nl_coeff2);
-
-    @memset(nl_out1, math.complex.init(0.0, 0.0));
+    @memset(buffers.nl_out1, math.complex.init(0.0, 0.0));
     for (0..n_atoms) |ia| {
         perturbation.apply_nonlocal_perturbation(
             gs.gvecs,
@@ -1513,36 +1492,39 @@ fn run_nonlocal_commutator_band_diagnostic(
             dir,
             1.0 / gs.grid.volume,
             gs.wavefunctions[band],
-            nl_out2,
-            nl_phase,
-            nl_xphase,
-            nl_coeff,
-            nl_coeff2,
+            buffers.nl_out2,
+            buffers.nl_phase,
+            buffers.nl_xphase,
+            buffers.nl_coeff,
+            buffers.nl_coeff2,
         );
-        for (0..n_pw) |g| nl_out1[g] = math.complex.add(nl_out1[g], nl_out2[g]);
+        for (0..n_pw) |g| {
+            buffers.nl_out1[g] = math.complex.add(buffers.nl_out1[g], buffers.nl_out2[g]);
+        }
     }
     for (0..n_pw) |g| {
         const g_d = direction_component(gs.gvecs[g].cart, dir);
         const psi = gs.wavefunctions[band][g];
-        work_igpsi[g] = math.complex.init(-psi.i * g_d, psi.r * g_d);
+        buffers.work_igpsi[g] = math.complex.init(-psi.i * g_d, psi.r * g_d);
     }
-    try scf_mod.apply_nonlocal_potential(gs.apply_ctx, work_igpsi, nl_out2);
-    try scf_mod.apply_nonlocal_potential(gs.apply_ctx, gs.wavefunctions[band], nl_out3);
+    try scf_mod.apply_nonlocal_potential(gs.apply_ctx, buffers.work_igpsi, buffers.nl_out2);
+    try scf_mod.apply_nonlocal_potential(gs.apply_ctx, gs.wavefunctions[band], buffers.nl_out3);
     for (0..n_pw) |g| {
         const g_d = direction_component(gs.gvecs[g].cart, dir);
-        const v = nl_out3[g];
-        nl_out3[g] = math.complex.init(-v.i * g_d, v.r * g_d);
+        const v = buffers.nl_out3[g];
+        buffers.nl_out3[g] = math.complex.init(-v.i * g_d, v.r * g_d);
     }
 
     var diff_norm: f64 = 0.0;
     var lhs_norm: f64 = 0.0;
     var rhs_norm: f64 = 0.0;
     for (0..n_pw) |g| {
-        const expected_g = math.complex.sub(nl_out2[g], nl_out3[g]);
-        const dr = nl_out1[g].r - expected_g.r;
-        const di = nl_out1[g].i - expected_g.i;
+        const expected_g = math.complex.sub(buffers.nl_out2[g], buffers.nl_out3[g]);
+        const dr = buffers.nl_out1[g].r - expected_g.r;
+        const di = buffers.nl_out1[g].i - expected_g.i;
         diff_norm += dr * dr + di * di;
-        lhs_norm += nl_out1[g].r * nl_out1[g].r + nl_out1[g].i * nl_out1[g].i;
+        lhs_norm += buffers.nl_out1[g].r * buffers.nl_out1[g].r +
+            buffers.nl_out1[g].i * buffers.nl_out1[g].i;
         rhs_norm += expected_g.r * expected_g.r + expected_g.i * expected_g.i;
     }
     const vnl_rel = if (rhs_norm > 1e-30) @sqrt(diff_norm / rhs_norm) else 0.0;
@@ -1552,6 +1534,56 @@ fn run_nonlocal_commutator_band_diagnostic(
         .{ dir, band, @sqrt(lhs_norm), @sqrt(rhs_norm), @sqrt(diff_norm), vnl_rel },
     );
 }
+
+const NonlocalCommutatorBuffers = struct {
+    nl_out1: []math.Complex,
+    nl_out2: []math.Complex,
+    nl_out3: []math.Complex,
+    work_igpsi: []math.Complex,
+    nl_phase: []math.Complex,
+    nl_xphase: []math.Complex,
+    nl_coeff: []math.Complex,
+    nl_coeff2: []math.Complex,
+
+    fn init(alloc: std.mem.Allocator, n_pw: usize, max_m_total: usize) !NonlocalCommutatorBuffers {
+        const nl_out1 = try alloc.alloc(math.Complex, n_pw);
+        errdefer alloc.free(nl_out1);
+        const nl_out2 = try alloc.alloc(math.Complex, n_pw);
+        errdefer alloc.free(nl_out2);
+        const nl_out3 = try alloc.alloc(math.Complex, n_pw);
+        errdefer alloc.free(nl_out3);
+        const work_igpsi = try alloc.alloc(math.Complex, n_pw);
+        errdefer alloc.free(work_igpsi);
+        const nl_phase = try alloc.alloc(math.Complex, n_pw);
+        errdefer alloc.free(nl_phase);
+        const nl_xphase = try alloc.alloc(math.Complex, n_pw);
+        errdefer alloc.free(nl_xphase);
+        const nl_coeff = try alloc.alloc(math.Complex, max_m_total);
+        errdefer alloc.free(nl_coeff);
+        const nl_coeff2 = try alloc.alloc(math.Complex, max_m_total);
+        return .{
+            .nl_out1 = nl_out1,
+            .nl_out2 = nl_out2,
+            .nl_out3 = nl_out3,
+            .work_igpsi = work_igpsi,
+            .nl_phase = nl_phase,
+            .nl_xphase = nl_xphase,
+            .nl_coeff = nl_coeff,
+            .nl_coeff2 = nl_coeff2,
+        };
+    }
+
+    fn deinit(self: *NonlocalCommutatorBuffers, alloc: std.mem.Allocator) void {
+        alloc.free(self.nl_out1);
+        alloc.free(self.nl_out2);
+        alloc.free(self.nl_out3);
+        alloc.free(self.work_igpsi);
+        alloc.free(self.nl_phase);
+        alloc.free(self.nl_xphase);
+        alloc.free(self.nl_coeff);
+        alloc.free(self.nl_coeff2);
+    }
+};
 
 fn run_nonlocal_commutator_diagnostics(
     alloc: std.mem.Allocator,
