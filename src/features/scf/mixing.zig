@@ -276,12 +276,7 @@ pub const PulayMixer = struct {
         self.alloc.free(residual);
 
         // Store current density and preconditioned residual
-        const rho_copy = try self.alloc.alloc(f64, n);
-        errdefer self.alloc.free(rho_copy);
-        @memcpy(rho_copy, rho);
-
-        try self.rho_history.append(self.alloc, rho_copy);
-        try self.residual_history.append(self.alloc, precond_residual);
+        try self.append_preconditioned_history(rho, precond_residual);
 
         // Remove oldest entries if history is full
         while (self.rho_history.items.len > self.history) {
@@ -499,18 +494,12 @@ pub const ComplexPulayMixer = struct {
         self.residual_history.clearRetainingCapacity();
     }
 
-    /// Mix complex arrays using Pulay/DIIS with pre-computed (preconditioned) residual.
-    /// Ownership of precond_residual is transferred to the mixer.
-    pub fn mix_with_residual(
+    fn append_preconditioned_history(
         self: *ComplexPulayMixer,
-        rho: []math.Complex,
+        rho: []const math.Complex,
         precond_residual: []math.Complex,
-        beta: f64,
     ) !void {
-        const n = rho.len;
-
-        // Store current input and preconditioned residual
-        const rho_copy = try self.alloc.alloc(math.Complex, n);
+        const rho_copy = try self.alloc.alloc(math.Complex, rho.len);
         @memcpy(rho_copy, rho);
 
         self.rho_history.append(self.alloc, rho_copy) catch |err| {
@@ -521,13 +510,24 @@ pub const ComplexPulayMixer = struct {
             self.alloc.free(self.rho_history.pop().?);
             return err;
         };
+    }
 
+    /// Mix complex arrays using Pulay/DIIS with pre-computed (preconditioned) residual.
+    /// Ownership of precond_residual is transferred to the mixer.
+    pub fn mix_with_residual(
+        self: *ComplexPulayMixer,
+        rho: []math.Complex,
+        precond_residual: []math.Complex,
+        beta: f64,
+    ) !void {
+        const n = rho.len;
+        // Store current input and preconditioned residual
+        try self.append_preconditioned_history(rho, precond_residual);
         // Remove oldest entries if history is full
         while (self.rho_history.items.len > self.history) {
             self.alloc.free(self.rho_history.orderedRemove(0));
             self.alloc.free(self.residual_history.orderedRemove(0));
         }
-
         const m = self.rho_history.items.len;
         if (m < 2) {
             // Not enough history, use simple preconditioned linear mixing
@@ -536,7 +536,6 @@ pub const ComplexPulayMixer = struct {
             }
             return;
         }
-
         // Build overlap matrix B_ij = Re⟨PR_i | PR_j⟩
         const matrix_size = m + 1;
         const B = try self.alloc.alloc(f64, matrix_size * matrix_size);
@@ -562,10 +561,8 @@ pub const ComplexPulayMixer = struct {
         }
         B[m * matrix_size + m] = 0.0;
         rhs[m] = -1.0;
-
         const coeffs = try solve_pulay_system(self.alloc, B, rhs, matrix_size);
         defer self.alloc.free(coeffs);
-
         // Compute optimal: rho = sum_i c_i * (rho_i + beta * PR_i)
         for (0..n) |k| {
             rho[k] = math.complex.init(0.0, 0.0);
