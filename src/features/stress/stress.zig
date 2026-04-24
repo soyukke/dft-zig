@@ -553,6 +553,11 @@ const WavefunctionStressContributions = struct {
     nonlocal: Stress3x3,
 };
 
+const StressContribPair = struct {
+    density: DensityStressContributions,
+    wavefunction: WavefunctionStressContributions,
+};
+
 fn psp_core_stress(psp_core_energy: f64, inv_volume: f64) Stress3x3 {
     var sigma = zero_stress();
     for (0..3) |a| sigma[a][a] = -psp_core_energy * inv_volume;
@@ -685,6 +690,58 @@ fn compute_wavefunction_stress_contributions(
     };
 }
 
+fn compute_stress_contributions(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    rho_g: []const math.Complex,
+    density_inputs: StressDensityInputs,
+    rho_core: ?[]const f64,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    wavefunctions: ?scf.WavefunctionData,
+    wavefunctions_down: ?scf.WavefunctionData,
+    energy: anytype,
+    xc_func: xc_mod.Functional,
+    local_cfg: local_potential.LocalPotentialConfig,
+    ff_tables: ?[]const form_factor.LocalFormFactorTable,
+    rho_core_tables: ?[]const form_factor.RadialFormFactorTable,
+    radial_tables: ?[]nonlocal.RadialTableSet,
+    paw_dij: ?[]const []const f64,
+    paw_dij_m: ?[]const []const f64,
+    paw_tabs: ?[]const paw_mod.PawTab,
+    ecutrho: f64,
+) !StressContribPair {
+    return .{
+        .density = try compute_density_stress_contributions(
+            alloc,
+            grid,
+            rho_g,
+            density_inputs,
+            rho_core,
+            species,
+            atoms,
+            energy,
+            xc_func,
+            local_cfg,
+            ff_tables,
+            rho_core_tables,
+            ecutrho,
+        ),
+        .wavefunction = try compute_wavefunction_stress_contributions(
+            alloc,
+            grid,
+            species,
+            atoms,
+            wavefunctions,
+            wavefunctions_down,
+            radial_tables,
+            paw_dij,
+            paw_dij_m,
+            paw_tabs,
+        ),
+    };
+}
+
 pub fn compute_stress(
     alloc: std.mem.Allocator,
     grid: Grid,
@@ -712,11 +769,10 @@ pub fn compute_stress(
     wavefunctions_down: ?scf.WavefunctionData,
 ) !StressTerms {
     const volume = grid.volume;
-    const inv_volume = 1.0 / volume;
     var density_inputs = try StressDensityInputs.init(alloc, grid, rho_r, rho_aug);
     defer density_inputs.deinit(alloc);
 
-    const density_terms = try compute_density_stress_contributions(
+    const contribs = try compute_stress_contributions(
         alloc,
         grid,
         rho_g,
@@ -724,26 +780,55 @@ pub fn compute_stress(
         rho_core,
         species,
         atoms,
+        wavefunctions,
+        wavefunctions_down,
         energy,
         xc_func,
         local_cfg,
         ff_tables,
         rho_core_tables,
-        ecutrho,
-    );
-    const wavefunction_terms = try compute_wavefunction_stress_contributions(
-        alloc,
-        grid,
-        species,
-        atoms,
-        wavefunctions,
-        wavefunctions_down,
         radial_tables,
         paw_dij,
         paw_dij_m,
         paw_tabs,
+        ecutrho,
     );
-    const terms = build_stress_terms(.{
+    const terms = try build_total_stress_terms(
+        alloc,
+        grid,
+        species,
+        atoms,
+        ewald_cfg,
+        energy,
+        contribs.density,
+        contribs.wavefunction,
+        paw_rhoij,
+        paw_tabs,
+        potential_values,
+        1.0 / volume,
+        ecutrho,
+    );
+
+    maybe_print_stress_terms(quiet, volume, terms, paw_tabs);
+    return terms;
+}
+
+fn build_total_stress_terms(
+    alloc: std.mem.Allocator,
+    grid: Grid,
+    species: []const hamiltonian.SpeciesEntry,
+    atoms: []const hamiltonian.AtomData,
+    ewald_cfg: config.EwaldConfig,
+    energy: anytype,
+    density_terms: anytype,
+    wavefunction_terms: anytype,
+    paw_rhoij: ?[]const []const f64,
+    paw_tabs: ?[]const paw_mod.PawTab,
+    potential_values: ?[]const math.Complex,
+    inv_volume: f64,
+    ecutrho: f64,
+) !StressTerms {
+    return build_stress_terms(.{
         .ewald = try ewald_ion_ion_stress(alloc, grid, species, atoms, ewald_cfg),
         .kinetic = wavefunction_terms.kinetic,
         .hartree = density_terms.hartree,
@@ -764,10 +849,15 @@ pub fn compute_stress(
         ),
         .onsite = zero_stress(),
     });
+}
 
+fn maybe_print_stress_terms(
+    quiet: bool,
+    volume: f64,
+    terms: StressTerms,
+    paw_tabs: ?[]const paw_mod.PawTab,
+) void {
     if (!quiet) print_stress_components(volume, terms, paw_tabs);
-
-    return terms;
 }
 
 const StressTableSet = struct {
