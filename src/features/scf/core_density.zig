@@ -113,7 +113,9 @@ fn minimum_image(cell: math.Mat3, recip: math.Mat3, delta: math.Vec3) math.Vec3 
 /// UPF rho_atom includes 4πr² factor, so no extra r² needed.
 fn rho_atom_form_factor(upf: *const UpfData, g: f64) f64 {
     if (upf.rho_atom.len == 0) return 0.0;
-    const n = @min(upf.rho_atom.len, @min(upf.r.len, upf.rab.len));
+    std.debug.assert(upf.rho_atom.len == upf.r.len);
+    std.debug.assert(upf.r.len == upf.rab.len);
+    const n = upf.rho_atom.len;
     var sum: f64 = 0.0;
     for (0..n) |i| {
         const x = g * upf.r[i];

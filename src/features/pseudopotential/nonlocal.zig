@@ -6,7 +6,9 @@ const ctrap_weight = @import("../math/math.zig").radial.ctrap_weight;
 /// Note: UPF files store r*beta(r) in PP_BETA, so we use r*beta*jl*dr
 /// which gives ∫ r² β(r) jl(gr) dr after accounting for the r factor.
 pub fn radial_projector(beta: []const f64, r: []const f64, rab: []const f64, l: i32, g: f64) f64 {
-    const n = @min(beta.len, @min(r.len, rab.len));
+    std.debug.assert(beta.len == r.len);
+    std.debug.assert(r.len == rab.len);
+    const n = beta.len;
     var sum: f64 = 0.0;
     var i: usize = 0;
     while (i < n) : (i += 1) {

@@ -158,29 +158,28 @@ test "local pseudopotential V(q) for Carbon" {
 
     // Test V(q) at various q values, including typical smallest G values
     const q_values = [_]f64{ 0.1, 0.166, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0 };
+    const z_val: f64 = 4.0;
     vprint("\n=== Local Pseudopotential V(q) ===\n", .{});
     for (q_values) |q| {
-        const vq = form_factor.local_vq(upf, q);
+        const vq = form_factor.local_vq_short_range(upf, z_val, q);
         vprint("V(q={d:.1}) = {d:.4} Ry\n", .{ q, vq });
     }
 
     // V(q) should be finite for q > 0
-    const v_at_1 = form_factor.local_vq(upf, 1.0);
+    const v_at_1 = form_factor.local_vq_short_range(upf, z_val, 1.0);
     try std.testing.expect(std.math.isFinite(v_at_1));
 
     // Test with Coulomb tail correction
     // Note: In Rydberg units, the Coulomb potential is -2Z/r, so V_Coul(q) = -8πZ/q²
     vprint("\n=== V(q) with Coulomb tail correction (Rydberg units) ===\n", .{});
-    const z_val: f64 = 4.0;
     for (q_values) |q| {
-        const vq_raw = form_factor.local_vq(upf, q);
+        const vq_sr = form_factor.local_vq_short_range(upf, z_val, q);
         const vq_tail = form_factor.local_vq_with_tail(upf, z_val, q);
         // Coulomb in Rydberg: -8πZ/q² (factor of 2 for Ry vs Ha)
         const v_coulomb_ry = -8.0 * std.math.pi * z_val / (q * q);
-        const vq_sr = vq_tail - v_coulomb_ry;
         vprint(
-            "q={d:.2}: V_raw={d:.1}, V_tail={d:.1}, V_Coul_Ry={d:.1}, V_SR={d:.1} Ry\n",
-            .{ q, vq_raw, vq_tail, v_coulomb_ry, vq_sr },
+            "q={d:.2}: V_short={d:.1}, V_tail={d:.1}, V_Coul_Ry={d:.1}, V_SR={d:.1} Ry\n",
+            .{ q, vq_sr, vq_tail, v_coulomb_ry, vq_tail - v_coulomb_ry },
         );
     }
 

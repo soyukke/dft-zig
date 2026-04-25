@@ -5,7 +5,7 @@ const fft = @import("../fft/fft.zig");
 const fft_grid = @import("fft_grid.zig");
 const grid_mod = @import("pw_grid.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
-const kpoints_mod = @import("kpoint_parallel.zig");
+const kpoint = @import("kpoint.zig");
 const logging = @import("logging.zig");
 const math = @import("../math/math.zig");
 const local_potential = @import("../pseudopotential/local_potential.zig");
@@ -19,14 +19,14 @@ const util = @import("util.zig");
 
 const Grid = grid_mod.Grid;
 const KPoint = symmetry.KPoint;
-const KpointCache = kpoints_mod.KpointCache;
-const KpointShared = kpoints_mod.KpointShared;
-const KpointWorker = kpoints_mod.KpointWorker;
+const KpointCache = kpoint.KpointCache;
+const KpointShared = kpoint.workers.KpointShared;
+const KpointWorker = kpoint.workers.KpointWorker;
 
 const check_hamiltonian_apply = apply.check_hamiltonian_apply;
-const compute_kpoint_contribution = kpoints_mod.compute_kpoint_contribution;
-const kpoint_thread_count = kpoints_mod.kpoint_thread_count;
-const kpoint_worker = kpoints_mod.kpoint_worker;
+const compute_kpoint_contribution = kpoint.solve.compute_kpoint_contribution;
+const kpoint_thread_count = kpoint.workers.kpoint_thread_count;
+const kpoint_worker = kpoint.workers.kpoint_worker;
 const build_fft_index_map = fft_grid.build_fft_index_map;
 const log_iterative_solver_disabled = logging.log_iterative_solver_disabled;
 const log_kpoint = logging.log_kpoint;
@@ -453,7 +453,6 @@ fn build_density_kpoint_shared(
         .cfg = ctx.cfg,
         .grid = ctx.grid,
         .kpoints = ctx.kpoints,
-        .ionic = ctx.ionic,
         .species = ctx.species,
         .atoms = ctx.atoms,
         .recip = ctx.recip,

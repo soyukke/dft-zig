@@ -360,17 +360,23 @@ fn copy_band_paw_dij(
     for (species, 0..) |_, si| {
         const atom_count = count_species_atoms(atoms, si);
         if (atom_count == 0) continue;
+        _ = nonlocal_ctx.species_by_index(si) catch |err| switch (err) {
+            error.NonlocalSpeciesNotFound => {
+                atom_idx += atom_count;
+                continue;
+            },
+        };
         try nonlocal_ctx.ensure_dij_per_atom(alloc, si, atom_count);
         var species_atom_index: usize = 0;
         for (atoms) |atom| {
             if (atom.species_index != si) continue;
-            if (atom_idx < paw_dij.len) {
-                nonlocal_ctx.update_dij_atom(si, species_atom_index, paw_dij[atom_idx]);
-            }
+            if (atom_idx >= paw_dij.len) return error.InvalidPawDijSize;
+            try nonlocal_ctx.update_dij_atom(si, species_atom_index, paw_dij[atom_idx]);
             species_atom_index += 1;
             atom_idx += 1;
         }
     }
+    if (atom_idx != paw_dij.len) return error.InvalidPawDijSize;
 }
 
 fn count_species_atoms(atoms: []const hamiltonian.AtomData, species_index: usize) usize {

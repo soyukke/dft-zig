@@ -1,10 +1,11 @@
 const std = @import("std");
 const apply = @import("apply.zig");
 const config = @import("../config/config.zig");
+const fermi_mod = @import("fermi_level.zig");
 const fft = @import("../fft/fft.zig");
 const grid_mod = @import("pw_grid.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
-const kpoints_mod = @import("kpoint_parallel.zig");
+const kpoint = @import("kpoint.zig");
 const linalg = @import("../linalg/linalg.zig");
 const logging = @import("logging.zig");
 const math = @import("../math/math.zig");
@@ -16,17 +17,17 @@ const symmetry = @import("../symmetry/symmetry.zig");
 
 const Grid = grid_mod.Grid;
 const KPoint = symmetry.KPoint;
-const KpointCache = kpoints_mod.KpointCache;
-const KpointEigenData = kpoints_mod.KpointEigenData;
-const SmearingShared = kpoints_mod.SmearingShared;
-const SmearingWorker = kpoints_mod.SmearingWorker;
+const KpointCache = kpoint.KpointCache;
+const KpointEigenData = kpoint.KpointEigenData;
+const SmearingShared = kpoint.workers.SmearingShared;
+const SmearingWorker = kpoint.workers.SmearingWorker;
 const ScfProfile = logging.ScfProfile;
 
-const compute_kpoint_eigen_data = kpoints_mod.compute_kpoint_eigen_data;
-const find_fermi_level = kpoints_mod.find_fermi_level;
-const accumulate_kpoint_density_smearing = kpoints_mod.accumulate_kpoint_density_smearing;
-const smearing_worker = kpoints_mod.smearing_worker;
-const kpoint_thread_count = kpoints_mod.kpoint_thread_count;
+const compute_kpoint_eigen_data = kpoint.solve.compute_kpoint_eigen_data;
+const find_fermi_level = fermi_mod.find_fermi_level;
+const accumulate_kpoint_density_smearing = kpoint.density.accumulate_kpoint_density_smearing;
+const smearing_worker = kpoint.workers.smearing_worker;
+const kpoint_thread_count = kpoint.workers.kpoint_thread_count;
 
 const log_kpoint = logging.log_kpoint;
 const log_profile = logging.log_profile;

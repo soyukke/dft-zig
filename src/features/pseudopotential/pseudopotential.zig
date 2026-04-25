@@ -153,6 +153,12 @@ pub fn load(alloc: std.mem.Allocator, io: std.Io, spec: Spec) !Parsed {
                 if (data.r.len != mesh or data.rab.len != mesh or data.v_local.len != mesh) {
                     return error.InvalidUpf;
                 }
+                if (data.rho_atom.len > 0 and data.rho_atom.len != mesh) {
+                    return error.InvalidUpf;
+                }
+                if (data.nlcc.len > 0 and data.nlcc.len != mesh) {
+                    return error.InvalidUpf;
+                }
             }
         },
         .psp8 => return error.UnsupportedPseudopotentialFormat,

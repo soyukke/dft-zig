@@ -85,7 +85,7 @@ fn init_apply_context(
     const apply_ctx = try alloc.create(scf_mod.ApplyContext);
     errdefer alloc.destroy(apply_ctx);
 
-    apply_ctx.* = try scf_mod.ApplyContext.init(
+    apply_ctx.* = try scf_mod.ApplyContext.init_with_workspaces(
         alloc,
         io,
         grid,
@@ -99,6 +99,7 @@ fn init_apply_context(
         null,
         null,
         cfg.scf.fft_backend,
+        1,
     );
     return apply_ctx;
 }
