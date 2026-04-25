@@ -6,12 +6,12 @@ const density_mod = @import("density.zig");
 const final_wavefunction = @import("final_wavefunction.zig");
 const grid_mod = @import("pw_grid.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
-const kpoints_mod = @import("kpoint_parallel.zig");
+const kpoint = @import("kpoint.zig");
 const math = @import("../math/math.zig");
 const model_mod = @import("../dft/model.zig");
 const potential_mod = @import("potential.zig");
 
-const KpointCache = kpoints_mod.KpointCache;
+const KpointCache = kpoint.KpointCache;
 const ScfCommon = common_mod.ScfCommon;
 const WavefunctionData = final_wavefunction.WavefunctionData;
 

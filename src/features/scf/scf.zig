@@ -10,7 +10,7 @@ const final_wavefunction = @import("final_wavefunction.zig");
 const fft_grid = @import("fft_grid.zig");
 const grid_mod = @import("pw_grid.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
-const kpoints_mod = @import("kpoint_parallel.zig");
+const kpoint = @import("kpoint.zig");
 const logging = @import("logging.zig");
 const math = @import("../math/math.zig");
 const mixing = @import("mixing.zig");
@@ -46,10 +46,8 @@ pub const NonlocalContext = apply.NonlocalContext;
 pub const NonlocalSpecies = apply.NonlocalSpecies;
 pub const apply_nonlocal_potential = apply.apply_nonlocal_potential;
 
-pub const KpointCache = kpoints_mod.KpointCache;
-pub const kpoint_thread_count = kpoints_mod.kpoint_thread_count;
-const find_fermi_level_spin = kpoints_mod.find_fermi_level_spin;
-const accumulate_kpoint_density_smearing_spin = kpoints_mod.accumulate_kpoint_density_smearing_spin;
+pub const KpointCache = kpoint.KpointCache;
+pub const kpoint_thread_count = kpoint.workers.kpoint_thread_count;
 
 pub const real_to_reciprocal = fft_grid.real_to_reciprocal;
 pub const reciprocal_to_real = fft_grid.reciprocal_to_real;

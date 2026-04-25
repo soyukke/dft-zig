@@ -323,7 +323,7 @@ pub const ApplyContext = struct {
     // Workspace allocation tracking for parallel use
     ws_in_use: []std.atomic.Value(u8),
     ws_mutex: std.Io.Mutex,
-    // Backward compatibility: first workspace fields
+    // First workspace mirrors for single-workspace helper paths.
     work_recip: []math.Complex,
     work_real: []math.Complex,
     work_recip_out: []math.Complex,
@@ -332,40 +332,6 @@ pub const ApplyContext = struct {
     work_xphase: []math.Complex,
     work_coeff: []math.Complex,
     work_coeff2: []math.Complex,
-
-    /// Initialize with single workspace (backward compatible)
-    pub fn init(
-        alloc: std.mem.Allocator,
-        io: std.Io,
-        grid: Grid,
-        gvecs: []const plane_wave.GVector,
-        local_r: []const f64,
-        vnl: ?[]math.Complex,
-        species: []const hamiltonian.SpeciesEntry,
-        atoms: []const hamiltonian.AtomData,
-        inv_volume: f64,
-        enable_nonlocal: bool,
-        profile: ?*ScfProfile,
-        fft_index_map: ?[]const usize,
-        fft_backend: fft.FftBackend,
-    ) !ApplyContext {
-        return init_with_workspaces(
-            alloc,
-            io,
-            grid,
-            gvecs,
-            local_r,
-            vnl,
-            species,
-            atoms,
-            inv_volume,
-            enable_nonlocal,
-            profile,
-            fft_index_map,
-            fft_backend,
-            1,
-        );
-    }
 
     /// Initialize with pre-created FFT plan (avoids mutex contention in parallel execution)
     pub fn init_with_fft_plan(
@@ -704,7 +670,7 @@ pub fn check_hamiltonian_apply(
     nonlocal_enabled: bool,
     fft_index_map: ?[]const usize,
 ) !void {
-    var ctx = try ApplyContext.init(
+    var ctx = try ApplyContext.init_with_workspaces(
         alloc,
         io,
         grid,
@@ -718,6 +684,7 @@ pub fn check_hamiltonian_apply(
         null,
         fft_index_map,
         .zig, // Use default Zig FFT for testing
+        1,
     );
     defer ctx.deinit(alloc);
 

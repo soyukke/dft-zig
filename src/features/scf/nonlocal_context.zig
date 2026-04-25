@@ -45,6 +45,17 @@ pub const NonlocalContext = struct {
     max_m_total: usize,
     has_paw: bool = false, // true if any species has PAW overlap
 
+    fn find_species(self: *NonlocalContext, species_index: usize) ?*NonlocalSpecies {
+        for (self.species) |*entry| {
+            if (entry.species_index == species_index) return entry;
+        }
+        return null;
+    }
+
+    pub fn species_by_index(self: *NonlocalContext, species_index: usize) !*NonlocalSpecies {
+        return self.find_species(species_index) orelse error.NonlocalSpeciesNotFound;
+    }
+
     pub fn deinit(self: *NonlocalContext, alloc: std.mem.Allocator) void {
         for (self.species) |*entry| {
             entry.deinit(alloc);
@@ -59,16 +70,11 @@ pub const NonlocalContext = struct {
 
     /// Update D_ij coefficients for a PAW species (by species_index).
     /// new_dij must have length beta_count * beta_count.
-    pub fn update_dij(self: *NonlocalContext, species_index: usize, new_dij: []const f64) void {
-        for (self.species) |*entry| {
-            if (entry.species_index == species_index) {
-                if (entry.dij_buf) |buf| {
-                    const n = @min(buf.len, new_dij.len);
-                    @memcpy(buf[0..n], new_dij[0..n]);
-                }
-                return;
-            }
-        }
+    pub fn update_dij(self: *NonlocalContext, species_index: usize, new_dij: []const f64) !void {
+        const entry = try self.species_by_index(species_index);
+        const buf = entry.dij_buf orelse return error.PawDijNotInitialized;
+        if (new_dij.len != buf.len) return error.InvalidPawDijSize;
+        @memcpy(buf, new_dij);
     }
 
     /// Ensure per-atom D_ij arrays are allocated for a PAW species.
@@ -79,19 +85,109 @@ pub const NonlocalContext = struct {
         species_index: usize,
         natom: usize,
     ) !void {
-        for (self.species) |*entry| {
-            if (entry.species_index == species_index) {
-                if (entry.dij_per_atom != null) return; // already allocated
-                const n_ij = entry.beta_count * entry.beta_count;
-                const dpa = try alloc.alloc([]f64, natom);
-                for (0..natom) |a| {
-                    dpa[a] = try alloc.alloc(f64, n_ij);
-                    @memcpy(dpa[a], entry.coeffs[0..n_ij]);
-                }
-                entry.dij_per_atom = dpa;
-                return;
+        const entry = try self.species_by_index(species_index);
+        if (entry.dij_per_atom) |dpa| {
+            if (dpa.len != natom) return error.InvalidPawAtomCount;
+            return;
+        }
+
+        const n_ij = entry.beta_count * entry.beta_count;
+        if (entry.coeffs.len != n_ij) return error.InvalidPawDijSize;
+        const dpa = try alloc.alloc([]f64, natom);
+        var initialized: usize = 0;
+        errdefer {
+            for (dpa[0..initialized]) |buf| alloc.free(buf);
+            alloc.free(dpa);
+        }
+        for (0..natom) |a| {
+            dpa[a] = try alloc.alloc(f64, n_ij);
+            initialized += 1;
+            @memcpy(dpa[a], entry.coeffs[0..n_ij]);
+        }
+        entry.dij_per_atom = dpa;
+    }
+
+    fn validate_atom_dij(dpa: [][]f64, atom_of_species: usize, new_dij: []const f64) ![]f64 {
+        if (atom_of_species >= dpa.len) return error.InvalidPawAtomIndex;
+        const target = dpa[atom_of_species];
+        if (new_dij.len != target.len) return error.InvalidPawDijSize;
+        return target;
+    }
+
+    pub fn dij_atom(self: *NonlocalContext, species_index: usize, atom_of_species: usize) ![]f64 {
+        const entry = try self.species_by_index(species_index);
+        const dpa = entry.dij_per_atom orelse return error.PawDijNotInitialized;
+        if (atom_of_species >= dpa.len) return error.InvalidPawAtomIndex;
+        return dpa[atom_of_species];
+    }
+
+    pub fn dij_m_atom(self: *NonlocalContext, species_index: usize, atom_of_species: usize) ![]f64 {
+        const entry = try self.species_by_index(species_index);
+        const dpa = entry.dij_m_per_atom orelse return error.PawDijNotInitialized;
+        if (atom_of_species >= dpa.len) return error.InvalidPawAtomIndex;
+        return dpa[atom_of_species];
+    }
+
+    pub fn dij_per_atom(self: *NonlocalContext, species_index: usize, natom: usize) ![][]f64 {
+        const entry = try self.species_by_index(species_index);
+        const dpa = entry.dij_per_atom orelse return error.PawDijNotInitialized;
+        if (dpa.len != natom) return error.InvalidPawAtomCount;
+        for (dpa) |buf| {
+            if (buf.len != entry.beta_count * entry.beta_count) return error.InvalidPawDijSize;
+        }
+        return dpa;
+    }
+
+    pub fn dij_m_per_atom(self: *NonlocalContext, species_index: usize, natom: usize) ![][]f64 {
+        const entry = try self.species_by_index(species_index);
+        const dpa = entry.dij_m_per_atom orelse return error.PawDijNotInitialized;
+        if (dpa.len != natom) return error.InvalidPawAtomCount;
+        for (dpa) |buf| {
+            if (buf.len != entry.m_total * entry.m_total) return error.InvalidPawDijSize;
+        }
+        return dpa;
+    }
+
+    pub fn average_dij_per_atom(
+        self: *NonlocalContext,
+        species_index: usize,
+        natom: usize,
+        average: []f64,
+    ) !void {
+        const entry = try self.species_by_index(species_index);
+        const n_ij = entry.beta_count * entry.beta_count;
+        if (average.len != n_ij) return error.InvalidPawDijSize;
+        const dpa = try self.dij_per_atom(species_index, natom);
+        @memset(average, 0.0);
+        for (dpa) |atom_dij| {
+            if (atom_dij.len != average.len) return error.InvalidPawDijSize;
+            for (average, atom_dij) |*avg, value| {
+                avg.* += value;
             }
         }
+        const inv_natom = 1.0 / @as(f64, @floatFromInt(natom));
+        for (average) |*value| value.* *= inv_natom;
+    }
+
+    pub fn average_dij_m_per_atom(
+        self: *NonlocalContext,
+        species_index: usize,
+        natom: usize,
+        average: []f64,
+    ) !void {
+        const entry = try self.species_by_index(species_index);
+        const n_m = entry.m_total * entry.m_total;
+        if (average.len != n_m) return error.InvalidPawDijSize;
+        const dpa = try self.dij_m_per_atom(species_index, natom);
+        @memset(average, 0.0);
+        for (dpa) |atom_dij| {
+            if (atom_dij.len != average.len) return error.InvalidPawDijSize;
+            for (average, atom_dij) |*avg, value| {
+                avg.* += value;
+            }
+        }
+        const inv_natom = 1.0 / @as(f64, @floatFromInt(natom));
+        for (average) |*value| value.* *= inv_natom;
     }
 
     /// Update D_ij for a specific atom of a PAW species.
@@ -100,16 +196,11 @@ pub const NonlocalContext = struct {
         species_index: usize,
         atom_of_species: usize,
         new_dij: []const f64,
-    ) void {
-        for (self.species) |*entry| {
-            if (entry.species_index == species_index) {
-                if (entry.dij_per_atom) |dpa| {
-                    const n = @min(dpa[atom_of_species].len, new_dij.len);
-                    @memcpy(dpa[atom_of_species][0..n], new_dij[0..n]);
-                }
-                return;
-            }
-        }
+    ) !void {
+        const entry = try self.species_by_index(species_index);
+        const dpa = entry.dij_per_atom orelse return error.PawDijNotInitialized;
+        const target = try validate_atom_dij(dpa, atom_of_species, new_dij);
+        @memcpy(target, new_dij);
     }
 
     /// Ensure per-atom m-resolved D_ij arrays are allocated for a PAW species.
@@ -119,20 +210,25 @@ pub const NonlocalContext = struct {
         species_index: usize,
         natom: usize,
     ) !void {
-        for (self.species) |*entry| {
-            if (entry.species_index == species_index) {
-                if (entry.dij_m_per_atom != null) return;
-                const mt = entry.m_total;
-                const n_m = mt * mt;
-                const dpa = try alloc.alloc([]f64, natom);
-                for (0..natom) |a| {
-                    dpa[a] = try alloc.alloc(f64, n_m);
-                    @memset(dpa[a], 0.0);
-                }
-                entry.dij_m_per_atom = dpa;
-                return;
-            }
+        const entry = try self.species_by_index(species_index);
+        if (entry.dij_m_per_atom) |dpa| {
+            if (dpa.len != natom) return error.InvalidPawAtomCount;
+            return;
         }
+
+        const n_m = entry.m_total * entry.m_total;
+        const dpa = try alloc.alloc([]f64, natom);
+        var initialized: usize = 0;
+        errdefer {
+            for (dpa[0..initialized]) |buf| alloc.free(buf);
+            alloc.free(dpa);
+        }
+        for (0..natom) |a| {
+            dpa[a] = try alloc.alloc(f64, n_m);
+            initialized += 1;
+            @memset(dpa[a], 0.0);
+        }
+        entry.dij_m_per_atom = dpa;
     }
 
     /// Update m-resolved D_ij for a specific atom of a PAW species.
@@ -141,16 +237,11 @@ pub const NonlocalContext = struct {
         species_index: usize,
         atom_of_species: usize,
         new_dij_m: []const f64,
-    ) void {
-        for (self.species) |*entry| {
-            if (entry.species_index == species_index) {
-                if (entry.dij_m_per_atom) |dpa| {
-                    const n = @min(dpa[atom_of_species].len, new_dij_m.len);
-                    @memcpy(dpa[atom_of_species][0..n], new_dij_m[0..n]);
-                }
-                return;
-            }
-        }
+    ) !void {
+        const entry = try self.species_by_index(species_index);
+        const dpa = entry.dij_m_per_atom orelse return error.PawDijNotInitialized;
+        const target = try validate_atom_dij(dpa, atom_of_species, new_dij_m);
+        @memcpy(target, new_dij_m);
     }
 };
 
@@ -383,6 +474,51 @@ fn fill_nonlocal_radial_terms(
         }
     }
     return total_m;
+}
+
+test "NonlocalContext rejects partial PAW Dij updates" {
+    const alloc = std.testing.allocator;
+    const species_slice = try alloc.alloc(NonlocalSpecies, 1);
+    var ctx = NonlocalContext{ .species = species_slice, .max_m_total = 2, .has_paw = true };
+    defer ctx.deinit(alloc);
+
+    const l_list = try alloc.dupe(i32, &[_]i32{ 0, 0 });
+    const m_offsets = try alloc.dupe(usize, &[_]usize{ 0, 1 });
+    const m_counts = try alloc.dupe(usize, &[_]usize{ 1, 1 });
+    const dij_buf = try alloc.dupe(f64, &[_]f64{ 1.0, 0.0, 0.0, 1.0 });
+
+    species_slice[0] = .{
+        .species_index = 3,
+        .beta_count = 2,
+        .g_count = 0,
+        .l_list = l_list,
+        .coeffs = dij_buf,
+        .m_offsets = m_offsets,
+        .m_counts = m_counts,
+        .m_total = 2,
+        .phi = &[_]f64{},
+        .dij_buf = dij_buf,
+    };
+
+    try std.testing.expectError(error.InvalidPawDijSize, ctx.update_dij(3, &[_]f64{1.0}));
+    try ctx.update_dij(3, &[_]f64{ 2.0, 0.1, 0.1, 2.0 });
+
+    try ctx.ensure_dij_per_atom(alloc, 3, 2);
+    try std.testing.expectError(
+        error.InvalidPawDijSize,
+        ctx.update_dij_atom(3, 0, &[_]f64{ 1.0, 2.0, 3.0 }),
+    );
+    try std.testing.expectError(
+        error.InvalidPawAtomIndex,
+        ctx.update_dij_atom(3, 2, &[_]f64{ 1.0, 2.0, 3.0, 4.0 }),
+    );
+    try std.testing.expectError(error.InvalidPawAtomCount, ctx.ensure_dij_per_atom(alloc, 3, 3));
+
+    try ctx.ensure_dij_m_per_atom(alloc, 3, 2);
+    try std.testing.expectError(
+        error.InvalidPawDijSize,
+        ctx.update_dij_m_atom(3, 0, &[_]f64{ 1.0, 2.0, 3.0 }),
+    );
 }
 
 fn fill_nonlocal_phi(

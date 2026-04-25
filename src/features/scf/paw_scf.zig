@@ -473,32 +473,34 @@ fn mix_and_write_paw_dij_atom(
     dij_mix_beta: f64,
     dij: []f64,
     dij_m: []f64,
-) void {
+) !void {
     if (dij_mix_beta < 1.0 - 1e-10 and apply_caches.len > 0) {
         if (apply_caches[0].nonlocal_ctx) |*nl| {
-            if (nl.species[si].dij_per_atom) |dpa| {
-                if (atom_counter < dpa.len) {
-                    for (0..@min(dij.len, dpa[atom_counter].len)) |ii| {
-                        dij[ii] = (1.0 - dij_mix_beta) * dpa[atom_counter][ii] +
-                            dij_mix_beta * dij[ii];
-                    }
+            if (nl.dij_atom(si, atom_counter)) |previous| {
+                if (previous.len != dij.len) return error.InvalidPawDijSize;
+                for (dij, previous) |*value, old_value| {
+                    value.* = (1.0 - dij_mix_beta) * old_value + dij_mix_beta * value.*;
                 }
+            } else |err| switch (err) {
+                error.PawDijNotInitialized => {},
+                else => return err,
             }
-            if (nl.species[si].dij_m_per_atom) |dpa| {
-                if (atom_counter < dpa.len) {
-                    for (0..@min(dij_m.len, dpa[atom_counter].len)) |ii| {
-                        dij_m[ii] = (1.0 - dij_mix_beta) * dpa[atom_counter][ii] +
-                            dij_mix_beta * dij_m[ii];
-                    }
+            if (nl.dij_m_atom(si, atom_counter)) |previous| {
+                if (previous.len != dij_m.len) return error.InvalidPawDijSize;
+                for (dij_m, previous) |*value, old_value| {
+                    value.* = (1.0 - dij_mix_beta) * old_value + dij_mix_beta * value.*;
                 }
+            } else |err| switch (err) {
+                error.PawDijNotInitialized => {},
+                else => return err,
             }
         }
     }
 
     for (apply_caches) |*ac| {
         if (ac.nonlocal_ctx) |*nl| {
-            nl.update_dij_atom(si, atom_counter, dij);
-            nl.update_dij_m_atom(si, atom_counter, dij_m);
+            try nl.update_dij_atom(si, atom_counter, dij);
+            try nl.update_dij_m_atom(si, atom_counter, dij_m);
         }
     }
 }
@@ -517,20 +519,13 @@ fn symmetrize_species_radial_dij(
 
     if (apply_caches.len > 0) {
         if (apply_caches[0].nonlocal_ctx) |*nl| {
-            if (nl.species[si].dij_per_atom) |dpa| {
-                for (0..natom) |a| {
-                    for (0..n_ij) |idx| avg_dij[idx] += dpa[a][idx];
-                }
-            }
+            try nl.average_dij_per_atom(si, natom, avg_dij);
         }
     }
-    const inv_natom = 1.0 / @as(f64, @floatFromInt(natom));
-    for (0..n_ij) |idx| avg_dij[idx] *= inv_natom;
     for (apply_caches) |*ac| {
         if (ac.nonlocal_ctx) |*nl| {
-            if (nl.species[si].dij_per_atom) |dpa| {
-                for (0..natom) |a| @memcpy(dpa[a], avg_dij);
-            }
+            const dpa = try nl.dij_per_atom(si, natom);
+            for (dpa) |atom_dij| @memcpy(atom_dij, avg_dij);
         }
     }
 }
@@ -549,20 +544,13 @@ fn symmetrize_species_m_resolved_dij(
 
     if (apply_caches.len > 0) {
         if (apply_caches[0].nonlocal_ctx) |*nl| {
-            if (nl.species[si].dij_m_per_atom) |dpa| {
-                for (0..natom) |a| {
-                    for (0..n_m) |idx| avg_dij_m[idx] += dpa[a][idx];
-                }
-            }
+            try nl.average_dij_m_per_atom(si, natom, avg_dij_m);
         }
     }
-    const inv_natom = 1.0 / @as(f64, @floatFromInt(natom));
-    for (0..n_m) |idx| avg_dij_m[idx] *= inv_natom;
     for (apply_caches) |*ac| {
         if (ac.nonlocal_ctx) |*nl| {
-            if (nl.species[si].dij_m_per_atom) |dpa| {
-                for (0..natom) |a| @memcpy(dpa[a], avg_dij_m);
-            }
+            const dpa = try nl.dij_m_per_atom(si, natom);
+            for (dpa) |atom_dij| @memcpy(atom_dij, avg_dij_m);
         }
     }
 }
@@ -664,8 +652,9 @@ pub fn add_paw_compensation_charge(
     const n_hat_r = try reciprocal_to_real(alloc, grid, n_hat_g);
     defer alloc.free(n_hat_r);
 
-    for (0..@min(rho.len, n_hat_r.len)) |i| {
-        rho[i] += n_hat_r[i];
+    if (rho.len != n_hat_r.len) return error.InvalidDensitySize;
+    for (rho, n_hat_r) |*rho_value, n_hat_value| {
+        rho_value.* += n_hat_value;
     }
 }
 
@@ -728,7 +717,7 @@ fn update_paw_dij_for_atom(
         dij_m,
     );
 
-    mix_and_write_paw_dij_atom(
+    try mix_and_write_paw_dij_atom(
         ctx.apply_caches,
         setup.si,
         atom_counter,

@@ -4,12 +4,12 @@ const energy_mod = @import("energy.zig");
 const final_wavefunction = @import("final_wavefunction.zig");
 const grid_mod = @import("pw_grid.zig");
 const hamiltonian = @import("../hamiltonian/hamiltonian.zig");
-const kpoints_mod = @import("kpoint_parallel.zig");
+const kpoint = @import("kpoint.zig");
 const math = @import("../math/math.zig");
 const paw_mod = @import("../paw/paw.zig");
 
 const Grid = grid_mod.Grid;
-const KpointCache = kpoints_mod.KpointCache;
+const KpointCache = kpoint.KpointCache;
 const WavefunctionData = final_wavefunction.WavefunctionData;
 
 pub const ScfResult = struct {

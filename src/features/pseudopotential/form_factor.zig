@@ -5,6 +5,22 @@ const pseudo = @import("pseudopotential.zig");
 
 const ctrap_weight = @import("../math/math.zig").radial.ctrap_weight;
 
+fn assert_local_mesh(upf: pseudo.UpfData) void {
+    std.debug.assert(upf.r.len == upf.rab.len);
+    std.debug.assert(upf.r.len == upf.v_local.len);
+}
+
+fn assert_radial_mesh(upf: pseudo.UpfData, data: []const f64) void {
+    std.debug.assert(upf.r.len == upf.rab.len);
+    std.debug.assert(data.len == upf.r.len);
+}
+
+fn validate_radial_mesh(upf: pseudo.UpfData, data: []const f64) !usize {
+    if (upf.r.len != upf.rab.len) return error.InvalidUpf;
+    if (data.len != upf.r.len) return error.InvalidUpf;
+    return data.len;
+}
+
 /// Pre-computed lookup table for local form factor V(q).
 /// Uses uniform grid + linear interpolation for O(1) evaluation.
 pub const LocalFormFactorTable = struct {
@@ -21,6 +37,7 @@ pub const LocalFormFactorTable = struct {
         local_cfg: local_potential.LocalPotentialConfig,
         q_max: f64,
     ) !LocalFormFactorTable {
+        assert_local_mesh(upf);
         const n = N_POINTS;
         const dq = q_max / @as(f64, @floatFromInt(n - 1));
         const values = try alloc.alloc(f64, n);
@@ -91,8 +108,8 @@ pub const RadialFormFactorTable = struct {
     ) !RadialFormFactorTable {
         const n = N_POINTS;
         const dq = q_max / @as(f64, @floatFromInt(n - 1));
+        const nr = try validate_radial_mesh(upf, data);
         const values = try alloc.alloc(f64, n);
-        const nr = @min(data.len, @min(upf.r.len, upf.rab.len));
         for (0..n) |i| {
             const q = @as(f64, @floatFromInt(i)) * dq;
             var sum: f64 = 0.0;
@@ -145,7 +162,8 @@ pub const RadialFormFactorTable = struct {
 /// This approach ensures numerical stability for all q values.
 pub fn local_vq_ewald(upf: pseudo.UpfData, z_valence: f64, q: f64, alpha: f64) f64 {
     if (upf.r.len == 0) return 0.0;
-    if (alpha <= 0.0) return local_vq(upf, q);
+    assert_local_mesh(upf);
+    std.debug.assert(alpha > 0.0);
 
     const n = upf.r.len;
     // Integrate V_comp(r) = V_local(r) + Z×erf(αr)/r
@@ -206,6 +224,7 @@ fn erf_approx(x: f64) f64 {
 /// contains the long-range Coulomb tail.
 pub fn local_vq_short_range(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
     if (upf.r.len == 0) return 0.0;
+    assert_local_mesh(upf);
 
     const n = upf.r.len;
     // Integrate the short-range part: V_loc(r) + 2Z/r (Rydberg units)
@@ -241,37 +260,6 @@ pub fn compute_epsatm(upf: pseudo.UpfData, z_valence: f64) f64 {
     return local_vq_short_range(upf, z_valence, 0.0);
 }
 
-/// Compute local pseudopotential form factor V(q) with Coulomb subtraction.
-/// The result is the "short-range" part: V_ps(q) - V_Coulomb(q)
-/// where V_Coulomb(q) = -4πZ/q² for q>0.
-/// This ensures the long-range Coulomb divergence cancels with Hartree.
-/// NOTE: This uses a naive subtraction which has numerical issues for small q.
-/// Prefer local_vq_short_range for better numerical stability.
-pub fn local_vq_with_z(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
-    if (upf.r.len == 0) return 0.0;
-
-    var sum: f64 = 0.0;
-    for (upf.r, 0..) |r, i| {
-        const v = upf.v_local[i];
-        const rab = upf.rab[i];
-        const x = q * r;
-        const sinc = if (@abs(x) < 1e-12) 1.0 else std.math.sin(x) / x;
-        sum += r * r * v * sinc * rab;
-    }
-    const v_ps = 4.0 * std.math.pi * sum;
-
-    // For small q, the Coulomb term diverges but V_ps also diverges,
-    // and their difference should be finite
-    if (q < 1e-6) {
-        // At q=0, return 0 (G=0 handled separately in ionic_local_potential)
-        return 0.0;
-    }
-
-    // Subtract long-range Coulomb: V_ps(q) - (-4πZ/q²) = V_ps(q) + 4πZ/q²
-    const v_coulomb = -4.0 * std.math.pi * z_valence / (q * q);
-    return v_ps - v_coulomb;
-}
-
 /// Compute local pseudopotential form factor with Coulomb tail correction.
 /// The numerical integral is truncated at r_max, so we add the analytical
 /// Coulomb tail contribution from r_max to infinity.
@@ -289,6 +277,7 @@ pub fn local_vq_with_z(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
 /// V_tail(q) = -8πZ×cos(qr_max)/q² (Rydberg)
 pub fn local_vq_with_tail(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
     if (upf.r.len == 0) return 0.0;
+    assert_local_mesh(upf);
 
     const n = upf.r.len;
     // Numerical integral from 0 to r_max
@@ -317,27 +306,12 @@ pub fn local_vq_with_tail(upf: pseudo.UpfData, z_valence: f64, q: f64) f64 {
     return v_numeric + v_tail;
 }
 
-/// Legacy function for compatibility - returns raw V(q) without tail correction
-/// NOTE: This gives incorrect results for small q due to missing Coulomb tail.
-/// Use local_vq_with_tail for accurate form factors.
-pub fn local_vq(upf: pseudo.UpfData, q: f64) f64 {
-    if (upf.r.len == 0) return 0.0;
-    var sum: f64 = 0.0;
-    for (upf.r, 0..) |r, i| {
-        const v = upf.v_local[i];
-        const rab = upf.rab[i];
-        const x = q * r;
-        const sinc = if (@abs(x) < 1e-12) 1.0 else std.math.sin(x) / x;
-        sum += r * r * v * sinc * rab;
-    }
-    return 4.0 * std.math.pi * sum;
-}
-
 /// Compute atomic valence density form factor ρ_atom(G).
 /// Uses ρ_atom(G) = 4π ∫ r² ρ_atom(r) j0(Gr) dr.
 pub fn rho_atom_g(upf: pseudo.UpfData, g: f64) f64 {
     if (upf.rho_atom.len == 0) return 0.0;
-    const n = @min(upf.rho_atom.len, @min(upf.r.len, upf.rab.len));
+    assert_radial_mesh(upf, upf.rho_atom);
+    const n = upf.rho_atom.len;
     var sum: f64 = 0.0;
     var i: usize = 0;
     while (i < n) : (i += 1) {
@@ -351,7 +325,8 @@ pub fn rho_atom_g(upf: pseudo.UpfData, g: f64) f64 {
 /// Compute core density form factor ρ_core(G) from NLCC.
 pub fn rho_core_g(upf: pseudo.UpfData, g: f64) f64 {
     if (upf.nlcc.len == 0) return 0.0;
-    const n = @min(upf.nlcc.len, @min(upf.r.len, upf.rab.len));
+    assert_radial_mesh(upf, upf.nlcc);
+    const n = upf.nlcc.len;
     var sum: f64 = 0.0;
     var i: usize = 0;
     while (i < n) : (i += 1) {
@@ -360,4 +335,29 @@ pub fn rho_core_g(upf: pseudo.UpfData, g: f64) f64 {
         sum += upf.r[i] * upf.r[i] * upf.nlcc[i] * j0 * upf.rab[i] * ctrap_weight(i, n);
     }
     return 4.0 * std.math.pi * sum;
+}
+
+test "radial form factor rejects mismatched UPF radial lengths" {
+    var r = [_]f64{ 0.0, 0.1 };
+    var rab = [_]f64{ 0.05, 0.05 };
+    var v_local = [_]f64{ -1.0, -0.5 };
+    var rho_atom = [_]f64{1.0};
+    var empty_beta = [_]pseudo.Beta{};
+    var empty_atomic_wfc = [_]pseudo.AtomicWfc{};
+    const upf = pseudo.UpfData{
+        .r = r[0..],
+        .rab = rab[0..],
+        .v_local = v_local[0..],
+        .beta = empty_beta[0..],
+        .dij = &[_]f64{},
+        .qij = &[_]f64{},
+        .nlcc = &[_]f64{},
+        .rho_atom = rho_atom[0..],
+        .atomic_wfc = empty_atomic_wfc[0..],
+    };
+
+    try std.testing.expectError(
+        error.InvalidUpf,
+        RadialFormFactorTable.init_rho_atom(std.testing.allocator, upf, 1.0),
+    );
 }
