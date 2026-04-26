@@ -1,0 +1,42 @@
+title = "silicon_ppgen"
+xyz = "silicon.xyz"
+out_dir = "out_ppgen"
+units = "angstrom"
+linalg_backend = "accelerate"
+
+[[pseudopotential]]
+element = "Si"
+path = "out_ppgen/Si_ppgen_PBE.upf"
+format = "upf"
+
+# Primitive cell (FCC): a/2 * [(0,1,1), (1,0,1), (1,1,0)]
+# a = 5.431 Angstrom
+[cell]
+a1 = [0.0, 2.7155, 2.7155]
+a2 = [2.7155, 0.0, 2.7155]
+a3 = [2.7155, 2.7155, 0.0]
+
+[scf]
+enabled = true
+solver = "iterative"
+xc = "pbe"
+ecut_ry = 20.0
+kmesh = [4, 4, 4]
+grid = [24, 24, 24]
+mixing_beta = 0.3
+pulay_history = 8
+max_iter = 80
+convergence = 1e-6
+use_rfft = true
+
+[band]
+solver = "iterative"
+points = 20
+nbands = 8
+use_symmetry = false
+iterative_max_iter = 100
+iterative_tol = 1e-8
+path = "G-X-W-K-G-L"
+
+[ewald]
+tol = 1e-8
