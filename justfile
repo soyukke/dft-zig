@@ -101,6 +101,15 @@ test-silicon: build
     python3 plot_comparison.py --run-check
     echo "Silicon test passed!"
 
+# Run ppgen-generated Si UPF smoke/regression test (SCF + bands)
+test-ppgen-silicon:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd benchmarks/silicon
+    source ../../.venv/bin/activate
+    python3 test_ppgen.py --run
+    echo "ppgen silicon test passed!"
+
 # Run graphene regression test (uses saved ABINIT baseline)
 test-graphene: build
     #!/usr/bin/env bash

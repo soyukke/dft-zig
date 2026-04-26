@@ -91,6 +91,184 @@ pub fn solve(
     };
 }
 
+/// Integrate a regular radial solution at a fixed reference energy.
+///
+/// This is used for unoccupied scattering/reference channels in
+/// pseudopotential generation. The returned wavefunction is normalized on the
+/// finite radial grid; its absolute scale is not physically meaningful, but
+/// the logarithmic derivatives and norm-conservation target are.
+pub fn solve_fixed_energy_outward(
+    allocator: std.mem.Allocator,
+    grid: *const RadialGrid,
+    v_eff: []const f64,
+    qn: OrbitalQuantumNumbers,
+    energy: f64,
+) !Solution {
+    return solve_fixed_energy_outward_scaled(allocator, grid, v_eff, qn, energy, true);
+}
+
+/// Integrate the same regular fixed-energy solution without finite-grid normalization.
+///
+/// Use this for scale-invariant scattering diagnostics where normalization can
+/// underflow the inner wave amplitude for positive-energy states.
+pub fn solve_fixed_energy_outward_unnormalized(
+    allocator: std.mem.Allocator,
+    grid: *const RadialGrid,
+    v_eff: []const f64,
+    qn: OrbitalQuantumNumbers,
+    energy: f64,
+) !Solution {
+    return solve_fixed_energy_outward_scaled(allocator, grid, v_eff, qn, energy, false);
+}
+
+fn solve_fixed_energy_outward_scaled(
+    allocator: std.mem.Allocator,
+    grid: *const RadialGrid,
+    v_eff: []const f64,
+    qn: OrbitalQuantumNumbers,
+    energy: f64,
+    normalize: bool,
+) !Solution {
+    std.debug.assert(v_eff.len == grid.n);
+    std.debug.assert(std.math.isFinite(energy));
+
+    const v_full = try build_full_potential(allocator, grid, v_eff, qn.l);
+    defer allocator.free(v_full);
+
+    const g = try allocator.alloc(f64, grid.n);
+    defer allocator.free(g);
+
+    build_g(grid, v_full, energy, g);
+
+    const phi = try allocator.alloc(f64, grid.n);
+    defer allocator.free(phi);
+
+    numerov_outward(g, qn.l, grid, phi, grid.n);
+
+    const u = try allocator.alloc(f64, grid.n);
+    errdefer allocator.free(u);
+
+    build_reduced_wavefunction(grid, phi, phi, grid.n - 1, u);
+    if (normalize) normalize_wavefunction(grid, u);
+
+    const R = try build_radial_wavefunction(allocator, grid, u);
+
+    return .{
+        .energy = energy,
+        .u = u,
+        .R = R,
+        .qn = qn,
+        .allocator = allocator,
+    };
+}
+
+/// Scale-invariant logarithmic derivative u'(r)/u(r) at the nearest grid point.
+pub fn log_derivative_at(grid: *const RadialGrid, u: []const f64, r_match: f64) !f64 {
+    std.debug.assert(u.len == grid.n);
+    if (!std.math.isFinite(r_match) or r_match <= grid.r[1] or r_match >= grid.r[grid.n - 2]) {
+        return error.InvalidLogDerivativeRadius;
+    }
+
+    const i = nearest_grid_index(grid, r_match);
+    if (i == 0 or i + 1 >= grid.n) return error.InvalidLogDerivativeRadius;
+    if (@abs(u[i]) <= 1e-20) return error.LogDerivativeNode;
+
+    const derivative = nonuniform_three_point_derivative(
+        grid.r[i - 1],
+        grid.r[i],
+        grid.r[i + 1],
+        u[i - 1],
+        u[i],
+        u[i + 1],
+    );
+    if (!std.math.isFinite(derivative)) return error.InvalidLogDerivative;
+
+    const value = derivative / u[i];
+    if (!std.math.isFinite(value)) return error.InvalidLogDerivative;
+    return value;
+}
+
+/// Logarithmic derivative of a regular fixed-energy solution at r_match.
+///
+/// The outward integration stops immediately after the matching stencil, which
+/// avoids contaminating scattering diagnostics with large-radius overflow.
+pub fn fixed_energy_log_derivative(
+    allocator: std.mem.Allocator,
+    grid: *const RadialGrid,
+    v_eff: []const f64,
+    qn: OrbitalQuantumNumbers,
+    energy: f64,
+    r_match: f64,
+) !f64 {
+    std.debug.assert(v_eff.len == grid.n);
+    std.debug.assert(std.math.isFinite(energy));
+
+    const i = nearest_grid_index(grid, r_match);
+    if (i <= 1 or i + 1 >= grid.n) return error.InvalidLogDerivativeRadius;
+
+    const v_full = try build_full_potential(allocator, grid, v_eff, qn.l);
+    defer allocator.free(v_full);
+
+    const g = try allocator.alloc(f64, grid.n);
+    defer allocator.free(g);
+
+    build_g(grid, v_full, energy, g);
+
+    const phi = try allocator.alloc(f64, i + 2);
+    defer allocator.free(phi);
+
+    numerov_outward(g, qn.l, grid, phi, i + 2);
+
+    const u_left = reduced_value_at(grid, phi[i - 1], i - 1);
+    const u_center = reduced_value_at(grid, phi[i], i);
+    const u_right = reduced_value_at(grid, phi[i + 1], i + 1);
+    if (@abs(u_center) <= 1e-20) return error.LogDerivativeNode;
+
+    const derivative = nonuniform_three_point_derivative(
+        grid.r[i - 1],
+        grid.r[i],
+        grid.r[i + 1],
+        u_left,
+        u_center,
+        u_right,
+    );
+    const value = derivative / u_center;
+    if (!std.math.isFinite(value)) return error.InvalidLogDerivative;
+    return value;
+}
+
+fn reduced_value_at(grid: *const RadialGrid, phi: f64, i: usize) f64 {
+    return phi * @exp(grid.b * @as(f64, @floatFromInt(i)) * 0.5);
+}
+
+fn nearest_grid_index(grid: *const RadialGrid, r_target: f64) usize {
+    var best: usize = 0;
+    var best_diff = @abs(grid.r[0] - r_target);
+    for (1..grid.n) |i| {
+        const diff = @abs(grid.r[i] - r_target);
+        if (diff < best_diff) {
+            best = i;
+            best_diff = diff;
+        }
+    }
+    return best;
+}
+
+fn nonuniform_three_point_derivative(
+    x0: f64,
+    x1: f64,
+    x2: f64,
+    y0: f64,
+    y1: f64,
+    y2: f64,
+) f64 {
+    std.debug.assert(x0 < x1 and x1 < x2);
+    const c0 = (x1 - x2) / ((x0 - x1) * (x0 - x2));
+    const c1 = (2.0 * x1 - x0 - x2) / ((x1 - x0) * (x1 - x2));
+    const c2 = (x1 - x0) / ((x2 - x0) * (x2 - x1));
+    return c0 * y0 + c1 * y1 + c2 * y2;
+}
+
 fn build_full_potential(
     allocator: std.mem.Allocator,
     grid: *const RadialGrid,
@@ -437,4 +615,27 @@ test "hydrogen 2p eigenvalue" {
 
     // E_2p = -0.25 Ry
     try std.testing.expectApproxEqAbs(-0.25, sol.energy, 1e-5);
+}
+
+test "log derivative is scale invariant on nonuniform grid" {
+    const allocator = std.testing.allocator;
+    var grid = try RadialGrid.init(allocator, 256, 1e-5, 20.0);
+    defer grid.deinit();
+
+    const u = try allocator.alloc(f64, grid.n);
+    defer allocator.free(u);
+
+    const scaled = try allocator.alloc(f64, grid.n);
+    defer allocator.free(scaled);
+
+    for (0..grid.n) |i| {
+        u[i] = grid.r[i] * @exp(-grid.r[i]);
+        scaled[i] = -7.0 * u[i];
+    }
+
+    const ld = try log_derivative_at(&grid, u, 3.0);
+    const ld_scaled = try log_derivative_at(&grid, scaled, 3.0);
+    const r_match = grid.r[nearest_grid_index(&grid, 3.0)];
+    try std.testing.expectApproxEqAbs(ld, ld_scaled, 1e-12);
+    try std.testing.expectApproxEqAbs(1.0 / r_match - 1.0, ld, 2e-3);
 }

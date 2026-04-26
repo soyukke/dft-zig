@@ -51,7 +51,7 @@ pub fn generate(
     const rc_actual = grid.r[i_rc];
     const norm_ae = integrate_norm(grid, u_ae, i_rc);
     const ae_at_rc = wavefunction_derivatives(grid, u_ae, i_rc);
-    const coeffs = solve_coefficients(ae_at_rc, rc_actual, l, energy, norm_ae);
+    const coeffs = try solve_coefficients(ae_at_rc, rc_actual, l, norm_ae);
 
     const u_ps = try build_pseudo_wavefunction(allocator, grid, u_ae, coeffs, l, i_rc);
     errdefer allocator.free(u_ps);
@@ -121,11 +121,14 @@ fn tm_potential_value(coeffs: TmCoefficients, r: f64, fl: f64, energy: f64) f64 
     const r4 = r2 * r2;
     const r6 = r4 * r2;
     const r8 = r4 * r4;
+    const r10 = r8 * r2;
     const p_prime_over_r = 2.0 * coeffs.c2 + 4.0 * coeffs.c4 * r2 +
-        6.0 * coeffs.c6 * r4 + 8.0 * coeffs.c8 * r6 + 10.0 * coeffs.c10 * r8;
+        6.0 * coeffs.c6 * r4 + 8.0 * coeffs.c8 * r6 + 10.0 * coeffs.c10 * r8 +
+        12.0 * coeffs.c12 * r10;
     const p_prime = r * p_prime_over_r;
     const p_double_prime = 2.0 * coeffs.c2 + 12.0 * coeffs.c4 * r2 +
-        30.0 * coeffs.c6 * r4 + 56.0 * coeffs.c8 * r6 + 90.0 * coeffs.c10 * r8;
+        30.0 * coeffs.c6 * r4 + 56.0 * coeffs.c8 * r6 + 90.0 * coeffs.c10 * r8 +
+        132.0 * coeffs.c12 * r10;
     return energy + p_double_prime + 2.0 * (fl + 1.0) * p_prime_over_r + p_prime * p_prime;
 }
 
@@ -220,9 +223,18 @@ const TmMatch = struct {
     f2: f64,
     f3: f64,
     f4: f64,
+
+    fn is_finite(self: TmMatch) bool {
+        return std.math.isFinite(self.f0) and std.math.isFinite(self.f1) and
+            std.math.isFinite(self.f2) and std.math.isFinite(self.f3) and
+            std.math.isFinite(self.f4);
+    }
 };
 
-fn tm_matching_values(ae: WfDerivatives, powers: TmPowers, l: u32) TmMatch {
+fn tm_matching_values(ae: WfDerivatives, powers: TmPowers, l: u32) !TmMatch {
+    if (!std.math.isFinite(ae.u) or @abs(ae.u) <= 1e-30) {
+        return error.InvalidTmCoefficients;
+    }
     const fl: f64 = @floatFromInt(l);
     const u_rc = ae.u;
     const du_rc = ae.du / u_rc;
@@ -230,7 +242,7 @@ fn tm_matching_values(ae: WfDerivatives, powers: TmPowers, l: u32) TmMatch {
     const d3u_rc = ae.d3u / u_rc;
     const d4u_rc = ae.d4u / u_rc;
 
-    return .{
+    const result = TmMatch{
         .f0 = @log(@abs(u_rc)) - (fl + 1.0) * @log(powers.rc),
         .f1 = du_rc - (fl + 1.0) / powers.rc,
         .f2 = d2u_rc - du_rc * du_rc + (fl + 1.0) / powers.rc2,
@@ -240,6 +252,8 @@ fn tm_matching_values(ae: WfDerivatives, powers: TmPowers, l: u32) TmMatch {
             12.0 * du_rc * du_rc * d2u_rc - 6.0 * du_rc * du_rc * du_rc * du_rc +
             6.0 * (fl + 1.0) / powers.rc4,
     };
+    if (!result.is_finite()) return error.InvalidTmCoefficients;
+    return result;
 }
 
 /// Solve for TM polynomial coefficients.
@@ -247,72 +261,193 @@ fn solve_coefficients(
     ae: WfDerivatives,
     rc: f64,
     l: u32,
-    energy: f64,
     norm_ae: f64,
-) TmCoefficients {
-    _ = energy;
-
+) !TmCoefficients {
+    if (!std.math.isFinite(rc) or rc <= 0.0) return error.InvalidTmCoefficients;
+    if (!std.math.isFinite(norm_ae) or norm_ae <= 0.0) return error.InvalidTmCoefficients;
     const powers = TmPowers.init(rc);
-    const m = tm_matching_values(ae, powers, l);
-    var c0: f64 = m.f0 - m.f1 * rc / 2.0;
-    var result: TmCoefficients = undefined;
+    const m = try tm_matching_values(ae, powers, l);
 
-    for (0..100) |_| {
-        result = coefficients_from_c0(c0, m, powers);
-        const norm_ps = compute_pseudo_norm(result, rc, l, 2000);
-        const norm_err = norm_ps - norm_ae;
-        if (@abs(norm_err) < 1e-12) break;
-
-        const dc0 = 1e-8;
-        const result_p = coefficients_from_c0(c0 + dc0, m, powers);
-        const norm_ps_p = compute_pseudo_norm(result_p, rc, l, 2000);
-        const dnorm_dc0 = (norm_ps_p - norm_ps) / dc0;
-
-        if (@abs(dnorm_dc0) < 1e-30) break;
-        c0 -= norm_err / dnorm_dc0;
+    const c2_guesses = [_]f64{ 0.0, -0.25, 0.25, -1.0, 1.0, -4.0, 4.0, -12.0, 12.0 };
+    for (c2_guesses) |c2| {
+        if (solve_coefficients_from_state(
+            .{ .c0 = m.f0 - m.f1 * rc / 2.0, .c2 = c2 },
+            m,
+            powers,
+            l,
+            norm_ae,
+        )) |coeffs| return coeffs else |_| continue;
     }
 
-    return result;
+    return error.InvalidTmCoefficients;
 }
 
-/// Given c0, compute all other TM coefficients from matching conditions.
-fn coefficients_from_c0(c0: f64, m: TmMatch, p: TmPowers) TmCoefficients {
+fn solve_coefficients_from_state(
+    initial_state: TmNonlinearState,
+    m: TmMatch,
+    powers: TmPowers,
+    l: u32,
+    norm_ae: f64,
+) !TmCoefficients {
+    var state = initial_state;
+    var residual = try evaluate_tm_residual(state, m, powers, l, norm_ae);
+    for (0..50) |_| {
+        if (residual.converged()) return residual.coeffs;
+        const step = try nonlinear_step(state, residual, m, powers, l, norm_ae);
+        state = try damped_tm_step(state, step, residual, m, powers, l, norm_ae);
+        residual = try evaluate_tm_residual(state, m, powers, l, norm_ae);
+    }
+
+    return error.InvalidTmCoefficients;
+}
+
+const TmNonlinearState = struct {
+    c0: f64,
+    c2: f64,
+};
+
+const TmResidual = struct {
+    coeffs: TmCoefficients,
+    norm: f64,
+    curvature: f64,
+
+    fn converged(self: TmResidual) bool {
+        return @abs(self.norm) < 1e-11 and @abs(self.curvature) < 1e-11;
+    }
+};
+
+fn evaluate_tm_residual(
+    state: TmNonlinearState,
+    m: TmMatch,
+    powers: TmPowers,
+    l: u32,
+    norm_ae: f64,
+) !TmResidual {
+    const coeffs = try coefficients_from_c0_c2(state.c0, state.c2, m, powers);
+    const norm_ps = compute_pseudo_norm(coeffs, powers.rc, l, 4000);
+    if (!std.math.isFinite(norm_ps)) return error.InvalidTmCoefficients;
+    return .{
+        .coeffs = coeffs,
+        .norm = norm_ps - norm_ae,
+        .curvature = tm_zero_curvature_residual(coeffs, l),
+    };
+}
+
+fn nonlinear_step(
+    state: TmNonlinearState,
+    residual: TmResidual,
+    m: TmMatch,
+    powers: TmPowers,
+    l: u32,
+    norm_ae: f64,
+) !TmNonlinearState {
+    const dc0 = 1e-6 * @max(1.0, @abs(state.c0));
+    const dc2 = 1e-6 * @max(1.0, @abs(state.c2));
+    const res_c0 = try evaluate_tm_residual(
+        .{ .c0 = state.c0 + dc0, .c2 = state.c2 },
+        m,
+        powers,
+        l,
+        norm_ae,
+    );
+    const res_c2 = try evaluate_tm_residual(
+        .{ .c0 = state.c0, .c2 = state.c2 + dc2 },
+        m,
+        powers,
+        l,
+        norm_ae,
+    );
+
+    const a = (res_c0.norm - residual.norm) / dc0;
+    const b = (res_c2.norm - residual.norm) / dc2;
+    const c = (res_c0.curvature - residual.curvature) / dc0;
+    const d = (res_c2.curvature - residual.curvature) / dc2;
+    const det = a * d - b * c;
+    if (!std.math.isFinite(det) or @abs(det) < 1e-20) return error.InvalidTmCoefficients;
+    return .{
+        .c0 = (-residual.norm * d + b * residual.curvature) / det,
+        .c2 = (c * residual.norm - a * residual.curvature) / det,
+    };
+}
+
+fn damped_tm_step(
+    state: TmNonlinearState,
+    step: TmNonlinearState,
+    residual: TmResidual,
+    m: TmMatch,
+    powers: TmPowers,
+    l: u32,
+    norm_ae: f64,
+) !TmNonlinearState {
+    const current_norm = residual_norm(residual);
+    var damping: f64 = 1.0;
+    var last_valid = state;
+    while (damping >= 1.0 / 1024.0) : (damping *= 0.5) {
+        const candidate = TmNonlinearState{
+            .c0 = state.c0 + damping * step.c0,
+            .c2 = state.c2 + damping * step.c2,
+        };
+        const candidate_residual =
+            evaluate_tm_residual(candidate, m, powers, l, norm_ae) catch continue;
+        last_valid = candidate;
+        if (residual_norm(candidate_residual) < current_norm) return candidate;
+    }
+    return last_valid;
+}
+
+fn residual_norm(residual: TmResidual) f64 {
+    return @abs(residual.norm) + @abs(residual.curvature);
+}
+
+fn tm_zero_curvature_residual(coeffs: TmCoefficients, l: u32) f64 {
+    const fl: f64 = @floatFromInt(l);
+    return coeffs.c4 + coeffs.c2 * coeffs.c2 / (2.0 * fl + 5.0);
+}
+
+/// Given c0 and c2, compute the remaining coefficients from rc matching.
+fn coefficients_from_c0_c2(c0: f64, c2: f64, m: TmMatch, p: TmPowers) !TmCoefficients {
+    const p12 = p.rc6 * p.rc6;
+    const p11 = p.rc10 * p.rc;
+    const p9 = p.rc8 * p.rc;
+    const p7 = p.rc6 * p.rc;
+    const p5 = p.rc4 * p.rc;
+    const p3 = p.rc2 * p.rc;
     const rhs = [5]f64{
-        m.f0 - c0,
-        m.f1,
-        m.f2,
+        m.f0 - c0 - c2 * p.rc2,
+        m.f1 - 2.0 * c2 * p.rc,
+        m.f2 - 2.0 * c2,
         m.f3,
         m.f4,
     };
 
     var a = [5][5]f64{
-        .{ p.rc2, p.rc4, p.rc6, p.rc8, p.rc10 },
+        .{ p.rc4, p.rc6, p.rc8, p.rc10, p12 },
         .{
-            2.0 * p.rc,
-            4.0 * p.rc * p.rc2,
-            6.0 * p.rc * p.rc4,
-            8.0 * p.rc * p.rc6,
-            10.0 * p.rc * p.rc8,
+            4.0 * p3,
+            6.0 * p5,
+            8.0 * p7,
+            10.0 * p9,
+            12.0 * p11,
         },
-        .{ 2.0, 12.0 * p.rc2, 30.0 * p.rc4, 56.0 * p.rc6, 90.0 * p.rc8 },
-        .{ 0.0, 24.0 * p.rc, 120.0 * p.rc * p.rc2, 336.0 * p.rc * p.rc4, 720.0 * p.rc * p.rc6 },
-        .{ 0.0, 24.0, 360.0 * p.rc2, 1680.0 * p.rc4, 5040.0 * p.rc6 },
+        .{ 12.0 * p.rc2, 30.0 * p.rc4, 56.0 * p.rc6, 90.0 * p.rc8, 132.0 * p.rc10 },
+        .{ 24.0 * p.rc, 120.0 * p3, 336.0 * p5, 720.0 * p7, 1320.0 * p9 },
+        .{ 24.0, 360.0 * p.rc2, 1680.0 * p.rc4, 5040.0 * p.rc6, 11880.0 * p.rc8 },
     };
 
     var b = rhs;
-    const x = solve_5x5(&a, &b);
+    const x = try solve_5x5(&a, &b);
     return .{
         .c0 = c0,
-        .c2 = x[0],
-        .c4 = x[1],
-        .c6 = x[2],
-        .c8 = x[3],
-        .c10 = x[4],
-        .c12 = 0,
+        .c2 = c2,
+        .c4 = x[0],
+        .c6 = x[1],
+        .c8 = x[2],
+        .c10 = x[3],
+        .c12 = x[4],
     };
 }
 
-fn solve_5x5(a: *[5][5]f64, b: *[5]f64) [5]f64 {
+fn solve_5x5(a: *[5][5]f64, b: *[5]f64) ![5]f64 {
     for (0..5) |col| {
         var max_val: f64 = 0;
         var max_row: usize = col;
@@ -332,7 +467,9 @@ fn solve_5x5(a: *[5][5]f64, b: *[5]f64) [5]f64 {
             b.*[max_row] = tmp_b;
         }
 
-        if (@abs(a.*[col][col]) < 1e-30) continue;
+        if (!std.math.isFinite(a.*[col][col]) or @abs(a.*[col][col]) < 1e-30) {
+            return error.InvalidTmCoefficients;
+        }
         for (col + 1..5) |row| {
             const factor = a.*[row][col] / a.*[col][col];
             for (col..5) |j| {
@@ -350,7 +487,11 @@ fn solve_5x5(a: *[5][5]f64, b: *[5]f64) [5]f64 {
         for (i + 1..5) |j| {
             sum -= a.*[i][j] * x[j];
         }
-        x[i] = if (@abs(a.*[i][i]) > 1e-30) sum / a.*[i][i] else 0;
+        if (!std.math.isFinite(a.*[i][i]) or @abs(a.*[i][i]) < 1e-30) {
+            return error.InvalidTmCoefficients;
+        }
+        x[i] = sum / a.*[i][i];
+        if (!std.math.isFinite(x[i])) return error.InvalidTmCoefficients;
     }
     return x;
 }
@@ -466,6 +607,47 @@ test "TM pseudo wavefunction: norm conservation" {
     const norm_ps = integrate_norm(&grid, pw.u, i_rc);
 
     try std.testing.expectApproxEqAbs(norm_ae, norm_ps, 1e-6);
+}
+
+test "TM coefficient solve enforces norm and zero curvature" {
+    const allocator = std.testing.allocator;
+    var grid = try RadialGridMod.RadialGrid.init(allocator, 4000, 1e-8, 80.0);
+    defer grid.deinit();
+
+    const v = try allocator.alloc(f64, grid.n);
+    defer allocator.free(v);
+
+    for (0..grid.n) |i| {
+        const r = grid.r[i];
+        v[i] = if (r > 1e-30) -2.0 / r else -2.0 / 1e-30;
+    }
+
+    var sol = try schrodinger.solve(allocator, &grid, v, .{ .n = 1, .l = 0 }, -0.5);
+    defer sol.deinit();
+
+    const i_rc = find_grid_index(&grid, 1.5);
+    const rc = grid.r[i_rc];
+    const norm_ae = integrate_norm(&grid, sol.u, i_rc);
+    const ae_at_rc = wavefunction_derivatives(&grid, sol.u, i_rc);
+    const coeffs = try solve_coefficients(ae_at_rc, rc, 0, norm_ae);
+
+    const norm_ps = compute_pseudo_norm(coeffs, rc, 0, 4000);
+    try std.testing.expectApproxEqAbs(norm_ae, norm_ps, 1e-9);
+    try std.testing.expectApproxEqAbs(0.0, tm_zero_curvature_residual(coeffs, 0), 1e-9);
+    try std.testing.expect(std.math.isFinite(coeffs.c12));
+    try std.testing.expect(@abs(coeffs.c12) > 1e-14);
+}
+
+test "TM coefficient solve rejects singular matching system" {
+    const ae = WfDerivatives{
+        .u = 1.0,
+        .du = 0.0,
+        .d2u = 0.0,
+        .d3u = 0.0,
+        .d4u = 0.0,
+    };
+    try std.testing.expectError(error.InvalidTmCoefficients, solve_coefficients(ae, 0.0, 0, 1.0));
+    try std.testing.expectError(error.InvalidTmCoefficients, solve_coefficients(ae, 1.0, 0, 0.0));
 }
 
 test "TM screened pseudopotential: finite at origin" {

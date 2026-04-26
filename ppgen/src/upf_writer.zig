@@ -28,6 +28,8 @@ pub const PseudopotentialData = struct {
     dij: []const f64,
     /// Atomic valence charge density ρ_atom(r) * 4πr² (for UPF)
     rho_atom: []const f64,
+    /// Nonlinear core correction density ρ_core(r), when enabled.
+    nlcc: ?[]const f64 = null,
     /// Maximum angular momentum
     l_max: u32,
     /// Number of mesh points
@@ -50,6 +52,7 @@ pub fn write(data: PseudopotentialData, writer: anytype) !void {
     try write_mesh(writer, data);
     try write_local(writer, data);
     try write_nonlocal(writer, data);
+    try write_nlcc(writer, data);
     try write_rho_atom(writer, data);
     try writer.writeAll("</UPF>\n");
 }
@@ -75,7 +78,7 @@ fn write_header(writer: anytype, data: PseudopotentialData) !void {
     try writer.print("    is_ultrasoft=\"F\"\n", .{});
     try writer.print("    is_paw=\"F\"\n", .{});
     try writer.print("    is_coulomb=\"F\"\n", .{});
-    try writer.print("    core_correction=\"F\"\n", .{});
+    try writer.print("    core_correction=\"{s}\"\n", .{if (data.nlcc != null) "T" else "F"});
     try writer.print("    functional=\"{s}\"\n", .{data.xc_functional});
     try writer.print("    z_valence=\"{d:.1}\"\n", .{data.z_valence});
     try writer.print("    total_psenergy=\"0.0\"\n", .{});
@@ -125,6 +128,14 @@ fn write_nonlocal(writer: anytype, data: PseudopotentialData) !void {
     try writer.writeAll("  </PP_NONLOCAL>\n");
 }
 
+fn write_nlcc(writer: anytype, data: PseudopotentialData) !void {
+    const nlcc = data.nlcc orelse return;
+    if (nlcc.len != data.mesh_size) return error.InvalidPseudopotentialData;
+    try writer.print("  <PP_NLCC type=\"real\" size=\"{d}\">\n", .{data.mesh_size});
+    try write_array(writer, nlcc, data.mesh_size);
+    try writer.writeAll("  </PP_NLCC>\n");
+}
+
 fn write_rho_atom(writer: anytype, data: PseudopotentialData) !void {
     try writer.print("  <PP_RHOATOM type=\"real\" size=\"{d}\">\n", .{data.mesh_size});
     try write_array(writer, data.rho_atom, data.mesh_size);
@@ -157,6 +168,7 @@ test "UPF writer: produces valid XML structure" {
     const beta_vals = [_]f64{ 0.0, 0.1, 0.2, 0.15, 0.05 };
     const dij = [_]f64{1.5};
     const rho_atom = [_]f64{ 0.0, 0.001, 0.002, 0.002, 0.001 };
+    const nlcc = [_]f64{ 0.4, 0.3, 0.2, 0.1, 0.0 };
 
     const betas = [_]BetaData{
         .{ .l = 0, .values = &beta_vals, .cutoff_index = 5 },
@@ -173,6 +185,7 @@ test "UPF writer: produces valid XML structure" {
         .betas = &betas,
         .dij = &dij,
         .rho_atom = &rho_atom,
+        .nlcc = &nlcc,
         .l_max = 0,
         .mesh_size = 5,
     };
@@ -192,9 +205,40 @@ test "UPF writer: produces valid XML structure" {
     try std.testing.expect(std.mem.indexOf(u8, output, "<PP_NONLOCAL>") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "<PP_BETA.1") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "<PP_DIJ") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "<PP_NLCC") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "<PP_RHOATOM") != null);
+    try std.testing.expect(std.mem.indexOf(u8, output, "core_correction=\"T\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "element=\"H\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, output, "pseudo_type=\"NC\"") != null);
+}
+
+test "UPF writer: rejects NLCC with wrong mesh size" {
+    const r = [_]f64{ 0.0, 0.01, 0.02 };
+    const rab = [_]f64{ 0.01, 0.01, 0.01 };
+    const v_local = [_]f64{ -10.0, -9.5, -9.0 };
+    const rho_atom = [_]f64{ 0.0, 0.5, 0.3 };
+    const nlcc = [_]f64{ 0.1, 0.2 };
+    const dij = [_]f64{};
+
+    const data = PseudopotentialData{
+        .element = "He",
+        .z = 2,
+        .z_valence = 2.0,
+        .xc_functional = "PZ",
+        .r = &r,
+        .rab = &rab,
+        .v_local = &v_local,
+        .betas = &[_]BetaData{},
+        .dij = &dij,
+        .rho_atom = &rho_atom,
+        .nlcc = &nlcc,
+        .l_max = 0,
+        .mesh_size = 3,
+    };
+
+    var buf: [8192]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buf);
+    try std.testing.expectError(error.InvalidPseudopotentialData, write(data, &writer));
 }
 
 test "UPF writer: round-trip with parser (structure)" {
