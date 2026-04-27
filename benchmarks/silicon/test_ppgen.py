@@ -27,6 +27,9 @@ LOG_DERIV_MAX_THRESHOLD = 0.75
 LOG_DERIV_RMS_THRESHOLD = 0.17
 LOG_DERIV_INVALID_THRESHOLD = 0
 LOG_DERIV_POLE_MISMATCH_THRESHOLD = 0
+LOCAL_SOLID_FF_THRESHOLD = 6.5
+BETA_SOLID_FF_THRESHOLD = 0.35
+FORM_FACTOR_SCORE_THRESHOLD = 6.8
 
 
 def run(cmd, cwd):
@@ -291,6 +294,7 @@ def check_results():
         raise AssertionError("ppgen form-factor diagnostics did not compare any beta channels")
     if "objective" not in diagnostics["form_factor"]:
         raise AssertionError("ppgen form-factor objective is missing")
+    check_form_factor_objective(diagnostics["form_factor"])
     if abs(diagnostics["nlcc"]["ppgen"]["charge"] - 0.7241414335) > NLCC_CHARGE_THRESHOLD:
         raise AssertionError(f"unexpected NLCC charge: {diagnostics['nlcc']['ppgen']['charge']:.6f}")
     if not diagnostics["logderiv_by_l"]:
@@ -313,6 +317,16 @@ def check_results():
     print(f"  Pole mismatch:  {log_pole_mismatches}")
     print(f"  Local FF RMS:   {diagnostics['form_factor']['local_sr_rms_delta']:.3e}")
     print_form_factor_objective(diagnostics["form_factor"])
+
+
+def check_form_factor_objective(form_factor):
+    objective = form_factor["objective"]
+    if objective["local_solid_q_rms"] > LOCAL_SOLID_FF_THRESHOLD:
+        raise AssertionError(f"local solid-q form factor drifted: {objective['local_solid_q_rms']:.3e}")
+    if objective["beta_mean_solid_q_rms"] > BETA_SOLID_FF_THRESHOLD:
+        raise AssertionError(f"beta solid-q form factor drifted: {objective['beta_mean_solid_q_rms']:.3e}")
+    if objective["absolute_score"] > FORM_FACTOR_SCORE_THRESHOLD:
+        raise AssertionError(f"form-factor score drifted: {objective['absolute_score']:.3e}")
 
 
 def print_form_factor_objective(form_factor):

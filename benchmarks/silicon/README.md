@@ -54,7 +54,9 @@ The same test also checks that the generated `PP_DIJ` coefficients remain below
 writes `out_ppgen/Si_ppgen_logderiv.tsv` on a 0.2 Ry energy grid, verifies
 the NLCC partial-core charge is about 0.724e, and checks the atomic scattering
 diagnostic: valid log-derivative max delta <= 0.75, RMS delta <= 0.17, invalid
-sample count = 0, and AE/PS pole mismatch count = 0.
+sample count = 0, and AE/PS pole mismatch count = 0. The form-factor ratchet
+also requires local solid-q RMS <= 6.5, beta solid-q mean RMS <= 0.35, and
+combined form-factor score <= 6.8.
 
 `diagnose_ppgen.py` runs as part of the ppgen benchmark and writes three
 diagnostic artifacts under `out_ppgen/`:
