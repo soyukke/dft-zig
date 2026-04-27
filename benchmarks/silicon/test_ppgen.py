@@ -19,7 +19,7 @@ CONFIG = "dft_zig_ppgen.toml"
 BASELINE_DIR = os.path.join(SCRIPT_DIR, "baseline")
 RY_TO_EV = 13.6057
 GAP_DIFF_THRESHOLD_MEV = 75.0
-AVG_MSE_THRESHOLD_MEV2 = 4_900.0
+AVG_MSE_THRESHOLD_MEV2 = 4_650.0
 MAX_ABS_DIJ_THRESHOLD = 20_000.0
 MAX_DIJ_ASYM_THRESHOLD = 1e-8
 NLCC_CHARGE_THRESHOLD = 1e-3
@@ -50,7 +50,7 @@ def build_and_run():
         "--local-l",
         "2",
         "--local-smooth-radius",
-        "1.2",
+        "1.3",
         "--p-ref-energy-ry",
         "0.8",
         "--d-energy-ry",
@@ -58,7 +58,7 @@ def build_and_run():
         "--nlcc-charge",
         "0.7241414335",
         "--nlcc-radius",
-        "0.80",
+        "0.95",
         "--log-deriv",
         LOG_DERIV_PATH,
         "--log-deriv-min-ry",

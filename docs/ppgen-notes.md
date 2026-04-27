@@ -56,7 +56,7 @@ p-projector block, about `8.1e4`, so the benchmark ratchets the absolute
 `PP_DIJ` limit to `2e4`.
 
 The Si PBE generator now writes an AE-core-derived nonlinear core correction by
-default: `--nlcc-charge 0.7241414335 --nlcc-radius 0.80`. This is an explicit
+default: `--nlcc-charge 0.7241414335 --nlcc-radius 0.95`. This is an explicit
 partial-core model, not the full frozen core charge. ppgen builds it from the
 occupied AE core orbitals that are not part of the valence channel set, applies
 a smooth radial suppression near the origin, and normalizes the resulting
@@ -69,11 +69,11 @@ current Si quantitative ratchet and should be replaced only by a more physical
 pseudo-core construction with equal or better regression results.
 
 The Si local potential is also smoothed by default with
-`--local-smooth-radius 1.2`. The local channel still comes from the d reference
+`--local-smooth-radius 1.3`. The local channel still comes from the d reference
 channel outside the smoothing radius, but the inner region is blended to a
 finite value with a zero-slope smootherstep. This lowers the local solid-q
-form-factor RMS from about `10.9` to about `7.6` and the Si band MSE from about
-`6040 meV^2` to about `4780 meV^2` while preserving the scattering
+form-factor RMS from about `10.9` to about `6.3` and the Si band MSE from about
+`6040 meV^2` to about `4528 meV^2` while preserving the scattering
 log-derivative ratchet.
 
 For multiple projectors in the same angular-momentum channel, the KB coefficient

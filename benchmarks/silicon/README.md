@@ -48,7 +48,7 @@ VBM-aligned bands against the saved ABINIT baseline. This is a quantitative
 ratchet for ppgen, not a claim that ppgen already matches ONCV quality.
 
 Current ppgen Si PBE ratchet: band-gap difference <= 75 meV and average
-VBM-aligned band MSE <= 4,900 meV^2 against the saved ABINIT baseline.
+VBM-aligned band MSE <= 4,650 meV^2 against the saved ABINIT baseline.
 The same test also checks that the generated `PP_DIJ` coefficients remain below
 2e4 in absolute value, verifies the `PP_DIJ` matrix is Hermitian to 1e-8,
 writes `out_ppgen/Si_ppgen_logderiv.tsv` on a 0.2 Ry energy grid, verifies

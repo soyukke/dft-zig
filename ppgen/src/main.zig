@@ -45,14 +45,14 @@ const CliParseState = struct {
     d2_energy_set: bool = false,
     l_local: u32 = 2,
     local_n: u32 = 3,
-    local_smooth_radius: ?f64 = 1.2,
+    local_smooth_radius: ?f64 = 1.3,
     log_deriv_path: ?[]const u8 = null,
     log_deriv_r: f64 = 3.0,
     log_deriv_min: f64 = 0.0,
     log_deriv_max: f64 = 1.6,
     log_deriv_step: f64 = 0.4,
     nlcc_charge: f64 = 0.7241414335,
-    nlcc_radius: f64 = 0.8,
+    nlcc_radius: f64 = 0.95,
     output_path: ?[]const u8 = null,
 
     fn finish(self: CliParseState) !CliOptions {
