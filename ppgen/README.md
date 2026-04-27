@@ -14,8 +14,9 @@ The current generator uses:
 - atomic all-electron SCF on a radial grid
 - Troullier-Martins norm-conserving pseudization
 - radial Schrodinger-equation inversion for channel potentials
+- smoothed local potential construction
 - Kleinman-Bylander separable nonlocal projectors
-- Gaussian nonlinear core correction (NLCC)
+- AE-core-derived nonlinear core correction (NLCC)
 - UPF output with `PP_LOCAL`, `PP_BETA`, `PP_DIJ`, `PP_NLCC`, and `PP_RHOATOM`
 
 This is not an ONCV generator. In particular, residual kinetic energy

@@ -40,6 +40,7 @@ pub const GeneratorConfig = struct {
     valence_channels: []const ChannelConfig,
     l_local: u32, // which l to use as local potential
     local_n: ?u32 = null,
+    local_smooth_radius: ?f64 = null,
     nlcc: ?NlccConfig = null,
 };
 
@@ -113,18 +114,13 @@ pub fn generate_pseudopotential(
     var ae_result = try solve_all_electron_atom(allocator, &grid, config);
     defer ae_result.deinit();
 
-    const pw_list = try generate_pseudo_wavefunctions(
-        allocator,
-        &grid,
-        config,
-        &ae_result,
-    );
+    const pw_list = try generate_pseudo_wavefunctions(allocator, &grid, config, &ae_result);
     defer deinit_pseudo_wavefunctions(allocator, pw_list);
 
     const rho_val = try build_valence_density(allocator, &grid, config.valence_channels, pw_list);
     defer allocator.free(rho_val);
 
-    const nlcc = try build_optional_nlcc(allocator, &grid, config.nlcc);
+    const nlcc = try build_optional_nlcc(allocator, &grid, config, &ae_result);
     defer if (nlcc) |values| allocator.free(values);
 
     const v_h = try build_hartree_potential(allocator, &grid, rho_val);
@@ -138,7 +134,14 @@ pub fn generate_pseudopotential(
         config.local_n,
         config.l_local,
     );
-    const v_local_screened = pw_list[l_local_idx].v_ps;
+    const v_local_screened = try build_local_screened_potential(
+        allocator,
+        &grid,
+        pw_list[l_local_idx].v_ps,
+        config.local_smooth_radius,
+    );
+    defer allocator.free(v_local_screened);
+
     const v_local_ion = try kb_projector.unscreen(allocator, &grid, v_local_screened, v_h, v_xc);
     defer allocator.free(v_local_ion);
 
@@ -576,6 +579,62 @@ fn build_xc_potential(
     return v_xc;
 }
 
+fn build_local_screened_potential(
+    allocator: std.mem.Allocator,
+    grid: *const RadialGrid,
+    channel_potential: []const f64,
+    smooth_radius: ?f64,
+) ![]f64 {
+    if (channel_potential.len != grid.n) return error.InvalidGeneratorConfig;
+
+    const local = try allocator.alloc(f64, grid.n);
+    errdefer allocator.free(local);
+
+    if (smooth_radius) |radius| {
+        try build_smooth_local_potential(grid, channel_potential, radius, local);
+    } else {
+        @memcpy(local, channel_potential);
+    }
+    return local;
+}
+
+fn build_smooth_local_potential(
+    grid: *const RadialGrid,
+    channel_potential: []const f64,
+    smooth_radius: f64,
+    local: []f64,
+) !void {
+    std.debug.assert(channel_potential.len == grid.n);
+    std.debug.assert(local.len == grid.n);
+    if (!std.math.isFinite(smooth_radius) or smooth_radius <= 0.0) {
+        return error.InvalidGeneratorConfig;
+    }
+
+    const i_smooth = tm_generator.find_grid_index(grid, smooth_radius);
+    if (i_smooth < 2 or i_smooth + 2 >= grid.n) return error.InvalidGeneratorConfig;
+
+    const radius = grid.r[i_smooth];
+    const inner_value = channel_potential[i_smooth];
+    for (0..grid.n) |i| {
+        if (i > i_smooth) {
+            local[i] = channel_potential[i];
+            continue;
+        }
+        const t = grid.r[i] / radius;
+        const weight = smootherstep(t);
+        local[i] = inner_value + weight * (channel_potential[i] - inner_value);
+    }
+}
+
+fn smootherstep(t: f64) f64 {
+    std.debug.assert(std.math.isFinite(t));
+    std.debug.assert(t >= 0.0 and t <= 1.0);
+
+    const t2 = t * t;
+    const t3 = t2 * t;
+    return t3 * (10.0 + t * (-15.0 + 6.0 * t));
+}
+
 fn find_local_channel_index(
     valence_channels: []const ChannelConfig,
     local_n: ?u32,
@@ -782,35 +841,121 @@ fn build_atomic_rho(
     return rho_atom;
 }
 
-fn build_gaussian_nlcc(
+fn build_ae_core_nlcc(
     allocator: std.mem.Allocator,
     grid: *const RadialGrid,
+    generator: GeneratorConfig,
+    ae_result: *const atomic_solver.AtomResult,
     config: NlccConfig,
 ) ![]f64 {
-    if (!std.math.isFinite(config.charge) or config.charge <= 0.0) {
-        return error.InvalidGeneratorConfig;
-    }
-    if (!std.math.isFinite(config.radius) or config.radius <= 0.0) {
-        return error.InvalidGeneratorConfig;
-    }
+    try validate_nlcc_config(config);
+
+    const core_density = try build_ae_core_density(allocator, grid, generator, ae_result);
+    defer allocator.free(core_density);
 
     const nlcc = try allocator.alloc(f64, grid.n);
-    const radius2 = config.radius * config.radius;
-    const norm = config.charge / (std.math.pow(f64, std.math.pi, 1.5) *
-        config.radius * config.radius * config.radius);
-    for (nlcc, grid.r) |*rho, r| {
-        rho.* = norm * @exp(-(r * r) / radius2);
+    errdefer allocator.free(nlcc);
+
+    for (nlcc, core_density, grid.r) |*rho, core, r| {
+        rho.* = core * ae_core_smoothing_weight(r, config.radius);
     }
+    try normalize_spherical_density(grid, nlcc, config.charge);
     return nlcc;
 }
 
 fn build_optional_nlcc(
     allocator: std.mem.Allocator,
     grid: *const RadialGrid,
-    config: ?NlccConfig,
+    generator: GeneratorConfig,
+    ae_result: *const atomic_solver.AtomResult,
 ) !?[]f64 {
-    const nlcc_config = config orelse return null;
-    return try build_gaussian_nlcc(allocator, grid, nlcc_config);
+    const nlcc_config = generator.nlcc orelse return null;
+    return try build_ae_core_nlcc(allocator, grid, generator, ae_result, nlcc_config);
+}
+
+fn validate_nlcc_config(config: NlccConfig) !void {
+    if (!std.math.isFinite(config.charge) or config.charge <= 0.0) {
+        return error.InvalidGeneratorConfig;
+    }
+    if (!std.math.isFinite(config.radius) or config.radius <= 0.0) {
+        return error.InvalidGeneratorConfig;
+    }
+}
+
+fn build_ae_core_density(
+    allocator: std.mem.Allocator,
+    grid: *const RadialGrid,
+    generator: GeneratorConfig,
+    ae_result: *const atomic_solver.AtomResult,
+) ![]f64 {
+    if (generator.all_orbitals.len != ae_result.wavefunctions.len) {
+        return error.InvalidGeneratorConfig;
+    }
+
+    const density = try allocator.alloc(f64, grid.n);
+    @memset(density, 0.0);
+    errdefer allocator.free(density);
+
+    var core_occupation: f64 = 0.0;
+    for (generator.all_orbitals, ae_result.wavefunctions) |orb, wave| {
+        if (wave.len != grid.n) return error.InvalidGeneratorConfig;
+        if (orb.occupation <= 0.0 or is_valence_orbital(generator.valence_channels, orb)) {
+            continue;
+        }
+        core_occupation += orb.occupation;
+        accumulate_orbital_density(grid, wave, orb.occupation, density);
+    }
+    if (core_occupation <= 0.0) return error.InvalidGeneratorConfig;
+    return density;
+}
+
+fn is_valence_orbital(valence_channels: []const ChannelConfig, orb: OrbitalDef) bool {
+    for (valence_channels) |channel| {
+        if (channel.occupation <= 0.0) continue;
+        if (channel.n == orb.n and channel.l == orb.l) return true;
+    }
+    return false;
+}
+
+fn accumulate_orbital_density(
+    grid: *const RadialGrid,
+    wave: []const f64,
+    occupation: f64,
+    density: []f64,
+) void {
+    std.debug.assert(wave.len == grid.n);
+    std.debug.assert(density.len == grid.n);
+
+    for (0..grid.n) |i| {
+        const r = grid.r[i];
+        const r2 = if (r > 1e-30) r * r else 1e-30;
+        density[i] += occupation * wave[i] * wave[i] / (4.0 * std.math.pi * r2);
+    }
+}
+
+fn ae_core_smoothing_weight(r: f64, radius: f64) f64 {
+    std.debug.assert(std.math.isFinite(r));
+    std.debug.assert(std.math.isFinite(radius) and radius > 0.0);
+
+    const x = r / radius;
+    const x2 = x * x;
+    const x4 = x2 * x2;
+    return 1.0 - @exp(-x4);
+}
+
+fn normalize_spherical_density(
+    grid: *const RadialGrid,
+    rho: []f64,
+    target_charge: f64,
+) !void {
+    std.debug.assert(rho.len == grid.n);
+
+    const charge = integrate_spherical_density(grid, rho);
+    if (!std.math.isFinite(charge) or charge <= 0.0) {
+        return error.InvalidGeneratorConfig;
+    }
+    const scale = target_charge / charge;
+    for (rho) |*value| value.* *= scale;
 }
 
 fn integrate_spherical_density(grid: *const RadialGrid, rho: []const f64) f64 {
@@ -968,6 +1113,29 @@ test "projector cutoff uses channel support" {
     try std.testing.expectEqual(channel_only, long_channel);
 }
 
+test "smooth local potential preserves cutoff and outer channel values" {
+    const allocator = std.testing.allocator;
+    var grid = try RadialGrid.init(allocator, 64, 1e-4, 8.0);
+    defer grid.deinit();
+
+    const radius = 1.2;
+    const i_smooth = tm_generator.find_grid_index(&grid, radius);
+    var channel: [64]f64 = undefined;
+    for (0..grid.n) |i| {
+        const r = grid.r[i];
+        channel[i] = -2.0 + 0.5 * r + 0.1 * r * r;
+    }
+
+    const local = try build_local_screened_potential(allocator, &grid, &channel, radius);
+    defer allocator.free(local);
+
+    try std.testing.expectApproxEqAbs(channel[i_smooth], local[i_smooth], 1e-14);
+    for (i_smooth + 1..grid.n) |i| {
+        try std.testing.expectApproxEqAbs(channel[i], local[i], 1e-14);
+    }
+    try std.testing.expectApproxEqAbs(channel[i_smooth], local[0], 1e-14);
+}
+
 test "XC potential uses valence plus NLCC density" {
     const allocator = std.testing.allocator;
     var grid = try RadialGrid.init(allocator, 4, 1e-4, 1.0);
@@ -997,14 +1165,101 @@ test "XC potential rejects mismatched NLCC density length" {
     );
 }
 
-test "Gaussian NLCC integrates to configured charge" {
+test "AE core density excludes occupied valence orbitals" {
     const allocator = std.testing.allocator;
-    var grid = try RadialGrid.init(allocator, 4096, 1e-8, 20.0);
+    var grid = try RadialGrid.init(allocator, 64, 1e-4, 8.0);
     defer grid.deinit();
 
-    const nlcc = try build_gaussian_nlcc(allocator, &grid, .{
+    var core_wave: [64]f64 = undefined;
+    var valence_wave: [64]f64 = undefined;
+    for (0..grid.n) |i| {
+        const r = grid.r[i];
+        core_wave[i] = r * @exp(-r);
+        valence_wave[i] = 100.0 * r * @exp(-0.5 * r);
+    }
+
+    const all_orbitals = [_]OrbitalDef{
+        .{ .n = 1, .l = 0, .occupation = 2.0 },
+        .{ .n = 2, .l = 0, .occupation = 1.0 },
+    };
+    const valence_channels = [_]ChannelConfig{
+        .{ .n = 2, .l = 0, .occupation = 1.0, .rc = 1.5 },
+    };
+    var eigenvalues = [_]f64{ -1.0, -0.1 };
+    var rho = [_]f64{0.0} ** 64;
+    var v_eff = [_]f64{0.0} ** 64;
+    var wavefunctions = [_][]f64{ &core_wave, &valence_wave };
+    const ae_result = atomic_solver.AtomResult{
+        .total_energy = 0.0,
+        .eigenvalues = &eigenvalues,
+        .rho = &rho,
+        .v_eff = &v_eff,
+        .wavefunctions = &wavefunctions,
+        .allocator = allocator,
+    };
+
+    const density = try build_ae_core_density(allocator, &grid, .{
+        .z = 2.0,
+        .element = "X",
+        .xc = .lda_pz,
+        .all_orbitals = &all_orbitals,
+        .valence_channels = &valence_channels,
+        .l_local = 0,
+    }, &ae_result);
+    defer allocator.free(density);
+
+    for (0..grid.n) |i| {
+        const r = grid.r[i];
+        const r2 = if (r > 1e-30) r * r else 1e-30;
+        const expected = 2.0 * core_wave[i] * core_wave[i] / (4.0 * std.math.pi * r2);
+        try std.testing.expectApproxEqAbs(expected, density[i], 1e-14);
+    }
+}
+
+test "AE core NLCC integrates to configured partial charge" {
+    const allocator = std.testing.allocator;
+    var grid = try RadialGrid.init(allocator, 256, 1e-5, 12.0);
+    defer grid.deinit();
+
+    var core_wave: [256]f64 = undefined;
+    var valence_wave: [256]f64 = undefined;
+    for (0..grid.n) |i| {
+        const r = grid.r[i];
+        core_wave[i] = r * @exp(-r);
+        valence_wave[i] = r * r * @exp(-0.4 * r);
+    }
+
+    const all_orbitals = [_]OrbitalDef{
+        .{ .n = 1, .l = 0, .occupation = 2.0 },
+        .{ .n = 2, .l = 1, .occupation = 1.0 },
+    };
+    const valence_channels = [_]ChannelConfig{
+        .{ .n = 2, .l = 1, .occupation = 1.0, .rc = 1.5 },
+    };
+    var eigenvalues = [_]f64{ -1.0, -0.1 };
+    var rho = [_]f64{0.0} ** 256;
+    var v_eff = [_]f64{0.0} ** 256;
+    var wavefunctions = [_][]f64{ &core_wave, &valence_wave };
+    const ae_result = atomic_solver.AtomResult{
+        .total_energy = 0.0,
+        .eigenvalues = &eigenvalues,
+        .rho = &rho,
+        .v_eff = &v_eff,
+        .wavefunctions = &wavefunctions,
+        .allocator = allocator,
+    };
+    const generator = GeneratorConfig{
+        .z = 3.0,
+        .element = "X",
+        .xc = .lda_pz,
+        .all_orbitals = &all_orbitals,
+        .valence_channels = &valence_channels,
+        .l_local = 1,
+    };
+
+    const nlcc = try build_ae_core_nlcc(allocator, &grid, generator, &ae_result, .{
         .charge = 0.5,
-        .radius = 0.35,
+        .radius = 0.8,
     });
     defer allocator.free(nlcc);
 
@@ -1012,18 +1267,63 @@ test "Gaussian NLCC integrates to configured charge" {
     try std.testing.expectApproxEqAbs(0.5, charge, 1e-6);
 }
 
-test "Gaussian NLCC rejects invalid parameters" {
+test "AE core NLCC rejects invalid parameters and missing core density" {
     const allocator = std.testing.allocator;
     var grid = try RadialGrid.init(allocator, 64, 1e-4, 8.0);
     defer grid.deinit();
 
+    var valence_wave: [64]f64 = undefined;
+    for (0..grid.n) |i| {
+        const r = grid.r[i];
+        valence_wave[i] = r * @exp(-r);
+    }
+    const all_orbitals = [_]OrbitalDef{
+        .{ .n = 1, .l = 0, .occupation = 1.0 },
+    };
+    const valence_channels = [_]ChannelConfig{
+        .{ .n = 1, .l = 0, .occupation = 1.0, .rc = 1.5 },
+    };
+    var eigenvalues = [_]f64{-1.0};
+    var rho = [_]f64{0.0} ** 64;
+    var v_eff = [_]f64{0.0} ** 64;
+    var wavefunctions = [_][]f64{&valence_wave};
+    const ae_result = atomic_solver.AtomResult{
+        .total_energy = 0.0,
+        .eigenvalues = &eigenvalues,
+        .rho = &rho,
+        .v_eff = &v_eff,
+        .wavefunctions = &wavefunctions,
+        .allocator = allocator,
+    };
+    const generator = GeneratorConfig{
+        .z = 1.0,
+        .element = "X",
+        .xc = .lda_pz,
+        .all_orbitals = &all_orbitals,
+        .valence_channels = &valence_channels,
+        .l_local = 0,
+    };
+
     try std.testing.expectError(
         error.InvalidGeneratorConfig,
-        build_gaussian_nlcc(allocator, &grid, .{ .charge = 0.0, .radius = 0.35 }),
+        build_ae_core_nlcc(allocator, &grid, generator, &ae_result, .{
+            .charge = 0.0,
+            .radius = 0.35,
+        }),
     );
     try std.testing.expectError(
         error.InvalidGeneratorConfig,
-        build_gaussian_nlcc(allocator, &grid, .{ .charge = 0.5, .radius = 0.0 }),
+        build_ae_core_nlcc(allocator, &grid, generator, &ae_result, .{
+            .charge = 0.5,
+            .radius = 0.0,
+        }),
+    );
+    try std.testing.expectError(
+        error.InvalidGeneratorConfig,
+        build_ae_core_nlcc(allocator, &grid, generator, &ae_result, .{
+            .charge = 0.5,
+            .radius = 0.8,
+        }),
     );
 }
 

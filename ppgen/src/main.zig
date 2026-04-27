@@ -23,6 +23,7 @@ const CliOptions = struct {
     d2_energy: f64,
     l_local: u32,
     local_n: u32,
+    local_smooth_radius: ?f64,
     log_deriv_path: ?[]const u8,
     log_deriv_r: f64,
     log_deriv_min: f64,
@@ -44,6 +45,7 @@ const CliParseState = struct {
     d2_energy_set: bool = false,
     l_local: u32 = 2,
     local_n: u32 = 3,
+    local_smooth_radius: ?f64 = 1.2,
     log_deriv_path: ?[]const u8 = null,
     log_deriv_r: f64 = 3.0,
     log_deriv_min: f64 = 0.0,
@@ -71,6 +73,7 @@ const CliParseState = struct {
             .d2_energy = self.d2_energy,
             .l_local = self.l_local,
             .local_n = self.local_n,
+            .local_smooth_radius = self.local_smooth_radius,
             .log_deriv_path = self.log_deriv_path,
             .log_deriv_r = self.log_deriv_r,
             .log_deriv_min = self.log_deriv_min,
@@ -167,6 +170,7 @@ fn generate_si_pseudopotential(
         .valence_channels = val_channels,
         .l_local = options.l_local,
         .local_n = options.local_n,
+        .local_smooth_radius = options.local_smooth_radius,
         .nlcc = .{
             .charge = options.nlcc_charge,
             .radius = options.nlcc_radius,
@@ -492,6 +496,16 @@ fn parse_local_arg(arg: []const u8, args_iter: anytype, state: *CliParseState) !
         state.local_n = try parse_local_n(arg["--local-n=".len..]);
         return true;
     }
+    if (std.mem.eql(u8, arg, "--local-smooth-radius")) {
+        const value = args_iter.next() orelse return error.InvalidArguments;
+        state.local_smooth_radius = try parse_local_smooth_radius(value);
+        return true;
+    }
+    if (std.mem.startsWith(u8, arg, "--local-smooth-radius=")) {
+        const value = arg["--local-smooth-radius=".len..];
+        state.local_smooth_radius = try parse_local_smooth_radius(value);
+        return true;
+    }
     return false;
 }
 
@@ -592,6 +606,14 @@ fn parse_local_n(value: []const u8) !u32 {
     return n;
 }
 
+fn parse_local_smooth_radius(value: []const u8) !f64 {
+    const radius = std.fmt.parseFloat(f64, value) catch return error.InvalidArguments;
+    if (!std.math.isFinite(radius) or radius < 0.2 or radius > 4.0) {
+        return error.InvalidArguments;
+    }
+    return radius;
+}
+
 fn parse_reference_energy(value: []const u8) !f64 {
     const energy = std.fmt.parseFloat(f64, value) catch return error.InvalidArguments;
     if (!std.math.isFinite(energy) or energy < -5.0 or energy > 5.0) {
@@ -658,6 +680,7 @@ fn write_usage(stderr: anytype) !void {
         "Usage: ppgen [--xc lda_pz|pbe] [--rc-s bohr] [--rc-p bohr] " ++
             "[--rc-d bohr] [--p-ref-energy-ry ry] [--d-energy-ry ry] " ++
             "[--d2-energy-ry ry] [--local-l 0|1|2] [--local-n n] " ++
+            "[--local-smooth-radius bohr] " ++
             "[--nlcc-charge e] [--nlcc-radius bohr] " ++
             "[--log-deriv path] [--log-deriv-r bohr] " ++
             "[--log-deriv-min-ry ry] [--log-deriv-max-ry ry] " ++
@@ -706,6 +729,13 @@ test "parse_local_n rejects nonphysical principal quantum numbers" {
     try std.testing.expectError(error.InvalidArguments, parse_local_n("9"));
 }
 
+test "parse_local_smooth_radius rejects invalid radii" {
+    try std.testing.expectApproxEqAbs(1.2, try parse_local_smooth_radius("1.2"), 1e-12);
+    try std.testing.expectError(error.InvalidArguments, parse_local_smooth_radius("nan"));
+    try std.testing.expectError(error.InvalidArguments, parse_local_smooth_radius("0.1"));
+    try std.testing.expectError(error.InvalidArguments, parse_local_smooth_radius("5.0"));
+}
+
 test "parse_reference_energy rejects invalid values" {
     try std.testing.expectApproxEqAbs(0.1, try parse_reference_energy("0.1"), 1e-12);
     try std.testing.expectError(error.InvalidArguments, parse_reference_energy("nan"));
@@ -719,7 +749,7 @@ test "parse_log_deriv_radius rejects invalid match radii" {
     try std.testing.expectError(error.InvalidArguments, parse_log_deriv_radius("9.0"));
 }
 
-test "parse_nlcc rejects invalid Gaussian partial core parameters" {
+test "parse_nlcc rejects invalid partial core parameters" {
     try std.testing.expectApproxEqAbs(0.5, try parse_nlcc_charge("0.5"), 1e-12);
     try std.testing.expectApproxEqAbs(0.35, try parse_nlcc_radius("0.35"), 1e-12);
     try std.testing.expectError(error.InvalidArguments, parse_nlcc_charge("0.0"));
