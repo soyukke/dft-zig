@@ -41,19 +41,22 @@ The local reference UPF for the main Si benchmark is `../../pseudo/Si.upf`
 `baseline/` was generated with that pseudopotential.
 
 `test_ppgen.py` generates `out_ppgen/Si_ppgen_PBE.upf` with ppgen using
-bound s/p channels, unoccupied p/d reference projectors, and a Gaussian
-partial-core NLCC, runs DFT-Zig using `dft_zig_ppgen.toml`, and compares the
+bound s/p channels, unoccupied p/d reference projectors, a smoothed local
+potential, and an AE-core-derived partial-core NLCC, runs DFT-Zig using
+`dft_zig_ppgen.toml`, and compares the
 VBM-aligned bands against the saved ABINIT baseline. This is a quantitative
 ratchet for ppgen, not a claim that ppgen already matches ONCV quality.
 
 Current ppgen Si PBE ratchet: band-gap difference <= 75 meV and average
-VBM-aligned band MSE <= 6,500 meV^2 against the saved ABINIT baseline.
+VBM-aligned band MSE <= 4,650 meV^2 against the saved ABINIT baseline.
 The same test also checks that the generated `PP_DIJ` coefficients remain below
 2e4 in absolute value, verifies the `PP_DIJ` matrix is Hermitian to 1e-8,
 writes `out_ppgen/Si_ppgen_logderiv.tsv` on a 0.2 Ry energy grid, verifies
 the NLCC partial-core charge is about 0.724e, and checks the atomic scattering
 diagnostic: valid log-derivative max delta <= 0.75, RMS delta <= 0.17, invalid
-sample count = 0, and AE/PS pole mismatch count = 0.
+sample count = 0, and AE/PS pole mismatch count = 0. The form-factor ratchet
+also requires local solid-q RMS <= 6.5, beta solid-q mean RMS <= 0.35, and
+combined form-factor score <= 6.8.
 
 `diagnose_ppgen.py` runs as part of the ppgen benchmark and writes three
 diagnostic artifacts under `out_ppgen/`:
